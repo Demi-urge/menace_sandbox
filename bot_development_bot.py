@@ -524,9 +524,12 @@ class BotDevelopmentBot:
         def writer() -> None:
             if self.manager is not None:
                 desc = f"update {path.name} content\n\n{data}"
-                summary = self.manager.auto_run_patch(path, desc)
-                failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
-                patch_id = getattr(self.manager, "_last_patch_id", None)
+                outcome = self.manager.auto_run_patch(path, desc)
+                summary = outcome.get("summary") if outcome else None
+                failed_tests = (
+                    int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                )
+                patch_id = outcome.get("patch_id") if outcome else None
                 if summary is None or failed_tests:
                     engine = getattr(self.manager, "engine", None)
                     if patch_id is not None and hasattr(engine, "rollback_patch"):
@@ -796,9 +799,14 @@ class BotDevelopmentBot:
         try:
             if path is not None:
                 def _apply_patch() -> None:
-                    summary = manager.auto_run_patch(path, prompt)
-                    failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
-                    patch_id = getattr(manager, "_last_patch_id", None)
+                    outcome = manager.auto_run_patch(path, prompt)
+                    summary = outcome.get("summary") if outcome else None
+                    failed_tests = (
+                        int(summary.get("self_tests", {}).get("failed", 0))
+                        if summary
+                        else 0
+                    )
+                    patch_id = outcome.get("patch_id") if outcome else None
                     if summary is None or failed_tests:
                         engine = getattr(manager, "engine", None)
                         if patch_id is not None and hasattr(engine, "rollback_patch"):

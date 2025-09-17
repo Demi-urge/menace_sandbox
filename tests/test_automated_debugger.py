@@ -2,6 +2,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
 sys.modules.setdefault("cryptography.hazmat.primitives", types.ModuleType("primitives"))
@@ -33,7 +35,15 @@ spec = importlib.util.spec_from_file_location(
 pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pkg)
 sys.modules["menace"] = pkg
-sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
+bot_registry_stub = types.ModuleType("menace.bot_registry")
+bot_registry_stub.register_bot = lambda *a, **k: None
+bot_registry_stub.get_bot_workflow_tests = lambda *a, **k: []
+bot_registry_stub.BotRegistry = object
+sys.modules["menace.bot_registry"] = bot_registry_stub
+sys.modules.setdefault(
+    "menace.self_coding_engine",
+    types.SimpleNamespace(SelfCodingEngine=object, MANAGER_CONTEXT=None),
+)
 import menace.automated_debugger as ad  # noqa: E402
 from menace.vector_service.context_builder import ContextBuilder  # noqa: E402
 
@@ -136,3 +146,41 @@ def test_generate_tests_traceback(monkeypatch, tmp_path):
     tests = dbg._generate_tests([log])
     assert "import_module('b')" in tests[0]
     assert "getattr(mod, 'bar'" in tests[0]
+
+
+def test_analyse_requires_self_tests(monkeypatch, tmp_path):
+    class OutcomeManager:
+        def __init__(self):
+            self.summary_payload: dict[str, object] = {}
+
+        def auto_run_patch(self, path, mode, **kwargs):
+            return {
+                "summary": self.summary_payload,
+                "patch_id": 1,
+                "commit": "abc123",
+                "result": None,
+            }
+
+    tracker = types.SimpleNamespace(
+        failures=[],
+        level_for=lambda *a, **k: ("module", None),
+        record_failure=lambda level, line, func: tracker.failures.append((level, line, func)),
+        reset=lambda region: None,
+    )
+
+    eng = DummyEngine()
+    manager = OutcomeManager()
+    dbg = ad.AutomatedDebugger(DummyTelem("log"), eng, DummyBuilder(), manager=manager)
+    dbg._tracker = tracker  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(dbg, "_recent_logs", lambda: ["error"], raising=False)
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["pass\n"], raising=False)
+
+    manager.summary_payload = {}
+    dbg.analyse_and_fix()
+    assert tracker.failures, "missing self_tests should trigger failure tracking"
+
+    tracker.failures.clear()
+    manager.summary_payload = {"self_tests": {"failed": 0}}
+    dbg.analyse_and_fix()
+    assert not tracker.failures, "self_tests summary should allow success"

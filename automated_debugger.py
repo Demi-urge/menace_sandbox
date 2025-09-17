@@ -219,9 +219,11 @@ class AutomatedDebugger:
                     kwargs["context_meta"] = {"retrieval_context": retrieval_context}
                 return self.manager.auto_run_patch(path, "auto_debug", **kwargs)
 
+            outcome: dict[str, Any] | None = None
             summary: dict[str, Any] | None = None
             try:
-                summary = _apply(module_path, target)
+                outcome = _apply(module_path, target)
+                summary = outcome.get("summary") if outcome else None
                 try:
                     from sandbox_runner import integrate_new_orphans  # type: ignore
 
@@ -232,11 +234,13 @@ class AutomatedDebugger:
                     self.logger.exception(
                         "integrate_new_orphans after apply_patch failed",
                     )
-                failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
-                if failed_tests:
-                    raise RuntimeError(f"self tests failed ({failed_tests})")
                 if summary is None:
                     raise RuntimeError("post validation summary unavailable")
+                if "self_tests" not in summary:
+                    raise RuntimeError("self test summary unavailable")
+                failed_tests = int(summary["self_tests"].get("failed", 0))
+                if failed_tests:
+                    raise RuntimeError(f"self tests failed ({failed_tests})")
                 self.logger.info("patch succeeded for %s", test_path.name)
                 if line_region:
                     self._tracker.reset(line_region)

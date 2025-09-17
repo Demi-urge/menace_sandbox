@@ -366,9 +366,10 @@ class ImplementationOptimiserBot:
                     if path_str:
                         try:
                             path = Path(path_str)
-                            summary = self.manager.auto_run_patch(path, desc)
+                            outcome = self.manager.auto_run_patch(path, desc)
+                            summary = outcome.get("summary") if outcome else None
                             failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
-                            patch_id = getattr(self.manager, "_last_patch_id", None)
+                            patch_id = outcome.get("patch_id") if outcome else None
                             if summary is None or failed_tests:
                                 if summary is None:
                                     logger.warning("implementation validation summary unavailable")

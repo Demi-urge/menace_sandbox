@@ -1033,15 +1033,22 @@ class QuickFixEngine:
                     **kw,
                 )
                 commit_hash = getattr(self.manager, "_last_commit_hash", None)
+                patch_id = getattr(self.manager, "_last_patch_id", None)
+                summary = None
                 if commit_hash:
                     ctx_meta = kw.get("context_meta")
-                    return self.manager.run_post_patch_cycle(
+                    summary = self.manager.run_post_patch_cycle(
                         path,
                         desc,
                         provenance_token=token,
                         context_meta=ctx_meta,
                     )
-                return None
+                return {
+                    "result": result,
+                    "commit": commit_hash,
+                    "patch_id": patch_id,
+                    "summary": summary,
+                }
         summary: Dict[str, Any] | None = None
         try:
             try:
@@ -1058,8 +1065,11 @@ class QuickFixEngine:
                     context_meta=context_meta,
                 )
             if isinstance(result, dict):
+                summary = result.get("summary")
+                patch_id = result.get("patch_id")
+            else:
                 summary = result
-            patch_id = getattr(self.manager, "_last_patch_id", None)
+                patch_id = getattr(self.manager, "_last_patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
             if event_bus:
@@ -1079,7 +1089,8 @@ class QuickFixEngine:
                     )
         if summary is None:
             summary = getattr(self.manager, "_last_validation_summary", None)
-        patch_id = getattr(self.manager, "_last_patch_id", None)
+        if patch_id is None:
+            patch_id = getattr(self.manager, "_last_patch_id", None)
         failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
         tests_ok = bool(summary) and failed_tests == 0
         if not tests_ok:

@@ -122,12 +122,13 @@ class TelemetryFeedback:
         summary: dict[str, Any] | None = None
         tests_ok = False
         try:
-            summary = self.manager.auto_run_patch(
+            outcome = self.manager.auto_run_patch(
                 path,
                 desc,
                 context_meta={"reason": desc, "trigger": "telemetry_feedback"},
             )
-            patch_id = getattr(self.manager, "_last_patch_id", None)
+            summary = outcome.get("summary") if outcome else None
+            patch_id = outcome.get("patch_id") if outcome else None
             failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
             tests_ok = summary is not None and failed_tests == 0
             if summary is None and patch_id is not None:

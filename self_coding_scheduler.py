@@ -145,13 +145,14 @@ class SelfCodingScheduler:
                     attempt += 1
 
                     def _run_patch() -> None:
-                        summary = self.manager.auto_run_patch(
+                        outcome = self.manager.auto_run_patch(
                             self.patch_path,
                             self.description,
                         )
+                        summary = outcome.get("summary") if outcome else None
                         failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
                         if summary is None or failed_tests:
-                            patch_id = getattr(self.manager, "_last_patch_id", None)
+                            patch_id = outcome.get("patch_id") if outcome else None
                             engine = getattr(self.manager, "engine", None)
                             if patch_id is not None and hasattr(engine, "rollback_patch"):
                                 try:
