@@ -101,12 +101,65 @@ except Exception:  # pragma: no cover - fallback
         pass
 
 try:  # pragma: no cover - optional
-    from vector_service.context_builder import ContextBuilder
+    from vector_service.context_builder import (
+        ContextBuilder,
+        build_prompt as _context_build_prompt,
+    )
 except Exception:  # pragma: no cover - fallback when service missing
     ContextBuilder = Any  # type: ignore
+    _context_build_prompt = None  # type: ignore
 
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB))))
+
+
+def _build_contextual_prompt(
+    goal: str,
+    *,
+    context_builder: ContextBuilder,
+    intent_metadata: Dict[str, Any] | None = None,
+    fallback_goal: Any | None = None,
+    fallback_kwargs: Dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> Prompt:
+    """Build a :class:`Prompt` using the active context engine."""
+
+    if context_builder is None:
+        raise ValueError("context_builder is required")
+
+    if _context_build_prompt is not None and isinstance(goal, str) and goal.strip():
+        try:
+            return _context_build_prompt(
+                goal,
+                intent=intent_metadata,
+                context_builder=context_builder,
+                **kwargs,
+            )
+        except PromptBuildError:
+            raise
+        except (AttributeError, TypeError, ValueError):
+            # Fallback to legacy builder signature below.
+            pass
+
+    builder_fn = getattr(context_builder, "build_prompt", None)
+    if not callable(builder_fn):
+        raise TypeError("context_builder missing build_prompt")
+
+    target = fallback_goal if fallback_goal is not None else goal
+    call_kwargs: Dict[str, Any] = {}
+    if fallback_kwargs:
+        call_kwargs.update(fallback_kwargs)
+    if intent_metadata is not None:
+        call_kwargs.setdefault("intent_metadata", intent_metadata)
+    call_kwargs.update(kwargs)
+
+    try:
+        return builder_fn(target, **call_kwargs)
+    except TypeError:
+        if "intent_metadata" in call_kwargs and "intent" not in call_kwargs:
+            meta = call_kwargs.pop("intent_metadata")
+            call_kwargs["intent"] = meta
+        return builder_fn(target, **call_kwargs)
 
 
 @dataclass
@@ -567,17 +620,25 @@ class ChatGPTClient(LLMClient):
         if context_builder is None:
             raise ValueError("context_builder is required")
 
-        intent_meta: Dict[str, Any] = {"tags": list(tags)}
+        tag_list = list(tags)
+        canonical_tags = [str(tag) for tag in tag_list if str(tag)]
+        intent_meta: Dict[str, Any] = {"tags": list(canonical_tags)}
         if prior:
             intent_meta["prior_ideas"] = prior
         if intent_metadata:
             intent_meta.update(intent_metadata)
 
+        query = " ".join(canonical_tags).strip() or (prior or "").strip()
+        if not query:
+            raise ValueError("at least one tag or prior is required to build a prompt")
+
         try:
-            base_prompt = context_builder.build_prompt(
-                tags,
-                prior=prior,
+            base_prompt = _build_contextual_prompt(
+                query,
+                context_builder=context_builder,
                 intent_metadata=intent_meta,
+                fallback_goal=list(tag_list),
+                fallback_kwargs={"prior": prior} if prior is not None else None,
             )
         except Exception as exc:
             if isinstance(exc, PromptBuildError):
@@ -596,12 +657,12 @@ class ChatGPTClient(LLMClient):
 
         for key, value in intent_meta.items():
             metadata.setdefault(key, value)
-        metadata.setdefault("intent_tags", list(tags))
+        metadata.setdefault("intent_tags", list(tag_list))
 
         existing_tags_raw = getattr(base_prompt, "tags", []) or []
         existing_tags = list(existing_tags_raw)
         merged_tags = (
-            list(dict.fromkeys([*existing_tags, *tags])) if tags else existing_tags
+            list(dict.fromkeys([*existing_tags, *tag_list])) if tag_list else existing_tags
         )
 
         if metadata_attr is not metadata:
@@ -762,8 +823,9 @@ def follow_up(
     """Request additional insight for a single idea."""
     prompt = "Provide deeper insight or variations for this business model."
     try:
-        prompt_obj = context_builder.build_prompt(
+        prompt_obj = _build_contextual_prompt(
             prompt,
+            context_builder=context_builder,
             intent_metadata={
                 "idea_name": idea.name,
                 "description": idea.description,
@@ -819,8 +881,9 @@ def generate_and_filter(
         "Respond in JSON list format with fields name, description and tags."
     )
     try:
-        prompt_obj = context_builder.build_prompt(
+        prompt_obj = _build_contextual_prompt(
             prompt,
+            context_builder=context_builder,
             intent_metadata={"tags": list(tags)},
         )
     except Exception as exc:
