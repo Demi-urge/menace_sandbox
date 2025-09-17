@@ -733,83 +733,124 @@ class ChatGPTClient(LLMClient):
         if not query:
             raise ValueError("at least one tag or prior is required to build a prompt")
 
-        try:
-            base_prompt = _build_contextual_prompt(
-                query,
-                context_builder=context_builder,
-                intent_metadata=intent_meta,
-                fallback_goal=list(tag_list),
-                fallback_kwargs={"prior": prior} if prior is not None else None,
-            )
-        except Exception as exc:
-            if isinstance(exc, PromptBuildError):
+        base_prompt: Prompt | None = None
+
+        engine = getattr(self, "engine", None)
+        build_enriched = getattr(engine, "build_enriched_prompt", None)
+        if callable(build_enriched):
+            try:
+                base_prompt = build_enriched(
+                    query,
+                    intent=dict(intent_meta),
+                    context_builder=context_builder,
+                )
+            except PromptBuildError:
                 raise
-            handle_failure(
-                "failed to build prompt from context builder",
-                exc,
-                logger=logger,
-            )
+            except Exception:
+                logger.exception("engine-based prompt enrichment failed")
+                if RAISE_ERRORS:
+                    raise
+
+        if base_prompt is None:
+            try:
+                base_prompt = _build_contextual_prompt(
+                    query,
+                    context_builder=context_builder,
+                    intent_metadata=intent_meta,
+                    fallback_goal=list(tag_list),
+                    fallback_kwargs={"prior": prior} if prior is not None else None,
+                )
+            except Exception as exc:
+                if isinstance(exc, PromptBuildError):
+                    raise
+                handle_failure(
+                    "failed to build prompt from context builder",
+                    exc,
+                    logger=logger,
+                )
+
+        if base_prompt is None:
+            raise RuntimeError("context builder returned no prompt")
 
         metadata_payload = dict(intent_meta)
         metadata_payload.setdefault("intent_tags", list(tag_list))
 
+        origin = (
+            getattr(base_prompt, "origin", "")
+            or metadata_payload.get("origin")
+            or "context_builder"
+        )
+
         enrich_fn = getattr(context_builder, "enrich_prompt", None)
+        if not callable(enrich_fn):
+            enrich_method = getattr(ContextBuilder, "enrich_prompt", None)
+
+            if callable(enrich_method):
+
+                def enrich_fn(
+                    prompt: Prompt,
+                    *,
+                    tags: Iterable[str] | None = None,
+                    metadata: Dict[str, Any] | None = None,
+                    origin: str | None = None,
+                ) -> Prompt:
+                    return enrich_method(
+                        context_builder,
+                        prompt,
+                        tags=tags,
+                        metadata=metadata,
+                        origin=origin,
+                    )
+
         if callable(enrich_fn):
             try:
                 result = enrich_fn(
                     base_prompt,
                     tags=canonical_tags or None,
                     metadata=metadata_payload,
-                    origin=metadata_payload.get("origin") or "context_builder",
+                    origin=origin,
                 )
                 if result is not None:
                     base_prompt = result
-                return base_prompt
             except PromptBuildError:
                 raise
             except Exception:
                 logger.exception("context builder enrichment failed")
                 if RAISE_ERRORS:
                     raise
-
-        metadata_attr = getattr(base_prompt, "metadata", None)
-        if isinstance(metadata_attr, dict):
-            metadata = metadata_attr
         else:
-            metadata = dict(metadata_attr or {})
+            metadata_attr = getattr(base_prompt, "metadata", None)
+            if isinstance(metadata_attr, dict):
+                metadata = metadata_attr
+            else:
+                metadata = dict(metadata_attr or {})
 
-        for key, value in metadata_payload.items():
-            metadata.setdefault(key, value)
+            for key, value in metadata_payload.items():
+                metadata.setdefault(key, value)
 
-        existing_tags_raw = getattr(base_prompt, "tags", []) or []
-        existing_tags = list(existing_tags_raw)
-        merged_tags = (
-            list(dict.fromkeys([*existing_tags, *canonical_tags]))
-            if canonical_tags
-            else existing_tags
-        )
+            if canonical_tags:
+                existing_tags = list(getattr(base_prompt, "tags", []) or [])
+                merged_tags = list(dict.fromkeys([*existing_tags, *canonical_tags]))
+            else:
+                merged_tags = list(getattr(base_prompt, "tags", []) or [])
 
-        if metadata_attr is not metadata:
-            try:
-                setattr(base_prompt, "metadata", metadata)
-            except Exception:
-                pass
+            if merged_tags:
+                metadata.setdefault("tags", list(merged_tags))
+                if list(getattr(base_prompt, "tags", []) or []) != list(merged_tags):
+                    try:
+                        setattr(base_prompt, "tags", list(merged_tags))
+                    except Exception:
+                        pass
 
-        if merged_tags and metadata.get("tags") is None:
-            metadata.setdefault("tags", list(merged_tags))
+            metadata.setdefault("origin", origin)
 
-        if list(getattr(base_prompt, "tags", []) or []) != list(merged_tags):
-            try:
-                setattr(base_prompt, "tags", list(merged_tags))
-            except Exception:
-                pass
+            if metadata_attr is not metadata:
+                try:
+                    setattr(base_prompt, "metadata", metadata)
+                except Exception:
+                    pass
 
-        origin = (
-            getattr(base_prompt, "origin", "")
-            or metadata.get("origin")
-            or "context_builder"
-        )
-        if getattr(base_prompt, "origin", None) != origin:
+        if getattr(base_prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
             try:
                 setattr(base_prompt, "origin", origin)
             except Exception:
