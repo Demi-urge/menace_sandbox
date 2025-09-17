@@ -145,7 +145,22 @@ class SelfCodingScheduler:
                     attempt += 1
 
                     def _run_patch() -> None:
-                        self.manager.auto_run_patch(self.patch_path, self.description)
+                        summary = self.manager.auto_run_patch(
+                            self.patch_path,
+                            self.description,
+                        )
+                        failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                        if summary is None or failed_tests:
+                            patch_id = getattr(self.manager, "_last_patch_id", None)
+                            engine = getattr(self.manager, "engine", None)
+                            if patch_id is not None and hasattr(engine, "rollback_patch"):
+                                try:
+                                    engine.rollback_patch(str(patch_id))
+                                except Exception:
+                                    self.logger.exception("scheduler rollback failed")
+                            if summary is None:
+                                raise RuntimeError("post validation summary unavailable")
+                            raise RuntimeError(f"self tests failed ({failed_tests})")
 
                     metrics = runner.run(_run_patch, safe_mode=True)
                     module = metrics.modules[0] if getattr(metrics, "modules", None) else None

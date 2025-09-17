@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 import logging
 
 from .dynamic_path_router import resolve_path
@@ -116,16 +116,34 @@ class SanityFeedback:
         desc = f"address {rule} detection"
         patch_id = None
         success = False
+        summary: dict[str, Any] | None = None
         if path:
             try:
                 path_obj = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                self.manager.auto_run_patch(
+                summary = self.manager.auto_run_patch(
                     path_obj,
                     desc,
                     context_meta={"reason": desc, "trigger": "sanity_feedback"},
                 )
                 patch_id = getattr(self.manager, "_last_patch_id", None)
-                success = bool(patch_id)
+                failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                success = bool(patch_id) and summary is not None and failed_tests == 0
+                if summary is None and patch_id is not None:
+                    engine = getattr(self.manager, "engine", None)
+                    if hasattr(engine, "rollback_patch"):
+                        try:
+                            engine.rollback_patch(str(patch_id))
+                        except Exception:
+                            logger.exception("sanity rollback failed")
+                    patch_id = None
+                elif failed_tests and patch_id is not None:
+                    engine = getattr(self.manager, "engine", None)
+                    if hasattr(engine, "rollback_patch"):
+                        try:
+                            engine.rollback_patch(str(patch_id))
+                        except Exception:
+                            logger.exception("sanity rollback failed")
+                    patch_id = None
             except Exception:
                 logger.exception("patch application failed", extra={"path": path})
         # log memory interaction

@@ -288,7 +288,21 @@ class EnhancementBot:
 
         if self.manager is not None:
             desc = f"apply enhancement from {proposal.author_bot}\n\n{proposal.new_code}"
-            self.manager.auto_run_patch(file_path, desc)
+            summary = self.manager.auto_run_patch(file_path, desc)
+            failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+            patch_id = getattr(self.manager, "_last_patch_id", None)
+            if summary is None or failed_tests:
+                logger.warning("enhancement validation failed: %s tests", failed_tests)
+                engine = getattr(self.manager, "engine", None)
+                if patch_id is not None and hasattr(engine, "rollback_patch"):
+                    try:
+                        engine.rollback_patch(str(patch_id))
+                    except Exception:
+                        logger.exception("enhancement rollback failed")
+                file_path.write_text(orig_text)
+                if summary is None:
+                    return False
+                return False
             registry = getattr(self.manager, "bot_registry", None)
             if registry is not None:
                 try:
@@ -298,8 +312,6 @@ class EnhancementBot:
                     logger.exception("bot registry update failed")
         else:
             file_path.write_text(proposal.new_code)
-
-        subprocess.run(["pytest", "-q"], check=False)
 
         self.enh_db.record_history(
             EnhancementHistory(

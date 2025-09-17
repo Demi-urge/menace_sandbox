@@ -524,7 +524,19 @@ class BotDevelopmentBot:
         def writer() -> None:
             if self.manager is not None:
                 desc = f"update {path.name} content\n\n{data}"
-                self.manager.auto_run_patch(path, desc)
+                summary = self.manager.auto_run_patch(path, desc)
+                failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                patch_id = getattr(self.manager, "_last_patch_id", None)
+                if summary is None or failed_tests:
+                    engine = getattr(self.manager, "engine", None)
+                    if patch_id is not None and hasattr(engine, "rollback_patch"):
+                        try:
+                            engine.rollback_patch(str(patch_id))
+                        except Exception:
+                            self.logger.exception("bot dev rollback failed")
+                    if summary is None:
+                        raise RuntimeError("post validation summary unavailable")
+                    raise RuntimeError(f"self tests failed ({failed_tests})")
                 registry = getattr(self.manager, "bot_registry", None)
                 if registry is not None:
                     try:
@@ -783,10 +795,22 @@ class BotDevelopmentBot:
             return EngineResult(False, None, msg)
         try:
             if path is not None:
-                self.engine_retry.run(
-                    lambda: manager.auto_run_patch(path, prompt),
-                    logger=self.logger,
-                )
+                def _apply_patch() -> None:
+                    summary = manager.auto_run_patch(path, prompt)
+                    failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                    patch_id = getattr(manager, "_last_patch_id", None)
+                    if summary is None or failed_tests:
+                        engine = getattr(manager, "engine", None)
+                        if patch_id is not None and hasattr(engine, "rollback_patch"):
+                            try:
+                                engine.rollback_patch(str(patch_id))
+                            except Exception:
+                                self.logger.exception("bot dev rollback failed")
+                        if summary is None:
+                            raise RuntimeError("post validation summary unavailable")
+                        raise RuntimeError(f"self tests failed ({failed_tests})")
+
+                self.engine_retry.run(_apply_patch, logger=self.logger)
                 code = path.read_text()
             else:
                 code = self.engine_retry.run(

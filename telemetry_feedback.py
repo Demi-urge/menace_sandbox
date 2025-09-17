@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional, List, Tuple
+from typing import Any, Optional, List, Tuple
 
 from .dynamic_path_router import resolve_path
 
@@ -119,15 +119,37 @@ class TelemetryFeedback:
         except FileNotFoundError:
             return
         desc = f"fix {error_type}: {module}"
+        summary: dict[str, Any] | None = None
+        tests_ok = False
         try:
-            self.manager.auto_run_patch(
+            summary = self.manager.auto_run_patch(
                 path,
                 desc,
                 context_meta={"reason": desc, "trigger": "telemetry_feedback"},
             )
             patch_id = getattr(self.manager, "_last_patch_id", None)
+            failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+            tests_ok = summary is not None and failed_tests == 0
+            if summary is None and patch_id is not None:
+                engine = getattr(self.manager, "engine", None)
+                if hasattr(engine, "rollback_patch"):
+                    try:
+                        engine.rollback_patch(str(patch_id))
+                    except Exception:
+                        self.logger.exception("telemetry rollback failed", exc_info=True)
+                patch_id = None
+            if failed_tests and patch_id is not None:
+                engine = getattr(self.manager, "engine", None)
+                if hasattr(engine, "rollback_patch"):
+                    try:
+                        engine.rollback_patch(str(patch_id))
+                    except Exception:
+                        self.logger.exception("telemetry rollback failed", exc_info=True)
+                patch_id = None
         except Exception:
             patch_id = None
+            summary = None
+            tests_ok = False
         menace_id = self.logger.db._menace_id(source_menace_id)
         clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
         query = apply_scope(
@@ -145,7 +167,12 @@ class TelemetryFeedback:
         if self.graph:
             try:
                 self.graph.add_telemetry_event(
-                    sample_bot, error_type, module, mods, patch_id=patch_id
+                    sample_bot,
+                    error_type,
+                    module,
+                    mods,
+                    patch_id=patch_id,
+                    resolved=tests_ok if patch_id is not None else False,
                 )
                 self.graph.update_error_stats(self.logger.db)
             except Exception:

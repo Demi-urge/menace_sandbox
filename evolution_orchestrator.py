@@ -818,6 +818,8 @@ class EvolutionOrchestrator:
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
                 commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
                 success = bool(patch_id and commit)
+                if post_error is not None:
+                    success = False
                 roi_after = (
                     self.data_bot.roi(bot)
                     if hasattr(self.data_bot, "roi")
@@ -1057,30 +1059,45 @@ class EvolutionOrchestrator:
                     "error_threshold": self.triggers.error_rate,
                 }
                 self._invoke_register_patch_cycle(reason, meta)
-                self.selfcoding_manager.auto_run_patch(
-                    path,
-                    reason,
-                    context_meta=meta,
-                )
+                post_details: dict[str, Any] | None = None
+                post_error: str | None = None
+                summary: dict[str, Any] | None = None
+                try:
+                    summary = self.selfcoding_manager.auto_run_patch(
+                        path,
+                        reason,
+                        context_meta=meta,
+                    )
+                except Exception as exc:
+                    post_error = str(exc)
+                    self.logger.exception(
+                        "post patch validation failed for %s",
+                        self.selfcoding_manager.bot_name,
+                    )
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
                 commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
                 success = bool(patch_id and commit)
-                post_details: dict[str, Any] | None = None
-                post_error: str | None = None
-                if success:
-                    try:
-                        post_details = self.selfcoding_manager.run_post_patch_cycle(
-                            path,
-                            reason,
-                            context_meta=meta,
-                            provenance_token=self.provenance_token,
-                        )
-                    except Exception as exc:
-                        post_error = str(exc)
-                        self.logger.exception(
-                            "post patch validation failed for %s",
-                            self.selfcoding_manager.bot_name,
-                        )
+                if summary is None and patch_id is not None and post_error is None:
+                    post_error = "post validation summary unavailable"
+                    success = False
+                    if RollbackManager is not None:
+                        try:
+                            RollbackManager().rollback(
+                                str(patch_id),
+                                requesting_bot=self.selfcoding_manager.bot_name,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "rollback failed for %s",
+                                self.selfcoding_manager.bot_name,
+                            )
+                    patch_id = None
+                elif summary is not None:
+                    post_details = summary
+                    failed_tests = int(summary.get("self_tests", {}).get("failed", 0) or 0)
+                    if failed_tests and post_error is None:
+                        post_error = f"self tests failed ({failed_tests})"
+                    if failed_tests:
                         success = False
                         if RollbackManager is not None and patch_id is not None:
                             try:
@@ -1093,6 +1110,22 @@ class EvolutionOrchestrator:
                                     "rollback failed for %s",
                                     self.selfcoding_manager.bot_name,
                                 )
+                if (
+                    post_error is not None
+                    and summary is None
+                    and RollbackManager is not None
+                    and patch_id is not None
+                ):
+                    try:
+                        RollbackManager().rollback(
+                            str(patch_id),
+                            requesting_bot=self.selfcoding_manager.bot_name,
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "rollback failed for %s",
+                            self.selfcoding_manager.bot_name,
+                        )
                 before = before_roi
                 after = self._latest_roi() if success else before
                 roi_delta_local = after - before
