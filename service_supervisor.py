@@ -482,7 +482,12 @@ class ServiceSupervisor:
                 evolution_orchestrator=evolution_orchestrator,
             )
             manager.context_builder = self.context_builder
-            manager.auto_run_patch(path, description)
+            summary = manager.auto_run_patch(path, description)
+            failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+            if summary is None or failed_tests:
+                if summary is None:
+                    raise RuntimeError("post validation summary unavailable")
+                raise RuntimeError(f"self tests failed ({failed_tests})")
             added_modules = getattr(engine, "last_added_modules", None)
             if not added_modules:
                 added_modules = getattr(engine, "added_modules", None)

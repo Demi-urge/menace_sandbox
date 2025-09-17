@@ -291,6 +291,7 @@ class SelfCodingManager:
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
+        self._last_validation_summary: Dict[str, Any] | None = None
         thresholds = self.threshold_service.get(bot_name)
         self.roi_drop_threshold = (
             roi_drop_threshold
@@ -1290,19 +1291,70 @@ class SelfCodingManager:
         return result, commit
 
     # ------------------------------------------------------------------
-    def auto_run_patch(self, path: Path, description: str, **kwargs: Any) -> AutomationResult:
+    def auto_run_patch(
+        self,
+        path: Path,
+        description: str,
+        *,
+        run_post_validation: bool = True,
+        **kwargs: Any,
+    ) -> Dict[str, Any] | None:
         """Run :meth:`run_patch` using the orchestrator's provenance token.
 
-        This helper reduces the chance of provenance related errors by
-        automatically retrieving the token from the attached
-        ``evolution_orchestrator``.
+        ``run_post_validation`` controls whether :meth:`run_post_patch_cycle`
+        executes automatically after a successful commit.  When enabled the
+        resulting validation summary is returned and also published via the
+        event bus and metrics collectors.  Callers that perform their own
+        orchestration can disable the automatic validation to avoid duplicate
+        runs.
         """
 
         orchestrator = getattr(self, "evolution_orchestrator", None)
         token = getattr(orchestrator, "provenance_token", None)
         if not token:
             raise PermissionError("missing provenance token")
-        return self.run_patch(path, description, provenance_token=token, **kwargs)
+
+        context_meta: Dict[str, Any] | None = kwargs.get("context_meta")
+        summary: Dict[str, Any] | None = None
+        self.run_patch(path, description, provenance_token=token, **kwargs)
+        commit = getattr(self, "_last_commit_hash", None)
+        patch_id = getattr(self, "_last_patch_id", None)
+        if run_post_validation and commit:
+            summary = self.run_post_patch_cycle(
+                path,
+                description,
+                provenance_token=token,
+                context_meta=context_meta,
+            )
+
+        self._last_validation_summary = summary
+        if summary is not None:
+            if self.event_bus:
+                try:
+                    payload: Dict[str, Any] = {
+                        "bot": self.bot_name,
+                        "path": str(path),
+                        "patch_id": patch_id,
+                        "commit": commit,
+                        "summary": summary,
+                    }
+                    if context_meta:
+                        payload["context_meta"] = context_meta
+                    self.event_bus.publish("self_coding:post_validation", payload)
+                except Exception:
+                    self.logger.exception("failed to publish post_validation event")
+            if self.data_bot:
+                try:
+                    failed_tests = float(summary.get("self_tests", {}).get("failed", 0) or 0.0)
+                    coverage = float(summary.get("self_tests", {}).get("coverage", 0.0) or 0.0)
+                    self.data_bot.collect(
+                        self.bot_name,
+                        patch_validation_failed_tests=failed_tests,
+                        patch_validation_coverage=coverage,
+                    )
+                except Exception:
+                    self.logger.exception("failed to record post validation metrics")
+        return summary
 
     # ------------------------------------------------------------------
     def run_patch(

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import re
-import subprocess
 import tempfile
 import traceback
 from typing import Any, Iterable
@@ -214,14 +213,15 @@ class AutomatedDebugger:
                 retrieval_context = None
 
             @retry(Exception, attempts=3)
-            def _apply(path: Path, region: TargetRegion | None) -> None:
+            def _apply(path: Path, region: TargetRegion | None) -> dict[str, Any] | None:
                 kwargs: dict[str, Any] = {}
                 if retrieval_context is not None:
                     kwargs["context_meta"] = {"retrieval_context": retrieval_context}
-                self.manager.auto_run_patch(path, "auto_debug", **kwargs)
+                return self.manager.auto_run_patch(path, "auto_debug", **kwargs)
 
+            summary: dict[str, Any] | None = None
             try:
-                _apply(module_path, target)
+                summary = _apply(module_path, target)
                 try:
                     from sandbox_runner import integrate_new_orphans  # type: ignore
 
@@ -232,18 +232,11 @@ class AutomatedDebugger:
                     self.logger.exception(
                         "integrate_new_orphans after apply_patch failed",
                     )
-                res = subprocess.run(
-                    ["pytest", "-q", str(test_path)], capture_output=True, text=True
-                )
-                if res.returncode != 0:
-                    self.logger.error(
-                        "test failed after patch: %s",
-                        (res.stdout + res.stderr).strip(),
-                    )
-                    if line_region and func_region:
-                        self._tracker.record_failure(level, line_region, func_region)
-                    self.logger.warning("Patch failed. Reverting or retrying...")
-                    continue
+                failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                if failed_tests:
+                    raise RuntimeError(f"self tests failed ({failed_tests})")
+                if summary is None:
+                    raise RuntimeError("post validation summary unavailable")
                 self.logger.info("patch succeeded for %s", test_path.name)
                 if line_region:
                     self._tracker.reset(line_region)

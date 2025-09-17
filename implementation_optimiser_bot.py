@@ -366,18 +366,35 @@ class ImplementationOptimiserBot:
                     if path_str:
                         try:
                             path = Path(path_str)
-                            self.manager.auto_run_patch(path, desc)
-                            if getattr(self.manager, "bot_registry", None):
-                                try:
-                                    name = getattr(
-                                        self,
-                                        "name",
-                                        getattr(self, "bot_name", self.__class__.__name__),
+                            summary = self.manager.auto_run_patch(path, desc)
+                            failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                            patch_id = getattr(self.manager, "_last_patch_id", None)
+                            if summary is None or failed_tests:
+                                if summary is None:
+                                    logger.warning("implementation validation summary unavailable")
+                                else:
+                                    logger.warning(
+                                        "implementation validation failed: %s", failed_tests
                                     )
-                                    self.manager.bot_registry.update_bot(name, str(path))
-                                except Exception:  # pragma: no cover - best effort
-                                    logger.exception("bot registry update failed")
-                            generated = path.read_text().rstrip()
+                                engine = getattr(self.manager, "engine", None)
+                                if patch_id is not None and hasattr(engine, "rollback_patch"):
+                                    try:
+                                        engine.rollback_patch(str(patch_id))
+                                    except Exception:
+                                        logger.exception("implementation rollback failed")
+                                generated = ""
+                            else:
+                                if getattr(self.manager, "bot_registry", None):
+                                    try:
+                                        name = getattr(
+                                            self,
+                                            "name",
+                                            getattr(self, "bot_name", self.__class__.__name__),
+                                        )
+                                        self.manager.bot_registry.update_bot(name, str(path))
+                                    except Exception:  # pragma: no cover - best effort
+                                        logger.exception("bot registry update failed")
+                                generated = path.read_text().rstrip()
                         except Exception:
                             generated = ""
 

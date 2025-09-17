@@ -1024,13 +1024,25 @@ class QuickFixEngine:
                 "provenance_token",
                 None,
             )
+
             def patch_fn(path: Path, desc: str, **kw):
-                return self.manager.run_patch(
+                result = self.manager.run_patch(
                     path,
                     desc,
                     provenance_token=token,
                     **kw,
                 )
+                commit_hash = getattr(self.manager, "_last_commit_hash", None)
+                if commit_hash:
+                    ctx_meta = kw.get("context_meta")
+                    return self.manager.run_post_patch_cycle(
+                        path,
+                        desc,
+                        provenance_token=token,
+                        context_meta=ctx_meta,
+                    )
+                return None
+        summary: Dict[str, Any] | None = None
         try:
             try:
                 result = patch_fn(
@@ -1045,7 +1057,9 @@ class QuickFixEngine:
                     desc,
                     context_meta=context_meta,
                 )
-            patch_id = getattr(result, "patch_id", None)
+            if isinstance(result, dict):
+                summary = result
+            patch_id = getattr(self.manager, "_last_patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
             if event_bus:
@@ -1063,12 +1077,38 @@ class QuickFixEngine:
                     self.logger.exception(
                         "failed to publish patch_failed event",
                     )
-        tests_ok = True
-        try:
-            subprocess.run(["pytest", "-q"], check=True)
-        except Exception as exc:
-            tests_ok = False
-            self.logger.error("quick fix validation failed: %s", exc)
+        if summary is None:
+            summary = getattr(self.manager, "_last_validation_summary", None)
+        patch_id = getattr(self.manager, "_last_patch_id", None)
+        failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+        tests_ok = bool(summary) and failed_tests == 0
+        if not tests_ok:
+            if summary is None:
+                self.logger.error("quick fix validation did not produce a summary")
+            else:
+                self.logger.error("quick fix validation failed: %s tests", failed_tests)
+            engine = getattr(self.manager, "engine", None)
+            if patch_id is not None and hasattr(engine, "rollback_patch"):
+                try:
+                    engine.rollback_patch(str(patch_id))
+                except Exception:
+                    self.logger.exception("quick fix rollback failed")
+            if event_bus:
+                try:
+                    event_bus.publish(
+                        "quick_fix:patch_failed",
+                        {
+                            "module": prompt_path,
+                            "bot": bot,
+                            "description": desc,
+                            "error": "self tests failed",
+                            "failed_tests": failed_tests,
+                        },
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish patch_failed event",
+                    )
         try:
             self.graph.add_telemetry_event(
                 bot, etype, prompt_path, mods, patch_id=patch_id, resolved=tests_ok

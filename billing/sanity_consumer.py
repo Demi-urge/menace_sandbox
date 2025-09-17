@@ -107,18 +107,36 @@ class SanityConsumer:
 
         patch_id = None
         success = False
+        summary: Dict[str, Any] | None = None
         try:
             path = meta.get("module") or meta.get("path")
             if path:
                 try:
                     target = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                    self.manager.auto_run_patch(
+                    summary = self.manager.auto_run_patch(
                         target,
                         f"address {event_type} anomaly",
                         context_meta={"reason": event_type, "trigger": "billing_anomaly"},
                     )
                     patch_id = getattr(self.manager, "_last_patch_id", None)
-                    success = bool(patch_id)
+                    failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+                    success = bool(patch_id) and summary is not None and failed_tests == 0
+                    if summary is None and patch_id is not None:
+                        engine = getattr(self.manager, "engine", None)
+                        if hasattr(engine, "rollback_patch"):
+                            try:
+                                engine.rollback_patch(str(patch_id))
+                            except Exception:
+                                logger.exception("billing rollback failed")
+                        patch_id = None
+                    elif failed_tests and patch_id is not None:
+                        engine = getattr(self.manager, "engine", None)
+                        if hasattr(engine, "rollback_patch"):
+                            try:
+                                engine.rollback_patch(str(patch_id))
+                            except Exception:
+                                logger.exception("billing rollback failed")
+                        patch_id = None
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("patch application failed", extra={"path": path})
             else:

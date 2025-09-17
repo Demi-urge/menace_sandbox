@@ -571,7 +571,12 @@ def deploy_patch(
     )
     manager.context_builder = builder
     try:
-        manager.auto_run_patch(path, description)
+        summary = manager.auto_run_patch(path, description)
+        failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
+        if summary is None or failed_tests:
+            if summary is None:
+                raise RuntimeError("post validation summary unavailable")
+            raise RuntimeError(f"self tests failed ({failed_tests})")
     except Exception:
         rb.auto_rollback("latest", [])
 
