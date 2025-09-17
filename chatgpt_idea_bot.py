@@ -209,6 +209,62 @@ class ChatGPTClient(LLMClient):
                 "provided ContextBuilder cannot query local databases"
             ) from exc
 
+    def _enrich_prompt_via_context(
+        self,
+        prompt: Prompt,
+        *,
+        context_builder: ContextBuilder,
+        tags: Iterable[str] | None = None,
+        metadata: Dict[str, Any] | None = None,
+        origin: str | None = None,
+    ) -> Prompt:
+        """Delegate prompt enrichment to the active context builder."""
+
+        if context_builder is None:
+            raise ValueError("context_builder is required for enrichment")
+
+        enrich_fn = getattr(context_builder, "enrich_prompt", None)
+
+        if not callable(enrich_fn):
+            enrich_method = getattr(ContextBuilder, "enrich_prompt", None)
+
+            if callable(enrich_method):
+
+                def enrich_fn(  # type: ignore[no-redef]
+                    prompt: Prompt,
+                    *,
+                    tags: Iterable[str] | None = None,
+                    metadata: Dict[str, Any] | None = None,
+                    origin: str | None = None,
+                ) -> Prompt:
+                    return enrich_method(
+                        context_builder,
+                        prompt,
+                        tags=tags,
+                        metadata=metadata,
+                        origin=origin,
+                    )
+
+        if callable(enrich_fn):
+            try:
+                result = enrich_fn(
+                    prompt,
+                    tags=list(tags) if tags else None,
+                    metadata=dict(metadata) if metadata else None,
+                    origin=origin,
+                )
+            except PromptBuildError:
+                raise
+            except Exception:
+                logger.exception("context builder enrichment failed")
+                if RAISE_ERRORS:
+                    raise
+            else:
+                if result is not None:
+                    prompt = result
+
+        return prompt
+
     def _prepare_prompt(
         self,
         prompt: Prompt,
@@ -259,83 +315,19 @@ class ChatGPTClient(LLMClient):
 
         metadata_payload: Dict[str, Any] = dict(metadata_snapshot)
         if merged_tags:
-            metadata_payload["tags"] = list(merged_tags)
+            metadata_payload.setdefault("tags", list(merged_tags))
         if merged_intent_tags:
-            metadata_payload["intent_tags"] = list(merged_intent_tags)
+            metadata_payload.setdefault("intent_tags", list(merged_intent_tags))
         if origin:
-            metadata_payload["origin"] = origin
+            metadata_payload.setdefault("origin", origin)
 
-        final_prompt = prompt
-        enrich_fn = getattr(context_builder, "enrich_prompt", None)
-        if callable(enrich_fn):
-            try:
-                result = enrich_fn(
-                    prompt,
-                    tags=list(merged_tags) or None,
-                    metadata=dict(metadata_payload),
-                    origin=origin,
-                )
-                if result is not None:
-                    final_prompt = result
-            except PromptBuildError:
-                raise
-            except Exception:
-                logger.exception("context builder enrichment failed")
-                if RAISE_ERRORS:
-                    raise
-
-        def _ensure_prompt_fields(target: Prompt) -> Prompt:
-            meta_attr = getattr(target, "metadata", None)
-            if isinstance(meta_attr, dict):
-                meta_dict = meta_attr
-            else:
-                meta_dict = dict(meta_attr or {})
-
-            if merged_tags:
-                existing_meta_tags = list(meta_dict.get("tags", []) or [])
-                combined_meta_tags = list(
-                    dict.fromkeys([*existing_meta_tags, *merged_tags])
-                )
-                if combined_meta_tags:
-                    meta_dict["tags"] = combined_meta_tags
-
-            if merged_intent_tags:
-                existing_intent = list(meta_dict.get("intent_tags", []) or [])
-                combined_intent = list(
-                    dict.fromkeys([*existing_intent, *merged_intent_tags])
-                )
-                if combined_intent:
-                    meta_dict["intent_tags"] = combined_intent
-
-            if origin and meta_dict.get("origin") != origin:
-                meta_dict["origin"] = origin
-
-            if not isinstance(meta_attr, dict):
-                try:
-                    setattr(target, "metadata", meta_dict)
-                except Exception:
-                    pass
-
-            if merged_tags:
-                current_tags = list(getattr(target, "tags", []) or [])
-                combined_tags = list(
-                    dict.fromkeys([*current_tags, *merged_tags])
-                )
-                if combined_tags and combined_tags != current_tags:
-                    try:
-                        setattr(target, "tags", combined_tags)
-                    except Exception:
-                        pass
-
-            if origin and getattr(target, "origin", None) != origin:
-                try:
-                    setattr(target, "origin", origin)
-                except Exception:
-                    pass
-
-            return target
-
-        final_prompt = _ensure_prompt_fields(final_prompt)
+        final_prompt = self._enrich_prompt_via_context(
+            prompt,
+            context_builder=context_builder,
+            tags=list(merged_tags) or None,
+            metadata=metadata_payload or None,
+            origin=origin,
+        )
 
         final_meta_attr = getattr(final_prompt, "metadata", None)
         if isinstance(final_meta_attr, dict):
@@ -346,24 +338,12 @@ class ChatGPTClient(LLMClient):
         if final_origin not in VALID_PROMPT_ORIGINS:
             raise ValueError("context builder returned unexpected prompt origin")
 
-        # Ensure metadata contains canonical context markers for downstream checks.
-        if merged_intent_tags and (
-            not isinstance(final_meta.get("intent_tags"), list)
-            or not final_meta.get("intent_tags")
-        ):
-            final_meta["intent_tags"] = list(merged_intent_tags)
-            try:
-                setattr(final_prompt, "metadata", final_meta)
-            except Exception:
-                pass
-        elif (
-            not merged_intent_tags
-            and isinstance(final_meta.get("intent_tags"), list)
-            and final_meta.get("intent_tags")
-        ):
-            merged_intent_tags = list(final_meta.get("intent_tags") or [])
+        final_intent_tags = list(final_meta.get("intent_tags", []) or [])
+        if not final_intent_tags:
+            final_intent_tags = list(metadata_payload.get("intent_tags", []))
+        if not final_intent_tags and merged_tags:
+            final_intent_tags = list(merged_tags)
 
-        # Collect tags from both prompt fields and metadata for logging purposes.
         final_tags: List[str] = []
         meta_tags = list(final_meta.get("tags", []) or [])
         prompt_level_tags = list(getattr(final_prompt, "tags", []) or [])
@@ -372,9 +352,9 @@ class ChatGPTClient(LLMClient):
             if text and text not in final_tags:
                 final_tags.append(text)
         if not final_tags:
-            final_tags = list(merged_tags)
+            final_tags = list(metadata_payload.get("tags", []) or merged_tags)
 
-        return final_prompt, final_meta, final_tags, list(merged_intent_tags), final_origin
+        return final_prompt, final_meta, final_tags, final_intent_tags, final_origin
 
     def generate(
         self,
@@ -422,14 +402,80 @@ class ChatGPTClient(LLMClient):
         def _coerce_prompt(candidate: Any, *, default_user: str = "") -> Prompt:
             if isinstance(candidate, Prompt):
                 return candidate
-            metadata = dict(getattr(candidate, "metadata", {}) or {})
-            return Prompt(
-                getattr(candidate, "user", default_user),
-                system=getattr(candidate, "system", ""),
-                examples=list(getattr(candidate, "examples", []) or []),
-                tags=list(getattr(candidate, "tags", []) or metadata.get("tags", []) or []),
-                metadata=metadata,
-                origin=getattr(candidate, "origin", None),
+
+            metadata_attr = getattr(candidate, "metadata", None)
+            if isinstance(metadata_attr, dict):
+                metadata = dict(metadata_attr)
+            else:
+                metadata = dict(metadata_attr or {})
+
+            candidate_tags = list(getattr(candidate, "tags", []) or [])
+            meta_tags = list(metadata.get("tags", []) or [])
+            canonical_tags: List[str] = []
+            for tag in [*candidate_tags, *meta_tags]:
+                text = str(tag)
+                if text and text not in canonical_tags:
+                    canonical_tags.append(text)
+
+            intent_tags_meta: List[str] = []
+            for tag in list(metadata.get("intent_tags", []) or []):
+                text = str(tag)
+                if text and text not in intent_tags_meta:
+                    intent_tags_meta.append(text)
+
+            prompt_user = getattr(candidate, "user", default_user) or default_user
+            if not isinstance(prompt_user, str):
+                prompt_user = str(prompt_user)
+            prompt_user = prompt_user.strip()
+            if not prompt_user:
+                raise ValueError(
+                    "ChatGPTClient.ask cannot build a prompt from an empty candidate"
+                )
+
+            intent_meta: Dict[str, Any] = {}
+            if canonical_tags:
+                intent_meta["tags"] = list(canonical_tags)
+            if intent_tags_meta:
+                intent_meta["intent_tags"] = list(intent_tags_meta)
+            elif canonical_tags:
+                intent_meta["intent_tags"] = list(canonical_tags)
+
+            if "prior_ideas" in metadata and metadata["prior_ideas"]:
+                intent_meta.setdefault("prior_ideas", metadata["prior_ideas"])
+
+            origin = getattr(candidate, "origin", None) or metadata.get("origin")
+
+            try:
+                base_prompt = builder.build_prompt(
+                    prompt_user,
+                    intent_metadata=intent_meta or None,
+                )
+            except PromptBuildError:
+                raise
+            except Exception as exc:
+                handle_failure(
+                    "failed to build prompt from structured candidate",
+                    exc,
+                    logger=logger,
+                )
+                raise
+
+            metadata_payload = dict(metadata)
+            if canonical_tags and "tags" not in metadata_payload:
+                metadata_payload["tags"] = list(canonical_tags)
+            if intent_tags_meta:
+                metadata_payload.setdefault("intent_tags", list(intent_tags_meta))
+            elif canonical_tags:
+                metadata_payload.setdefault("intent_tags", list(canonical_tags))
+            if origin:
+                metadata_payload.setdefault("origin", origin)
+
+            return self._enrich_prompt_via_context(
+                base_prompt,
+                context_builder=builder,
+                tags=canonical_tags or None,
+                metadata=metadata_payload or None,
+                origin=origin,
             )
 
         # Normalize messages to OpenAI chat format, requiring Prompt objects.
@@ -895,7 +941,9 @@ class ChatGPTClient(LLMClient):
             raise RuntimeError("context builder returned no prompt")
 
         metadata_payload = dict(intent_meta)
-        metadata_payload.setdefault("intent_tags", list(tag_list))
+        if canonical_tags:
+            metadata_payload.setdefault("tags", list(canonical_tags))
+        metadata_payload.setdefault("intent_tags", list(canonical_tags or tag_list))
 
         origin = (
             getattr(base_prompt, "origin", "")
@@ -903,82 +951,13 @@ class ChatGPTClient(LLMClient):
             or "context_builder"
         )
 
-        enrich_fn = getattr(context_builder, "enrich_prompt", None)
-        if not callable(enrich_fn):
-            enrich_method = getattr(ContextBuilder, "enrich_prompt", None)
-
-            if callable(enrich_method):
-
-                def enrich_fn(
-                    prompt: Prompt,
-                    *,
-                    tags: Iterable[str] | None = None,
-                    metadata: Dict[str, Any] | None = None,
-                    origin: str | None = None,
-                ) -> Prompt:
-                    return enrich_method(
-                        context_builder,
-                        prompt,
-                        tags=tags,
-                        metadata=metadata,
-                        origin=origin,
-                    )
-
-        if callable(enrich_fn):
-            try:
-                result = enrich_fn(
-                    base_prompt,
-                    tags=canonical_tags or None,
-                    metadata=metadata_payload,
-                    origin=origin,
-                )
-                if result is not None:
-                    base_prompt = result
-            except PromptBuildError:
-                raise
-            except Exception:
-                logger.exception("context builder enrichment failed")
-                if RAISE_ERRORS:
-                    raise
-        else:
-            metadata_attr = getattr(base_prompt, "metadata", None)
-            if isinstance(metadata_attr, dict):
-                metadata = metadata_attr
-            else:
-                metadata = dict(metadata_attr or {})
-
-            for key, value in metadata_payload.items():
-                metadata.setdefault(key, value)
-
-            if canonical_tags:
-                existing_tags = list(getattr(base_prompt, "tags", []) or [])
-                merged_tags = list(dict.fromkeys([*existing_tags, *canonical_tags]))
-            else:
-                merged_tags = list(getattr(base_prompt, "tags", []) or [])
-
-            if merged_tags:
-                metadata.setdefault("tags", list(merged_tags))
-                if list(getattr(base_prompt, "tags", []) or []) != list(merged_tags):
-                    try:
-                        setattr(base_prompt, "tags", list(merged_tags))
-                    except Exception:
-                        pass
-
-            metadata.setdefault("origin", origin)
-
-            if metadata_attr is not metadata:
-                try:
-                    setattr(base_prompt, "metadata", metadata)
-                except Exception:
-                    pass
-
-        if getattr(base_prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
-            try:
-                setattr(base_prompt, "origin", origin)
-            except Exception:
-                pass
-
-        return base_prompt
+        return self._enrich_prompt_via_context(
+            base_prompt,
+            context_builder=context_builder,
+            tags=canonical_tags or None,
+            metadata=metadata_payload or None,
+            origin=origin,
+        )
 
 
 def build_prompt(
