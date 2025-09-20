@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import os
 import logging
-from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING, Set
 from types import SimpleNamespace
@@ -108,13 +107,16 @@ else:  # pragma: no cover - executed when running under pydantic v1
         def decorator(func):
             method = func.__func__ if isinstance(func, classmethod) else func
 
-            @wraps(method)
             def _validator(cls, values):
                 instance = cls.construct(**values)  # type: ignore[attr-defined]
                 result = method(instance)
                 if isinstance(result, cls):
                     return result.dict()
                 return values if result is None else result
+
+            _validator.__name__ = getattr(method, "__name__", "validator")
+            _validator.__qualname__ = getattr(method, "__qualname__", _validator.__qualname__)
+            _validator.__doc__ = getattr(method, "__doc__", None)
 
             return root_validator(skip_on_failure=True, allow_reuse=True)(_validator)
 
