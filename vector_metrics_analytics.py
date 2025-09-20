@@ -17,9 +17,9 @@ from typing import Any
 from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - allow running as a script
-    from .vector_metrics_db import VectorMetricsDB
+    from .vector_metrics_db import VectorMetricsDB, default_vector_metrics_path
 except Exception:  # pragma: no cover - fallback when executed directly
-    from vector_metrics_db import VectorMetricsDB  # type: ignore
+    from vector_metrics_db import VectorMetricsDB, default_vector_metrics_path  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ def cli(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--db",
-        default=resolve_path("vector_metrics.db"),
+        default=str(default_vector_metrics_path()),
         help="Path to VectorMetricsDB",
     )
     parser.add_argument(

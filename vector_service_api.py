@@ -20,6 +20,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dynamic_path_router import resolve_path
 
+try:  # pragma: no cover - compatibility when packaged
+    from .vector_metrics_db import default_vector_metrics_path
+except Exception:  # pragma: no cover - direct execution fallback
+    from vector_metrics_db import default_vector_metrics_path  # type: ignore
+
 from vector_service import (
     CognitionLayer,
     EmbeddingBackfill,
@@ -312,7 +317,7 @@ __all__ = ["app", "create_app"]
 
 # ---------------------------------------------------------------------------
 def evaluate_ranker(
-    vector_db: str | os.PathLike[str] = resolve_path("vector_metrics.db"),
+    vector_db: str | os.PathLike[str] = default_vector_metrics_path(),
     patch_db: str | os.PathLike[str] = resolve_path("metrics.db"),
     strategy: str = "roi_weighted_cosine",
 ) -> dict[str, float]:
@@ -353,7 +358,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Vector service utilities")
     sub = parser.add_subparsers(dest="cmd", required=True)
     ev = sub.add_parser("evaluate", help="Evaluate ranking effectiveness")
-    ev.add_argument("--vector-db", default=resolve_path("vector_metrics.db"))
+    ev.add_argument("--vector-db", default=str(default_vector_metrics_path()))
     ev.add_argument("--patch-db", default=resolve_path("metrics.db"))
     ev.add_argument(
         "--strategy",
