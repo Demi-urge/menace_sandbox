@@ -12,8 +12,12 @@ try:  # pragma: no cover - allow running as script
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
-from .workflow_graph import WorkflowGraph
-from . import workflow_spec
+try:  # pragma: no cover - support package and script imports
+    from .workflow_graph import WorkflowGraph
+    from . import workflow_spec
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from workflow_graph import WorkflowGraph  # type: ignore
+    import workflow_spec  # type: ignore
 
 # In-memory ROI history per workflow
 _WORKFLOW_ROI_HISTORY: Dict[str, List[float]] = {}
