@@ -60,17 +60,23 @@ finally:  # ensure path restoration
 
 import yaml  # noqa: E402
 
-try:  # noqa: E402
-    from pydantic import (  # type: ignore[attr-defined]
-        BaseModel,
-        ConfigDict,
-        Field,
-        field_validator,
-        model_validator,
-    )
+from pydantic import BaseModel, Field  # noqa: E402
+
+try:  # noqa: E402 - prefer attribute detection over import side effects
+    import pydantic as _pydantic
+except Exception as exc:  # pragma: no cover - pydantic should always be present
+    raise ImportError("pydantic is required for configuration models") from exc
+
+if all(
+    hasattr(_pydantic, attr)
+    for attr in ("ConfigDict", "field_validator", "model_validator")
+):
+    ConfigDict = getattr(_pydantic, "ConfigDict")  # type: ignore[assignment]
+    field_validator = getattr(_pydantic, "field_validator")  # type: ignore[assignment]
+    model_validator = getattr(_pydantic, "model_validator")  # type: ignore[assignment]
     _PYDANTIC_V2 = True
-except ImportError:  # pragma: no cover - fallback for pydantic v1
-    from pydantic import BaseModel, Field, root_validator, validator  # type: ignore
+else:  # pragma: no cover - executed when running under pydantic v1
+    from pydantic import root_validator, validator  # type: ignore
 
     _PYDANTIC_V2 = False
 
