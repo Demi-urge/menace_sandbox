@@ -17,8 +17,9 @@ import threading
 import queue
 import atexit
 import uuid
+import importlib
 from typing import Any, Dict, Mapping, TYPE_CHECKING
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from foresight_tracker import ForesightTracker
@@ -117,6 +118,89 @@ except ImportError as exc:  # pragma: no cover - optional dependency
 
 logger = get_logger(__name__)
 
+_ENVIRONMENT_MODULE: ModuleType | None = None
+
+
+def _load_environment() -> ModuleType:
+    """Return the :mod:`sandbox_runner.environment` module lazily."""
+
+    global _ENVIRONMENT_MODULE
+    if _ENVIRONMENT_MODULE is not None:
+        return _ENVIRONMENT_MODULE
+    _ENVIRONMENT_MODULE = importlib.import_module(f"{__package__}.environment")
+    return _ENVIRONMENT_MODULE
+
+
+def _require_environment() -> ModuleType:
+    """Return the environment module or raise a descriptive error."""
+
+    try:
+        return _load_environment()
+    except BaseException as exc:  # pragma: no cover - propagate import errors
+        raise RuntimeError(
+            "sandbox_runner.environment could not be imported"
+        ) from exc
+
+
+def record_error(*args: Any, **kwargs: Any) -> None:
+    """Proxy to :func:`sandbox_runner.environment.record_error`."""
+
+    env = _require_environment()
+    env.record_error(*args, **kwargs)
+
+
+def run_scenarios(*args: Any, **kwargs: Any) -> Any:
+    """Proxy to :func:`sandbox_runner.environment.run_scenarios`."""
+
+    env = _require_environment()
+    return env.run_scenarios(*args, **kwargs)
+
+
+def auto_include_modules(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
+    """Proxy to :func:`sandbox_runner.environment.auto_include_modules`."""
+
+    env = _require_environment()
+    return env.auto_include_modules(*args, **kwargs)
+
+
+def _get_sandbox_env_presets() -> list[dict[str, Any]]:
+    return _require_environment().SANDBOX_ENV_PRESETS
+
+
+def _set_sandbox_env_presets(presets: list[dict[str, Any]]) -> None:
+    env = _require_environment()
+    env.SANDBOX_ENV_PRESETS = presets
+
+
+def _error_category_counts() -> Mapping[str, int]:
+    return _require_environment().ERROR_CATEGORY_COUNTS
+
+
+class _CycleModule(ModuleType):
+    """Module type that proxies selected attributes to the environment module."""
+
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - attribute proxy
+        if name == "SANDBOX_ENV_PRESETS":
+            return _require_environment().SANDBOX_ENV_PRESETS
+        if name == "ERROR_CATEGORY_COUNTS":
+            return _error_category_counts()
+        return super().__getattr__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover
+        if name == "SANDBOX_ENV_PRESETS":
+            _set_sandbox_env_presets(list(value))
+            return
+        if name == "ERROR_CATEGORY_COUNTS":
+            env = _require_environment()
+            env.ERROR_CATEGORY_COUNTS = value
+            return
+        super().__setattr__(name, value)
+
+
+module = sys.modules[__name__]
+if not isinstance(module, _CycleModule):  # pragma: no cover - module patching
+    module.__class__ = _CycleModule
+
 from analytics import adaptive_roi_model
 from adaptive_roi_predictor import load_training_data
 
@@ -136,13 +220,6 @@ from relevancy_radar import (
     radar,
 )
 
-from .environment import (
-    SANDBOX_ENV_PRESETS,
-    record_error,
-    run_scenarios,
-    ERROR_CATEGORY_COUNTS,
-    auto_include_modules,
-)
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
     append_orphan_cache,
@@ -757,14 +834,11 @@ def _sandbox_cycle_runner(
     continues unless ``tracker`` indicates convergence.
     """
 
-    global SANDBOX_ENV_PRESETS
-    from sandbox_runner import (
-        build_section_prompt,
-        GPT_KNOWLEDGE_SERVICE,
-        GPT_SECTION_PROMPT_MAX_LENGTH,
-    )
+    import sandbox_runner as sandbox_pkg
 
-    knowledge_service = GPT_KNOWLEDGE_SERVICE
+    build_section_prompt = getattr(sandbox_pkg, "build_section_prompt")
+    knowledge_service = getattr(sandbox_pkg, "GPT_KNOWLEDGE_SERVICE", None)
+    max_prompt_length = getattr(sandbox_pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0)
     ensure_fresh_weights(ctx.context_builder)
 
     if foresight_tracker is None:
@@ -779,13 +853,15 @@ def _sandbox_cycle_runner(
         except VectorServiceError:
             ctx.patch_logger = None
 
+    env_presets = _get_sandbox_env_presets()
     env_val = os.getenv("SANDBOX_ENV_PRESETS")
     if env_val:
         try:
             data = json.loads(env_val)
             if isinstance(data, dict):
                 data = [data]
-            SANDBOX_ENV_PRESETS = [dict(p) for p in data]
+            env_presets = [dict(p) for p in data]
+            _set_sandbox_env_presets(env_presets)
         except Exception as exc:
             record_error(exc, context_builder=ctx.context_builder)
 
@@ -827,13 +903,14 @@ def _sandbox_cycle_runner(
             extra={"cycle": idx, "prev_roi": ctx.prev_roi},
         )
         try:
-            SANDBOX_ENV_PRESETS = tuner.adjust(tracker, SANDBOX_ENV_PRESETS)
-            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+            env_presets = tuner.adjust(tracker, env_presets)
+            _set_sandbox_env_presets(env_presets)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(env_presets)
         except Exception as exc:
             record_error(exc, context_builder=ctx.context_builder)
         logger.info(
             "resource tuning complete",
-            extra=log_record(cycle=idx, presets=SANDBOX_ENV_PRESETS),
+            extra=log_record(cycle=idx, presets=env_presets),
         )
         logger.info("sandbox cycle %d starting", idx)
         logger.info("orchestrator run", extra=log_record(cycle=idx))
@@ -1289,9 +1366,10 @@ def _sandbox_cycle_runner(
         if ctx.extra_metrics:
             metrics_dict.update(ctx.extra_metrics)
         # include error category summaries
-        for cat, count in ERROR_CATEGORY_COUNTS.items():
+        category_counts = _error_category_counts()
+        for cat, count in category_counts.items():
             metrics_dict[f"error_category_{cat}"] = float(count)
-        ERROR_CATEGORY_COUNTS.clear()
+        category_counts.clear()
         try:
             detections = ctx.dd_bot.scan()
         except Exception as exc:
@@ -1429,7 +1507,7 @@ def _sandbox_cycle_runner(
                         engine=ctx.engine,
                         snippet=text,
                         prior=brainstorm_summary if brainstorm_summary else None,
-                        max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                        max_prompt_length=max_prompt_length,
                     )
                     history: list[Prompt] = ctx.conversations.get(memory_key, [])
                     history_text = "\n".join(h.user for h in history)
@@ -1668,7 +1746,7 @@ def _sandbox_cycle_runner(
                             engine=ctx.engine,
                             snippet=f"ROI stalled. Current metrics: {summary}",
                             prior=prior if prior else None,
-                            max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                            max_prompt_length=max_prompt_length,
                         )
                         context_builder = ctx.context_builder
                         hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
@@ -1766,7 +1844,7 @@ def _sandbox_cycle_runner(
                         engine=ctx.engine,
                         snippet="Brainstorm high level improvements to increase ROI.",
                         prior=summary if summary else None,
-                        max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                        max_prompt_length=max_prompt_length,
                     )
                     context_builder = ctx.context_builder
                     hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
@@ -2078,11 +2156,12 @@ def _sandbox_cycle_runner(
             )
             from menace.environment_generator import adapt_presets
 
-            SANDBOX_ENV_PRESETS = adapt_presets(tracker, SANDBOX_ENV_PRESETS)
-            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+            env_presets = adapt_presets(tracker, env_presets)
+            _set_sandbox_env_presets(env_presets)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(env_presets)
             logger.debug(
                 "preset adaptation end",
-                extra={"preset_count": len(SANDBOX_ENV_PRESETS)},
+                extra={"preset_count": len(env_presets)},
             )
         except Exception:
             logger.exception("preset adaptation failed")
