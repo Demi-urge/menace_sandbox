@@ -72,10 +72,6 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
-from self_improvement.baseline_tracker import (
-    BaselineTracker,
-    TRACKER as GLOBAL_BASELINE_TRACKER,
-)
 from collections import deque
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
@@ -183,11 +179,24 @@ except ImportError:  # pragma: no cover - optional dependency
     def get_synergy_cluster(*_args: object, **_kwargs: object) -> set[str]:  # type: ignore
         return set()
 
-# Pre-populate baseline histories for integration metrics
-for _metric in ("side_effects", "intent_similarity", "synergy"):
-    GLOBAL_BASELINE_TRACKER._history.setdefault(
-        _metric, deque(maxlen=GLOBAL_BASELINE_TRACKER.window)
-    )
+if TYPE_CHECKING:  # pragma: no cover
+    from self_improvement.baseline_tracker import BaselineTracker
+
+_BASELINE_TRACKER: "BaselineTracker" | None = None
+
+
+def _get_baseline_tracker() -> "BaselineTracker":
+    """Return the shared :class:`BaselineTracker` instance lazily."""
+
+    global _BASELINE_TRACKER
+    if _BASELINE_TRACKER is None:
+        from self_improvement.baseline_tracker import TRACKER as _GLOBAL_TRACKER  # type: ignore
+
+        tracker: "BaselineTracker" = _GLOBAL_TRACKER
+        for _metric in ("side_effects", "intent_similarity", "synergy"):
+            tracker._history.setdefault(_metric, deque(maxlen=tracker.window))
+        _BASELINE_TRACKER = tracker
+    return _BASELINE_TRACKER
 
 if TYPE_CHECKING:  # pragma: no cover
     from foresight_tracker import ForesightTracker
@@ -7003,7 +7012,7 @@ def run_repo_section_simulations(
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
-    from sandbox_runner.metrics_plugins import (
+    from .metrics_plugins import (
         discover_metrics_plugins,
         collect_plugin_metrics,
     )
@@ -7874,7 +7883,7 @@ def try_integrate_into_workflows(
     except Exception:
         import metrics_exporter as _me  # type: ignore
     names: dict[str, str] = {}
-    tracker = GLOBAL_BASELINE_TRACKER
+    tracker = _get_baseline_tracker()
     settings = SandboxSettings()
     if side_effect_dev_multiplier is None:
         side_effect_dev_multiplier = getattr(
@@ -8881,9 +8890,10 @@ def auto_include_modules(
                 res = orphan_analyzer.classify_module(path, include_meta=True)
                 cls, meta = res if isinstance(res, tuple) else (res, {})
                 score = float(meta.get("side_effects", 0))
-                GLOBAL_BASELINE_TRACKER.update(side_effects=score)
-                avg = GLOBAL_BASELINE_TRACKER.get("side_effects")
-                std = GLOBAL_BASELINE_TRACKER.std("side_effects")
+                tracker = _get_baseline_tracker()
+                tracker.update(side_effects=score)
+                avg = tracker.get("side_effects")
+                std = tracker.std("side_effects")
                 threshold = avg + getattr(
                     settings, "side_effect_dev_multiplier", 1.0
                 ) * std
