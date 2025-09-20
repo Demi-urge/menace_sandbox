@@ -116,7 +116,7 @@ else:  # pragma: no cover - executed when running under pydantic v1
                     return result.dict()
                 return values if result is None else result
 
-            return root_validator(skip_on_failure=True)(_validator)
+            return root_validator(skip_on_failure=True, allow_reuse=True)(_validator)
 
         return decorator
 
