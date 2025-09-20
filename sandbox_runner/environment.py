@@ -36,6 +36,7 @@ try:
 except (ImportError, OSError):  # pragma: no cover - not available on some platforms
     resource = None  # type: ignore
 import shutil
+import socket
 import subprocess
 import tempfile
 import textwrap
@@ -517,13 +518,25 @@ if os.name == "nt" and "fcntl" not in sys.modules:
         logger.error("fcntl compatibility shim is required on Windows", exc_info=exc)
         raise RuntimeError("fcntl support unavailable on Windows") from exc
 
+_SOCKET_SUPPORTS_AF_UNIX = hasattr(socket, "AF_UNIX")
+
 try:  # pragma: no cover - optional dependency
+    if os.name == "nt" and not _SOCKET_SUPPORTS_AF_UNIX:
+        raise RuntimeError(
+            "pyroute2 requires socket.AF_UNIX which is unavailable on Windows"
+        )
     from pyroute2 import IPRoute, NSPopen, netns
-except (ImportError, OSError) as exc:
+except (ImportError, OSError, RuntimeError) as exc:
     IPRoute = None  # type: ignore
     NSPopen = None  # type: ignore
     netns = None  # type: ignore
-    logger.warning("pyroute2 import failed: %s", exc)
+    if os.name == "nt" and not _SOCKET_SUPPORTS_AF_UNIX:
+        logger.info(
+            "pyroute2 support disabled: %s. network emulation features will be skipped",
+            exc,
+        )
+    else:
+        logger.warning("pyroute2 import failed: %s", exc)
 
 try:
     from faker import Faker  # type: ignore
