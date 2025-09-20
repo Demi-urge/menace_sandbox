@@ -132,6 +132,15 @@ class _ContextFileLock(FileLock):
             if not lock_path:
                 return
 
+            # ``WindowsFileLock`` already removes the lock file as part of
+            # its ``_release`` implementation.  Attempting another removal is
+            # racy because a waiting process may acquire the lock immediately
+            # after it is released, keeping the file open and triggering noisy
+            # ``PermissionError`` warnings.  Skip the manual cleanup on
+            # Windows and let the next owner manage the lifecycle instead.
+            if os.name == "nt":  # pragma: win32 cover - behaviour validated in CI
+                return
+
             for attempt in range(5):
                 try:
                     os.remove(lock_path)
