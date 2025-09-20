@@ -128,12 +128,31 @@ class _ContextFileLock(FileLock):
         try:
             super().release(*args, **kwargs)
         finally:
-            try:
-                os.remove(self.lock_file)
-            except FileNotFoundError:
-                logger.warning("lock file already removed: %s", self.lock_file)
-            except Exception as exc:
-                logger.exception("failed to remove lock file: %s", exc)
+            lock_path = getattr(self, "lock_file", None)
+            if not lock_path:
+                return
+
+            for attempt in range(5):
+                try:
+                    os.remove(lock_path)
+                    return
+                except FileNotFoundError:
+                    logger.warning("lock file already removed: %s", lock_path)
+                    return
+                except PermissionError:
+                    # Windows may keep the lock file open momentarily after
+                    # releasing ``msvcrt`` locks.  Retry a few times before
+                    # giving up to avoid noisy log spam on that platform.
+                    if os.name == "nt":
+                        time.sleep(0.1 * (attempt + 1))
+                        continue
+                    logger.exception("failed to remove lock file: %s", lock_path)
+                    return
+                except Exception as exc:
+                    logger.exception("failed to remove lock file: %s", exc)
+                    return
+
+            logger.warning("failed to remove lock file after retries: %s", lock_path)
 
 
 class SandboxLock(_ContextFileLock):
