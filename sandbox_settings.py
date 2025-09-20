@@ -2696,11 +2696,33 @@ class SandboxSettings(BaseSettings):
         description="Weights for coverage, errors, ROI, complexity, synergy ROI and efficiency.",
     )
 
-    @field_validator("baseline_window", "stagnation_iters")
-    def _check_positive_int(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+    if PYDANTIC_V2:
+
+        @field_validator("baseline_window", "stagnation_iters")
+        def _check_positive_int(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("baseline_window", "stagnation_iters")
+        def _check_positive_int(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: Any,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
 
     @field_validator("delta_margin")
     def _check_delta_margin(cls, v: float) -> float:
