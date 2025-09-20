@@ -325,6 +325,30 @@ class BotThresholds(BaseModel):
             return normalize_workflow_tests(value)
 
 
+def _unit_range_validator(value: float | None, *, field_name: str) -> float | None:
+    """Validate that a value is within the inclusive unit range."""
+
+    if value is not None and not 0 <= value <= 1:
+        raise ValueError(f"{field_name} must be between 0 and 1")
+    return value
+
+
+def _positive_int_validator(value: int | None, *, field_name: str) -> int | None:
+    """Validate that a value, when provided, is a positive integer."""
+
+    if value is not None and value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return value
+
+
+def _non_negative_validator(value: float, *, field_name: str) -> float:
+    """Validate that a numeric value is non-negative."""
+
+    if value < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return value
+
+
 class SynergySettings(BaseModel):
     """Settings for module synergy calculations."""
 
@@ -359,53 +383,117 @@ class SynergySettings(BaseModel):
     python_max_replay: int = 1000
     deviation_tolerance: float = 0.0
 
-    @field_validator(
-        "threshold",
-        "confidence",
-        "threshold_weight",
-        "stationarity_confidence",
-        "std_threshold",
-        "variance_confidence",
-        "gamma",
-    )
-    def _synergy_unit_range(cls, v: float | None, info: Any) -> float | None:
-        if v is not None and not 0 <= v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
+    if PYDANTIC_V2:
 
-    @field_validator(
-        "threshold_window",
-        "ma_window",
-        "train_interval",
-        "replay_size",
-        "batch_size",
-        "hidden_size",
-        "layers",
-        "checkpoint_interval",
-        "target_sync",
-        "python_max_replay",
-    )
-    def _synergy_positive_int(cls, v: int | None, info: Any) -> int | None:
-        if v is not None and v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+        @field_validator(
+            "threshold",
+            "confidence",
+            "threshold_weight",
+            "stationarity_confidence",
+            "std_threshold",
+            "variance_confidence",
+            "gamma",
+        )
+        def _synergy_unit_range(
+            cls, v: float | None, info: FieldValidationInfo
+        ) -> float | None:
+            return _unit_range_validator(v, field_name=_field_name(info=info))
 
-    @field_validator(
-        "weight_roi",
-        "weight_efficiency",
-        "weight_resilience",
-        "weight_antifragility",
-        "weight_reliability",
-        "weight_maintainability",
-        "weight_throughput",
-        "weights_lr",
-        "noise",
-        "deviation_tolerance",
-    )
-    def _synergy_non_negative(cls, v: float, info: Any) -> float:
-        if v < 0:
-            raise ValueError(f"{info.field_name} must be non-negative")
-        return v
+        @field_validator(
+            "threshold_window",
+            "ma_window",
+            "train_interval",
+            "replay_size",
+            "batch_size",
+            "hidden_size",
+            "layers",
+            "checkpoint_interval",
+            "target_sync",
+            "python_max_replay",
+        )
+        def _synergy_positive_int(
+            cls, v: int | None, info: FieldValidationInfo
+        ) -> int | None:
+            return _positive_int_validator(v, field_name=_field_name(info=info))
+
+        @field_validator(
+            "weight_roi",
+            "weight_efficiency",
+            "weight_resilience",
+            "weight_antifragility",
+            "weight_reliability",
+            "weight_maintainability",
+            "weight_throughput",
+            "weights_lr",
+            "noise",
+            "deviation_tolerance",
+        )
+        def _synergy_non_negative(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            return _non_negative_validator(v, field_name=_field_name(info=info))
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator(
+            "threshold",
+            "confidence",
+            "threshold_weight",
+            "stationarity_confidence",
+            "std_threshold",
+            "variance_confidence",
+            "gamma",
+        )
+        def _synergy_unit_range(
+            cls,
+            v: float | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float | None:
+            return _unit_range_validator(v, field_name=_field_name(field=field))
+
+        @field_validator(
+            "threshold_window",
+            "ma_window",
+            "train_interval",
+            "replay_size",
+            "batch_size",
+            "hidden_size",
+            "layers",
+            "checkpoint_interval",
+            "target_sync",
+            "python_max_replay",
+        )
+        def _synergy_positive_int(
+            cls,
+            v: int | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int | None:
+            return _positive_int_validator(v, field_name=_field_name(field=field))
+
+        @field_validator(
+            "weight_roi",
+            "weight_efficiency",
+            "weight_resilience",
+            "weight_antifragility",
+            "weight_reliability",
+            "weight_maintainability",
+            "weight_throughput",
+            "weights_lr",
+            "noise",
+            "deviation_tolerance",
+        )
+        def _synergy_non_negative(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            return _non_negative_validator(v, field_name=_field_name(field=field))
 
     @field_validator("strategy")
     def _synergy_strategy(cls, v: str) -> str:
