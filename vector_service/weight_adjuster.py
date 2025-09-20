@@ -29,8 +29,12 @@ def _load_tag_sentiment() -> Dict[RoiTag, float]:
         RoiTag.BLOCKED: -1.0,
     }
 
-    cfg_path = resolve_path("config/roi_tag_sentiment.yaml")
-    if cfg_path.exists():
+    try:
+        cfg_path = resolve_path("config/roi_tag_sentiment.yaml")
+    except FileNotFoundError:
+        cfg_path = None
+
+    if cfg_path and cfg_path.exists():
         try:  # pragma: no cover - configuration loading is best effort
             data = yaml.safe_load(cfg_path.read_text()) or {}
             if isinstance(data, dict):
