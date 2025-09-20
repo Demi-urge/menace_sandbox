@@ -34,12 +34,58 @@ except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv(
-    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+
+
+def _default_db_root() -> Path:
+    """Return the directory used for auto-created SQLite databases."""
+
+    override = os.environ.get("MENACE_DB_ROOT") or os.environ.get("MENACE_DB_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    return resolve_path(".")
+
+
+def _resolve_db_path(env_name: str, default: Path) -> str:
+    """Resolve *env_name* to an absolute path, falling back to *default*.
+
+    The previous implementation always called :func:`resolve_path` which raises
+    :class:`FileNotFoundError` for paths that do not exist yet.  Several entry
+    points, including ``manual_bootstrap.py``, rely on the default behaviour of
+    :mod:`db_router` to create ``menace_<id>_local.db`` and ``shared/global.db``
+    on first run.  Resolving eagerly therefore prevented bootstrapping on a
+    clean checkout.  This helper mirrors the lazy behaviour by attempting to
+    resolve known files when present and otherwise returning the provided
+    *default* location.
+    """
+
+    configured = os.environ.get(env_name)
+    if configured:
+        path = Path(configured).expanduser().resolve()
+    else:
+        try:
+            relative = default.relative_to(_default_db_root()).as_posix()
+        except ValueError:
+            relative = None
+
+        if relative is not None:
+            try:
+                path = resolve_path(relative).resolve()
+            except FileNotFoundError:
+                path = default
+        else:
+            path = default
+
+    path = path.expanduser().resolve()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+_DB_ROOT = _default_db_root()
+LOCAL_DB_PATH = _resolve_db_path(
+    "MENACE_LOCAL_DB_PATH", _DB_ROOT / f"menace_{MENACE_ID}_local.db"
 )
-SHARED_DB_PATH = os.getenv(
-    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
-)
+SHARED_DB_PATH = _resolve_db_path("MENACE_SHARED_DB_PATH", _DB_ROOT / "shared" / "global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 router = GLOBAL_ROUTER
