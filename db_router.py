@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
 
 from audit import log_db_access
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 
 
 __all__ = [
@@ -819,16 +819,30 @@ def init_db_router(
 
     global GLOBAL_ROUTER
 
-    local_path = (
-        local_db_path
-        if local_db_path is not None
-        else str(resolve_path(f"menace_{menace_id}_local.db"))
-    )
-    shared_path = (
-        shared_db_path
-        if shared_db_path is not None
-        else str(resolve_path("shared/global.db"))
-    )
+    project_root = get_project_root()
 
-    GLOBAL_ROUTER = DBRouter(menace_id, local_path, shared_path)
+    if local_db_path is None:
+        try:
+            local_path = resolve_path(f"menace_{menace_id}_local.db")
+        except FileNotFoundError:
+            local_path = (project_root / f"menace_{menace_id}_local.db").resolve()
+        else:
+            local_path = local_path.resolve()
+    else:
+        local_path = Path(local_db_path).expanduser().resolve()
+
+    if shared_db_path is None:
+        try:
+            shared_path = resolve_path("shared/global.db")
+        except FileNotFoundError:
+            shared_path = (project_root / "shared" / "global.db").resolve()
+        else:
+            shared_path = shared_path.resolve()
+    else:
+        shared_path = Path(shared_db_path).expanduser().resolve()
+
+    local_path_str = str(local_path)
+    shared_path_str = str(shared_path)
+
+    GLOBAL_ROUTER = DBRouter(menace_id, local_path_str, shared_path_str)
     return GLOBAL_ROUTER

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
@@ -29,6 +30,40 @@ _TABLE_ACCESS = Gauge(
 _TABLE_ACCESS_COUNTS: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
     lambda: defaultdict(dict)
 )
+
+
+def _connection_path(conn: sqlite3.Connection) -> Path | None:
+    """Return the file backing ``conn`` or ``None`` for in-memory databases."""
+
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+    except Exception:
+        return None
+    for _, name, filename in rows:
+        if name == "main" and filename:
+            try:
+                return Path(filename).resolve()
+            except Exception:
+                return None
+    return None
+
+
+def _select_router(db_path: str) -> DBRouter:
+    """Return a router bound to ``db_path`` creating one when required."""
+
+    desired = Path(db_path).expanduser().resolve()
+    existing = GLOBAL_ROUTER
+    if existing is not None:
+        if existing.menace_id != "telemetry":
+            existing = None
+        else:
+            local_path = _connection_path(existing.local_conn)
+            shared_path = _connection_path(existing.shared_conn)
+            if local_path != desired or shared_path != desired:
+                existing = None
+    if existing is None:
+        return init_db_router("telemetry", str(desired), str(desired))
+    return existing
 
 
 def record_table_access(
@@ -92,9 +127,11 @@ class TelemetryBackend:
         self, db_path: str = "telemetry.db", *, router: DBRouter | None = None
     ) -> None:
         self.db_path = db_path
-        self.router = router or GLOBAL_ROUTER or init_db_router(
-            "telemetry", db_path, db_path
-        )
+        if router is not None:
+            chosen = router
+        else:
+            chosen = _select_router(db_path)
+        self.router = chosen
         LOCAL_TABLES.add("roi_telemetry")
         LOCAL_TABLES.add("roi_prediction_events")
         self._init_db()
