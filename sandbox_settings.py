@@ -27,7 +27,13 @@ from pydantic import BaseModel, Field
 try:  # pragma: no cover - compatibility shim
     from pydantic import field_validator
 except Exception:  # pragma: no cover
-    from pydantic import validator as field_validator  # type: ignore
+    from pydantic import validator as _pydantic_validator  # type: ignore
+
+    def field_validator(*fields, **kwargs):  # type: ignore[misc]
+        """Shim for ``pydantic.validator`` with ``allow_reuse`` defaulting to ``True``."""
+
+        kwargs.setdefault("allow_reuse", True)
+        return _pydantic_validator(*fields, **kwargs)
 
 SELF_CODING_ROI_DROP: float = float(os.getenv("SELF_CODING_ROI_DROP", "-0.1"))
 SELF_CODING_ERROR_INCREASE: float = float(
