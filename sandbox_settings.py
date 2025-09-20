@@ -25,8 +25,9 @@ except Exception:  # pragma: no cover - fallback for pydantic<2
 from pydantic import BaseModel, Field
 
 try:  # pragma: no cover - compatibility shim
-    from pydantic import field_validator
+    from pydantic import FieldValidationInfo, field_validator
 except Exception:  # pragma: no cover
+    FieldValidationInfo = Any  # type: ignore[misc, assignment]
     from pydantic import validator as _pydantic_validator  # type: ignore
 
     def field_validator(*fields, **kwargs):  # type: ignore[misc]
@@ -34,6 +35,8 @@ except Exception:  # pragma: no cover
 
         kwargs.setdefault("allow_reuse", True)
         return _pydantic_validator(*fields, **kwargs)
+
+    from pydantic.fields import ModelField
 
 SELF_CODING_ROI_DROP: float = float(os.getenv("SELF_CODING_ROI_DROP", "-0.1"))
 SELF_CODING_ERROR_INCREASE: float = float(
@@ -97,6 +100,18 @@ class AlignmentRules(BaseModel):
     rule_modules: list[str] = Field(default_factory=list)
 
 
+def _field_name(*, info: Any | None = None, field: Any | None = None) -> str:
+    """Return the field name regardless of the Pydantic version in use."""
+
+    if PYDANTIC_V2:
+        if info is not None and getattr(info, "field_name", None):
+            return str(info.field_name)
+    else:
+        if field is not None and getattr(field, "name", None):
+            return str(field.name)
+    return "value"
+
+
 class ROISettings(BaseModel):
     """Settings related to return-on-investment scoring."""
 
@@ -120,56 +135,171 @@ class ROISettings(BaseModel):
     momentum_dev_multiplier: float = 1.0
     roi_stagnation_dev_multiplier: float = 1.0
 
-    @field_validator(
-        "threshold",
-        "confidence",
-        "ema_alpha",
-        "entropy_threshold",
-        "entropy_plateau_threshold",
-        "entropy_ceiling_threshold",
-    )
-    def _check_unit_range(cls, v: float | None, info: Any) -> float | None:
-        if v is not None and not 0 <= v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
+    if PYDANTIC_V2:
 
-    @field_validator(
-        "compounding_weight",
-        "min_integration_roi",
-        "entropy_weight",
-    )
-    def _check_non_negative(cls, v: float, info: Any) -> float:
-        if v < 0:
-            raise ValueError(f"{info.field_name} must be non-negative")
-        return v
+        @field_validator(
+            "threshold",
+            "confidence",
+            "ema_alpha",
+            "entropy_threshold",
+            "entropy_plateau_threshold",
+            "entropy_ceiling_threshold",
+        )
+        def _check_unit_range(
+            cls, v: float | None, info: FieldValidationInfo
+        ) -> float | None:
+            if v is not None and not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be between 0 and 1"
+                )
+            return v
 
-    @field_validator(
-        "deviation_tolerance",
-        "stagnation_threshold",
-        "momentum_dev_multiplier",
-        "roi_stagnation_dev_multiplier",
-    )
-    def _check_positive_float(cls, v: float, info: Any) -> float:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be positive")
-        return v
+        @field_validator(
+            "compounding_weight",
+            "min_integration_roi",
+            "entropy_weight",
+        )
+        def _check_non_negative(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return v
 
-    @field_validator("entropy_plateau_consecutive", "entropy_ceiling_consecutive")
-    def _check_positive(cls, v: int | None, info: Any) -> int | None:
-        if v is not None and v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+        @field_validator(
+            "deviation_tolerance",
+            "stagnation_threshold",
+            "momentum_dev_multiplier",
+            "roi_stagnation_dev_multiplier",
+        )
+        def _check_positive_float(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v <= 0:
+                raise ValueError(f"{_field_name(info=info)} must be positive")
+            return v
 
-    @field_validator(
-        "baseline_window",
-        "entropy_window",
-        "stagnation_cycles",
-        "momentum_window",
-    )
-    def _check_positive_int(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+        @field_validator(
+            "entropy_plateau_consecutive", "entropy_ceiling_consecutive"
+        )
+        def _check_positive(
+            cls, v: int | None, info: FieldValidationInfo
+        ) -> int | None:
+            if v is not None and v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "baseline_window",
+            "entropy_window",
+            "stagnation_cycles",
+            "momentum_window",
+        )
+        def _check_positive_int(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator(
+            "threshold",
+            "confidence",
+            "ema_alpha",
+            "entropy_threshold",
+            "entropy_plateau_threshold",
+            "entropy_ceiling_threshold",
+        )
+        def _check_unit_range(
+            cls,
+            v: float | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float | None:
+            if v is not None and not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be between 0 and 1"
+                )
+            return v
+
+        @field_validator(
+            "compounding_weight",
+            "min_integration_roi",
+            "entropy_weight",
+        )
+        def _check_non_negative(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return v
+
+        @field_validator(
+            "deviation_tolerance",
+            "stagnation_threshold",
+            "momentum_dev_multiplier",
+            "roi_stagnation_dev_multiplier",
+        )
+        def _check_positive_float(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be positive"
+                )
+            return v
+
+        @field_validator("entropy_plateau_consecutive", "entropy_ceiling_consecutive")
+        def _check_positive(
+            cls,
+            v: int | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int | None:
+            if v is not None and v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "baseline_window",
+            "entropy_window",
+            "stagnation_cycles",
+            "momentum_window",
+        )
+        def _check_positive_int(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
 
 
 class BotThresholds(BaseModel):
