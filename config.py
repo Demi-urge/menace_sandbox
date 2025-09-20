@@ -21,8 +21,10 @@ from __future__ import annotations
 import argparse
 import os
 import logging
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING, Set
+from types import SimpleNamespace
 import sys
 import site
 import copy
@@ -57,13 +59,64 @@ finally:  # ensure path restoration
     sys.path = _orig_sys_path
 
 import yaml  # noqa: E402
-from pydantic import (  # noqa: E402
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+
+try:  # noqa: E402
+    from pydantic import (  # type: ignore[attr-defined]
+        BaseModel,
+        ConfigDict,
+        Field,
+        field_validator,
+        model_validator,
+    )
+    _PYDANTIC_V2 = True
+except ImportError:  # pragma: no cover - fallback for pydantic v1
+    from pydantic import BaseModel, Field, root_validator, validator  # type: ignore
+
+    _PYDANTIC_V2 = False
+
+    def field_validator(*fields, **kwargs):  # type: ignore[override]
+        """Compatibility shim for :func:`pydantic.field_validator` on v1."""
+
+        decorator = validator(*fields, allow_reuse=True, **kwargs)
+
+        def wrapper(func):
+            method = func.__func__ if isinstance(func, classmethod) else func
+
+            @wraps(method)
+            def _validator(cls, value, values, config, field):  # type: ignore[override]
+                info = SimpleNamespace(field_name=getattr(field, "name", None))
+                return method(cls, value, info)
+
+            return decorator(_validator)
+
+        return wrapper
+
+    def model_validator(*, mode):  # type: ignore[override]
+        """Compatibility shim for :func:`pydantic.model_validator` on v1."""
+
+        if mode != "after":  # pragma: no cover - other modes unused
+            raise ValueError("pydantic v1 fallback only supports mode='after'")
+
+        def decorator(func):
+            method = func.__func__ if isinstance(func, classmethod) else func
+
+            @wraps(method)
+            def _validator(cls, values):
+                instance = cls.construct(**values)  # type: ignore[attr-defined]
+                result = method(instance)
+                if isinstance(result, cls):
+                    return result.dict()
+                return values if result is None else result
+
+            return root_validator(skip_on_failure=True)(_validator)
+
+        return decorator
+
+    class ConfigDict(dict):  # type: ignore[misc,override]
+        """Minimal stand-in so attribute access succeeds under v1."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from .unified_event_bus import EventBus
@@ -72,18 +125,27 @@ if TYPE_CHECKING:  # pragma: no cover - import for typing only
 logger = logging.getLogger(__name__)
 
 
+class _StrictBaseModel(BaseModel):
+    """Base model enforcing ``extra = forbid`` across Pydantic versions."""
+
+    if _PYDANTIC_V2:
+        model_config = ConfigDict(extra="forbid")
+    else:  # pragma: no cover - exercised only on pydantic v1
+
+        class Config:
+            extra = "forbid"
+
+
 # ---------------------------------------------------------------------------
 # Pydantic models defining the configuration schema
 # ---------------------------------------------------------------------------
 
 
-class Paths(BaseModel):
+class Paths(_StrictBaseModel):
     """File system locations used by the application."""
 
     data_dir: str
     log_dir: str
-
-    model_config = ConfigDict(extra="forbid")
 
     @field_validator("data_dir", "log_dir")
     @classmethod
@@ -93,13 +155,11 @@ class Paths(BaseModel):
         return value
 
 
-class Thresholds(BaseModel):
+class Thresholds(_StrictBaseModel):
     """Operational thresholds expressed as floats between 0 and 1."""
 
     error: float = Field(ge=0.0, le=1.0)
     alert: float = Field(ge=0.0, le=1.0)
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def _check_order(self) -> "Thresholds":
@@ -108,13 +168,11 @@ class Thresholds(BaseModel):
         return self
 
 
-class APIKeys(BaseModel):
+class APIKeys(_StrictBaseModel):
     """External service authentication keys."""
 
     openai: str
     serp: str
-
-    model_config = ConfigDict(extra="forbid")
 
     @field_validator("openai", "serp")
     @classmethod
@@ -124,42 +182,34 @@ class APIKeys(BaseModel):
         return value
 
 
-class Logging(BaseModel):
+class Logging(_StrictBaseModel):
     """Logging configuration."""
 
     verbosity: str = Field(pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class Vector(BaseModel):
+class Vector(_StrictBaseModel):
     """Vector search parameters."""
 
     dimensions: int = Field(gt=0)
     distance_metric: str
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class VectorStoreConfig(BaseModel):
+class VectorStoreConfig(_StrictBaseModel):
     """Backend configuration for vector storage."""
 
     backend: str = Field(default="faiss")
     path: str = Field(default="vectors.index")
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class BotConfig(BaseModel):
+class BotConfig(_StrictBaseModel):
     """Bot tuning parameters."""
 
     learning_rate: float = Field(gt=0)
     epsilon: float = Field(ge=0.0, le=1.0)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ContextBuilderConfig(BaseModel):
+class ContextBuilderConfig(_StrictBaseModel):
     """Context builder tuning parameters."""
 
     max_tokens: int = 800
@@ -241,10 +291,8 @@ class ContextBuilderConfig(BaseModel):
         description="Multiplier applied to similarity scores when ranking prompt examples",
     )
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class Config(BaseModel):
+class Config(_StrictBaseModel):
     """Top-level application configuration."""
 
     paths: Paths
@@ -256,8 +304,6 @@ class Config(BaseModel):
     bot: BotConfig
     context_builder: ContextBuilderConfig = ContextBuilderConfig()
     watch_config: bool = True
-
-    model_config = ConfigDict(extra="forbid")
 
     # ------------------------------------------------------------------
     # Runtime modification helpers
