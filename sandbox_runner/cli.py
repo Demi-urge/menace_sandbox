@@ -49,7 +49,6 @@ from menace.metrics_dashboard import MetricsDashboard
 from logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
-from .environment import load_presets, simulate_full_environment
 try:  # optional dependency
     from .meta_logger import _SandboxMetaLogger
 except Exception:  # pragma: no cover - best effort
@@ -116,6 +115,8 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
     """Execute sandbox runs for one or multiple environment presets."""
     if sandbox_main is None:
         from sandbox_runner import _sandbox_main as sandbox_main
+
+    from .environment import load_presets, simulate_full_environment
 
     presets = load_presets()
     settings = get_settings()
