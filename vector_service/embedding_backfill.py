@@ -98,8 +98,22 @@ except Exception:  # pragma: no cover
 DEFAULT_REGISTRY = resolve_path("vector_service/embedding_registry.json")
 _REGISTRY_FILE = DEFAULT_REGISTRY
 
-# Persistent record of last successful vectorisation per database
-_TIMESTAMP_FILE = resolve_path("embedding_timestamps.json")
+# Persistent record of last successful vectorisation per database.  Historically
+# this lived in the project root as ``embedding_timestamps.json`` but fresh
+# sandboxes may not ship with the file.  ``resolve_path`` raises a
+# ``FileNotFoundError`` in that scenario, which would cause the import of this
+# module to fail and upstream callers to fall back to lightweight stubs.  To keep
+# the vector service functional out of the box we create the timestamp file on
+# demand next to the registry if it is missing.
+try:
+    _TIMESTAMP_FILE = resolve_path("embedding_timestamps.json")
+except FileNotFoundError:
+    _TIMESTAMP_FILE = DEFAULT_REGISTRY.with_name("embedding_timestamps.json")
+    if not _TIMESTAMP_FILE.exists():  # pragma: no cover - best effort initialisation
+        try:
+            _TIMESTAMP_FILE.write_text("{}")
+        except Exception:
+            pass
 _DB_FILE_MAP: Dict[str, str] = {}
 
 

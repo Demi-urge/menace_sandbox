@@ -3,32 +3,82 @@
 This package provides the canonical vector retrieval service.
 """
 
-try:  # pragma: no cover - optional heavy dependencies
-    from .retriever import Retriever, FallbackResult
-    from .patch_logger import PatchLogger
-    from .cognition_layer import CognitionLayer
-    from .embedding_backfill import EmbeddingBackfill
-    from .vectorizer import SharedVectorService
-    from .context_builder import ContextBuilder
+class _Stub:  # pragma: no cover - simple callable placeholder
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+# ``Retriever`` historically provided ``FallbackResult`` so we default to the
+# lightweight implementations first and upgrade them when the real modules are
+# available.  This ensures partial imports do not mask functionality unrelated to
+# a missing heavy dependency (for example ``transformers``).
+class FallbackResult(list):  # pragma: no cover - used when retriever unavailable
+    pass
+
+
+class VectorServiceError(Exception):  # pragma: no cover - default error type
+    pass
+
+
+RateLimitError = MalformedPromptError = VectorServiceError
+
+Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = SharedVectorService = ContextBuilder = _Stub  # type: ignore
+
+try:  # pragma: no cover - upgrade default errors when available
     from .exceptions import (
-        VectorServiceError,
-        RateLimitError,
-        MalformedPromptError,
+        VectorServiceError as _VectorServiceError,
+        RateLimitError as _RateLimitError,
+        MalformedPromptError as _MalformedPromptError,
     )
-except Exception:  # pragma: no cover - lightweight fallbacks for tests
-    class _Stub:  # type: ignore
-        def __init__(self, *args, **kwargs):
-            pass
+except Exception:
+    pass
+else:
+    VectorServiceError = _VectorServiceError
+    RateLimitError = _RateLimitError
+    MalformedPromptError = _MalformedPromptError
 
-    Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = SharedVectorService = ContextBuilder = _Stub  # type: ignore
+try:  # pragma: no cover - optional heavy dependency
+    from .retriever import Retriever as _Retriever, FallbackResult as _FallbackResult
+except Exception:
+    pass
+else:
+    Retriever = _Retriever
+    FallbackResult = _FallbackResult
 
-    class FallbackResult(list):
-        pass
+try:  # pragma: no cover - optional heavy dependency
+    from .patch_logger import PatchLogger as _PatchLogger
+except Exception:
+    pass
+else:
+    PatchLogger = _PatchLogger
 
-    class VectorServiceError(Exception):
-        pass
+try:  # pragma: no cover - optional heavy dependency
+    from .cognition_layer import CognitionLayer as _CognitionLayer
+except Exception:
+    pass
+else:
+    CognitionLayer = _CognitionLayer
 
-    RateLimitError = MalformedPromptError = VectorServiceError
+try:  # pragma: no cover - optional heavy dependency
+    from .embedding_backfill import EmbeddingBackfill as _EmbeddingBackfill
+except Exception:
+    pass
+else:
+    EmbeddingBackfill = _EmbeddingBackfill
+
+try:  # pragma: no cover - optional heavy dependency
+    from .vectorizer import SharedVectorService as _SharedVectorService
+except Exception:
+    pass
+else:
+    SharedVectorService = _SharedVectorService
+
+try:  # pragma: no cover - optional heavy dependency
+    from .context_builder import ContextBuilder as _ContextBuilder
+except Exception:
+    pass
+else:
+    ContextBuilder = _ContextBuilder
 
 
 class ErrorResult(Exception):
