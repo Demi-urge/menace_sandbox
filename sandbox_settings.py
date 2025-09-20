@@ -516,16 +516,43 @@ class AlignmentSettings(BaseModel):
         default_factory=lambda: resolve_path("sandbox_metrics.yaml")
     )
 
-    @field_validator(
-        "warning_threshold",
-        "failure_threshold",
-        "improvement_warning_threshold",
-        "improvement_failure_threshold",
-    )
-    def _alignment_unit_range(cls, v: float, info: Any) -> float:
-        if not 0 <= v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
+    if PYDANTIC_V2:
+
+        @field_validator(
+            "warning_threshold",
+            "failure_threshold",
+            "improvement_warning_threshold",
+            "improvement_failure_threshold",
+        )
+        def _alignment_unit_range(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be between 0 and 1"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator(
+            "warning_threshold",
+            "failure_threshold",
+            "improvement_warning_threshold",
+            "improvement_failure_threshold",
+        )
+        def _alignment_unit_range(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be between 0 and 1"
+                )
+            return v
 
 
 class AutoMergeSettings(BaseModel):
