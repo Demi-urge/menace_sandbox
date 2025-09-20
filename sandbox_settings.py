@@ -37,6 +37,15 @@ except Exception:  # pragma: no cover
     def field_validator(*fields, **kwargs):  # type: ignore[misc]
         """Shim for ``pydantic.validator`` with ``allow_reuse`` defaulting to ``True``."""
 
+        mode = kwargs.pop("mode", None)
+        if mode is not None:
+            translated: dict[str, bool] = {"before": True, "after": False, "plain": False}
+            if mode not in translated:
+                raise ValueError(
+                    f"Unsupported validation mode for pydantic<2: {mode!r}"
+                )
+            kwargs["pre"] = translated[mode]
+
         kwargs.setdefault("allow_reuse", True)
         base_validator = _pydantic_validator(*fields, **kwargs)
 
