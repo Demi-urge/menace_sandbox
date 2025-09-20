@@ -73,12 +73,32 @@ except Exception:  # pragma: no cover - statsmodels missing
 
 import pickle
 
-from .logging_utils import get_logger
-from .adaptive_roi_dataset import build_dataset, _label_growth
-from .roi_tracker import ROITracker
-from .evaluation_history_db import EvaluationHistoryDB
-from .evolution_history_db import EvolutionHistoryDB
-from .truth_adapter import TruthAdapter
+if __package__:
+    from .logging_utils import get_logger
+    from .adaptive_roi_dataset import build_dataset, _label_growth
+    from .roi_tracker import ROITracker
+    from .evaluation_history_db import EvaluationHistoryDB
+    from .evolution_history_db import EvolutionHistoryDB
+    from .truth_adapter import TruthAdapter
+else:  # pragma: no cover - fallback when executed outside package
+    import sys
+    from importlib import import_module
+    from pathlib import Path
+
+    _pkg_root = Path(__file__).resolve().parent
+    _pkg_name = _pkg_root.name
+    _parent = _pkg_root.parent
+    if str(_parent) not in sys.path:
+        sys.path.append(str(_parent))
+
+    get_logger = import_module(f"{_pkg_name}.logging_utils").get_logger  # type: ignore[attr-defined]
+    dataset_mod = import_module(f"{_pkg_name}.adaptive_roi_dataset")
+    build_dataset = dataset_mod.build_dataset  # type: ignore[attr-defined]
+    _label_growth = dataset_mod._label_growth  # type: ignore[attr-defined]
+    ROITracker = import_module(f"{_pkg_name}.roi_tracker").ROITracker  # type: ignore[attr-defined]
+    EvaluationHistoryDB = import_module(f"{_pkg_name}.evaluation_history_db").EvaluationHistoryDB  # type: ignore[attr-defined]
+    EvolutionHistoryDB = import_module(f"{_pkg_name}.evolution_history_db").EvolutionHistoryDB  # type: ignore[attr-defined]
+    TruthAdapter = import_module(f"{_pkg_name}.truth_adapter").TruthAdapter  # type: ignore[attr-defined]
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 MENACE_ID = "adaptive_roi_predictor"

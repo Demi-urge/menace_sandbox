@@ -33,9 +33,14 @@ import numpy as np
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 
-from .evolution_history_db import EvolutionHistoryDB
-from .evaluation_history_db import EvaluationHistoryDB
-from .roi_tracker import ROITracker
+if __package__:
+    from .evolution_history_db import EvolutionHistoryDB
+    from .evaluation_history_db import EvaluationHistoryDB
+    from .roi_tracker import ROITracker
+else:  # pragma: no cover - fallback for flat module layout
+    from evolution_history_db import EvolutionHistoryDB  # type: ignore
+    from evaluation_history_db import EvaluationHistoryDB  # type: ignore
+    from roi_tracker import ROITracker  # type: ignore
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
