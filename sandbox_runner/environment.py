@@ -554,7 +554,7 @@ from knowledge_graph import KnowledgeGraph
 from db_router import GLOBAL_ROUTER, init_db_router
 
 
-def _env_path(name: str, default: str) -> Path:
+def _env_path(name: str, default: str, *, create: bool = False) -> Path:
     """Resolve *name* from the environment to an absolute :class:`Path`.
 
     The value of ``name`` is looked up in the environment, falling back to
@@ -563,7 +563,20 @@ def _env_path(name: str, default: str) -> Path:
     root.
     """
 
-    return resolve_path(os.getenv(name, default))
+    value = os.getenv(name, default)
+    try:
+        return resolve_path(value)
+    except FileNotFoundError:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = repo_root() / candidate
+
+        if create:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.touch(exist_ok=True)
+            return candidate.resolve()
+
+        raise
 
 # Persistent module usage tracking -------------------------------------------
 MODULE_USAGE_PATH = _env_path("SANDBOX_MODULE_USAGE_PATH", "sandbox_data/module_usage.json")
@@ -596,7 +609,7 @@ def record_module_usage(module_name: str) -> None:
             )
 
 # path to cleanup log file
-_CLEANUP_LOG_PATH = _env_path("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log")
+_CLEANUP_LOG_PATH = _env_path("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log", create=True)
 _CLEANUP_LOG_LOCK = threading.Lock()
 POOL_LOCK_FILE = _env_path("SANDBOX_POOL_LOCK", "sandbox_data/pool.lock")
 
