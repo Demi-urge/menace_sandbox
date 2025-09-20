@@ -18,8 +18,12 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Optional
 
-from .db_router import GLOBAL_ROUTER, init_db_router
-from .scope_utils import Scope, build_scope_clause, apply_scope
+try:
+    from .db_router import GLOBAL_ROUTER, init_db_router
+    from .scope_utils import Scope, build_scope_clause, apply_scope
+except ImportError:  # pragma: no cover - fallback for flat layout
+    from db_router import GLOBAL_ROUTER, init_db_router  # type: ignore
+    from scope_utils import Scope, build_scope_clause, apply_scope  # type: ignore
 
 try:
     from .sentry_client import SentryClient
