@@ -50,8 +50,10 @@ from context_builder_util import ensure_fresh_weights
 
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
-except Exception:  # pragma: no cover - allow running without ROI tracker
-    logger.warning("roi_tracker import failed; using no-op ROITracker fallback")
+except Exception as exc:  # pragma: no cover - allow running without ROI tracker
+    logger.info(
+        "ROI tracker unavailable (%s); using deterministic no-op fallback", exc
+    )
 
     class ROITracker:  # type: ignore[no-redef]
         """Deterministic no-op fallback used when ``roi_tracker`` is unavailable."""
@@ -82,9 +84,10 @@ except Exception:  # pragma: no cover - executed when networkx missing
 
 try:  # pragma: no cover - optional heavy dependency
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
-except Exception:  # pragma: no cover - allow running without comparator
-    logger.warning(
-        "workflow_synergy_comparator import failed; synergy metrics disabled"
+except Exception as exc:  # pragma: no cover - allow running without comparator
+    logger.info(
+        "Workflow synergy comparator unavailable (%s); synergy metrics disabled",
+        exc,
     )
 
     class WorkflowSynergyComparator:  # type: ignore[no-redef]

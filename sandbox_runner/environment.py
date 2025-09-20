@@ -1343,7 +1343,10 @@ try:  # pragma: no cover - optional dependency
     import docker  # type: ignore
     from docker.errors import DockerException, APIError
 except Exception as exc:  # pragma: no cover - docker may be unavailable
-    logger.warning("docker import failed: %s", exc)
+    logger.info(
+        "Docker SDK unavailable (%s); container pooling features will be skipped",
+        exc,
+    )
     docker = None  # type: ignore
     DockerException = Exception  # type: ignore
     APIError = Exception  # type: ignore
@@ -1352,7 +1355,10 @@ else:
     try:
         _DOCKER_CLIENT = docker.from_env()
     except DockerException as exc:  # pragma: no cover - docker may be unavailable
-        logger.warning("docker client init failed: %s", exc)
+        logger.info(
+            "Docker client unavailable (%s); container pooling features disabled",
+            exc,
+        )
         _DOCKER_CLIENT = None
 
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))

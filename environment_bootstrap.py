@@ -305,16 +305,21 @@ class EnvironmentBootstrapper:
             self.install_dependencies(missing)
         if importlib.util.find_spec("apscheduler") is None:
             self.install_dependencies(["apscheduler"])
-        try:
-            subprocess.run(
-                ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-        except Exception as exc:  # pragma: no cover - log only
-            self.logger.warning(
-                "failed enabling sandbox_autopurge.timer: %s", exc
+        if shutil.which("systemctl"):
+            try:
+                subprocess.run(
+                    ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                )
+            except Exception as exc:  # pragma: no cover - log only
+                self.logger.warning(
+                    "failed enabling sandbox_autopurge.timer: %s", exc
+                )
+        else:
+            self.logger.info(
+                "systemctl not available; skipping sandbox_autopurge timer activation"
             )
         deps = os.getenv("MENACE_BOOTSTRAP_DEPS", "").split(",")
         deps = [d.strip() for d in deps if d.strip()]
