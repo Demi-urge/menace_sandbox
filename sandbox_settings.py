@@ -877,40 +877,119 @@ class SandboxSettings(BaseSettings):
             raise ValueError("roi_stagnation_cycles must be positive")
         return v
 
-    @field_validator(
-        "roi_deviation_tolerance",
-        "roi_stagnation_threshold",
-        "roi_momentum_dev_multiplier",
-    )
-    def _roi_positive_float(cls, v: float, info: Any) -> float:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be positive")
-        return v
+    if PYDANTIC_V2:
 
-    @field_validator("error_overfit_percentile", "entropy_overfit_percentile")
-    def _overfit_percentile_range(cls, v: float, info: Any) -> float:
-        if not 0 < v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
+        @field_validator(
+            "roi_deviation_tolerance",
+            "roi_stagnation_threshold",
+            "roi_momentum_dev_multiplier",
+        )
+        def _roi_positive_float(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be positive"
+                )
+            return v
 
-    @field_validator(
-        "mae_deviation",
-        "acc_deviation",
-        "energy_deviation",
-        "roi_deviation",
-        "entropy_deviation",
-        "autoscale_create_dev_multiplier",
-        "autoscale_remove_dev_multiplier",
-        "autoscale_roi_dev_multiplier",
-        "relevancy_deviation_multiplier",
-        "scenario_alert_dev_multiplier",
-        "scenario_patch_dev_multiplier",
-        "scenario_rerun_dev_multiplier",
-    )
-    def _baseline_non_negative(cls, v: float, info: Any) -> float:
-        if v < 0:
-            raise ValueError(f"{info.field_name} must be non-negative")
-        return v
+        @field_validator(
+            "error_overfit_percentile", "entropy_overfit_percentile"
+        )
+        def _overfit_percentile_range(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if not 0 < v <= 1:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be between 0 and 1"
+                )
+            return v
+
+        @field_validator(
+            "mae_deviation",
+            "acc_deviation",
+            "energy_deviation",
+            "roi_deviation",
+            "entropy_deviation",
+            "autoscale_create_dev_multiplier",
+            "autoscale_remove_dev_multiplier",
+            "autoscale_roi_dev_multiplier",
+            "relevancy_deviation_multiplier",
+            "scenario_alert_dev_multiplier",
+            "scenario_patch_dev_multiplier",
+            "scenario_rerun_dev_multiplier",
+        )
+        def _baseline_non_negative(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator(
+            "roi_deviation_tolerance",
+            "roi_stagnation_threshold",
+            "roi_momentum_dev_multiplier",
+        )
+        def _roi_positive_float(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be positive"
+                )
+            return v
+
+        @field_validator(
+            "error_overfit_percentile", "entropy_overfit_percentile"
+        )
+        def _overfit_percentile_range(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if not 0 < v <= 1:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be between 0 and 1"
+                )
+            return v
+
+        @field_validator(
+            "mae_deviation",
+            "acc_deviation",
+            "energy_deviation",
+            "roi_deviation",
+            "entropy_deviation",
+            "autoscale_create_dev_multiplier",
+            "autoscale_remove_dev_multiplier",
+            "autoscale_roi_dev_multiplier",
+            "relevancy_deviation_multiplier",
+            "scenario_alert_dev_multiplier",
+            "scenario_patch_dev_multiplier",
+            "scenario_rerun_dev_multiplier",
+        )
+        def _baseline_non_negative(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return v
     menace_env_file: str = Field(
         (resolve_path(".") / ".env").as_posix(), env="MENACE_ENV_FILE"
     )
@@ -1868,12 +1947,6 @@ class SandboxSettings(BaseSettings):
             raise ValueError("exploration_temperature must be positive")
         return v
 
-    @field_validator("policy_alpha", "policy_gamma", "policy_epsilon")
-    def _validate_policy_unit_range(cls, v: float, info: Any) -> float:
-        if not 0 <= v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
-
     @field_validator("policy_temperature")
     def _validate_policy_temperature(cls, v: float) -> float:
         if v <= 0:
@@ -1898,64 +1971,218 @@ class SandboxSettings(BaseSettings):
             raise ValueError("meta_entropy_weight must be non-negative")
         return v
 
-    @field_validator("meta_search_depth", "meta_beam_width")
-    def _validate_meta_search_params(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+    if PYDANTIC_V2:
 
-    @field_validator("meta_planning_interval", "meta_planning_period")
-    def _validate_meta_intervals(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
+        @field_validator("policy_alpha", "policy_gamma", "policy_epsilon")
+        def _validate_policy_unit_range(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be between 0 and 1"
+                )
+            return v
 
-    @field_validator(
-        "meta_improvement_threshold",
-        "meta_mutation_rate",
-        "meta_roi_weight",
-        "meta_domain_penalty",
-        "orphan_reuse_threshold",
-    )
-    def _validate_non_negative(cls, v: float, info: Any) -> float:
-        if v < 0:
-            raise ValueError(f"{info.field_name} must be non-negative")
-        return v
+        @field_validator("meta_search_depth", "meta_beam_width")
+        def _validate_meta_search_params(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+        @field_validator("meta_planning_interval", "meta_planning_period")
+        def _validate_meta_intervals(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "meta_improvement_threshold",
+            "meta_mutation_rate",
+            "meta_roi_weight",
+            "meta_domain_penalty",
+            "orphan_reuse_threshold",
+        )
+        def _validate_non_negative(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return v
+
+        @field_validator("flakiness_runs", "test_run_retries")
+        def _validate_positive_int(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "adaptive_roi_retrain_interval",
+            "adaptive_roi_train_interval",
+            "backup_rotation_count",
+            "checkpoint_retention",
+        )
+        def _validate_positive_training(
+            cls, v: int, info: FieldValidationInfo
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "weight_update_interval",
+            "test_run_timeout",
+            "side_effect_dev_multiplier",
+            "synergy_dev_multiplier",
+            "roi_threshold_k",
+            "synergy_threshold_k",
+        )
+        def _validate_positive_float(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be positive"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("policy_alpha", "policy_gamma", "policy_epsilon")
+        def _validate_policy_unit_range(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be between 0 and 1"
+                )
+            return v
+
+        @field_validator("meta_search_depth", "meta_beam_width")
+        def _validate_meta_search_params(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
+
+        @field_validator("meta_planning_interval", "meta_planning_period")
+        def _validate_meta_intervals(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "meta_improvement_threshold",
+            "meta_mutation_rate",
+            "meta_roi_weight",
+            "meta_domain_penalty",
+            "orphan_reuse_threshold",
+        )
+        def _validate_non_negative(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return v
+
+        @field_validator("flakiness_runs", "test_run_retries")
+        def _validate_positive_int(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "adaptive_roi_retrain_interval",
+            "adaptive_roi_train_interval",
+            "backup_rotation_count",
+            "checkpoint_retention",
+        )
+        def _validate_positive_training(
+            cls,
+            v: int,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return v
+
+        @field_validator(
+            "weight_update_interval",
+            "test_run_timeout",
+            "side_effect_dev_multiplier",
+            "synergy_dev_multiplier",
+            "roi_threshold_k",
+            "synergy_threshold_k",
+        )
+        def _validate_positive_float(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be positive"
+                )
+            return v
 
     @field_validator("auto_train_interval")
     def _validate_auto_train_interval(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("auto_train_interval must be positive")
-        return v
-
-    @field_validator("flakiness_runs", "test_run_retries")
-    def _validate_positive_int(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
-
-    @field_validator(
-        "adaptive_roi_retrain_interval",
-        "adaptive_roi_train_interval",
-        "backup_rotation_count",
-        "checkpoint_retention",
-    )
-    def _validate_positive_training(cls, v: int, info: Any) -> int:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be a positive integer")
-        return v
-
-    @field_validator(
-        "weight_update_interval",
-        "test_run_timeout",
-        "side_effect_dev_multiplier",
-        "synergy_dev_multiplier",
-        "roi_threshold_k",
-        "synergy_threshold_k",
-    )
-    def _validate_positive_float(cls, v: float, info: Any) -> float:
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be positive")
         return v
 
     test_redundant_modules: bool = Field(
@@ -2209,18 +2436,47 @@ class SandboxSettings(BaseSettings):
         description="confidence for variance tests; defaults to 0.95",
     )
 
-    @field_validator(
-        "roi_weight",
-        "entropy_weight",
-        "momentum_weight",
-        "pass_rate_weight",
-        "entropy_weight_scale",
-        "momentum_weight_scale",
-    )
-    def _validate_delta_weights(cls, v: float, info: Any) -> float:
-        if v < 0:
-            raise ValueError(f"{info.field_name} must be non-negative")
-        return v
+    if PYDANTIC_V2:
+
+        @field_validator(
+            "roi_weight",
+            "entropy_weight",
+            "momentum_weight",
+            "pass_rate_weight",
+            "entropy_weight_scale",
+            "momentum_weight_scale",
+        )
+        def _validate_delta_weights(
+            cls, v: float, info: FieldValidationInfo
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator(
+            "roi_weight",
+            "entropy_weight",
+            "momentum_weight",
+            "pass_rate_weight",
+            "entropy_weight_scale",
+            "momentum_weight_scale",
+        )
+        def _validate_delta_weights(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if v < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return v
 
     @field_validator("momentum_stagnation_dev_multiplier")
     def _momentum_stagnation_dev_multiplier_positive(
