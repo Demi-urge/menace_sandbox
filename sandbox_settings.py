@@ -736,11 +736,33 @@ class PolicySettings(BaseModel):
     temperature: float = 1.0
     exploration: str = "epsilon_greedy"
 
-    @field_validator("alpha", "gamma", "epsilon")
-    def _policy_unit_range(cls, v: float, info: Any) -> float:
-        if not 0 <= v <= 1:
-            raise ValueError(f"{info.field_name} must be between 0 and 1")
-        return v
+    if PYDANTIC_V2:
+
+        @field_validator("alpha", "gamma", "epsilon")
+        def _policy_unit_range(
+            cls,
+            v: float,
+            info: FieldValidationInfo,
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(f"{info.field_name} must be between 0 and 1")
+            return v
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("alpha", "gamma", "epsilon")
+        def _policy_unit_range(
+            cls,
+            v: float,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float:
+            if not 0 <= v <= 1:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be between 0 and 1"
+                )
+            return v
 
     @field_validator("temperature")
     def _policy_temperature(cls, v: float) -> float:
