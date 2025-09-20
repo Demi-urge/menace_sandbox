@@ -10,7 +10,7 @@ import json
 import logging
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, get_project_root
 
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
@@ -62,13 +62,56 @@ class VectorMetric:
     ts: str = datetime.utcnow().isoformat()
 
 
+def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
+    """Return the default location for the vector metrics database.
+
+    The original implementation relied on :func:`resolve_path` which raises a
+    :class:`FileNotFoundError` when ``vector_metrics.db`` has not been created
+    yet.  Some entry points instantiate :class:`VectorMetricsDB` (or import
+    modules that resolve the default path) before the database exists, causing
+    start-up to abort.  This helper mirrors the previous behaviour when the
+    file is present while providing a deterministic fallback rooted at the
+    repository when it is missing.
+
+    When ``ensure_exists`` is ``True`` the parent directory is created and an
+    empty file is touched so subsequent :func:`resolve_path` calls succeed.
+    ``sqlite3`` will initialise the actual database schema on first use.
+    """
+
+    try:
+        path = resolve_path("vector_metrics.db")
+    except FileNotFoundError:
+        path = (get_project_root() / "vector_metrics.db").resolve()
+        if ensure_exists:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.touch()
+    else:
+        if ensure_exists:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.touch()
+    return path
+
+
 class VectorMetricsDB:
     """SQLite-backed store for :class:`VectorMetric` records."""
 
     def __init__(self, path: Path | str = "vector_metrics.db") -> None:
         LOCAL_TABLES.add("vector_metrics")
-        p = Path(path).resolve()
-        default_path = resolve_path("vector_metrics.db")
+
+        default_path = default_vector_metrics_path()
+        requested = Path(path).expanduser()
+        if str(requested.as_posix()) == "vector_metrics.db":
+            p = default_path
+        else:
+            if not requested.is_absolute():
+                requested = (default_path.parent / requested).resolve()
+            else:
+                requested = requested.resolve()
+            requested.parent.mkdir(parents=True, exist_ok=True)
+            p = requested
+
         if GLOBAL_ROUTER is not None and p == default_path:
             self.router = GLOBAL_ROUTER
         else:
