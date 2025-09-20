@@ -10,7 +10,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from typing import Any, Dict
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 
 try:
     import requests  # type: ignore
@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 CONFIG_PATH = resolve_path("config/alert_settings.json")
-LOG_PATH = resolve_path("logs/alert_failures.log")
+LOG_PATH = get_project_root() / "logs" / "alert_failures.log"
 
 logger = logging.getLogger("AlertDispatcher")
 if not logger.handlers:
