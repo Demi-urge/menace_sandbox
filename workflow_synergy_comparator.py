@@ -17,11 +17,29 @@ from dataclasses import dataclass, field
 import json
 import logging
 import math
+import sys
+import types
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from collections import Counter
 
-from .dynamic_path_router import resolve_path
+if __package__ in (None, ""):
+    package_root = Path(__file__).resolve().parent
+    parent = package_root.parent
+    if str(parent) not in sys.path:
+        sys.path.insert(0, str(parent))
+    package_name = package_root.name
+    pkg = sys.modules.get(package_name)
+    if pkg is None:
+        pkg = types.ModuleType(package_name)
+        pkg.__path__ = [str(package_root)]
+        sys.modules[package_name] = pkg
+    __package__ = package_name
+
+try:  # pragma: no cover - allow execution without package context
+    from .dynamic_path_router import resolve_path
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -54,26 +72,36 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 try:  # pragma: no cover - optional dependency
     from .workflow_graph import WorkflowGraph  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from workflow_graph import WorkflowGraph  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     WorkflowGraph = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .roi_tracker import ROITracker  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from roi_tracker import ROITracker  # type: ignore
 except BaseException:  # pragma: no cover - gracefully degrade
     ROITracker = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .roi_results_db import ROIResultsDB  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from roi_results_db import ROIResultsDB  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     ROIResultsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import workflow_merger  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    import workflow_merger  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     workflow_merger = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import workflow_run_summary  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    import workflow_run_summary  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     workflow_run_summary = None  # type: ignore
 

@@ -25,9 +25,11 @@ from dataclasses import dataclass
 import argparse
 import csv
 
+import types
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
 from dynamic_path_router import resolve_path
@@ -37,12 +39,34 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
-from .logging_utils import get_logger, log_record
-from .config_loader import (
-    get_impact_severity,
-    impact_severity_map as load_impact_severity_map,
-)
-from .workflow_run_summary import record_run, save_all_summaries
+if __package__ in (None, ""):
+    package_root = Path(__file__).resolve().parent
+    parent = package_root.parent
+    if str(parent) not in sys.path:
+        sys.path.insert(0, str(parent))
+    package_name = package_root.name
+    pkg = sys.modules.get(package_name)
+    if pkg is None:
+        pkg = types.ModuleType(package_name)
+        pkg.__path__ = [str(package_root)]
+        sys.modules[package_name] = pkg
+    __package__ = package_name
+
+try:  # pragma: no cover - allow running as script without package context
+    from .logging_utils import get_logger, log_record
+    from .config_loader import (
+        get_impact_severity,
+        impact_severity_map as load_impact_severity_map,
+    )
+    from .workflow_run_summary import record_run, save_all_summaries
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from logging_utils import get_logger, log_record  # type: ignore
+    from config_loader import (  # type: ignore
+        get_impact_severity,
+        impact_severity_map as load_impact_severity_map,
+    )
+    from workflow_run_summary import record_run, save_all_summaries  # type: ignore
+
 try:  # pragma: no cover - telemetry optional during tests
     from .telemetry_backend import TelemetryBackend
     from . import telemetry_backend as tb
@@ -55,22 +79,34 @@ except Exception:  # pragma: no cover - provide stub when unavailable
             pass
 
     tb = None  # type: ignore
-from .borderline_bucket import BorderlineBucket
-from .truth_adapter import TruthAdapter
-from .roi_calculator import ROICalculator, propose_fix
-from .readiness_index import compute_readiness
+try:  # pragma: no cover - support package and script imports
+    from .borderline_bucket import BorderlineBucket
+    from .truth_adapter import TruthAdapter
+    from .roi_calculator import ROICalculator, propose_fix
+    from .readiness_index import compute_readiness
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from borderline_bucket import BorderlineBucket  # type: ignore
+    from truth_adapter import TruthAdapter  # type: ignore
+    from roi_calculator import ROICalculator, propose_fix  # type: ignore
+    from readiness_index import compute_readiness  # type: ignore
 try:  # pragma: no cover - optional during tests
     from .roi_results_db import ROIResultsDB  # type: ignore
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from roi_results_db import ROIResultsDB  # type: ignore
 except Exception:  # pragma: no cover - allow operation without DB
     ROIResultsDB = None  # type: ignore
 LOCAL_TABLES.add("workflow_module_deltas")
 
 try:  # pragma: no cover - optional dependency
     from . import self_test_service as _sts
+except ImportError:  # pragma: no cover - fallback when executed directly
+    import self_test_service as _sts  # type: ignore
 except Exception:  # pragma: no cover - self-test service may be absent
     _sts = None
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
+except ImportError:  # pragma: no cover - fallback when executed directly
+    import metrics_exporter as _me  # type: ignore
 except Exception:  # pragma: no cover - best effort
     _me = None
 
