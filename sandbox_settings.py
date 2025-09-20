@@ -29,14 +29,48 @@ try:  # pragma: no cover - compatibility shim
 except Exception:  # pragma: no cover
     FieldValidationInfo = Any  # type: ignore[misc, assignment]
     from pydantic import validator as _pydantic_validator  # type: ignore
+    from pydantic.fields import ModelField
+    import inspect
+    from functools import wraps
+    from types import SimpleNamespace
 
     def field_validator(*fields, **kwargs):  # type: ignore[misc]
         """Shim for ``pydantic.validator`` with ``allow_reuse`` defaulting to ``True``."""
 
         kwargs.setdefault("allow_reuse", True)
-        return _pydantic_validator(*fields, **kwargs)
+        base_validator = _pydantic_validator(*fields, **kwargs)
 
-    from pydantic.fields import ModelField
+        def decorator(func):
+            signature = inspect.signature(func)
+            parameters = signature.parameters
+
+            if "info" not in parameters:
+                return base_validator(func)
+
+            @wraps(func)
+            def wrapper(cls, value, values, config, field, **extra):  # type: ignore[override]
+                info_obj = SimpleNamespace(field_name=getattr(field, "name", None))
+                call_kwargs: dict[str, Any] = {}
+
+                if "info" in parameters:
+                    call_kwargs["info"] = info_obj
+                if "values" in parameters:
+                    call_kwargs["values"] = values
+                if "config" in parameters:
+                    call_kwargs["config"] = config
+                if "field" in parameters:
+                    call_kwargs["field"] = field
+
+                if extra:
+                    for key, val in extra.items():
+                        if key in parameters:
+                            call_kwargs[key] = val
+
+                return func(cls, value, **call_kwargs)
+
+            return base_validator(wrapper)
+
+        return decorator
 
 SELF_CODING_ROI_DROP: float = float(os.getenv("SELF_CODING_ROI_DROP", "-0.1"))
 SELF_CODING_ERROR_INCREASE: float = float(
