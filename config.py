@@ -88,10 +88,12 @@ else:  # pragma: no cover - executed when running under pydantic v1
         def wrapper(func):
             method = func.__func__ if isinstance(func, classmethod) else func
 
-            @wraps(method)
             def _validator(cls, value, values, config, field):  # type: ignore[override]
                 info = SimpleNamespace(field_name=getattr(field, "name", None))
                 return method(cls, value, info)
+
+            _validator.__name__ = getattr(method, "__name__", "validator")
+            _validator.__qualname__ = getattr(method, "__qualname__", _validator.__qualname__)
 
             return decorator(_validator)
 
