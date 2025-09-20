@@ -347,9 +347,14 @@ class EvaluationDashboard:
     def relevancy_radar_panel(self, threshold: int = 5) -> List[Dict[str, Any]]:
         """Return modules with low relevancy scores and annotations."""
 
-        metrics_path = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
-        if not metrics_path.exists():
-            return []
+        module_dir = Path(__file__).resolve().parent
+        local_metrics = module_dir / "sandbox_data" / "relevancy_metrics.json"
+        if local_metrics.exists():
+            metrics_path = local_metrics
+        else:
+            metrics_path = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
+            if not metrics_path.exists():
+                return []
         try:
             with metrics_path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
