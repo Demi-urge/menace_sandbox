@@ -47,6 +47,30 @@ Example ``self_coding_thresholds.yaml``::
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:  # pragma: no cover - support script execution
+    _THIS_FILE = Path(__file__).resolve()
+    _PACKAGE_ROOT = _THIS_FILE.parent
+    _REPO_PARENT = _PACKAGE_ROOT.parent
+    if str(_REPO_PARENT) not in sys.path:
+        sys.path.insert(0, str(_REPO_PARENT))
+    _PKG_NAME = _PACKAGE_ROOT.name
+    if _PKG_NAME not in sys.modules:
+        _SPEC = importlib.util.spec_from_file_location(
+            _PKG_NAME,
+            _PACKAGE_ROOT / "__init__.py",
+            submodule_search_locations=[str(_PACKAGE_ROOT)],
+        )
+        if _SPEC and _SPEC.loader:
+            _MODULE = importlib.util.module_from_spec(_SPEC)
+            sys.modules[_PKG_NAME] = _MODULE
+            _SPEC.loader.exec_module(_MODULE)
+    __package__ = _PKG_NAME
+
 # flake8: noqa
 import sqlite3
 import os
@@ -54,29 +78,64 @@ import logging
 import json
 import threading
 import time
-import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from pathlib import Path
 from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 
-from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from .scope_utils import Scope, build_scope_clause, apply_scope
 
-from .unified_event_bus import UnifiedEventBus
+def _prefer_relative(module: str):
+    """Import *module* preferring a relative lookup when possible."""
+
+    try:
+        return importlib.import_module(f".{module}", __package__)
+    except ImportError as exc:
+        message = str(exc)
+        qualified_names = {module}
+        if __package__:
+            qualified_names.add(f"{__package__}.{module}")
+        if exc.name in qualified_names and "parent" in message and "known" in message:
+            return importlib.import_module(module)
+        raise
+    except (TypeError, ValueError) as exc:
+        if "parent package" in str(exc) or "package' argument is required" in str(exc):
+            return importlib.import_module(module)
+        raise
+
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
+_scope_utils = _prefer_relative("scope_utils")
+Scope = _scope_utils.Scope
+build_scope_clause = _scope_utils.build_scope_clause
+apply_scope = _scope_utils.apply_scope
+
+_unified_event_bus_module = _prefer_relative("unified_event_bus")
+UnifiedEventBus = _unified_event_bus_module.UnifiedEventBus
 try:  # pragma: no cover - allow flat imports
-    from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+    _shared_event_bus_module = _prefer_relative("shared_event_bus")
+    _SHARED_EVENT_BUS = _shared_event_bus_module.event_bus
 except Exception:  # pragma: no cover - flat layout fallback
-    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
-from .roi_thresholds import ROIThresholds
-from .threshold_service import (
-    ThresholdService,
-    threshold_service as _DEFAULT_THRESHOLD_SERVICE,
-)
-from .sandbox_settings import SandboxSettings
-from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
-from .code_database import PatchHistoryDB
-from .forecasting import ForecastModel, create_model
+    _SHARED_EVENT_BUS = importlib.import_module("shared_event_bus").event_bus  # type: ignore
+
+_roi_thresholds_module = _prefer_relative("roi_thresholds")
+ROIThresholds = _roi_thresholds_module.ROIThresholds
+
+_threshold_service_module = _prefer_relative("threshold_service")
+ThresholdService = _threshold_service_module.ThresholdService
+_DEFAULT_THRESHOLD_SERVICE = _threshold_service_module.threshold_service
+
+_sandbox_settings_module = _prefer_relative("sandbox_settings")
+SandboxSettings = _sandbox_settings_module.SandboxSettings
+
+_evolution_history_module = _prefer_relative("evolution_history_db")
+EvolutionHistoryDB = _evolution_history_module.EvolutionHistoryDB
+EvolutionEvent = _evolution_history_module.EvolutionEvent
+
+_code_database_module = _prefer_relative("code_database")
+PatchHistoryDB = _code_database_module.PatchHistoryDB
+
+_forecasting_module = _prefer_relative("forecasting")
+ForecastModel = _forecasting_module.ForecastModel
+create_model = _forecasting_module.create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -115,20 +174,21 @@ except Exception:  # pragma: no cover - optional dependency
     )
 
 try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB
+    _vector_metrics_module = _prefer_relative("vector_metrics_db")
 except Exception:
     VectorMetricsDB = None  # type: ignore
+else:
+    VectorMetricsDB = _vector_metrics_module.VectorMetricsDB
 
 
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
-from .self_coding_thresholds import (
-    SelfCodingThresholds,
-    update_thresholds as _save_sc_thresholds,
-    get_thresholds as _load_sc_thresholds,
-    _load_config as _load_sc_config,
-)
+_self_coding_thresholds_module = _prefer_relative("self_coding_thresholds")
+SelfCodingThresholds = _self_coding_thresholds_module.SelfCodingThresholds
+_save_sc_thresholds = _self_coding_thresholds_module.update_thresholds
+_load_sc_thresholds = _self_coding_thresholds_module.get_thresholds
+_load_sc_config = _self_coding_thresholds_module._load_config
 
 try:  # pragma: no cover - optional dependency
     sys.modules.pop("watchdog", None)
