@@ -1,6 +1,18 @@
 # flake8: noqa
 from __future__ import annotations
 
+import sys
+
+_this_module = sys.modules.setdefault(__name__, sys.modules.get(__name__))
+for _alias in (
+    "sandbox_runner.cycle",
+    "menace.sandbox_runner.cycle",
+    "menace_sandbox.sandbox_runner.cycle",
+):
+    if _alias != __name__:
+        sys.modules[_alias] = _this_module
+del _alias, _this_module
+
 import logging
 from pathlib import Path
 
@@ -12,7 +24,6 @@ import subprocess
 import shutil
 import time
 import asyncio
-import sys
 import threading
 import queue
 import atexit
