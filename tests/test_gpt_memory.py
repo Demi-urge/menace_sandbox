@@ -12,7 +12,7 @@ class _DummyModel:
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 
 
 def test_store_and_retrieve_with_tags():

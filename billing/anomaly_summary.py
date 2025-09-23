@@ -6,7 +6,7 @@ from collections import Counter
 from typing import Dict, Any
 
 from menace_sanity_layer import list_anomalies
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from log_tags import FEEDBACK
 from metrics_aggregator import MetricsDB
 

@@ -550,16 +550,18 @@ class DBRouter:
         # menace instance inside it.
         local_path = (
             os.path.join(local_db_path, f"{menace_id}.db")
-            if os.path.isdir(local_db_path)
+            if local_db_path != ":memory:" and os.path.isdir(local_db_path)
             else local_db_path
         )
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        if local_path != ":memory:":
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
         self.local_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             local_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
         self.local_conn.menace_id = menace_id
 
-        os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
+        if shared_db_path != ":memory:":
+            os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
         self.shared_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             shared_db_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
@@ -821,28 +823,33 @@ def init_db_router(
 
     project_root = get_project_root()
 
-    if local_db_path is None:
+    if local_db_path == ":memory:":
+        local_path_str = ":memory:"
+    elif local_db_path is None:
         try:
             local_path = resolve_path(f"menace_{menace_id}_local.db")
         except FileNotFoundError:
             local_path = (project_root / f"menace_{menace_id}_local.db").resolve()
         else:
             local_path = local_path.resolve()
+        local_path_str = str(local_path)
     else:
         local_path = Path(local_db_path).expanduser().resolve()
+        local_path_str = str(local_path)
 
-    if shared_db_path is None:
+    if shared_db_path == ":memory:":
+        shared_path_str = ":memory:"
+    elif shared_db_path is None:
         try:
             shared_path = resolve_path("shared/global.db")
         except FileNotFoundError:
             shared_path = (project_root / "shared" / "global.db").resolve()
         else:
             shared_path = shared_path.resolve()
+        shared_path_str = str(shared_path)
     else:
         shared_path = Path(shared_db_path).expanduser().resolve()
-
-    local_path_str = str(local_path)
-    shared_path_str = str(shared_path)
+        shared_path_str = str(shared_path)
 
     GLOBAL_ROUTER = DBRouter(menace_id, local_path_str, shared_path_str)
     return GLOBAL_ROUTER

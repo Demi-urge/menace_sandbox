@@ -1,6 +1,6 @@
 import pytest
 
-from gpt_memory import GPTMemoryManager, FEEDBACK
+from menace_sandbox.gpt_memory import GPTMemoryManager, FEEDBACK
 from knowledge_retriever import get_feedback
 
 

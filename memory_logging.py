@@ -9,7 +9,7 @@ import re
 import threading
 import time
 
-from gpt_memory import STANDARD_TAGS
+from menace_sandbox.gpt_memory import STANDARD_TAGS
 
 
 logger = logging.getLogger(__name__)

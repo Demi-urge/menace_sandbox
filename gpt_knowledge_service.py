@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, List
 
-from gpt_memory import GPTMemoryManager, INSIGHT, _summarise_text
+from menace_sandbox.gpt_memory import GPTMemoryManager, INSIGHT, _summarise_text
 from governed_retrieval import govern_retrieval, redact
 
 

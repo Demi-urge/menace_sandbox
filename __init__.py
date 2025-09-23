@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING
 import types
 from pathlib import Path
 
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+if str(_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_ROOT))
+
 sys.modules.setdefault(
     "dynamic_path_router",
     types.SimpleNamespace(
@@ -24,6 +28,9 @@ sys.modules.setdefault(
         get_project_root=lambda: Path("."),
     ),
 )
+
+# Provide a legacy alias expected by some bootstrapping utilities.
+sys.modules.setdefault("menace", sys.modules[__name__])
 
 from .roi_calculator import ROICalculator
 # ErrorParser is optional during lightweight imports; fall back to None if heavy
@@ -167,6 +174,33 @@ sys.modules.setdefault("menace.alert_dispatcher", _alert_dispatcher)
 _readiness_index = importlib.import_module(__name__ + ".readiness_index")
 sys.modules.setdefault("readiness_index", _readiness_index)
 sys.modules.setdefault("menace.readiness_index", _readiness_index)
+
+
+class _LegacyModule(types.ModuleType):
+    """Lazy proxy that exposes ``menace_sandbox.gpt_memory`` as ``gpt_memory``."""
+
+    _loaded: types.ModuleType | None
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self._loaded = None
+
+    def _load(self) -> types.ModuleType:
+        if self._loaded is None:
+            module = importlib.import_module(__name__ + ".gpt_memory")
+            self._loaded = module
+            sys.modules[self.__name__] = module
+            return module
+        return self._loaded
+
+    def __getattr__(self, item: str) -> object:
+        return getattr(self._load(), item)
+
+    def __dir__(self) -> list[str]:
+        return dir(self._load())
+
+
+sys.modules.setdefault("gpt_memory", _LegacyModule("gpt_memory"))
 from .dynamic_path_router import resolve_path, resolve_module_path, resolve_dir, get_project_root
 
 _sk_dir = get_project_root() / "sklearn"

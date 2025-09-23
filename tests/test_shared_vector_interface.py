@@ -74,7 +74,7 @@ def test_gpt_memory_routes_through_vector_service():
         ),
     )
 
-    from gpt_memory import GPTMemoryManager
+    from menace_sandbox.gpt_memory import GPTMemoryManager
     mem = GPTMemoryManager(db_path=':memory:', vector_service=svc)
     mem.log_interaction('hi','there')
     mem.close()

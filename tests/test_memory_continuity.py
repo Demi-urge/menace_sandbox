@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
 import db_router
-import gpt_memory as gm
+import menace_sandbox.gpt_memory as gm
 from context_builder import PromptBuildError, handle_failure
-from gpt_memory import (
+from menace_sandbox.gpt_memory import (
     FEEDBACK,
     ERROR_FIX,
     IMPROVEMENT_PATH,
