@@ -22,24 +22,66 @@ import warnings
 import logging
 from time import perf_counter
 from typing import Any, List, Sequence, Mapping, Dict, Optional, Literal
+import sys
 
-import menace_sandbox.db_router as _db_router
-from menace_sandbox.db_router import DBRouter, init_db_router
-from menace_sandbox.gpt_memory_interface import GPTMemoryInterface
-from menace_sandbox.embeddable_db_mixin import log_embedding_metrics
-from menace_sandbox.analysis.semantic_diff_filter import find_semantic_risks
-from menace_sandbox.governed_retrieval import govern_retrieval
-from menace_sandbox.vector_service import SharedVectorService
-from menace_sandbox.security.secret_redactor import redact as redact_secrets
+try:
+    from . import db_router as _db_router
+except ImportError:  # pragma: no cover - flat layout fallback
+    import db_router as _db_router  # type: ignore
+
+try:
+    from .db_router import DBRouter, init_db_router
+except ImportError:  # pragma: no cover - flat layout fallback
+    from db_router import DBRouter, init_db_router  # type: ignore
+
+try:
+    from .gpt_memory_interface import GPTMemoryInterface
+except ImportError:  # pragma: no cover - flat layout fallback
+    from gpt_memory_interface import GPTMemoryInterface  # type: ignore
+
+try:
+    from .embeddable_db_mixin import log_embedding_metrics
+except ImportError:  # pragma: no cover - flat layout fallback
+    from embeddable_db_mixin import log_embedding_metrics  # type: ignore
+
+try:
+    from .analysis.semantic_diff_filter import find_semantic_risks
+except ImportError:  # pragma: no cover - flat layout fallback
+    from analysis.semantic_diff_filter import find_semantic_risks  # type: ignore
+
+try:
+    from .governed_retrieval import govern_retrieval
+except ImportError:  # pragma: no cover - flat layout fallback
+    from governed_retrieval import govern_retrieval  # type: ignore
+
+try:
+    from .vector_service import SharedVectorService
+except ImportError:  # pragma: no cover - flat layout fallback
+    from vector_service import SharedVectorService  # type: ignore
+
+try:
+    from .security.secret_redactor import redact as redact_secrets
+except ImportError:  # pragma: no cover - flat layout fallback
+    from security.secret_redactor import redact as redact_secrets  # type: ignore
 
 
 try:  # Optional dependency used for event publication
-    from menace_sandbox.unified_event_bus import UnifiedEventBus
+    from .unified_event_bus import UnifiedEventBus
+except ImportError:  # pragma: no cover - flat layout fallback
+    try:
+        from unified_event_bus import UnifiedEventBus  # type: ignore
+    except Exception:  # pragma: no cover - optional
+        UnifiedEventBus = None  # type: ignore
 except Exception:  # pragma: no cover - optional
     UnifiedEventBus = None  # type: ignore
 
 try:  # Optional dependency for graph updates
-    from menace_sandbox.knowledge_graph import KnowledgeGraph
+    from .knowledge_graph import KnowledgeGraph
+except ImportError:  # pragma: no cover - flat layout fallback
+    try:
+        from knowledge_graph import KnowledgeGraph  # type: ignore
+    except Exception:  # pragma: no cover - optional
+        KnowledgeGraph = None  # type: ignore
 except Exception:  # pragma: no cover - optional
     KnowledgeGraph = None  # type: ignore
 
@@ -49,7 +91,16 @@ except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
 try:  # Optional dependency used by the light wrapper ``GPTMemory``
-    from menace_sandbox.menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
+    from .menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
+except ImportError:  # pragma: no cover - flat layout fallback
+    try:
+        from menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
+    except Exception:  # pragma: no cover - tests stub this module
+        MenaceMemoryManager = None  # type: ignore
+
+        def _summarise_text(text: str, ratio: float = 0.2) -> str:  # pragma: no cover - fallback
+            """Fallback summariser used when menace_memory_manager is unavailable."""
+            return text[: max(1, int(len(text) * ratio))]
 except Exception:  # pragma: no cover - tests stub this module
     MenaceMemoryManager = None  # type: ignore
 
@@ -59,7 +110,15 @@ except Exception:  # pragma: no cover - tests stub this module
 
 # --------------------------------------------------------------------------- tags
 try:  # Canonical tag constants shared across modules
-    from menace_sandbox.log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except ImportError:  # pragma: no cover - flat layout fallback
+    try:
+        from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+    except Exception:  # pragma: no cover - flat layout fallback
+        FEEDBACK = "feedback"
+        IMPROVEMENT_PATH = "improvement_path"
+        ERROR_FIX = "error_fix"
+        INSIGHT = "insight"
 except Exception:  # pragma: no cover - flat layout fallback
     FEEDBACK = "feedback"
     IMPROVEMENT_PATH = "improvement_path"
@@ -727,6 +786,10 @@ __all__ = [
     "MemoryEntry",
     "GPTMemoryRecord",
 ]
+
+
+# Ensure legacy flat imports resolve to this module instance.
+sys.modules["gpt_memory"] = sys.modules[__name__]
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
