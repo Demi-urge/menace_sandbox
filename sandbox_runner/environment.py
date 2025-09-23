@@ -9,11 +9,22 @@ current repository checkout.
 
 from __future__ import annotations
 
+import sys
+
+_this_module = sys.modules.setdefault(__name__, sys.modules.get(__name__))
+for _alias in (
+    "sandbox_runner.environment",
+    "menace.sandbox_runner.environment",
+    "menace_sandbox.sandbox_runner.environment",
+):
+    if _alias != __name__:
+        sys.modules[_alias] = _this_module
+del _alias, _this_module
+
 import ast
 import asyncio
 import json
 import os
-import sys
 import yaml
 from vector_service.context_builder import ContextBuilder
 
