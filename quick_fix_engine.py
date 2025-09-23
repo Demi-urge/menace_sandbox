@@ -28,9 +28,42 @@ import symtable
 from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
-from .snippet_compressor import compress_snippets
-from .codebase_diff_checker import generate_code_diff, flag_risky_changes
-from .sandbox_settings import SandboxSettings
+if __package__ in {None, ""}:  # pragma: no cover - allow flat execution
+    package_root = Path(__file__).resolve().parent
+    parent = package_root.parent
+    if str(parent) not in sys.path:
+        sys.path.insert(0, str(parent))
+    globals()["__package__"] = package_root.name
+
+def _should_use_flat_import(exc: ImportError, module: str) -> bool:
+    """Return ``True`` when *exc* indicates a missing package context."""
+
+    name = getattr(exc, "name", None)
+    if name in {module, f"menace_sandbox.{module}"}:
+        return True
+    msg = str(exc)
+    return "attempted relative import" in msg or "relative import with no known parent" in msg
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .snippet_compressor import compress_snippets
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "snippet_compressor"):
+        raise
+    from snippet_compressor import compress_snippets  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .codebase_diff_checker import generate_code_diff, flag_risky_changes
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "codebase_diff_checker"):
+        raise
+    from codebase_diff_checker import generate_code_diff, flag_risky_changes  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .sandbox_settings import SandboxSettings
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "sandbox_settings"):
+        raise
+    from sandbox_settings import SandboxSettings  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights, create_context_builder
@@ -583,17 +616,56 @@ def _requires_helper(hints: list[Dict[str, Any]]) -> bool:
     return False
 
 
-from .error_bot import ErrorDB  # noqa: E402
-from .self_coding_manager import SelfCodingManager  # noqa: E402
+try:  # pragma: no cover - prefer package-relative import when available
+    from .error_bot import ErrorDB  # noqa: E402
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "error_bot"):
+        raise
+    from error_bot import ErrorDB  # type: ignore  # noqa: E402
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .self_coding_manager import SelfCodingManager  # noqa: E402
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "self_coding_manager"):
+        raise
+    from self_coding_manager import SelfCodingManager  # type: ignore  # noqa: E402
+
 try:  # pragma: no cover - optional helper
     from .self_coding_manager import _manager_generate_helper_with_builder  # noqa: E402
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "self_coding_manager"):
+        try:
+            from self_coding_manager import _manager_generate_helper_with_builder  # type: ignore  # noqa: E402
+        except Exception:  # pragma: no cover - helper unavailable
+            _manager_generate_helper_with_builder = None  # type: ignore
+    else:
+        _manager_generate_helper_with_builder = None  # type: ignore
 except Exception:  # pragma: no cover - helper unavailable
     _manager_generate_helper_with_builder = None  # type: ignore
-from .knowledge_graph import KnowledgeGraph  # noqa: E402
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .knowledge_graph import KnowledgeGraph  # noqa: E402
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "knowledge_graph"):
+        raise
+    from knowledge_graph import KnowledgeGraph  # type: ignore  # noqa: E402
+
 try:  # pragma: no cover - optional dependency
     from .coding_bot_interface import (  # noqa: E402
         manager_generate_helper as _base_manager_generate_helper,
     )
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "coding_bot_interface"):
+        try:
+            from coding_bot_interface import (  # type: ignore  # noqa: E402
+                manager_generate_helper as _base_manager_generate_helper,
+            )
+        except Exception:  # pragma: no cover - fallback when coding engine unavailable
+            def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
+                raise ImportError("Self-coding engine is required for operation")
+    else:
+        def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
+            raise ImportError("Self-coding engine is required for operation")
 except Exception:  # pragma: no cover - fallback when coding engine unavailable
     def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
         raise ImportError("Self-coding engine is required for operation")
@@ -603,11 +675,29 @@ manager_generate_helper = (
 )
 try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot  # noqa: E402
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "data_bot"):
+        try:
+            from data_bot import DataBot  # type: ignore  # noqa: E402
+        except Exception as inner_exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "data_bot.DataBot is required for quick_fix_engine"
+            ) from inner_exc
+    else:
+        raise RuntimeError(
+            "data_bot.DataBot is required for quick_fix_engine"
+        ) from exc
 except Exception as exc:  # pragma: no cover - missing dependency
     raise RuntimeError(
         "data_bot.DataBot is required for quick_fix_engine"
     ) from exc
-from .resilience import retry_with_backoff  # noqa: E402
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .resilience import retry_with_backoff  # noqa: E402
+except ImportError as exc:  # pragma: no cover - support execution without package context
+    if not _should_use_flat_import(exc, "resilience"):
+        raise
+    from resilience import retry_with_backoff  # type: ignore  # noqa: E402
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (  # noqa: E402
         ContextBuilder,
@@ -658,16 +748,50 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
     ) from exc
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "human_alignment_flagger"):
+        try:
+            from human_alignment_flagger import _collect_diff_data  # type: ignore
+        except Exception as inner_exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "human_alignment_flagger._collect_diff_data is required for quick_fix_engine"
+            ) from inner_exc
+    else:
+        raise RuntimeError(
+            "human_alignment_flagger._collect_diff_data is required for quick_fix_engine"
+        ) from exc
 except Exception as exc:  # pragma: no cover - missing dependency
     raise RuntimeError(
         "human_alignment_flagger._collect_diff_data is required for quick_fix_engine"
     ) from exc
 try:  # pragma: no cover - optional dependency
     from .human_alignment_agent import HumanAlignmentAgent
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "human_alignment_agent"):
+        try:
+            from human_alignment_agent import HumanAlignmentAgent  # type: ignore
+        except Exception:  # pragma: no cover - missing dependency
+            HumanAlignmentAgent = None  # type: ignore[assignment]
+    else:
+        HumanAlignmentAgent = None  # type: ignore[assignment]
 except Exception:  # pragma: no cover - missing dependency
     HumanAlignmentAgent = None  # type: ignore[assignment]
 try:  # pragma: no cover - optional dependency
     from .violation_logger import log_violation
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "violation_logger"):
+        try:
+            from violation_logger import log_violation  # type: ignore
+        except Exception:  # pragma: no cover - missing dependency
+            def log_violation(*_args, **_kwargs) -> None:  # type: ignore[func-returns-value]
+                logging.getLogger(__name__).warning(
+                    "violation logging unavailable; skipping alignment records"
+                )
+    else:
+        def log_violation(*_args, **_kwargs) -> None:  # type: ignore[func-returns-value]
+            logging.getLogger(__name__).warning(
+                "violation logging unavailable; skipping alignment records"
+            )
 except Exception:  # pragma: no cover - missing dependency
     def log_violation(*_args, **_kwargs) -> None:  # type: ignore[func-returns-value]
         logging.getLogger(__name__).warning(
@@ -675,12 +799,36 @@ except Exception:  # pragma: no cover - missing dependency
         )
 try:  # pragma: no cover - optional dependency
     from .advanced_error_management import AutomatedRollbackManager
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "advanced_error_management"):
+        try:
+            from advanced_error_management import AutomatedRollbackManager  # type: ignore
+        except Exception as inner_exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
+            ) from inner_exc
+    else:
+        raise RuntimeError(
+            "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
+        ) from exc
 except Exception as exc:  # pragma: no cover - missing dependency
     raise RuntimeError(
         "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
     ) from exc
 try:  # pragma: no cover - optional dependency
     from .code_database import PatchHistoryDB
+except ImportError as exc:  # pragma: no cover - retry without package context
+    if _should_use_flat_import(exc, "code_database"):
+        try:
+            from code_database import PatchHistoryDB  # type: ignore
+        except Exception as inner_exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "code_database.PatchHistoryDB is required for quick_fix_engine"
+            ) from inner_exc
+    else:
+        raise RuntimeError(
+            "code_database.PatchHistoryDB is required for quick_fix_engine"
+        ) from exc
 except Exception as exc:  # pragma: no cover - missing dependency
     raise RuntimeError(
         "code_database.PatchHistoryDB is required for quick_fix_engine"
