@@ -51,6 +51,7 @@ import importlib
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 if __package__ in {None, ""}:  # pragma: no cover - support script execution
     _THIS_FILE = Path(__file__).resolve()
@@ -80,74 +81,99 @@ import threading
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
+from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast
+
+_MODULE_CACHE: Dict[str, ModuleType] = {}
 
 
-def _prefer_relative(module: str):
-    """Import *module* preferring a relative lookup when possible."""
+def _load_internal_module(name: str) -> ModuleType:
+    """Return *name* from this package falling back to flat imports."""
 
-    try:
-        return importlib.import_module(f".{module}", __package__)
-    except ImportError as exc:
-        message = str(exc)
-        qualified_names = {module}
-        if __package__:
-            qualified_names.add(f"{__package__}.{module}")
-        if exc.name in qualified_names and "parent" in message and "known" in message:
-            return importlib.import_module(module)
-        raise
-    except (TypeError, ValueError) as exc:
-        if "parent package" in str(exc) or "package' argument is required" in str(exc):
-            return importlib.import_module(module)
-        raise
+    cached = _MODULE_CACHE.get(name)
+    if cached is not None:
+        return cached
 
-from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+    module: ModuleType | None = None
+    last_exc: ModuleNotFoundError | None = None
+    if __package__:
+        qualified = f"{__package__}.{name}"
+        try:
+            module = importlib.import_module(qualified)
+        except ModuleNotFoundError as exc:
+            last_exc = exc
+            if exc.name != qualified:
+                raise
 
-_scope_utils = _prefer_relative("scope_utils")
+    if module is None:
+        try:
+            module = importlib.import_module(name)
+        except ModuleNotFoundError as exc:
+            if last_exc is not None:
+                raise last_exc from exc
+            raise
+
+    _MODULE_CACHE[name] = module
+    return module
+
+_db_router_module = _load_internal_module("db_router")
+DBRouter = _db_router_module.DBRouter
+GLOBAL_ROUTER = _db_router_module.GLOBAL_ROUTER
+LOCAL_TABLES = _db_router_module.LOCAL_TABLES
+init_db_router = _db_router_module.init_db_router
+
+_scope_utils = _load_internal_module("scope_utils")
 Scope = _scope_utils.Scope
 build_scope_clause = _scope_utils.build_scope_clause
 apply_scope = _scope_utils.apply_scope
 
-_unified_event_bus_module = _prefer_relative("unified_event_bus")
+_unified_event_bus_module = _load_internal_module("unified_event_bus")
 UnifiedEventBus = _unified_event_bus_module.UnifiedEventBus
-try:  # pragma: no cover - allow flat imports
-    _shared_event_bus_module = _prefer_relative("shared_event_bus")
-    _SHARED_EVENT_BUS = _shared_event_bus_module.event_bus
-except Exception:  # pragma: no cover - flat layout fallback
-    _SHARED_EVENT_BUS = importlib.import_module("shared_event_bus").event_bus  # type: ignore
+_shared_event_bus_module = _load_internal_module("shared_event_bus")
+_SHARED_EVENT_BUS = _shared_event_bus_module.event_bus
 
-_roi_thresholds_module = _prefer_relative("roi_thresholds")
+_roi_thresholds_module = _load_internal_module("roi_thresholds")
 ROIThresholds = _roi_thresholds_module.ROIThresholds
 
-_threshold_service_module = _prefer_relative("threshold_service")
+_threshold_service_module = _load_internal_module("threshold_service")
 ThresholdService = _threshold_service_module.ThresholdService
 _DEFAULT_THRESHOLD_SERVICE = _threshold_service_module.threshold_service
 
-_sandbox_settings_module = _prefer_relative("sandbox_settings")
+_sandbox_settings_module = _load_internal_module("sandbox_settings")
 SandboxSettings = _sandbox_settings_module.SandboxSettings
 
-_evolution_history_module = _prefer_relative("evolution_history_db")
+_evolution_history_module = _load_internal_module("evolution_history_db")
 EvolutionHistoryDB = _evolution_history_module.EvolutionHistoryDB
 EvolutionEvent = _evolution_history_module.EvolutionEvent
 
-_code_database_module = _prefer_relative("code_database")
+_code_database_module = _load_internal_module("code_database")
 PatchHistoryDB = _code_database_module.PatchHistoryDB
 
-_forecasting_module = _prefer_relative("forecasting")
+_forecasting_module = _load_internal_module("forecasting")
 ForecastModel = _forecasting_module.ForecastModel
 create_model = _forecasting_module.create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
-    from .capital_management_bot import CapitalManagementBot
-    from .self_improvement.baseline_tracker import BaselineTracker
+    from menace_sandbox.capital_management_bot import CapitalManagementBot as _CapitalManagementBot
+    from menace_sandbox.self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
+
+    CapitalManagementBot = cast(
+        "type[_CapitalManagementBot]",
+        _load_internal_module("capital_management_bot").CapitalManagementBot,
+    )
+    BaselineTracker = cast(
+        "type[_BaselineTracker]",
+        _load_internal_module("self_improvement.baseline_tracker").BaselineTracker,
+    )
+else:
+    CapitalManagementBot = object  # type: ignore[assignment]
+    BaselineTracker = object  # type: ignore[assignment]
 
 
 def _create_baseline_tracker(*args: object, **kwargs: object) -> "BaselineTracker":
     """Lazily import :class:`BaselineTracker` to avoid circular imports."""
 
-    from .self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
-
-    return _BaselineTracker(*args, **kwargs)
+    tracker_cls = _load_internal_module("self_improvement.baseline_tracker").BaselineTracker
+    return tracker_cls(*args, **kwargs)
 
 try:
     import psutil  # type: ignore
@@ -174,7 +200,7 @@ except Exception:  # pragma: no cover - optional dependency
     )
 
 try:  # pragma: no cover - optional dependency
-    _vector_metrics_module = _prefer_relative("vector_metrics_db")
+    _vector_metrics_module = _load_internal_module("vector_metrics_db")
 except Exception:
     VectorMetricsDB = None  # type: ignore
 else:
@@ -184,7 +210,7 @@ else:
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
-_self_coding_thresholds_module = _prefer_relative("self_coding_thresholds")
+_self_coding_thresholds_module = _load_internal_module("self_coding_thresholds")
 SelfCodingThresholds = _self_coding_thresholds_module.SelfCodingThresholds
 _save_sc_thresholds = _self_coding_thresholds_module.update_thresholds
 _load_sc_thresholds = _self_coding_thresholds_module.get_thresholds
@@ -1377,9 +1403,8 @@ class DataBot:
         self.trend_predictor = trend_predictor
         if self.trend_predictor is None:
             try:  # pragma: no cover - optional dependency
-                from .trend_predictor import TrendPredictor as _TP
-
-                self.trend_predictor = _TP()
+                _trend_predictor_module = _load_internal_module("trend_predictor")
+                self.trend_predictor = _trend_predictor_module.TrendPredictor()
             except Exception:
                 self.trend_predictor = None
         # Optional external predictor for projected metrics.
@@ -1522,8 +1547,8 @@ class DataBot:
                 ),
             }
             if start_server or os.getenv("METRICS_PORT"):
-                from .metrics_exporter import start_metrics_server
-
+                _metrics_exporter = _load_internal_module("metrics_exporter")
+                start_metrics_server = _metrics_exporter.start_metrics_server
                 port = int(os.getenv("METRICS_PORT", "8001"))
                 start_metrics_server(port)
 
@@ -2933,7 +2958,7 @@ class DataBot:
             return []
 
         try:
-            from . import anomaly_detection
+            anomaly_detection = _load_internal_module("anomaly_detection")
 
             scores = anomaly_detection.anomaly_scores(
                 values, metrics_db=metrics_db, field=field
