@@ -76,11 +76,19 @@ from .threshold_service import (
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
-from .self_improvement.baseline_tracker import BaselineTracker
 from .forecasting import ForecastModel, create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
+    from .self_improvement.baseline_tracker import BaselineTracker
+
+
+def _create_baseline_tracker(*args: object, **kwargs: object) -> "BaselineTracker":
+    """Lazily import :class:`BaselineTracker` to avoid circular imports."""
+
+    from .self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
+
+    return _BaselineTracker(*args, **kwargs)
 
 try:
     import psutil  # type: ignore
@@ -1481,7 +1489,7 @@ class DataBot:
             try:
                 self.reload_thresholds(name)
                 self._baseline.setdefault(
-                    name, BaselineTracker(window=self.baseline_window)
+                    name, _create_baseline_tracker(window=self.baseline_window)
                 )
                 self._ema_baseline.setdefault(
                     name,
@@ -1544,7 +1552,7 @@ class DataBot:
         try:
             self.reload_thresholds(str(name))
             self._baseline.setdefault(
-                str(name), BaselineTracker(window=self.baseline_window)
+                str(name), _create_baseline_tracker(window=self.baseline_window)
             )
             self._ema_baseline.setdefault(
                 str(name), {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0}
@@ -1574,7 +1582,7 @@ class DataBot:
             return
         try:
             self.reload_thresholds(str(name))
-            self._baseline[str(name)] = BaselineTracker(window=self.baseline_window)
+            self._baseline[str(name)] = _create_baseline_tracker(window=self.baseline_window)
             self._ema_baseline[str(name)] = {
                 "roi": 0.0,
                 "errors": 0.0,
@@ -1613,7 +1621,7 @@ class DataBot:
             if bot:
                 # Reload thresholds and reset rolling baselines for the bot
                 self.reload_thresholds(bot)
-                tracker = BaselineTracker(window=self.baseline_window)
+                tracker = _create_baseline_tracker(window=self.baseline_window)
                 tracker.update(record_momentum=False, roi=roi_after, errors=errors_after)
                 self._baseline[bot] = tracker
                 self._ema_baseline[bot] = {
@@ -1964,7 +1972,7 @@ class DataBot:
                             "failed to publish threshold update failed event"
                         )
         tracker = self._baseline.setdefault(
-            bot, BaselineTracker(window=self.baseline_window)
+            bot, _create_baseline_tracker(window=self.baseline_window)
         )
         ema = self._ema_baseline.setdefault(
             bot,
@@ -2478,7 +2486,7 @@ class DataBot:
         tracker = None
         if bot:
             tracker = self._baseline.setdefault(
-                bot, BaselineTracker(window=self.baseline_window)
+                bot, _create_baseline_tracker(window=self.baseline_window)
             )
         roi_drop = (
             self.roi_drop_threshold
