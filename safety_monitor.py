@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, TYPE_CHECKING
 import sqlite3
 import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER
-from .bot_testing_bot import BotTestingBot
 from .unified_event_bus import UnifiedEventBus
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
+    from .bot_testing_bot import BotTestingBot
 
 
 @dataclass
@@ -24,12 +26,16 @@ class SafetyMonitor:
 
     def __init__(
         self,
-        tester: BotTestingBot | None = None,
+        tester: "BotTestingBot" | None = None,
         event_bus: Optional[UnifiedEventBus] = None,
         *,
         config: SafetyConfig | None = None,
     ) -> None:
-        self.tester = tester or BotTestingBot()
+        if tester is None:
+            from .bot_testing_bot import BotTestingBot as _BotTestingBot
+
+            tester = _BotTestingBot()
+        self.tester = tester
         self.event_bus = event_bus
         self.config = config or SafetyConfig()
         self.fail_counts: Dict[str, int] = {}
