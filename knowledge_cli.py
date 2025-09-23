@@ -8,7 +8,7 @@ from typing import Iterable
 
 import os
 
-from gpt_memory import INSIGHT
+from menace_sandbox.gpt_memory import INSIGHT
 from local_knowledge_module import init_local_knowledge
 
 

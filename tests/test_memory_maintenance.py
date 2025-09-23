@@ -2,7 +2,7 @@ import os
 import time
 from pathlib import Path
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance
 
 

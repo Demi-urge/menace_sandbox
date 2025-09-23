@@ -23,26 +23,23 @@ import logging
 from time import perf_counter
 from typing import Any, List, Sequence, Mapping, Dict, Optional, Literal
 
-from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from gpt_memory_interface import GPTMemoryInterface
-from embeddable_db_mixin import log_embedding_metrics
-from analysis.semantic_diff_filter import find_semantic_risks
-from governed_retrieval import govern_retrieval
-from vector_service import SharedVectorService
-
-try:
-    from security.secret_redactor import redact as redact_secrets
-except Exception:  # pragma: no cover - legacy path
-    from secret_redactor import redact_secrets  # type: ignore
+import menace_sandbox.db_router as _db_router
+from menace_sandbox.db_router import DBRouter, init_db_router
+from menace_sandbox.gpt_memory_interface import GPTMemoryInterface
+from menace_sandbox.embeddable_db_mixin import log_embedding_metrics
+from menace_sandbox.analysis.semantic_diff_filter import find_semantic_risks
+from menace_sandbox.governed_retrieval import govern_retrieval
+from menace_sandbox.vector_service import SharedVectorService
+from menace_sandbox.security.secret_redactor import redact as redact_secrets
 
 
 try:  # Optional dependency used for event publication
-    from unified_event_bus import UnifiedEventBus
+    from menace_sandbox.unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - optional
     UnifiedEventBus = None  # type: ignore
 
 try:  # Optional dependency for graph updates
-    from knowledge_graph import KnowledgeGraph
+    from menace_sandbox.knowledge_graph import KnowledgeGraph
 except Exception:  # pragma: no cover - optional
     KnowledgeGraph = None  # type: ignore
 
@@ -52,7 +49,7 @@ except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
 try:  # Optional dependency used by the light wrapper ``GPTMemory``
-    from menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
+    from menace_sandbox.menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
 except Exception:  # pragma: no cover - tests stub this module
     MenaceMemoryManager = None  # type: ignore
 
@@ -62,7 +59,7 @@ except Exception:  # pragma: no cover - tests stub this module
 
 # --------------------------------------------------------------------------- tags
 try:  # Canonical tag constants shared across modules
-    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    from menace_sandbox.log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - flat layout fallback
     FEEDBACK = "feedback"
     IMPROVEMENT_PATH = "improvement_path"
@@ -131,7 +128,7 @@ class GPTMemoryManager(GPTMemoryInterface):
         router: "DBRouter | None" = None,
     ) -> None:
         self.db_path = Path(db_path)
-        self.router = router or GLOBAL_ROUTER
+        self.router = router or _db_router.GLOBAL_ROUTER
         if self.router is None:
             self.router = init_db_router("memory", str(self.db_path), str(self.db_path))
         self.conn = self.router.get_connection("memory")
@@ -510,6 +507,13 @@ class GPTMemoryManager(GPTMemoryInterface):
             self.conn.close()
         except Exception:  # pragma: no cover - defensive
             pass
+
+        if self.router is _db_router.GLOBAL_ROUTER:
+            try:
+                self.router.close()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            _db_router.GLOBAL_ROUTER = None
 
 
 # ---------------------------------------------------------------------------

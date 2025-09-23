@@ -3,9 +3,67 @@
 This package provides the canonical vector retrieval service.
 """
 
+from __future__ import annotations
+
+from typing import Any, Dict
+
+
 class _Stub:  # pragma: no cover - simple callable placeholder
     def __init__(self, *args, **kwargs):
         pass
+
+
+class _SimpleSharedVectorService:
+    """Lightweight fallback implementation used when vectorizer is unavailable."""
+
+    def __init__(self, embedder: Any | None = None, vector_store: Any | None = None):
+        self.embedder = embedder or _Stub()
+        self.vector_store = vector_store
+
+    def _ensure_vector(self, kind: str, payload: Dict[str, Any]) -> list[float]:
+        if kind == "bot":
+            try:  # pragma: no cover - best effort import
+                from bot_vectorizer import BotVectorizer  # type: ignore
+            except Exception:
+                return [0.0]
+            return [0.0] * BotVectorizer().dim
+
+        text = ""
+        if kind == "text":
+            text = str(payload.get("text", ""))
+        else:
+            text = " ".join(
+                str(value)
+                for key, value in payload.items()
+                if isinstance(value, str) and key != "text"
+            )
+
+        if hasattr(self.embedder, "encode"):
+            try:
+                vecs = self.embedder.encode([text])
+                vec = vecs[0]
+                if hasattr(vec, "tolist"):
+                    vec = vec.tolist()
+                return [float(x) for x in vec]
+            except Exception:
+                pass
+        return [0.0]
+
+    def vectorise(self, kind: str, payload: Dict[str, Any]) -> list[float]:
+        return self._ensure_vector(kind, payload)
+
+    def vectorise_and_store(
+        self, kind: str, record_id: str, payload: Dict[str, Any]
+    ) -> list[float]:
+        vec = self.vectorise(kind, payload)
+        if self.vector_store is not None:
+            try:
+                self.vector_store.add(
+                    kind, record_id, vec, metadata=payload
+                )
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+        return vec
 
 
 # ``Retriever`` historically provided ``FallbackResult`` so we default to the
@@ -22,7 +80,8 @@ class VectorServiceError(Exception):  # pragma: no cover - default error type
 
 RateLimitError = MalformedPromptError = VectorServiceError
 
-Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = SharedVectorService = ContextBuilder = _Stub  # type: ignore
+Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = ContextBuilder = _Stub  # type: ignore
+SharedVectorService: type[_SimpleSharedVectorService] | type[_Stub] = _SimpleSharedVectorService
 
 try:  # pragma: no cover - upgrade default errors when available
     from .exceptions import (

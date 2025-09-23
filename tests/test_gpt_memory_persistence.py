@@ -1,6 +1,6 @@
 import pytest
 
-from gpt_memory import GPTMemoryManager, FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
+from menace_sandbox.gpt_memory import GPTMemoryManager, FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
 from gpt_knowledge_service import GPTKnowledgeService
 
 

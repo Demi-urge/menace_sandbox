@@ -59,7 +59,7 @@ LOCAL_DB_PATH = settings.menace_local_db_path or str(
 SHARED_DB_PATH = settings.menace_shared_db_path or str(resolve_path("shared/global.db"))
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance, _load_retention_rules
 from gpt_knowledge_service import GPTKnowledgeService
 from local_knowledge_module import LocalKnowledgeModule, init_local_knowledge

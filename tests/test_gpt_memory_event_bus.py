@@ -1,4 +1,4 @@
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 
 
 class DummyBus:

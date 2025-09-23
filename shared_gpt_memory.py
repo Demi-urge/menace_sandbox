@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Shared GPT memory manager instance for all ChatGPT clients."""
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE
 
 # Single global GPT memory instance reused across bots

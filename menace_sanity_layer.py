@@ -57,7 +57,7 @@ except Exception:  # pragma: no cover - best effort
     DiscrepancyRecord = None  # type: ignore
 
 try:  # Optional dependency – GPT memory manager
-    from gpt_memory import GPTMemoryManager
+    from menace_sandbox.gpt_memory import GPTMemoryManager
 except Exception:  # pragma: no cover - best effort
     GPTMemoryManager = None  # type: ignore
 

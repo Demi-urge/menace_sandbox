@@ -13,7 +13,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - allow running without dependency
     SentimentIntensityAnalyzer = None  # type: ignore
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
 from db_router import init_db_router
 

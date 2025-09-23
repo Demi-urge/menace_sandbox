@@ -1,5 +1,5 @@
 from db_router import DBRouter
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 
 
 def test_gpt_memory_uses_router(tmp_path):

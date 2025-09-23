@@ -39,7 +39,7 @@ class _DummyModel:
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-from gpt_memory import GPTMemoryManager, _summarise_text
+from menace_sandbox.gpt_memory import GPTMemoryManager, _summarise_text
 
 
 def test_memory_continuity_and_summary(tmp_path):

@@ -3,9 +3,9 @@ import pytest
 
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 import db_router
-import gpt_memory as gm
+import menace_sandbox.gpt_memory as gm
 from knowledge_retriever import (
     get_feedback,
     get_error_fixes,

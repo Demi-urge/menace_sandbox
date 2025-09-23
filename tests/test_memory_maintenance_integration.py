@@ -2,7 +2,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from gpt_knowledge_service import GPTKnowledgeService
 from memory_maintenance import MemoryMaintenance
 

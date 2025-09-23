@@ -9,7 +9,7 @@ import argparse
 import sys
 from typing import Dict, Mapping, TYPE_CHECKING, Iterable
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_knowledge_service import GPTKnowledgeService

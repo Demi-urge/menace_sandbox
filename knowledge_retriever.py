@@ -8,7 +8,7 @@ functions for bots to fetch feedback, error fixes and other insights.
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from governed_retrieval import govern_retrieval
 from secret_redactor import redact_secrets, redact_secrets_dict
 try:  # pragma: no cover - allow flat imports

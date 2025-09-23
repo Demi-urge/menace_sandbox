@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import types
 
-from gpt_memory import GPTMemoryManager
+from menace_sandbox.gpt_memory import GPTMemoryManager
 from tests import test_self_coding_engine as sce_mod
 from tests import test_self_improvement_logging as sil
 
