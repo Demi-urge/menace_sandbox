@@ -43,72 +43,60 @@ _INITIALISED = False
 logger = get_logger(__name__)
 
 
+_REPO_PACKAGE = Path(__file__).resolve().parents[1].name
+_OPTIONAL_MODULE_CACHE: dict[str, ModuleType] = {}
+
+
+def _candidate_optional_module_names(name: str) -> list[str]:
+    """Return import names to try for optional module ``name``."""
+
+    candidates = [name]
+    package_hint = (__package__ or "").split(".", 1)[0]
+    for prefix in (package_hint, _REPO_PACKAGE):
+        if prefix and not name.startswith(f"{prefix}."):
+            qualified = f"{prefix}.{name}"
+            if qualified not in candidates:
+                candidates.append(qualified)
+    return candidates
+
+
 def _import_optional_module(name: str) -> ModuleType:
-    """Import ``name`` preferring in-repo modules and align aliases.
+    """Import ``name`` trying package-qualified fallbacks when necessary."""
 
-    Optional integrations live next to the sandbox sources, which means they
-    can be imported either via their flat module name (``quick_fix_engine``)
-    when running from a checkout or via the installed package namespace (for
-    example ``menace_sandbox.quick_fix_engine``).  This helper resolves those
-    modules by first attempting the qualified import for every plausible root
-    package and only falling back to the flat import when the qualified module
-    truly does not exist.  When an import succeeds the helper ensures both the
-    flat and qualified names reference the same module object inside
-    :data:`sys.modules` so legacy callers keep working.
-    """
+    cached = _OPTIONAL_MODULE_CACHE.get(name)
+    if cached is not None:
+        return cached
 
-    repo_root = Path(__file__).resolve().parents[1]
-    module_rel_path = name.replace(".", os.sep)
-    module_file = repo_root / f"{module_rel_path}.py"
-    package_init = repo_root / module_rel_path / "__init__.py"
+    candidates = _candidate_optional_module_names(name)
+    last_exc: ImportError | None = None
 
-    package_hint = __package__ or ""
-    root_candidates: list[str] = []
-    if package_hint:
-        package_root = package_hint.split(".", 1)[0]
-        if package_root:
-            root_candidates.append(package_root)
-    repo_root_package = repo_root.name
-    if repo_root_package not in root_candidates:
-        root_candidates.append(repo_root_package)
-
-    is_local = module_file.exists() or package_init.exists()
-    module: ModuleType | None = None
-    last_exc: ModuleNotFoundError | None = None
-
-    if is_local:
-        for root_package in root_candidates:
-            qualified_name = f"{root_package}.{name}"
-            try:
-                module = importlib.import_module(qualified_name)
-            except ModuleNotFoundError as exc:
-                missing = getattr(exc, "name", "") or ""
-                missing_candidates = {qualified_name, root_package}
-                if "." in qualified_name:
-                    missing_candidates.add(qualified_name.split(".", 1)[0])
-                if missing in missing_candidates:
-                    last_exc = exc
-                    continue
-                raise
-            else:
-                break
+    for candidate in candidates:
+        cached = _OPTIONAL_MODULE_CACHE.get(candidate)
+        if cached is not None:
+            _OPTIONAL_MODULE_CACHE[name] = cached
+            if candidate != name:
+                sys.modules.setdefault(name, cached)
+            return cached
+        try:
+            module = importlib.import_module(candidate)
+        except ModuleNotFoundError as exc:
+            last_exc = exc
+            continue
+        except ImportError as exc:
+            last_exc = exc
+            if "relative import with no known parent package" in str(exc).lower():
+                continue
+            raise
         else:
-            try:
-                module = importlib.import_module(name)
-            except ModuleNotFoundError as exc:
-                raise last_exc or exc
-    else:
-        module = importlib.import_module(name)
+            _OPTIONAL_MODULE_CACHE[name] = module
+            _OPTIONAL_MODULE_CACHE[candidate] = module
+            if candidate != name:
+                sys.modules[name] = module
+            return module
 
-    if is_local and module is not None:
-        for root_package in root_candidates:
-            sys.modules[f"{root_package}.{name}"] = module
-    if module is not None:
-        sys.modules[name] = module
-
-    if module is None:
-        raise ModuleNotFoundError(name)
-    return module
+    if last_exc is not None:
+        raise last_exc
+    raise ModuleNotFoundError(name)
 
 
 def _ensure_sqlite_db(path: Path) -> None:
@@ -128,11 +116,16 @@ def _start_optional_services(modules: Iterable[str]) -> None:
 
     for mod in modules:
         svc_name = f"{mod}_service"
-        try:
-            svc_mod = importlib.import_module(svc_name)
-        except ModuleNotFoundError:
-            logger.info("%s service not installed", svc_name)
-            continue
+        svc_mod = _OPTIONAL_MODULE_CACHE.get(svc_name)
+        if svc_mod is None:
+            try:
+                svc_mod = _import_optional_module(svc_name)
+            except ModuleNotFoundError:
+                logger.info("%s service not installed", svc_name)
+                continue
+            except ImportError:
+                logger.warning("failed to import optional service %s", svc_name, exc_info=True)
+                continue
         start_fn = getattr(svc_mod, "start", None) or getattr(svc_mod, "main", None)
         if callable(start_fn):
             try:
@@ -153,18 +146,23 @@ def _verify_optional_modules(
 
     missing: set[str] = set()
     for mod in modules:
+        if mod in _OPTIONAL_MODULE_CACHE:
+            continue
         try:
-            _import_optional_module(mod)
-        except ModuleNotFoundError:
+            module = _import_optional_module(mod)
+        except ImportError as exc:
             missing.add(mod)
             min_ver = versions.get(mod, "")
             ver_hint = f">={min_ver}" if min_ver else ""
             logger.warning(
-                "%s module not found; install with 'pip install %s%s' to enable it",
+                "%s module not found; install with 'pip install %s%s' to enable it (last error: %s)",
                 mod,
                 mod,
                 ver_hint,
+                exc,
             )
+        else:
+            _OPTIONAL_MODULE_CACHE[mod] = module
     return missing
 
 
@@ -370,16 +368,29 @@ def _initialize_autonomous_sandbox(
         if mod in missing_optional:
             # Already warned about the missing module above.
             continue
-        try:
-            module = _import_optional_module(mod)
-        except ModuleNotFoundError:
-            logger.warning(
-                "%s service not found; install with 'pip install %s>=%s' to enable it",
-                mod,
-                mod,
-                min_version,
-            )
-            continue
+        module = _OPTIONAL_MODULE_CACHE.get(mod)
+        if module is None:
+            try:
+                module = _import_optional_module(mod)
+            except ModuleNotFoundError:
+                logger.warning(
+                    "%s service not found; install with 'pip install %s>=%s' to enable it",
+                    mod,
+                    mod,
+                    min_version,
+                )
+                missing_optional.add(mod)
+                continue
+            except ImportError:
+                logger.warning(
+                    "failed to import optional service %s; install %s>=%s to enable it",
+                    mod,
+                    mod,
+                    min_version,
+                    exc_info=True,
+                )
+                missing_optional.add(mod)
+                continue
         version: str | None
         try:
             version = metadata.version(mod)

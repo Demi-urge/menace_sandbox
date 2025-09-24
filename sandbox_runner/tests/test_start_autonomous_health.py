@@ -8,6 +8,11 @@ from dynamic_path_router import resolve_path
 
 sys.path.append(str(resolve_path("")))
 
+import dynamic_path_router as _dynamic_path_router  # noqa: E402  (ensure repo_root exists for imports)
+
+if not hasattr(_dynamic_path_router, "repo_root"):
+    _dynamic_path_router.repo_root = _dynamic_path_router.get_project_root  # type: ignore[attr-defined]
+
 
 # Minimal stubs for external modules used during sandbox bootstrap
 
@@ -46,6 +51,41 @@ _setup_base_packages()
 from sandbox_settings import SandboxSettings  # noqa: E402
 import sandbox_runner.bootstrap as bootstrap  # noqa: E402
 import start_autonomous_sandbox as sas  # noqa: E402
+
+
+def test_optional_import_retries_with_package(monkeypatch):
+    cache: dict[str, types.ModuleType] = {}
+    monkeypatch.setattr(bootstrap, "_OPTIONAL_MODULE_CACHE", cache)
+
+    import_calls: list[str] = []
+    module = types.ModuleType("menace_sandbox.fallback_demo_mod")
+
+    def fake_import(name: str):
+        import_calls.append(name)
+        if name == "fallback_demo_mod":
+            raise ImportError("attempted relative import with no known parent package")
+        if name == "menace_sandbox.fallback_demo_mod":
+            return module
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(bootstrap.importlib, "import_module", fake_import)
+    monkeypatch.delitem(sys.modules, "fallback_demo_mod", raising=False)
+    monkeypatch.delitem(sys.modules, "sandbox_runner.fallback_demo_mod", raising=False)
+    monkeypatch.delitem(sys.modules, "menace_sandbox.fallback_demo_mod", raising=False)
+
+    loaded = bootstrap._import_optional_module("fallback_demo_mod")
+
+    assert loaded is module
+    assert import_calls[0] == "fallback_demo_mod"
+    assert import_calls[-1] == "menace_sandbox.fallback_demo_mod"
+    assert import_calls.index("menace_sandbox.fallback_demo_mod") > 0
+    assert sys.modules["fallback_demo_mod"] is module
+    assert cache["fallback_demo_mod"] is module
+
+    import_calls.clear()
+    again = bootstrap._import_optional_module("fallback_demo_mod")
+    assert again is module
+    assert import_calls == []
 
 
 def test_sandbox_health_and_artifacts(tmp_path, monkeypatch):
