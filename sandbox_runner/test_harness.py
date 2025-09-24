@@ -37,8 +37,35 @@ else:  # pragma: no branch - bookkeeping
 
 if _environment is not None:
     get_edge_case_stubs = getattr(_environment, "get_edge_case_stubs", lambda: {})
-    preserve_sandbox_env = _environment.preserve_sandbox_env
-    cleanup_artifacts = _environment.cleanup_artifacts
+    cleanup_artifacts = getattr(
+        _environment, "cleanup_artifacts", lambda *_args, **_kwargs: None
+    )
+
+    _preserve_impl = getattr(_environment, "preserve_sandbox_env", None)
+    if _preserve_impl is not None:
+        preserve_sandbox_env = _preserve_impl
+    else:
+
+        @contextmanager
+        def preserve_sandbox_env(*_args, **_kwargs):
+            """Best-effort fallback when environment helpers miss ``preserve``."""
+
+            snapshot = {
+                key: os.environ.get(key)
+                for key in tuple(os.environ.keys())
+                if key.startswith("SANDBOX_")
+            }
+            try:
+                yield
+            finally:
+                current = {key for key in os.environ if key.startswith("SANDBOX_")}
+                for key in current - snapshot.keys():
+                    os.environ.pop(key, None)
+                for key, value in snapshot.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
 else:
 
     def get_edge_case_stubs() -> dict[str, Any]:  # pragma: no cover - simple fallback
