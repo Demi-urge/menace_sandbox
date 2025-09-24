@@ -16,13 +16,70 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import json
 import argparse
-import warnings
+import importlib
+import importlib.util
+import json
 import logging
-from time import perf_counter
-from typing import Any, List, Sequence, Mapping, Dict, Optional, Literal
 import sys
+import warnings
+from time import perf_counter
+from types import ModuleType
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
+
+if __package__ in {None, ""}:  # pragma: no cover - support script execution
+    _THIS_FILE = Path(__file__).resolve()
+    _PACKAGE_ROOT = _THIS_FILE.parent
+    _REPO_PARENT = _PACKAGE_ROOT.parent
+    if str(_REPO_PARENT) not in sys.path:
+        sys.path.insert(0, str(_REPO_PARENT))
+
+    _PKG_NAME = "menace_sandbox"
+    globals()["__package__"] = _PKG_NAME
+
+    try:
+        _pkg_module = importlib.import_module(_PKG_NAME)
+    except ModuleNotFoundError:
+        _spec = importlib.util.spec_from_file_location(
+            _PKG_NAME,
+            _PACKAGE_ROOT / "__init__.py",
+            submodule_search_locations=[str(_PACKAGE_ROOT)],
+        )
+        if _spec and _spec.loader:
+            _pkg_module = importlib.util.module_from_spec(_spec)
+            sys.modules[_PKG_NAME] = _pkg_module
+            _spec.loader.exec_module(_pkg_module)
+        else:  # pragma: no cover - fallback if package spec missing
+            _pkg_module = ModuleType(_PKG_NAME)
+            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
+            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
+            sys.modules[_PKG_NAME] = _pkg_module
+    else:
+        _pkg_module = sys.modules[_PKG_NAME]
+
+    _pkg_path = getattr(_pkg_module, "__path__", None)
+    _pkg_root_str = str(_PACKAGE_ROOT)
+    if _pkg_path is None:
+        _pkg_module.__path__ = [_pkg_root_str]
+    else:
+        try:
+            _existing_paths = list(_pkg_path)
+        except TypeError:  # pragma: no cover - exotic path container
+            _pkg_module.__path__ = [_pkg_root_str]
+        else:
+            if _pkg_root_str not in _existing_paths:
+                try:
+                    _pkg_path.insert(0, _pkg_root_str)
+                except Exception:  # pragma: no cover - immutable path
+                    _pkg_module.__path__ = [_pkg_root_str, *_existing_paths]
+
+    _module = sys.modules.get(__name__)
+    if _module is None:  # pragma: no cover - defensive
+        _module = ModuleType(__name__)
+        _module.__file__ = str(_THIS_FILE)
+        sys.modules[__name__] = _module
+    sys.modules["menace_sandbox.gpt_memory"] = _module
+    sys.modules["gpt_memory"] = _module
 
 try:
     from . import db_router as _db_router
