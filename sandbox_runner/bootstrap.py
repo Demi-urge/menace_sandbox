@@ -70,17 +70,41 @@ def _candidate_optional_module_names(name: str) -> list[str]:
     return candidates
 
 
-def _cleanup_optional_imports(name: str, candidate: str) -> None:
+def _cleanup_optional_imports(
+    name: str, candidate: str, added_modules: set[str]
+) -> None:
     """Remove partially-imported optional modules from ``sys.modules``."""
 
     cleanup_targets = {candidate}
     if candidate != name:
         cleanup_targets.add(name)
-    for mod_name in list(sys.modules):
+
+    repo_prefix = _REPO_PACKAGE
+    to_remove: set[str] = set()
+    for mod_name in added_modules:
         if any(
             mod_name == target or mod_name.startswith(f"{target}.")
             for target in cleanup_targets
         ):
+            to_remove.add(mod_name)
+            continue
+        if mod_name == repo_prefix or mod_name.startswith(f"{repo_prefix}."):
+            to_remove.add(mod_name)
+
+    if not to_remove:
+        return
+
+    removed_modules = []
+    for mod_name in to_remove:
+        module = sys.modules.pop(mod_name, None)
+        if module is not None:
+            removed_modules.append(module)
+
+    if not removed_modules:
+        return
+
+    for mod_name, module in list(sys.modules.items()):
+        if any(module is removed for removed in removed_modules):
             sys.modules.pop(mod_name, None)
 
 
@@ -118,18 +142,25 @@ def _import_optional_module(name: str, *, missing_optional: set[str] | None = No
             if candidate != name:
                 sys.modules.setdefault(name, cached)
             return cached
+        before_modules = set(sys.modules)
         try:
             module = importlib.import_module(candidate)
         except ModuleNotFoundError as exc:
             last_exc = exc
+            added_modules = set(sys.modules) - before_modules
+            if added_modules:
+                _cleanup_optional_imports(name, candidate, added_modules)
             continue
         except ImportError as exc:
             last_exc = exc
+            added_modules = set(sys.modules) - before_modules
             if "relative import with no known parent package" in str(exc).lower():
-                _cleanup_optional_imports(name, candidate)
+                if added_modules:
+                    _cleanup_optional_imports(name, candidate, added_modules)
                 continue
             dependency_failure = True
-            _cleanup_optional_imports(name, candidate)
+            if added_modules:
+                _cleanup_optional_imports(name, candidate, added_modules)
             if name not in _OPTIONAL_DEPENDENCY_WARNED:
                 logger.warning(
                     "optional module %s import failed (%s); treating as missing",
