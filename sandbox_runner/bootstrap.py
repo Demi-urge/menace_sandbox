@@ -50,13 +50,21 @@ _OPTIONAL_MODULE_CACHE: dict[str, ModuleType] = {}
 def _candidate_optional_module_names(name: str) -> list[str]:
     """Return import names to try for optional module ``name``."""
 
-    candidates = [name]
     package_hint = (__package__ or "").split(".", 1)[0]
-    for prefix in (package_hint, _REPO_PACKAGE):
-        if prefix and not name.startswith(f"{prefix}."):
-            qualified = f"{prefix}.{name}"
-            if qualified not in candidates:
-                candidates.append(qualified)
+    prefixes: list[str] = []
+    for prefix in (_REPO_PACKAGE, package_hint):
+        if prefix and not name.startswith(f"{prefix}.") and prefix not in prefixes:
+            prefixes.append(prefix)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for prefix in prefixes:
+        qualified = f"{prefix}.{name}"
+        if qualified not in seen:
+            candidates.append(qualified)
+            seen.add(qualified)
+    if name not in seen:
+        candidates.append(name)
     return candidates
 
 
@@ -85,6 +93,15 @@ def _import_optional_module(name: str) -> ModuleType:
         except ImportError as exc:
             last_exc = exc
             if "relative import with no known parent package" in str(exc).lower():
+                cleanup_targets = {candidate}
+                if candidate != name:
+                    cleanup_targets.add(name)
+                for mod_name in list(sys.modules):
+                    if any(
+                        mod_name == target or mod_name.startswith(f"{target}.")
+                        for target in cleanup_targets
+                    ):
+                        sys.modules.pop(mod_name, None)
                 continue
             raise
         else:
