@@ -45,6 +45,8 @@ logger = get_logger(__name__)
 
 _REPO_PACKAGE = Path(__file__).resolve().parents[1].name
 _OPTIONAL_MODULE_CACHE: dict[str, ModuleType] = {}
+_MISSING_OPTIONAL: set[str] = set()
+_OPTIONAL_DEPENDENCY_WARNED: set[str] = set()
 
 
 def _candidate_optional_module_names(name: str) -> list[str]:
@@ -68,7 +70,37 @@ def _candidate_optional_module_names(name: str) -> list[str]:
     return candidates
 
 
-def _import_optional_module(name: str) -> ModuleType:
+def _cleanup_optional_imports(name: str, candidate: str) -> None:
+    """Remove partially-imported optional modules from ``sys.modules``."""
+
+    cleanup_targets = {candidate}
+    if candidate != name:
+        cleanup_targets.add(name)
+    for mod_name in list(sys.modules):
+        if any(
+            mod_name == target or mod_name.startswith(f"{target}.")
+            for target in cleanup_targets
+        ):
+            sys.modules.pop(mod_name, None)
+
+
+def _record_missing_optional(name: str, missing: set[str] | None) -> None:
+    """Track optional module ``name`` as unavailable."""
+
+    _MISSING_OPTIONAL.add(name)
+    if missing is not None:
+        missing.add(name)
+
+
+def _clear_missing_optional(name: str, missing: set[str] | None) -> None:
+    """Remove ``name`` from the optional-missing bookkeeping sets."""
+
+    _MISSING_OPTIONAL.discard(name)
+    if missing is not None:
+        missing.discard(name)
+
+
+def _import_optional_module(name: str, *, missing_optional: set[str] | None = None) -> ModuleType:
     """Import ``name`` trying package-qualified fallbacks when necessary."""
 
     cached = _OPTIONAL_MODULE_CACHE.get(name)
@@ -76,7 +108,8 @@ def _import_optional_module(name: str) -> ModuleType:
         return cached
 
     candidates = _candidate_optional_module_names(name)
-    last_exc: ImportError | None = None
+    last_exc: ImportError | ModuleNotFoundError | None = None
+    dependency_failure = False
 
     for candidate in candidates:
         cached = _OPTIONAL_MODULE_CACHE.get(candidate)
@@ -93,24 +126,30 @@ def _import_optional_module(name: str) -> ModuleType:
         except ImportError as exc:
             last_exc = exc
             if "relative import with no known parent package" in str(exc).lower():
-                cleanup_targets = {candidate}
-                if candidate != name:
-                    cleanup_targets.add(name)
-                for mod_name in list(sys.modules):
-                    if any(
-                        mod_name == target or mod_name.startswith(f"{target}.")
-                        for target in cleanup_targets
-                    ):
-                        sys.modules.pop(mod_name, None)
+                _cleanup_optional_imports(name, candidate)
                 continue
-            raise
+            dependency_failure = True
+            _cleanup_optional_imports(name, candidate)
+            if name not in _OPTIONAL_DEPENDENCY_WARNED:
+                logger.warning(
+                    "optional module %s import failed (%s); treating as missing",
+                    name,
+                    exc,
+                )
+                _OPTIONAL_DEPENDENCY_WARNED.add(name)
+            _record_missing_optional(name, missing_optional)
+            continue
         else:
             _OPTIONAL_MODULE_CACHE[name] = module
             _OPTIONAL_MODULE_CACHE[candidate] = module
             if candidate != name:
                 sys.modules[name] = module
+            _clear_missing_optional(name, missing_optional)
+            _OPTIONAL_DEPENDENCY_WARNED.discard(name)
             return module
 
+    if dependency_failure:
+        raise ModuleNotFoundError(name)
     if last_exc is not None:
         raise last_exc
     raise ModuleNotFoundError(name)
@@ -123,7 +162,9 @@ def _ensure_sqlite_db(path: Path) -> None:
         path.touch()
 
 
-def _start_optional_services(modules: Iterable[str]) -> None:
+def _start_optional_services(
+    modules: Iterable[str], missing_optional: Iterable[str] | None = None
+) -> None:
     """Best-effort launch of auxiliary service modules.
 
     For each entry in ``modules`` we attempt to import ``<module>_service`` and
@@ -131,7 +172,16 @@ def _start_optional_services(modules: Iterable[str]) -> None:
     otherwise ignored to keep bootstrap resilient.
     """
 
+    missing = set(_MISSING_OPTIONAL)
+    if missing_optional is not None:
+        missing.update(missing_optional)
     for mod in modules:
+        if mod in missing:
+            logger.info(
+                "%s service skipped because the module is unavailable",
+                mod,
+            )
+            continue
         svc_name = f"{mod}_service"
         svc_mod = _OPTIONAL_MODULE_CACHE.get(svc_name)
         if svc_mod is None:
@@ -166,9 +216,9 @@ def _verify_optional_modules(
         if mod in _OPTIONAL_MODULE_CACHE:
             continue
         try:
-            module = _import_optional_module(mod)
+            module = _import_optional_module(mod, missing_optional=missing)
         except ImportError as exc:
-            missing.add(mod)
+            _record_missing_optional(mod, missing)
             min_ver = versions.get(mod, "")
             ver_hint = f">={min_ver}" if min_ver else ""
             logger.warning(
@@ -318,6 +368,9 @@ def _initialize_autonomous_sandbox(
     if _INITIALISED:
         return settings
 
+    _MISSING_OPTIONAL.clear()
+    _OPTIONAL_DEPENDENCY_WARNED.clear()
+
     try:
         auto_configure_env(settings)
     except Exception as exc:  # pragma: no cover - best effort
@@ -388,7 +441,7 @@ def _initialize_autonomous_sandbox(
         module = _OPTIONAL_MODULE_CACHE.get(mod)
         if module is None:
             try:
-                module = _import_optional_module(mod)
+                module = _import_optional_module(mod, missing_optional=missing_optional)
             except ModuleNotFoundError:
                 logger.warning(
                     "%s service not found; install with 'pip install %s>=%s' to enable it",
@@ -396,7 +449,7 @@ def _initialize_autonomous_sandbox(
                     mod,
                     min_version,
                 )
-                missing_optional.add(mod)
+                _record_missing_optional(mod, missing_optional)
                 continue
             except ImportError:
                 logger.warning(
@@ -406,7 +459,7 @@ def _initialize_autonomous_sandbox(
                     min_version,
                     exc_info=True,
                 )
-                missing_optional.add(mod)
+                _record_missing_optional(mod, missing_optional)
                 continue
         version: str | None
         try:
@@ -430,7 +483,10 @@ def _initialize_autonomous_sandbox(
                 mod,
             )
 
-    _start_optional_services(settings.optional_service_versions.keys())
+    _start_optional_services(
+        settings.optional_service_versions.keys(),
+        missing_optional=missing_optional,
+    )
     _INITIALISED = True
 
     try:

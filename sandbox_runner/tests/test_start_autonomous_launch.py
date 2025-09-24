@@ -49,7 +49,9 @@ def test_launch_sandbox_starts_self_improvement_thread(tmp_path, monkeypatch):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
@@ -112,7 +114,9 @@ def test_launch_sandbox_runs_warmup(tmp_path, monkeypatch):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
 
@@ -180,7 +184,9 @@ def test_initialize_autonomous_sandbox_raises_on_dead_thread(tmp_path, monkeypat
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "_INITIALISED", False)
@@ -224,7 +230,9 @@ def test_initialize_autonomous_sandbox_warmup_failure(tmp_path, monkeypatch):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "_INITIALISED", False)
@@ -274,7 +282,9 @@ def test_shutdown_autonomous_sandbox_joins_thread(tmp_path, monkeypatch):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "_INITIALISED", False)
