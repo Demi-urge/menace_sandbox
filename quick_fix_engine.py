@@ -769,18 +769,34 @@ except Exception:  # pragma: no cover - missing dependency
         logging.getLogger(__name__).warning(
             "violation logging unavailable; skipping alignment records"
         )
-try:  # pragma: no cover - optional dependency
-    AutomatedRollbackManager = load_internal(
-        "advanced_error_management"
-    ).AutomatedRollbackManager
-except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
-    ) from exc
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
-    ) from exc
+_import_logger = logging.getLogger(__name__)
+
+AutomatedRollbackManager = None  # type: ignore[assignment]
+_AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED = True
+
+
+def _resolve_automated_rollback_manager() -> Any | None:
+    """Lazily import ``AutomatedRollbackManager`` to avoid circular imports."""
+
+    global AutomatedRollbackManager  # type: ignore[global-var-not-assigned]
+    global _AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED
+
+    if not _AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED:
+        return AutomatedRollbackManager
+
+    try:
+        AutomatedRollbackManager = load_internal(
+            "advanced_error_management"
+        ).AutomatedRollbackManager
+    except Exception as exc:  # pragma: no cover - optional dependency unavailable
+        _import_logger.warning(
+            "AutomatedRollbackManager unavailable; rollbacks disabled: %s", exc
+        )
+        AutomatedRollbackManager = None  # type: ignore[assignment]
+    finally:
+        _AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED = False
+
+    return AutomatedRollbackManager
 try:  # pragma: no cover - optional dependency
     PatchHistoryDB = load_internal("code_database").PatchHistoryDB
 except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
@@ -1361,9 +1377,10 @@ def generate_patch(
                             approved = False
                     if not approved:
                         rbm = getattr(ap, "rollback_mgr", None)
-                        if rbm is None and AutomatedRollbackManager is not None:
+                        if rbm is None:
+                            arm_cls = _resolve_automated_rollback_manager()
                             try:
-                                rbm = AutomatedRollbackManager()
+                                rbm = arm_cls() if arm_cls is not None else None
                             except Exception:
                                 rbm = None
                         if rbm is not None:
