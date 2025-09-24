@@ -99,23 +99,37 @@ else:  # pragma: no cover - script execution fallback
         )
         UnifiedEventBus = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    from ..meta_workflow_planner import MetaWorkflowPlanner
-except Exception as exc:  # pragma: no cover - gracefully degrade
-    get_logger(__name__).warning(
-        "meta_workflow_planner import failed",  # noqa: TRY300
-        extra=log_record(component=__name__, dependency="meta_workflow_planner"),
-        exc_info=exc,
-    )
-    try:
-        from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
+def _load_meta_workflow_planner() -> Any | None:
+    """Import :class:`MetaWorkflowPlanner` handling flat/packaged layouts."""
+
+    logger = get_logger(__name__)
+
+    if __package__:
+        try:  # pragma: no cover - optional dependency
+            from ..meta_workflow_planner import MetaWorkflowPlanner as planner  # type: ignore
+
+            return planner
+        except Exception as exc:  # pragma: no cover - gracefully degrade
+            logger.warning(
+                "meta_workflow_planner import failed",  # noqa: TRY300
+                extra=log_record(component=__name__, dependency="meta_workflow_planner"),
+                exc_info=exc,
+            )
+
+    try:  # pragma: no cover - best effort fallback when run as script
+        from meta_workflow_planner import MetaWorkflowPlanner as planner  # type: ignore
+
+        return planner
     except Exception as exc2:  # pragma: no cover - best effort fallback
-        get_logger(__name__).warning(
+        logger.warning(
             "local meta_workflow_planner import failed",  # noqa: TRY300
             extra=log_record(component=__name__, dependency="meta_workflow_planner"),
             exc_info=exc2,
         )
-        MetaWorkflowPlanner = None  # type: ignore
+        return None
+
+
+MetaWorkflowPlanner = _load_meta_workflow_planner()
 
 
 class _FallbackPlanner:
