@@ -617,7 +617,23 @@ def _requires_helper(hints: list[Dict[str, Any]]) -> bool:
     return False
 
 
-ErrorDB = load_internal("error_bot").ErrorDB  # noqa: E402
+_error_bot_module = load_internal("error_bot")
+try:
+    ErrorDB = _error_bot_module.ErrorDB  # type: ignore[attr-defined]
+except AttributeError as exc:  # pragma: no cover - compatibility shim
+    logging.getLogger(__name__).warning(
+        "error_bot.ErrorDB unavailable; falling back to disabled implementation",
+        exc_info=exc,
+    )
+
+    class _UnavailableErrorDB:  # pragma: no cover - simple guard
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError(
+                "error_bot.ErrorDB is unavailable; reinstall menace_sandbox or "
+                "enable optional dependencies"
+            )
+
+    ErrorDB = _UnavailableErrorDB  # type: ignore[assignment]
 
 SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager  # noqa: E402
 
