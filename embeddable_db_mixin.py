@@ -20,72 +20,70 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+_PACKAGE_NAME = "menace_sandbox"
 
-def _bootstrap_self() -> None:
-    """Ensure this module can be executed directly."""
 
-    _THIS_FILE = Path(__file__).resolve()
-    _PACKAGE_ROOT = _THIS_FILE.parent
-    _REPO_PARENT = _PACKAGE_ROOT.parent
-    if str(_REPO_PARENT) not in sys.path:
-        sys.path.insert(0, str(_REPO_PARENT))
+def _bootstrap_package() -> None:
+    """Ensure the package layout is available when executed as a script."""
 
-    _PKG_NAME = "menace_sandbox"
-    globals()["__package__"] = _PKG_NAME
+    this_file = Path(__file__).resolve()
+    package_root = this_file.parent
+    repo_root = package_root.parent
 
-    try:
-        _pkg_module = importlib.import_module(_PKG_NAME)
-    except ModuleNotFoundError:
-        _spec = importlib.util.spec_from_file_location(
-            _PKG_NAME,
-            _PACKAGE_ROOT / "__init__.py",
-            submodule_search_locations=[str(_PACKAGE_ROOT)],
-        )
-        if _spec and _spec.loader:
-            _pkg_module = importlib.util.module_from_spec(_spec)
-            sys.modules[_PKG_NAME] = _pkg_module
-            _spec.loader.exec_module(_pkg_module)
-        else:  # pragma: no cover - fallback when spec cannot be created
-            _pkg_module = ModuleType(_PKG_NAME)
-            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
-            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
-            sys.modules[_PKG_NAME] = _pkg_module
-    else:
-        _pkg_module = sys.modules[_PKG_NAME]
+    module = sys.modules.get(__name__)
+    if module is None:  # pragma: no cover - defensive fallback
+        module = ModuleType(__name__)
+        module.__file__ = str(this_file)
+        sys.modules[__name__] = module
 
-    _pkg_path = getattr(_pkg_module, "__path__", None)
-    _pkg_root_str = str(_PACKAGE_ROOT)
-    if _pkg_path is None:
-        _pkg_module.__path__ = [_pkg_root_str]
+    if __package__ in {None, ""}:  # pragma: no cover - script execution path
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        globals()["__package__"] = _PACKAGE_NAME
+
+    pkg_module = sys.modules.get(_PACKAGE_NAME)
+    if pkg_module is None:
+        try:
+            pkg_module = importlib.import_module(_PACKAGE_NAME)
+        except ModuleNotFoundError:
+            spec = importlib.util.spec_from_file_location(
+                _PACKAGE_NAME,
+                package_root / "__init__.py",
+                submodule_search_locations=[str(package_root)],
+            )
+            if spec and spec.loader:
+                pkg_module = importlib.util.module_from_spec(spec)
+                sys.modules[_PACKAGE_NAME] = pkg_module
+                spec.loader.exec_module(pkg_module)
+            else:  # pragma: no cover - fallback when spec cannot be created
+                pkg_module = ModuleType(_PACKAGE_NAME)
+                pkg_module.__file__ = str(package_root / "__init__.py")
+                pkg_module.__path__ = [str(package_root)]
+                sys.modules[_PACKAGE_NAME] = pkg_module
+        else:
+            pkg_module = sys.modules[_PACKAGE_NAME]
+
+    pkg_root_str = str(package_root)
+    pkg_path = getattr(pkg_module, "__path__", None)
+    if pkg_path is None:
+        pkg_module.__path__ = [pkg_root_str]
     else:
         try:
-            _existing_paths = list(_pkg_path)
+            existing_paths = list(pkg_path)
         except TypeError:  # pragma: no cover - exotic path container
-            _pkg_module.__path__ = [_pkg_root_str]
+            pkg_module.__path__ = [pkg_root_str]
         else:
-            if _pkg_root_str not in _existing_paths:
+            if pkg_root_str not in existing_paths:
                 try:
-                    _pkg_path.insert(0, _pkg_root_str)
-                except Exception:  # pragma: no cover - immutable path
-                    _pkg_module.__path__ = [_pkg_root_str, *_existing_paths]
+                    pkg_path.insert(0, pkg_root_str)
+                except Exception:  # pragma: no cover - immutable path container
+                    pkg_module.__path__ = [pkg_root_str, *existing_paths]
 
-    _module = sys.modules.get(__name__)
-    if _module is None:  # pragma: no cover - defensive fallback
-        _module = ModuleType(__name__)
-        _module.__file__ = str(_THIS_FILE)
-        sys.modules[__name__] = _module
-
-    sys.modules.setdefault(f"{_PKG_NAME}.embeddable_db_mixin", _module)
-    sys.modules.setdefault("embeddable_db_mixin", _module)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.embeddable_db_mixin", module)
+    sys.modules.setdefault("embeddable_db_mixin", module)
 
 
-if __package__ in {None, ""}:  # pragma: no cover - support execution as script
-    _bootstrap_self()
-
-_CURRENT_MODULE = sys.modules.get(__name__)
-if _CURRENT_MODULE is not None:
-    sys.modules.setdefault("menace_sandbox.embeddable_db_mixin", _CURRENT_MODULE)
-    sys.modules.setdefault("embeddable_db_mixin", _CURRENT_MODULE)
+_bootstrap_package()
 
 _MODULE_CACHE: dict[str, ModuleType] = {}
 
@@ -97,24 +95,16 @@ def _load_internal_module(name: str) -> ModuleType:
     if cached is not None:
         return cached
 
-    module: ModuleType | None = None
-    last_exc: ModuleNotFoundError | None = None
-    if __package__:
-        qualified = f"{__package__}.{name}"
-        try:
-            module = importlib.import_module(qualified)
-        except ModuleNotFoundError as exc:
-            last_exc = exc
-            if exc.name != qualified:
-                raise
-
-    if module is None:
+    qualified = f"{_PACKAGE_NAME}.{name}"
+    try:
+        module = importlib.import_module(qualified)
+    except ModuleNotFoundError as primary_exc:
+        if primary_exc.name not in {qualified, _PACKAGE_NAME}:
+            raise
         try:
             module = importlib.import_module(name)
-        except ModuleNotFoundError as exc:
-            if last_exc is not None:
-                raise last_exc from exc
-            raise
+        except ModuleNotFoundError as secondary_exc:
+            raise secondary_exc from primary_exc
 
     _MODULE_CACHE[name] = module
     return module
