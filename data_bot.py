@@ -59,18 +59,49 @@ if __package__ in {None, ""}:  # pragma: no cover - support script execution
     _REPO_PARENT = _PACKAGE_ROOT.parent
     if str(_REPO_PARENT) not in sys.path:
         sys.path.insert(0, str(_REPO_PARENT))
-    _PKG_NAME = _PACKAGE_ROOT.name
-    if _PKG_NAME not in sys.modules:
-        _SPEC = importlib.util.spec_from_file_location(
+
+    _PKG_NAME = "menace_sandbox"
+    globals()["__package__"] = _PKG_NAME
+
+    _pkg_module = sys.modules.get(_PKG_NAME)
+    if _pkg_module is None:
+        _spec = importlib.util.spec_from_file_location(
             _PKG_NAME,
             _PACKAGE_ROOT / "__init__.py",
             submodule_search_locations=[str(_PACKAGE_ROOT)],
         )
-        if _SPEC and _SPEC.loader:
-            _MODULE = importlib.util.module_from_spec(_SPEC)
-            sys.modules[_PKG_NAME] = _MODULE
-            _SPEC.loader.exec_module(_MODULE)
-    __package__ = _PKG_NAME
+        if _spec and _spec.loader:
+            _pkg_module = importlib.util.module_from_spec(_spec)
+            sys.modules[_PKG_NAME] = _pkg_module
+            _spec.loader.exec_module(_pkg_module)
+        else:  # pragma: no cover - fallback if package spec missing
+            _pkg_module = ModuleType(_PKG_NAME)
+            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
+            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
+            sys.modules[_PKG_NAME] = _pkg_module
+    _pkg_path = getattr(_pkg_module, "__path__", None)
+    _pkg_root_str = str(_PACKAGE_ROOT)
+    if _pkg_path is None:
+        _pkg_module.__path__ = [_pkg_root_str]
+    else:
+        try:
+            _existing_paths = list(_pkg_path)
+        except TypeError:  # pragma: no cover - exotic path container
+            _pkg_module.__path__ = [_pkg_root_str]
+        else:
+            if _pkg_root_str not in _existing_paths:
+                try:
+                    _pkg_path.insert(0, _pkg_root_str)
+                except Exception:  # pragma: no cover - immutable path
+                    _pkg_module.__path__ = [_pkg_root_str, *_existing_paths]
+
+    _module = sys.modules.get(__name__)
+    if _module is None:  # pragma: no cover - defensive
+        _module = ModuleType(__name__)
+        _module.__file__ = str(_THIS_FILE)
+        sys.modules[__name__] = _module
+    sys.modules["menace_sandbox.data_bot"] = _module
+    sys.modules["data_bot"] = _module
 
 # flake8: noqa
 import sqlite3
