@@ -22,6 +22,7 @@ import uuid
 import time
 import py_compile
 import shlex
+import importlib
 import importlib.util
 import sys
 import symtable
@@ -33,7 +34,13 @@ if __package__ in {None, ""}:  # pragma: no cover - allow flat execution
     parent = package_root.parent
     if str(parent) not in sys.path:
         sys.path.insert(0, str(parent))
-    globals()["__package__"] = package_root.name
+    package_name = package_root.name
+    importlib.import_module(package_name)
+    globals()["__package__"] = package_name
+    module_name = Path(__file__).stem
+    current_module = sys.modules[__name__]
+    sys.modules[f"{package_name}.{module_name}"] = current_module
+    sys.modules[module_name] = current_module
 
 def _should_use_flat_import(exc: ImportError, module: str) -> bool:
     """Return ``True`` when *exc* indicates a missing package context."""
