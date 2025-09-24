@@ -175,6 +175,9 @@ def main(
         else:
             if settings is not None:
                 _describe_settings(logger, settings)
+            logger.info("sandbox bootstrap completed successfully")
+    else:
+        logger.info("sandbox bootstrap completed successfully (skipped)")
 
     if args.skip_environment:
         return exit_code
