@@ -35,7 +35,7 @@ from types import SimpleNamespace
 from contextlib import AsyncExitStack, contextmanager
 
 from db_router import init_db_router
-from dynamic_path_router import resolve_path, path_for_prompt
+from dynamic_path_router import resolve_path, path_for_prompt, get_project_root
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency for type hints
@@ -53,15 +53,45 @@ from pydantic import Field
 from sandbox_settings import SandboxSettings
 
 
+def _default_local_db_path() -> str:
+    """Return a writable location for the per-run self test database."""
+
+    db_name = f"menace_{MENACE_ID}_local.db"
+    try:
+        path = resolve_path(db_name)
+    except FileNotFoundError:
+        path = (get_project_root() / db_name).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = path.resolve()
+
+    return str(path)
+
+
+def _default_shared_db_path() -> str:
+    """Return a stable location for the shared self test database."""
+
+    relative_path = Path("shared") / "global.db"
+    try:
+        path = resolve_path(relative_path.as_posix())
+    except FileNotFoundError:
+        path = (get_project_root() / relative_path).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = path.resolve()
+
+    return str(path)
+
+
 class SelfTestEnvSettings(BaseSettings):
     """Environment configuration for :mod:`self_test_service`."""
 
     menace_local_db_path: str = Field(
-        default_factory=lambda: str(resolve_path(f"menace_{MENACE_ID}_local.db")),
+        default_factory=_default_local_db_path,
         validation_alias="MENACE_LOCAL_DB_PATH",
     )
     menace_shared_db_path: str = Field(
-        str(resolve_path("shared/global.db")),
+        default_factory=_default_shared_db_path,
         validation_alias="MENACE_SHARED_DB_PATH",
     )
     self_test_retries: int | None = Field(None, validation_alias="SELF_TEST_RETRIES")
