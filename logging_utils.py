@@ -243,9 +243,43 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+_RESERVED_LOG_ATTRS = set(
+    logging.LogRecord(
+        name="", level=logging.INFO, pathname="", lineno=0, msg="", args=(), exc_info=None
+    ).__dict__
+)
+# These are injected by the logging framework during formatting.
+_RESERVED_LOG_ATTRS.update({"message", "asctime"})
+
+
+def _safe_key(key: str, existing: Dict[str, Any]) -> str:
+    """Return a key that will not clash with :class:`logging.LogRecord` fields."""
+
+    if key not in _RESERVED_LOG_ATTRS and key not in existing:
+        return key
+
+    base = f"extra_{key}"
+    if base not in _RESERVED_LOG_ATTRS and base not in existing:
+        return base
+
+    # Fall back to a numeric suffix if our preferred alias is still unsafe.
+    idx = 1
+    candidate = f"{base}_{idx}"
+    while candidate in _RESERVED_LOG_ATTRS or candidate in existing:
+        idx += 1
+        candidate = f"{base}_{idx}"
+    return candidate
+
+
 def log_record(**fields: Any) -> Dict[str, Any]:
-    """Return *fields* without ``None`` values for structured logging."""
-    return {k: v for k, v in fields.items() if v is not None}
+    """Return *fields* sanitized for use with ``Logger.extra``."""
+
+    safe: Dict[str, Any] = {}
+    for key, value in fields.items():
+        if value is None:
+            continue
+        safe[_safe_key(key, safe)] = value
+    return safe
 
 
 __all__ = [
