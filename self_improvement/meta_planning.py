@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Sequence
 
+from importlib import import_module
+
 from statistics import fmean
 import asyncio
 import json
@@ -104,29 +106,32 @@ def _load_meta_workflow_planner() -> Any | None:
 
     logger = get_logger(__name__)
 
-    if __package__:
-        try:  # pragma: no cover - optional dependency
-            from ..meta_workflow_planner import MetaWorkflowPlanner as planner  # type: ignore
+    candidate_modules: list[str] = []
 
-            return planner
+    if __package__:
+        package_parts = __package__.split(".")
+        for idx in range(len(package_parts), -1, -1):
+            parent = ".".join(package_parts[:idx])
+            candidate_modules.append(
+                f"{parent + '.' if parent else ''}meta_workflow_planner"
+            )
+    else:
+        candidate_modules.append("meta_workflow_planner")
+
+    for module_name in candidate_modules:
+        try:  # pragma: no cover - optional dependency
+            module = import_module(module_name)
+            return getattr(module, "MetaWorkflowPlanner")
         except Exception as exc:  # pragma: no cover - gracefully degrade
             logger.warning(
                 "meta_workflow_planner import failed",  # noqa: TRY300
-                extra=log_record(component=__name__, dependency="meta_workflow_planner"),
+                extra=log_record(
+                    component=__name__, dependency="meta_workflow_planner", module=module_name
+                ),
                 exc_info=exc,
             )
 
-    try:  # pragma: no cover - best effort fallback when run as script
-        from meta_workflow_planner import MetaWorkflowPlanner as planner  # type: ignore
-
-        return planner
-    except Exception as exc2:  # pragma: no cover - best effort fallback
-        logger.warning(
-            "local meta_workflow_planner import failed",  # noqa: TRY300
-            extra=log_record(component=__name__, dependency="meta_workflow_planner"),
-            exc_info=exc2,
-        )
-        return None
+    return None
 
 
 MetaWorkflowPlanner = _load_meta_workflow_planner()
