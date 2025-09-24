@@ -25,23 +25,28 @@ that transient failures are retried while permanent issues propagate errors.
 import logging
 
 try:
-    from ..logging_utils import log_record, get_logger, setup_logging, set_correlation_id
-except ImportError:  # pragma: no cover - simplified environments
+    from logging_utils import log_record, get_logger, setup_logging, set_correlation_id
+except ImportError:  # pragma: no cover - allow package-relative import
     try:
-        from logging_utils import log_record  # type: ignore
-    except ImportError:  # pragma: no cover - last resort
+        from ..logging_utils import (  # type: ignore
+            log_record,
+            get_logger,
+            setup_logging,
+            set_correlation_id,
+        )
+    except ImportError:  # pragma: no cover - simplified environments
 
         def log_record(**fields: object) -> dict[str, object]:  # type: ignore
             return fields
 
-    def get_logger(name: str) -> logging.Logger:  # type: ignore
-        return logging.getLogger(name)
+        def get_logger(name: str) -> logging.Logger:  # type: ignore
+            return logging.getLogger(name)
 
-    def setup_logging() -> None:  # type: ignore
-        return
+        def setup_logging() -> None:  # type: ignore
+            return
 
-    def set_correlation_id(_: str | None) -> None:  # type: ignore
-        return
+        def set_correlation_id(_: str | None) -> None:  # type: ignore
+            return
 
 
 import time
@@ -116,9 +121,24 @@ try:
 except ImportError as exc:  # pragma: no cover - fail fast when dependency missing
     raise RuntimeError("neurosales dependency is required") from exc
 
-DEFAULT_RELEVANCY_METRICS_DB = resolve_path(
-    "sandbox_data/relevancy_metrics.db"
-)
+logger = get_logger(__name__)
+
+try:
+    DEFAULT_RELEVANCY_METRICS_DB = resolve_path("sandbox_data/relevancy_metrics.db")
+except FileNotFoundError:
+    data_dir = Path(resolve_path("sandbox_data"))
+    DEFAULT_RELEVANCY_METRICS_DB = data_dir / "relevancy_metrics.db"
+    try:
+        DEFAULT_RELEVANCY_METRICS_DB.parent.mkdir(parents=True, exist_ok=True)
+        DEFAULT_RELEVANCY_METRICS_DB.touch(exist_ok=True)
+        logger.debug(
+            "created default relevancy metrics database",
+            extra=log_record(path=str(DEFAULT_RELEVANCY_METRICS_DB)),
+        )
+    except OSError as exc:  # pragma: no cover - surface creation failure
+        raise RuntimeError(
+            "unable to prepare relevancy metrics database"
+        ) from exc
 from alert_dispatcher import dispatch_alert
 import json
 import inspect
