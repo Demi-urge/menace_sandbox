@@ -620,7 +620,36 @@ def _requires_helper(hints: list[Dict[str, Any]]) -> bool:
     return False
 
 
-SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager  # noqa: E402
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback avoids circular import
+    SelfCodingManager = object  # type: ignore[misc, assignment]
+
+
+def _resolve_self_coding_manager_cls() -> type:
+    """Return the real ``SelfCodingManager`` class lazily.
+
+    Importing ``self_coding_manager`` at module import time causes a circular
+    import because that module also imports :mod:`quick_fix_engine`.  Resolving
+    the class lazily keeps the cycle intact without raising an
+    ``AttributeError`` during bootstrap when optional modules are loaded.
+    """
+
+    module = load_internal("self_coding_manager")
+    cls = getattr(module, "SelfCodingManager", None)
+    if cls is None:
+        raise AttributeError("self_coding_manager has no SelfCodingManager")
+    return cls
+
+
+def _is_self_coding_manager(candidate: object) -> bool:
+    """Best-effort check that *candidate* is a ``SelfCodingManager`` instance."""
+
+    try:
+        cls = _resolve_self_coding_manager_cls()
+    except Exception:  # pragma: no cover - degraded environments
+        return False
+    return isinstance(candidate, cls)
 
 try:  # pragma: no cover - optional helper
     _manager_generate_helper_with_builder = (
@@ -844,7 +873,7 @@ def generate_patch(
         raise QuickFixEngineError(
             "quick_fix_init_error", "generate_patch requires a manager"
         )
-    if not isinstance(manager, SelfCodingManager):
+    if not _is_self_coding_manager(manager):
         raise QuickFixEngineError(
             "quick_fix_init_error",
             "generate_patch requires a SelfCodingManager instance",
