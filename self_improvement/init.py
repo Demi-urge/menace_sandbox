@@ -36,32 +36,37 @@ from filelock import FileLock
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
-try:  # pragma: no cover - prefer package-relative import when available
-    from ..metrics_exporter import self_improvement_failure_total
-except ImportError:  # pragma: no cover - support flat execution layout
-    from metrics_exporter import self_improvement_failure_total  # type: ignore
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from metrics_exporter import self_improvement_failure_total
+except ImportError:  # pragma: no cover - fallback to package-relative import
+    from ..metrics_exporter import self_improvement_failure_total  # type: ignore
 
-try:  # pragma: no cover - fallback for flat layout
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback to package-relative import
     from ..dynamic_path_router import resolve_path
-except Exception:  # pragma: no cover - fallback
-    from dynamic_path_router import resolve_path  # type: ignore
 
 try:
-    from ..logging_utils import get_logger, setup_logging, log_record
-except (ImportError, AttributeError) as exc:  # pragma: no cover - simplified environments
-    logging.getLogger(__name__).warning(
-        "logging utils unavailable", exc_info=exc, extra={"component": __name__}
-    )
-    self_improvement_failure_total.labels(reason="logging_utils_import").inc()
+    from logging_utils import get_logger, setup_logging, log_record  # type: ignore
+except (ImportError, AttributeError):  # pragma: no cover - fallback to package layout
+    try:
+        from ..logging_utils import get_logger, setup_logging, log_record
+    except (ImportError, AttributeError) as exc:  # pragma: no cover - simplified environments
+        logging.getLogger(__name__).warning(
+            "logging utils unavailable",
+            exc_info=exc,
+            extra={"component": __name__},
+        )
+        self_improvement_failure_total.labels(reason="logging_utils_import").inc()
 
-    def get_logger(name: str) -> logging.Logger:  # type: ignore
-        return logging.getLogger(name)
+        def get_logger(name: str) -> logging.Logger:  # type: ignore
+            return logging.getLogger(name)
 
-    def setup_logging() -> None:  # type: ignore
-        return None
+        def setup_logging() -> None:  # type: ignore
+            return None
 
-    def log_record(**fields: Any) -> dict[str, Any]:  # type: ignore
-        return fields
+        def log_record(**fields: Any) -> dict[str, Any]:  # type: ignore
+            return fields
 
 
 logger = get_logger(__name__)
