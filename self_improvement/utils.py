@@ -29,9 +29,20 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any, Callable
 
-from ..dynamic_path_router import resolve_dir, get_project_root
-from ..metrics_exporter import self_improvement_failure_total
-from ..sandbox_settings import SandboxSettings
+try:  # pragma: no cover - prefer package-relative import when available
+    from ..dynamic_path_router import resolve_dir, get_project_root
+except ImportError:  # pragma: no cover - support flat execution layout
+    from dynamic_path_router import resolve_dir, get_project_root  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from ..metrics_exporter import self_improvement_failure_total
+except ImportError:  # pragma: no cover - support flat execution layout
+    from metrics_exporter import self_improvement_failure_total  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from ..sandbox_settings import SandboxSettings
+except ImportError:  # pragma: no cover - support flat execution layout
+    from sandbox_settings import SandboxSettings  # type: ignore
 
 
 _diagnostics_lock = threading.Lock()
