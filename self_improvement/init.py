@@ -65,8 +65,35 @@ except (ImportError, AttributeError):  # pragma: no cover - fallback to package 
         def setup_logging() -> None:  # type: ignore
             return None
 
+        _RESERVED_LOG_ATTRS = set(
+            logging.LogRecord(
+                name="", level=logging.INFO, pathname="", lineno=0, msg="", args=(), exc_info=None
+            ).__dict__
+        )
+        _RESERVED_LOG_ATTRS.update({"message", "asctime"})
+
+        def _safe_key(key: str, existing: dict[str, Any]) -> str:
+            if key not in _RESERVED_LOG_ATTRS and key not in existing:
+                return key
+
+            base = f"extra_{key}"
+            if base not in _RESERVED_LOG_ATTRS and base not in existing:
+                return base
+
+            suffix = 1
+            candidate = f"{base}_{suffix}"
+            while candidate in _RESERVED_LOG_ATTRS or candidate in existing:
+                suffix += 1
+                candidate = f"{base}_{suffix}"
+            return candidate
+
         def log_record(**fields: Any) -> dict[str, Any]:  # type: ignore
-            return fields
+            safe: dict[str, Any] = {}
+            for key, value in fields.items():
+                if value is None:
+                    continue
+                safe[_safe_key(key, safe)] = value
+            return safe
 
 
 logger = get_logger(__name__)
