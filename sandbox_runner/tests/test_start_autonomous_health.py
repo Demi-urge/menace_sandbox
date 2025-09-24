@@ -143,7 +143,9 @@ def test_sandbox_health_and_artifacts(tmp_path, monkeypatch):
     settings.sandbox_stub_model = "demo-model"
 
     monkeypatch.setattr(bootstrap, "load_sandbox_settings", lambda: settings)
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "_verify_optional_modules", lambda *a, **k: set())

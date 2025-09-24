@@ -10,7 +10,10 @@ from sandbox_settings import SandboxSettings  # noqa: E402
 
 
 def _setup_base(monkeypatch):
-    monkeypatch.setattr("sandbox_runner.bootstrap._start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        "sandbox_runner.bootstrap._start_optional_services",
+        lambda *a, **k: None,
+    )
     monkeypatch.setattr("sandbox_runner.bootstrap.ensure_vector_service", lambda: None)
     monkeypatch.setattr("sandbox_runner.bootstrap._verify_required_dependencies", lambda s: {})
 

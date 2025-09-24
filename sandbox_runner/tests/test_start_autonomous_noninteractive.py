@@ -50,7 +50,9 @@ def test_start_autonomous_sandbox_noninteractive(tmp_path, monkeypatch):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
@@ -117,7 +119,9 @@ def test_start_autonomous_sandbox_health_check(tmp_path, monkeypatch, caplog):
 
     import sandbox_runner.bootstrap as bootstrap
 
-    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(
+        bootstrap, "_start_optional_services", lambda *a, **k: None
+    )
     monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
 
