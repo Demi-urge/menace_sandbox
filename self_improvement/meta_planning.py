@@ -75,15 +75,29 @@ _cycle_thread: Any | None = None
 _stop_event: threading.Event | None = None
 
 
-try:  # pragma: no cover - optional dependency
-    from ..unified_event_bus import UnifiedEventBus
-except (ImportError, ValueError) as exc:  # pragma: no cover - fallback when event bus missing
-    get_logger(__name__).warning(
-        "unified event bus unavailable",  # noqa: TRY300
-        extra=log_record(component=__name__, dependency="unified_event_bus"),
-        exc_info=exc,
-    )
-    UnifiedEventBus = None  # type: ignore
+if __package__:  # pragma: no cover - support package imports
+    try:  # pragma: no cover - optional dependency
+        from ..unified_event_bus import UnifiedEventBus
+    except (ImportError, ValueError):  # pragma: no cover - fallback when event bus missing
+        try:
+            from unified_event_bus import UnifiedEventBus  # type: ignore
+        except Exception as exc2:  # pragma: no cover - gracefully degrade when unavailable
+            get_logger(__name__).warning(
+                "unified event bus unavailable",  # noqa: TRY300
+                extra=log_record(component=__name__, dependency="unified_event_bus"),
+                exc_info=exc2,
+            )
+            UnifiedEventBus = None  # type: ignore
+else:  # pragma: no cover - script execution fallback
+    try:
+        from unified_event_bus import UnifiedEventBus  # type: ignore
+    except Exception as exc:  # pragma: no cover - gracefully degrade when unavailable
+        get_logger(__name__).warning(
+            "unified event bus unavailable",  # noqa: TRY300
+            extra=log_record(component=__name__, dependency="unified_event_bus"),
+            exc_info=exc,
+        )
+        UnifiedEventBus = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from ..meta_workflow_planner import MetaWorkflowPlanner
