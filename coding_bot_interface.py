@@ -18,63 +18,56 @@ Example:
     ...     ...
 """
 
-from pathlib import Path
-import importlib
+import importlib.util
 import sys
+from pathlib import Path
 from functools import wraps
 import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
 
-if __package__ in {None, ""}:  # pragma: no cover - allow flat execution
-    package_root = Path(__file__).resolve().parent
-    repo_root = package_root.parent
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    package = importlib.import_module(package_root.name)
-    sys.modules.setdefault(package_root.name, package)
-    globals()["__package__"] = package_root.name
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-from context_builder_util import create_context_builder
-
-
-def _should_use_flat_import(exc: ImportError, module: str) -> bool:
-    """Return ``True`` when *exc* indicates a missing package context."""
-
-    name = getattr(exc, "name", None)
-    if name in {module, f"menace_sandbox.{module}"}:
-        return True
-    msg = str(exc)
-    return "attempted relative import" in msg or "relative import with no known parent" in msg
-
-
-try:  # pragma: no cover - prefer package-relative import when available
-    from .self_coding_thresholds import update_thresholds, _load_config
-except ImportError as exc:  # pragma: no cover - support execution without package context
-    if not _should_use_flat_import(exc, "self_coding_thresholds"):
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
         raise
-    from self_coding_thresholds import update_thresholds, _load_config  # type: ignore
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+
+create_context_builder = load_internal("context_builder_util").create_context_builder
+
+_self_coding_thresholds = load_internal("self_coding_thresholds")
+update_thresholds = _self_coding_thresholds.update_thresholds
+_load_config = _self_coding_thresholds._load_config
 
 try:  # pragma: no cover - optional self-coding dependency
-    from .self_coding_manager import SelfCodingManager
-except ImportError as exc:  # pragma: no cover - self-coding unavailable
-    if _should_use_flat_import(exc, "self_coding_manager"):
-        try:
-            from self_coding_manager import SelfCodingManager  # type: ignore
-        except ImportError:  # pragma: no cover - degrade gracefully when absent
-            SelfCodingManager = Any  # type: ignore
-    else:
-        SelfCodingManager = Any  # type: ignore
+    SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when absent
+    SelfCodingManager = Any  # type: ignore
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    SelfCodingManager = Any  # type: ignore
+
 try:  # pragma: no cover - allow tests to stub engine
-    from .self_coding_engine import MANAGER_CONTEXT
-except ImportError as exc:  # pragma: no cover - support execution without package context
-    if not _should_use_flat_import(exc, "self_coding_engine"):
-        raise ImportError("Self-coding engine is required for operation") from exc
-    try:
-        from self_coding_engine import MANAGER_CONTEXT  # type: ignore
-    except ImportError as flat_exc:  # pragma: no cover - propagate requirement
-        raise ImportError("Self-coding engine is required for operation") from flat_exc
+    MANAGER_CONTEXT = load_internal("self_coding_engine").MANAGER_CONTEXT
+except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
+    raise ImportError("Self-coding engine is required for operation") from exc
 except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
     raise ImportError("Self-coding engine is required for operation") from exc
 

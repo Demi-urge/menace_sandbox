@@ -13,133 +13,71 @@ This wrapper is exercised in the unit tests and provides a minimal ``store`` and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
 import argparse
-import importlib
 import importlib.util
 import json
 import logging
 import sys
 import warnings
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from time import perf_counter
-from types import ModuleType
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
 
-if __package__ in {None, ""}:  # pragma: no cover - support script execution
-    _THIS_FILE = Path(__file__).resolve()
-    _PACKAGE_ROOT = _THIS_FILE.parent
-    _REPO_PARENT = _PACKAGE_ROOT.parent
-    if str(_REPO_PARENT) not in sys.path:
-        sys.path.insert(0, str(_REPO_PARENT))
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-    _PKG_NAME = "menace_sandbox"
-    globals()["__package__"] = _PKG_NAME
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-    try:
-        _pkg_module = importlib.import_module(_PKG_NAME)
-    except ModuleNotFoundError:
-        _spec = importlib.util.spec_from_file_location(
-            _PKG_NAME,
-            _PACKAGE_ROOT / "__init__.py",
-            submodule_search_locations=[str(_PACKAGE_ROOT)],
-        )
-        if _spec and _spec.loader:
-            _pkg_module = importlib.util.module_from_spec(_spec)
-            sys.modules[_PKG_NAME] = _pkg_module
-            _spec.loader.exec_module(_pkg_module)
-        else:  # pragma: no cover - fallback if package spec missing
-            _pkg_module = ModuleType(_PKG_NAME)
-            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
-            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
-            sys.modules[_PKG_NAME] = _pkg_module
-    else:
-        _pkg_module = sys.modules[_PKG_NAME]
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
 
-    _pkg_path = getattr(_pkg_module, "__path__", None)
-    _pkg_root_str = str(_PACKAGE_ROOT)
-    if _pkg_path is None:
-        _pkg_module.__path__ = [_pkg_root_str]
-    else:
-        try:
-            _existing_paths = list(_pkg_path)
-        except TypeError:  # pragma: no cover - exotic path container
-            _pkg_module.__path__ = [_pkg_root_str]
-        else:
-            if _pkg_root_str not in _existing_paths:
-                try:
-                    _pkg_path.insert(0, _pkg_root_str)
-                except Exception:  # pragma: no cover - immutable path
-                    _pkg_module.__path__ = [_pkg_root_str, *_existing_paths]
+_db_router = load_internal("db_router")
+DBRouter = _db_router.DBRouter
+init_db_router = _db_router.init_db_router
 
-    _module = sys.modules.get(__name__)
-    if _module is None:  # pragma: no cover - defensive
-        _module = ModuleType(__name__)
-        _module.__file__ = str(_THIS_FILE)
-        sys.modules[__name__] = _module
-    sys.modules["menace_sandbox.gpt_memory"] = _module
-    sys.modules["gpt_memory"] = _module
+GPTMemoryInterface = load_internal("gpt_memory_interface").GPTMemoryInterface
 
-try:
-    from . import db_router as _db_router
-except ImportError:  # pragma: no cover - flat layout fallback
-    import db_router as _db_router  # type: ignore
+log_embedding_metrics = load_internal("embeddable_db_mixin").log_embedding_metrics
 
-try:
-    from .db_router import DBRouter, init_db_router
-except ImportError:  # pragma: no cover - flat layout fallback
-    from db_router import DBRouter, init_db_router  # type: ignore
+find_semantic_risks = load_internal("analysis.semantic_diff_filter").find_semantic_risks
 
-try:
-    from .gpt_memory_interface import GPTMemoryInterface
-except ImportError:  # pragma: no cover - flat layout fallback
-    from gpt_memory_interface import GPTMemoryInterface  # type: ignore
+govern_retrieval = load_internal("governed_retrieval").govern_retrieval
 
-try:
-    from .embeddable_db_mixin import log_embedding_metrics
-except ImportError:  # pragma: no cover - flat layout fallback
-    from embeddable_db_mixin import log_embedding_metrics  # type: ignore
+SharedVectorService = load_internal("vector_service").SharedVectorService
 
-try:
-    from .analysis.semantic_diff_filter import find_semantic_risks
-except ImportError:  # pragma: no cover - flat layout fallback
-    from analysis.semantic_diff_filter import find_semantic_risks  # type: ignore
-
-try:
-    from .governed_retrieval import govern_retrieval
-except ImportError:  # pragma: no cover - flat layout fallback
-    from governed_retrieval import govern_retrieval  # type: ignore
-
-try:
-    from .vector_service import SharedVectorService
-except ImportError:  # pragma: no cover - flat layout fallback
-    from vector_service import SharedVectorService  # type: ignore
-
-try:
-    from .security.secret_redactor import redact as redact_secrets
-except ImportError:  # pragma: no cover - flat layout fallback
-    from security.secret_redactor import redact as redact_secrets  # type: ignore
+redact_secrets = load_internal("security.secret_redactor").redact
 
 
 try:  # Optional dependency used for event publication
-    from .unified_event_bus import UnifiedEventBus
-except ImportError:  # pragma: no cover - flat layout fallback
-    try:
-        from unified_event_bus import UnifiedEventBus  # type: ignore
-    except Exception:  # pragma: no cover - optional
-        UnifiedEventBus = None  # type: ignore
-except Exception:  # pragma: no cover - optional
+    UnifiedEventBus = load_internal("unified_event_bus").UnifiedEventBus
+except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+    UnifiedEventBus = None  # type: ignore
+except Exception:  # pragma: no cover - degrade gracefully
     UnifiedEventBus = None  # type: ignore
 
 try:  # Optional dependency for graph updates
-    from .knowledge_graph import KnowledgeGraph
-except ImportError:  # pragma: no cover - flat layout fallback
-    try:
-        from knowledge_graph import KnowledgeGraph  # type: ignore
-    except Exception:  # pragma: no cover - optional
-        KnowledgeGraph = None  # type: ignore
-except Exception:  # pragma: no cover - optional
+    KnowledgeGraph = load_internal("knowledge_graph").KnowledgeGraph
+except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+    KnowledgeGraph = None  # type: ignore
+except Exception:  # pragma: no cover - degrade gracefully
     KnowledgeGraph = None  # type: ignore
 
 try:  # Optional dependency used for semantic embeddings
@@ -148,39 +86,43 @@ except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
 try:  # Optional dependency used by the light wrapper ``GPTMemory``
-    from .menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
-except ImportError:  # pragma: no cover - flat layout fallback
-    try:
-        from menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
-    except Exception:  # pragma: no cover - tests stub this module
-        MenaceMemoryManager = None  # type: ignore
-
-        def _summarise_text(text: str, ratio: float = 0.2) -> str:  # pragma: no cover - fallback
-            """Fallback summariser used when menace_memory_manager is unavailable."""
-            return text[: max(1, int(len(text) * ratio))]
-except Exception:  # pragma: no cover - tests stub this module
+    _memory_module = load_internal("menace_memory_manager")
+except ModuleNotFoundError:  # pragma: no cover - tests stub this module
     MenaceMemoryManager = None  # type: ignore
 
     def _summarise_text(text: str, ratio: float = 0.2) -> str:  # pragma: no cover - fallback
         """Fallback summariser used when menace_memory_manager is unavailable."""
+
         return text[: max(1, int(len(text) * ratio))]
+except Exception:  # pragma: no cover - degrade gracefully in tests
+    MenaceMemoryManager = None  # type: ignore
+
+    def _summarise_text(text: str, ratio: float = 0.2) -> str:  # pragma: no cover - fallback
+        """Fallback summariser used when menace_memory_manager is unavailable."""
+
+        return text[: max(1, int(len(text) * ratio))]
+else:
+    MenaceMemoryManager = _memory_module.MenaceMemoryManager  # type: ignore[attr-defined]
+    _summarise_text = _memory_module._summarise_text  # type: ignore[attr-defined]
 
 # --------------------------------------------------------------------------- tags
 try:  # Canonical tag constants shared across modules
-    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
-except ImportError:  # pragma: no cover - flat layout fallback
-    try:
-        from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
-    except Exception:  # pragma: no cover - flat layout fallback
-        FEEDBACK = "feedback"
-        IMPROVEMENT_PATH = "improvement_path"
-        ERROR_FIX = "error_fix"
-        INSIGHT = "insight"
-except Exception:  # pragma: no cover - flat layout fallback
+    _log_tags = load_internal("log_tags")
+except ModuleNotFoundError:  # pragma: no cover - fallback when tags unavailable
     FEEDBACK = "feedback"
     IMPROVEMENT_PATH = "improvement_path"
     ERROR_FIX = "error_fix"
     INSIGHT = "insight"
+except Exception:  # pragma: no cover - degrade gracefully
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+    INSIGHT = "insight"
+else:
+    FEEDBACK = _log_tags.FEEDBACK
+    IMPROVEMENT_PATH = _log_tags.IMPROVEMENT_PATH
+    ERROR_FIX = _log_tags.ERROR_FIX
+    INSIGHT = _log_tags.INSIGHT
 
 # Standardised tag set for GPT interaction logging
 STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}

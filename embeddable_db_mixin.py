@@ -14,100 +14,33 @@ Subclasses must provide a ``self.conn`` database connection and override
 
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
 
+_HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-def _bootstrap_package() -> None:
-    """Ensure the package layout is available when executed as a script."""
-
-    this_file = Path(__file__).resolve()
-    package_root = this_file.parent
-    repo_root = package_root.parent
-
-    module = sys.modules.get(__name__)
-    if module is None:  # pragma: no cover - defensive fallback
-        module = ModuleType(__name__)
-        module.__file__ = str(this_file)
-        sys.modules[__name__] = module
-
-    if __package__ in {None, ""}:  # pragma: no cover - script execution path
-        if str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
-        globals()["__package__"] = _PACKAGE_NAME
-
-    pkg_module = sys.modules.get(_PACKAGE_NAME)
-    if pkg_module is None:
-        try:
-            pkg_module = importlib.import_module(_PACKAGE_NAME)
-        except ModuleNotFoundError:
-            spec = importlib.util.spec_from_file_location(
-                _PACKAGE_NAME,
-                package_root / "__init__.py",
-                submodule_search_locations=[str(package_root)],
-            )
-            if spec and spec.loader:
-                pkg_module = importlib.util.module_from_spec(spec)
-                sys.modules[_PACKAGE_NAME] = pkg_module
-                spec.loader.exec_module(pkg_module)
-            else:  # pragma: no cover - fallback when spec cannot be created
-                pkg_module = ModuleType(_PACKAGE_NAME)
-                pkg_module.__file__ = str(package_root / "__init__.py")
-                pkg_module.__path__ = [str(package_root)]
-                sys.modules[_PACKAGE_NAME] = pkg_module
-        else:
-            pkg_module = sys.modules[_PACKAGE_NAME]
-
-    pkg_root_str = str(package_root)
-    pkg_path = getattr(pkg_module, "__path__", None)
-    if pkg_path is None:
-        pkg_module.__path__ = [pkg_root_str]
-    else:
-        try:
-            existing_paths = list(pkg_path)
-        except TypeError:  # pragma: no cover - exotic path container
-            pkg_module.__path__ = [pkg_root_str]
-        else:
-            if pkg_root_str not in existing_paths:
-                try:
-                    pkg_path.insert(0, pkg_root_str)
-                except Exception:  # pragma: no cover - immutable path container
-                    pkg_module.__path__ = [pkg_root_str, *existing_paths]
-
-    sys.modules.setdefault(f"{_PACKAGE_NAME}.embeddable_db_mixin", module)
-    sys.modules.setdefault("embeddable_db_mixin", module)
-
-
-_bootstrap_package()
-
-_MODULE_CACHE: dict[str, ModuleType] = {}
-
-
-def _load_internal_module(name: str) -> ModuleType:
-    """Import ``name`` from this package falling back to flat modules."""
-
-    cached = _MODULE_CACHE.get(name)
-    if cached is not None:
-        return cached
-
-    qualified = f"{_PACKAGE_NAME}.{name}"
-    try:
-        module = importlib.import_module(qualified)
-    except ModuleNotFoundError as primary_exc:
-        if primary_exc.name not in {qualified, _PACKAGE_NAME}:
-            raise
-        try:
-            module = importlib.import_module(name)
-        except ModuleNotFoundError as secondary_exc:
-            raise secondary_exc from primary_exc
-
-    _MODULE_CACHE[name] = module
-    return module
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
 
 from datetime import datetime
 from time import perf_counter
@@ -116,18 +49,29 @@ import hashlib
 import json
 import logging
 import re
-from security.secret_redactor import redact
-from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed
-from chunking import split_into_chunks, summarize_snippet
-from vector_service.text_preprocessor import generalise, PreprocessingConfig
+
+_secret_redactor = load_internal("security.secret_redactor")
+redact = _secret_redactor.redact
+
+_semantic_diff = load_internal("analysis.semantic_diff_filter")
+find_semantic_risks = _semantic_diff.find_semantic_risks
+
+_governed_embeddings = load_internal("governed_embeddings")
+governed_embed = _governed_embeddings.governed_embed
+
+_chunking = load_internal("chunking")
+split_into_chunks = _chunking.split_into_chunks
+summarize_snippet = _chunking.summarize_snippet
+
+_text_preprocessor = load_internal("vector_service.text_preprocessor")
+generalise = _text_preprocessor.generalise
+PreprocessingConfig = _text_preprocessor.PreprocessingConfig
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
-from compliance.license_fingerprint import (
-    check as license_check,
-    fingerprint as license_fingerprint,
-)
+_license_fingerprint = load_internal("compliance.license_fingerprint")
+license_check = _license_fingerprint.check
+license_fingerprint = _license_fingerprint.fingerprint
 
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
@@ -144,7 +88,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-_metrics_exporter = _load_internal_module("metrics_exporter")
+_metrics_exporter = load_internal("metrics_exporter")
 _EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
 _EMBED_STORE_TOTAL = _metrics_exporter.embedding_store_seconds_total
 _EMBED_STALE = _metrics_exporter.embedding_stale_cost_seconds
@@ -152,13 +96,13 @@ _EMBED_TOKENS = _metrics_exporter.embedding_tokens_total
 _EMBED_WALL_TOTAL = _metrics_exporter.embedding_wall_seconds_total
 _EMBED_WALL_LAST = _metrics_exporter.embedding_wall_time_seconds
 
-_vector_metrics_db = _load_internal_module("vector_metrics_db")
+_vector_metrics_db = load_internal("vector_metrics_db")
 VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
 
-_embedding_stats_db = _load_internal_module("embedding_stats_db")
+_embedding_stats_db = load_internal("embedding_stats_db")
 EmbeddingStatsDB = _embedding_stats_db.EmbeddingStatsDB
 
-_data_bot = _load_internal_module("data_bot")
+_data_bot = load_internal("data_bot")
 MetricsDB = _data_bot.MetricsDB
 
 logger = logging.getLogger(__name__)

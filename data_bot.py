@@ -47,61 +47,33 @@ Example ``self_coding_thresholds.yaml``::
 
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
 
-if __package__ in {None, ""}:  # pragma: no cover - support script execution
-    _THIS_FILE = Path(__file__).resolve()
-    _PACKAGE_ROOT = _THIS_FILE.parent
-    _REPO_PARENT = _PACKAGE_ROOT.parent
-    if str(_REPO_PARENT) not in sys.path:
-        sys.path.insert(0, str(_REPO_PARENT))
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-    _PKG_NAME = "menace_sandbox"
-    globals()["__package__"] = _PKG_NAME
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-    _pkg_module = sys.modules.get(_PKG_NAME)
-    if _pkg_module is None:
-        _spec = importlib.util.spec_from_file_location(
-            _PKG_NAME,
-            _PACKAGE_ROOT / "__init__.py",
-            submodule_search_locations=[str(_PACKAGE_ROOT)],
-        )
-        if _spec and _spec.loader:
-            _pkg_module = importlib.util.module_from_spec(_spec)
-            sys.modules[_PKG_NAME] = _pkg_module
-            _spec.loader.exec_module(_pkg_module)
-        else:  # pragma: no cover - fallback if package spec missing
-            _pkg_module = ModuleType(_PKG_NAME)
-            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
-            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
-            sys.modules[_PKG_NAME] = _pkg_module
-    _pkg_path = getattr(_pkg_module, "__path__", None)
-    _pkg_root_str = str(_PACKAGE_ROOT)
-    if _pkg_path is None:
-        _pkg_module.__path__ = [_pkg_root_str]
-    else:
-        try:
-            _existing_paths = list(_pkg_path)
-        except TypeError:  # pragma: no cover - exotic path container
-            _pkg_module.__path__ = [_pkg_root_str]
-        else:
-            if _pkg_root_str not in _existing_paths:
-                try:
-                    _pkg_path.insert(0, _pkg_root_str)
-                except Exception:  # pragma: no cover - immutable path
-                    _pkg_module.__path__ = [_pkg_root_str, *_existing_paths]
-
-    _module = sys.modules.get(__name__)
-    if _module is None:  # pragma: no cover - defensive
-        _module = ModuleType(__name__)
-        _module.__file__ = str(_THIS_FILE)
-        sys.modules[__name__] = _module
-    sys.modules["menace_sandbox.data_bot"] = _module
-    sys.modules["data_bot"] = _module
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
 
 # flake8: noqa
 import sqlite3
@@ -114,72 +86,40 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast
 
-_MODULE_CACHE: Dict[str, ModuleType] = {}
-
-
-def _load_internal_module(name: str) -> ModuleType:
-    """Return *name* from this package falling back to flat imports."""
-
-    cached = _MODULE_CACHE.get(name)
-    if cached is not None:
-        return cached
-
-    module: ModuleType | None = None
-    last_exc: ModuleNotFoundError | None = None
-    if __package__:
-        qualified = f"{__package__}.{name}"
-        try:
-            module = importlib.import_module(qualified)
-        except ModuleNotFoundError as exc:
-            last_exc = exc
-            if exc.name != qualified:
-                raise
-
-    if module is None:
-        try:
-            module = importlib.import_module(name)
-        except ModuleNotFoundError as exc:
-            if last_exc is not None:
-                raise last_exc from exc
-            raise
-
-    _MODULE_CACHE[name] = module
-    return module
-
-_db_router_module = _load_internal_module("db_router")
+_db_router_module = load_internal("db_router")
 DBRouter = _db_router_module.DBRouter
 GLOBAL_ROUTER = _db_router_module.GLOBAL_ROUTER
 LOCAL_TABLES = _db_router_module.LOCAL_TABLES
 init_db_router = _db_router_module.init_db_router
 
-_scope_utils = _load_internal_module("scope_utils")
+_scope_utils = load_internal("scope_utils")
 Scope = _scope_utils.Scope
 build_scope_clause = _scope_utils.build_scope_clause
 apply_scope = _scope_utils.apply_scope
 
-_unified_event_bus_module = _load_internal_module("unified_event_bus")
+_unified_event_bus_module = load_internal("unified_event_bus")
 UnifiedEventBus = _unified_event_bus_module.UnifiedEventBus
-_shared_event_bus_module = _load_internal_module("shared_event_bus")
+_shared_event_bus_module = load_internal("shared_event_bus")
 _SHARED_EVENT_BUS = _shared_event_bus_module.event_bus
 
-_roi_thresholds_module = _load_internal_module("roi_thresholds")
+_roi_thresholds_module = load_internal("roi_thresholds")
 ROIThresholds = _roi_thresholds_module.ROIThresholds
 
-_threshold_service_module = _load_internal_module("threshold_service")
+_threshold_service_module = load_internal("threshold_service")
 ThresholdService = _threshold_service_module.ThresholdService
 _DEFAULT_THRESHOLD_SERVICE = _threshold_service_module.threshold_service
 
-_sandbox_settings_module = _load_internal_module("sandbox_settings")
+_sandbox_settings_module = load_internal("sandbox_settings")
 SandboxSettings = _sandbox_settings_module.SandboxSettings
 
-_evolution_history_module = _load_internal_module("evolution_history_db")
+_evolution_history_module = load_internal("evolution_history_db")
 EvolutionHistoryDB = _evolution_history_module.EvolutionHistoryDB
 EvolutionEvent = _evolution_history_module.EvolutionEvent
 
-_code_database_module = _load_internal_module("code_database")
+_code_database_module = load_internal("code_database")
 PatchHistoryDB = _code_database_module.PatchHistoryDB
 
-_forecasting_module = _load_internal_module("forecasting")
+_forecasting_module = load_internal("forecasting")
 ForecastModel = _forecasting_module.ForecastModel
 create_model = _forecasting_module.create_model
 
@@ -189,11 +129,11 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
 
     CapitalManagementBot = cast(
         "type[_CapitalManagementBot]",
-        _load_internal_module("capital_management_bot").CapitalManagementBot,
+        load_internal("capital_management_bot").CapitalManagementBot,
     )
     BaselineTracker = cast(
         "type[_BaselineTracker]",
-        _load_internal_module("self_improvement.baseline_tracker").BaselineTracker,
+        load_internal("self_improvement.baseline_tracker").BaselineTracker,
     )
 else:
     CapitalManagementBot = object  # type: ignore[assignment]
@@ -203,7 +143,7 @@ else:
 def _create_baseline_tracker(*args: object, **kwargs: object) -> "BaselineTracker":
     """Lazily import :class:`BaselineTracker` to avoid circular imports."""
 
-    tracker_cls = _load_internal_module("self_improvement.baseline_tracker").BaselineTracker
+    tracker_cls = load_internal("self_improvement.baseline_tracker").BaselineTracker
     return tracker_cls(*args, **kwargs)
 
 try:
@@ -231,7 +171,7 @@ except Exception:  # pragma: no cover - optional dependency
     )
 
 try:  # pragma: no cover - optional dependency
-    _vector_metrics_module = _load_internal_module("vector_metrics_db")
+    _vector_metrics_module = load_internal("vector_metrics_db")
 except Exception:
     VectorMetricsDB = None  # type: ignore
 else:
@@ -241,7 +181,7 @@ else:
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
-_self_coding_thresholds_module = _load_internal_module("self_coding_thresholds")
+_self_coding_thresholds_module = load_internal("self_coding_thresholds")
 SelfCodingThresholds = _self_coding_thresholds_module.SelfCodingThresholds
 _save_sc_thresholds = _self_coding_thresholds_module.update_thresholds
 _load_sc_thresholds = _self_coding_thresholds_module.get_thresholds
@@ -1434,7 +1374,7 @@ class DataBot:
         self.trend_predictor = trend_predictor
         if self.trend_predictor is None:
             try:  # pragma: no cover - optional dependency
-                _trend_predictor_module = _load_internal_module("trend_predictor")
+                _trend_predictor_module = load_internal("trend_predictor")
                 self.trend_predictor = _trend_predictor_module.TrendPredictor()
             except Exception:
                 self.trend_predictor = None
@@ -1578,7 +1518,7 @@ class DataBot:
                 ),
             }
             if start_server or os.getenv("METRICS_PORT"):
-                _metrics_exporter = _load_internal_module("metrics_exporter")
+                _metrics_exporter = load_internal("metrics_exporter")
                 start_metrics_server = _metrics_exporter.start_metrics_server
                 port = int(os.getenv("METRICS_PORT", "8001"))
                 start_metrics_server(port)
@@ -2989,7 +2929,7 @@ class DataBot:
             return []
 
         try:
-            anomaly_detection = _load_internal_module("anomaly_detection")
+            anomaly_detection = load_internal("anomaly_detection")
 
             scores = anomaly_detection.anomaly_scores(
                 values, metrics_db=metrics_db, field=field

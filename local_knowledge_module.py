@@ -8,29 +8,60 @@ It provides a minimal interface used by bots that need persistent long-term
 context.
 """
 
+import importlib.util
+import sys
 from pathlib import Path
-from typing import Sequence, Any
+from typing import Any, Sequence
 
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
-from governed_embeddings import get_embedder
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-try:
-    from .gpt_memory import GPTMemoryManager
-except ImportError:  # pragma: no cover - allow flat imports
-    try:
-        from menace_sandbox.gpt_memory import GPTMemoryManager  # type: ignore
-    except ImportError:  # pragma: no cover - flat layout fallback
-        from gpt_memory import GPTMemoryManager  # type: ignore
-from gpt_knowledge_service import GPTKnowledgeService
-from vector_service import CognitionLayer
-try:  # pragma: no cover - allow flat imports
-    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX
-except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX  # type: ignore
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+
+get_embedder = load_internal("governed_embeddings").get_embedder
+
+GPTMemoryManager = load_internal("gpt_memory").GPTMemoryManager
+GPTKnowledgeService = load_internal("gpt_knowledge_service").GPTKnowledgeService
+CognitionLayer = load_internal("vector_service").CognitionLayer
+
+try:  # pragma: no cover - canonical tag constants
+    _log_tags = load_internal("log_tags")
+except ModuleNotFoundError:  # pragma: no cover - fallback when tags unavailable
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+except Exception:  # pragma: no cover - degrade gracefully
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+else:
+    FEEDBACK = _log_tags.FEEDBACK
+    IMPROVEMENT_PATH = _log_tags.IMPROVEMENT_PATH
+    ERROR_FIX = _log_tags.ERROR_FIX
 
 
 class LocalKnowledgeModule:
