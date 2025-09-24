@@ -20,17 +20,50 @@ import time
 import json
 import urllib.parse
 from typing import Any
+from contextlib import contextmanager
 
 from dynamic_path_router import resolve_path, path_for_prompt
 
 
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
-from .environment import (
-    get_edge_case_stubs,
-    preserve_sandbox_env,
-    cleanup_artifacts,
-)
+try:  # pragma: no cover - tolerate trimmed environments
+    from . import environment as _environment
+except Exception as exc:  # pragma: no cover - optional dependency fallback
+    _environment = None
+    _ENV_IMPORT_ERROR = exc
+else:  # pragma: no branch - bookkeeping
+    _ENV_IMPORT_ERROR = None
+
+if _environment is not None:
+    get_edge_case_stubs = getattr(_environment, "get_edge_case_stubs", lambda: {})
+    preserve_sandbox_env = _environment.preserve_sandbox_env
+    cleanup_artifacts = _environment.cleanup_artifacts
+else:
+
+    def get_edge_case_stubs() -> dict[str, Any]:  # pragma: no cover - simple fallback
+        """Return an empty edge-case stub map when environment helpers are missing."""
+
+        return {}
+
+
+    @contextmanager
+    def preserve_sandbox_env(*_args, **_kwargs):  # pragma: no cover - fallback
+        """Raise a helpful error when sandbox environment helpers are unavailable."""
+
+        if _ENV_IMPORT_ERROR is not None:
+            raise RuntimeError(
+                "sandbox_runner.environment helpers are unavailable; install optional "
+                "sandbox dependencies"
+            ) from _ENV_IMPORT_ERROR
+        yield
+
+
+    def cleanup_artifacts(*_args, **_kwargs):  # pragma: no cover - noop fallback
+        """No-op cleanup when environment helpers are missing."""
+
+        return None
+
 from .scoring import record_run
 
 
