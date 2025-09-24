@@ -171,6 +171,22 @@ def diff_within_target_region(
     return True
 
 
+def _default_weights_path() -> Path:
+    """Return the configured style-weight path if it exists."""
+
+    candidate = os.getenv("PROMPT_STYLE_WEIGHTS_PATH", "prompt_style_weights.json")
+    try:
+        return resolve_path(candidate)
+    except FileNotFoundError:
+        logger.warning(
+            "prompt style weights not found; continuing without cached styles",  # noqa: TRY300
+            extra={"dependency": "prompt_style_weights"},
+        )
+        return Path(candidate)
+    except Exception:
+        return Path(candidate)
+
+
 @dataclass
 class PromptEngine:
     """Build prompts for the :class:`SelfCodingEngine`.
@@ -266,12 +282,7 @@ class PromptEngine:
             "coding_standards;repository_layout;metadata;version_control;testing",
         ).split(";"),
     )
-    weights_path: Path = resolve_path(
-        os.getenv(
-            "PROMPT_STYLE_WEIGHTS_PATH",
-            "prompt_style_weights.json",
-        )
-    )
+    weights_path: Path = field(default_factory=_default_weights_path)
     trainer: PromptMemoryTrainer | None = None
     optimizer: PromptOptimizer | None = None
     optimizer_refresh_interval: int | None = None
