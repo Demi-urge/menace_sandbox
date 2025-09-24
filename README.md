@@ -1,5 +1,16 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
+## Direct imports from the source tree
+
+All modules that participate in the bootstrap chain now call a shared
+`import_compat` helper before performing any relative imports.  The helper adds
+the repository root to `sys.path`, initialises the `menace_sandbox` package when
+necessary, and registers alias entries in `sys.modules` so flat imports resolve
+to the same objects as package-qualified imports.  This makes it safe to run
+scripts such as `python gpt_memory.py` directly from the repository without
+installing the package first; the same module objects are reused regardless of
+import style.
+
 ## Dynamic path routing
 
 Scripts and data files are located with `dynamic_path_router.resolve_path` so
