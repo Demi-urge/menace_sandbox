@@ -6,10 +6,10 @@ Run ``menace embed --db workflow`` to backfill manually.
 
 from __future__ import annotations
 
-from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from bot_registry import BotRegistry
+from data_bot import DataBot
 
-from .coding_bot_interface import self_coding_managed
+from coding_bot_interface import self_coding_managed
 import json
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -25,9 +25,6 @@ from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import generalise
 from db_router import (
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
     DBRouter,
     GLOBAL_ROUTER,
     LOCAL_TABLES,
@@ -55,6 +52,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pika = None  # type: ignore
 import threading
+
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
