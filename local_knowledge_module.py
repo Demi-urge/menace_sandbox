@@ -18,7 +18,13 @@ except Exception:  # pragma: no cover - keep import lightweight
 
 from governed_embeddings import get_embedder
 
-from menace_sandbox.gpt_memory import GPTMemoryManager
+try:
+    from .gpt_memory import GPTMemoryManager
+except ImportError:  # pragma: no cover - allow flat imports
+    try:
+        from menace_sandbox.gpt_memory import GPTMemoryManager  # type: ignore
+    except ImportError:  # pragma: no cover - flat layout fallback
+        from gpt_memory import GPTMemoryManager  # type: ignore
 from gpt_knowledge_service import GPTKnowledgeService
 from vector_service import CognitionLayer
 try:  # pragma: no cover - allow flat imports
