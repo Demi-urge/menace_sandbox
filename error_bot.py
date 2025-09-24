@@ -7,6 +7,24 @@ Run ``menace embed --db error`` to backfill manually.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+current_module = sys.modules[__name__]
+sys.modules["menace_sandbox.error_bot"] = current_module
+sys.modules["error_bot"] = current_module
+
+if __package__ in {None, ""}:
+    repo_root = Path(__file__).resolve().parent.parent
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+    import importlib
+
+    package = importlib.import_module("menace_sandbox")
+    sys.modules.setdefault("menace_sandbox", package)
+    __package__ = "menace_sandbox"
+
 import logging
 import sqlite3
 import json
@@ -15,7 +33,6 @@ import os
 from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
-from pathlib import Path
 import re
 
 try:  # pragma: no cover - allow flat imports
