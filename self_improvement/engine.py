@@ -23,6 +23,7 @@ that transient failures are retried while permanent issues propagate errors.
 # flake8: noqa
 
 import logging
+from pathlib import Path
 
 try:
     from logging_utils import log_record, get_logger, setup_logging, set_correlation_id
@@ -66,16 +67,33 @@ from .init import (
     _atomic_write,
     get_default_synergy_weights,
 )
-try:  # pragma: no cover - allow flat imports
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from dynamic_path_router import resolve_path, resolve_module_path
+except Exception:  # pragma: no cover - fallback for package-relative layout
     from ..dynamic_path_router import resolve_path, resolve_module_path
-except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path, resolve_module_path  # type: ignore
-from ..metrics_exporter import (
-    synergy_weight_updates_total,
-    synergy_weight_update_failures_total,
-    synergy_weight_update_alerts_total,
-    orphan_modules_reintroduced_total,
-    orphan_modules_passed_total,
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from metrics_exporter import (
+        synergy_weight_updates_total,
+        synergy_weight_update_failures_total,
+        synergy_weight_update_alerts_total,
+        orphan_modules_reintroduced_total,
+        orphan_modules_passed_total,
+        orphan_modules_tested_total,
+        orphan_modules_failed_total,
+        orphan_modules_reclassified_total,
+        orphan_modules_redundant_total,
+        orphan_modules_legacy_total,
+        prediction_mae,
+        prediction_reliability,
+        self_improvement_failure_total,
+    )
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..metrics_exporter import (
+        synergy_weight_updates_total,
+        synergy_weight_update_failures_total,
+        synergy_weight_update_alerts_total,
+        orphan_modules_reintroduced_total,
+        orphan_modules_passed_total,
     orphan_modules_tested_total,
     orphan_modules_failed_total,
     orphan_modules_reclassified_total,
@@ -84,14 +102,32 @@ from ..metrics_exporter import (
     prediction_mae,
     prediction_reliability,
     self_improvement_failure_total,
-)
+    )
 
-from ..composite_workflow_scorer import CompositeWorkflowScorer
-from ..neuroplasticity import PathwayDB
-from ..data_bot import MetricsDB
-from ..roi_results_db import ROIResultsDB
-from ..workflow_scorer_core import EvaluationResult
-from ..workflow_stability_db import WorkflowStabilityDB
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from composite_workflow_scorer import CompositeWorkflowScorer
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..composite_workflow_scorer import CompositeWorkflowScorer
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from neuroplasticity import PathwayDB
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..neuroplasticity import PathwayDB
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from data_bot import MetricsDB
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..data_bot import MetricsDB
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from roi_results_db import ROIResultsDB
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..roi_results_db import ROIResultsDB
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from workflow_scorer_core import EvaluationResult
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..workflow_scorer_core import EvaluationResult
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from workflow_stability_db import WorkflowStabilityDB
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except ImportError:  # pragma: no cover - best effort fallback
@@ -151,7 +187,6 @@ import shutil
 import ast
 import yaml
 import traceback
-from pathlib import Path
 from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_CHECKING
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
