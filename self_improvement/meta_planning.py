@@ -30,14 +30,43 @@ if "menace.logging_utils" in sys.modules and not hasattr(
 ):  # pragma: no cover - test stub fallback
     sys.modules["menace.logging_utils"].setup_logging = lambda *a, **k: None
 
-from ..logging_utils import get_logger, log_record
-from ..sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
+try:  # pragma: no cover - allow flat package layout
+    from ..logging_utils import get_logger, log_record
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from logging_utils import get_logger, log_record  # type: ignore
+
+try:  # pragma: no cover - allow flat package layout
+    from ..sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from sandbox_settings import (  # type: ignore
+        SandboxSettings,
+        DEFAULT_SEVERITY_SCORE_MAP,
+    )
+
 from . import init as _init
-from ..workflow_stability_db import WorkflowStabilityDB
-from ..roi_results_db import ROIResultsDB
-from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
+
+try:  # pragma: no cover - allow flat package layout
+    from ..workflow_stability_db import WorkflowStabilityDB
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from workflow_stability_db import WorkflowStabilityDB  # type: ignore
+
+try:  # pragma: no cover - allow flat package layout
+    from ..roi_results_db import ROIResultsDB
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from roi_results_db import ROIResultsDB  # type: ignore
+
+try:  # pragma: no cover - allow flat package layout
+    from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT  # type: ignore
+
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
-from ..error_logger import TelemetryEvent
+
+try:  # pragma: no cover - allow flat package layout
+    from ..error_logger import TelemetryEvent
+except ImportError:  # pragma: no cover - fallback for manual_bootstrap environments
+    from error_logger import TelemetryEvent  # type: ignore
+
 from .sandbox_score import get_latest_sandbox_score
 from context_builder_util import create_context_builder
 
