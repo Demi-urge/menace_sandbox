@@ -7,6 +7,10 @@ components.  If ``vector_service`` is unavailable an informative
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
+import sys
+import types
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping, Callable
 import subprocess
@@ -22,24 +26,80 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextvars
 
+if not __package__:
+    _REPO_ROOT = Path(__file__).resolve().parent
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    _PACKAGE_NAME = _REPO_ROOT.name
+    package_module = sys.modules.get(_PACKAGE_NAME)
+    if package_module is None:
+        init_file = _REPO_ROOT / "__init__.py"
+        spec = importlib.util.spec_from_file_location(
+            _PACKAGE_NAME,
+            init_file,
+            submodule_search_locations=[str(_REPO_ROOT)],
+        )
+        if spec and spec.loader:
+            package_module = importlib.util.module_from_spec(spec)
+            sys.modules[_PACKAGE_NAME] = package_module
+            spec.loader.exec_module(package_module)  # type: ignore[attr-defined]
+        else:  # pragma: no cover - defensive fallback when spec missing
+            package_module = types.ModuleType(_PACKAGE_NAME)
+            package_module.__path__ = [str(_REPO_ROOT)]  # type: ignore[attr-defined]
+            sys.modules[_PACKAGE_NAME] = package_module
+    else:
+        package_module.__dict__.setdefault("__path__", [str(_REPO_ROOT)])
+    package_module.__dict__.setdefault("__path__", [str(_REPO_ROOT)])
+    globals()["__package__"] = _PACKAGE_NAME
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.self_coding_engine", sys.modules[__name__])
+    setattr(package_module, "self_coding_engine", sys.modules[__name__])
+
+
+def _import_from_package(module_name: str) -> types.ModuleType:
+    """Import ``module_name`` relative to this package with flat fallback."""
+
+    package = __package__ or ""
+    if package:
+        qualified = f"{package}.{module_name}"
+        try:
+            return importlib.import_module(qualified)
+        except ModuleNotFoundError as exc:
+            if exc.name == package:
+                return importlib.import_module(module_name)
+            raise
+    return importlib.import_module(module_name)
+
 from context_builder import handle_failure, PromptBuildError
 
-from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
-from .unified_event_bus import UnifiedEventBus
-from .trend_predictor import TrendPredictor
+_code_database = _import_from_package("code_database")
+CodeDB = _code_database.CodeDB
+CodeRecord = _code_database.CodeRecord
+PatchHistoryDB = _code_database.PatchHistoryDB
+PatchRecord = _code_database.PatchRecord
+_unified_event_bus = _import_from_package("unified_event_bus")
+UnifiedEventBus = _unified_event_bus.UnifiedEventBus
+_trend_predictor = _import_from_package("trend_predictor")
+TrendPredictor = _trend_predictor.TrendPredictor
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
-from .safety_monitor import SafetyMonitor
+_safety_monitor = _import_from_package("safety_monitor")
+SafetyMonitor = _safety_monitor.SafetyMonitor
 try:  # pragma: no cover - optional formal verification dependency
     from .advanced_error_management import FormalVerifier
 except Exception:  # pragma: no cover - degrade gracefully when missing
     FormalVerifier = object  # type: ignore[misc,assignment]
-from .llm_interface import Prompt, LLMResult, LLMClient
-from .llm_router import client_from_settings
-from .resilience import retry_with_backoff, RetryError
+_llm_interface = _import_from_package("llm_interface")
+Prompt = _llm_interface.Prompt
+LLMResult = _llm_interface.LLMResult
+LLMClient = _llm_interface.LLMClient
+_llm_router = _import_from_package("llm_router")
+client_from_settings = _llm_router.client_from_settings
+_resilience = _import_from_package("resilience")
+retry_with_backoff = _resilience.retry_with_backoff
+RetryError = _resilience.RetryError
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -72,15 +132,23 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
         recent_improvement_path,
     )
-from .menace_sanity_layer import fetch_recent_billing_issues
+_menace_sanity_layer = _import_from_package("menace_sanity_layer")
+fetch_recent_billing_issues = _menace_sanity_layer.fetch_recent_billing_issues
 try:  # pragma: no cover - optional rollback support
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - degrade gracefully when missing
     RollbackManager = object  # type: ignore[misc,assignment]
-from .audit_trail import AuditTrail
-from .access_control import READ, WRITE, check_permission
-from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
-from .patch_attempt_tracker import PatchAttemptTracker
+_audit_trail = _import_from_package("audit_trail")
+AuditTrail = _audit_trail.AuditTrail
+_access_control = _import_from_package("access_control")
+READ = _access_control.READ
+WRITE = _access_control.WRITE
+check_permission = _access_control.check_permission
+_patch_suggestion_db = _import_from_package("patch_suggestion_db")
+PatchSuggestionDB = _patch_suggestion_db.PatchSuggestionDB
+SuggestionRecord = _patch_suggestion_db.SuggestionRecord
+_patch_attempt_tracker = _import_from_package("patch_attempt_tracker")
+PatchAttemptTracker = _patch_attempt_tracker.PatchAttemptTracker
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .enhancement_classifier import EnhancementClassifier, EnhancementSuggestion
@@ -96,7 +164,8 @@ except Exception:  # pragma: no cover - graceful degradation
     class TestHarnessResult:  # type: ignore[misc]
         success = False
         stdout = ""
-from .sandbox_settings import SandboxSettings
+_sandbox_settings = _import_from_package("sandbox_settings")
+SandboxSettings = _sandbox_settings.SandboxSettings
 
 try:
     from vector_service import (
@@ -120,25 +189,30 @@ try:  # pragma: no cover - optional ROI tracking
     from .roi_tracker import ROITracker
 except Exception:  # pragma: no cover - degrade gracefully when missing
     ROITracker = object  # type: ignore[misc,assignment]
-from .prompt_evolution_memory import PromptEvolutionMemory
+_prompt_evolution_memory = _import_from_package("prompt_evolution_memory")
+PromptEvolutionMemory = _prompt_evolution_memory.PromptEvolutionMemory
 try:  # pragma: no cover - optional dependency
     from .patch_provenance import record_patch_metadata
 except Exception:  # pragma: no cover - graceful degradation
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
-from .prompt_engine import (
-    PromptEngine,
-    _ENCODER,
-    diff_within_target_region,
-)
-from .prompt_memory_trainer import PromptMemoryTrainer
+_prompt_engine = _import_from_package("prompt_engine")
+PromptEngine = _prompt_engine.PromptEngine
+_ENCODER = _prompt_engine._ENCODER
+diff_within_target_region = _prompt_engine.diff_within_target_region
+_prompt_memory_trainer = _import_from_package("prompt_memory_trainer")
+PromptMemoryTrainer = _prompt_memory_trainer.PromptMemoryTrainer
 from chunking import split_into_chunks, get_chunk_summaries
 from code_summarizer import summarize_code
 try:
     from .prompt_optimizer import PromptOptimizer
 except Exception:  # pragma: no cover - fallback for flat layout
     from prompt_optimizer import PromptOptimizer  # type: ignore
-from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
+_error_parser = _import_from_package("error_parser")
+ErrorParser = _error_parser.ErrorParser
+ErrorReport = _error_parser.ErrorReport
+parse_failure = _error_parser.parse_failure
+FailureCache = _error_parser.FailureCache
 try:
     from .target_region import TargetRegion
 except Exception:  # pragma: no cover - fallback for direct execution
@@ -151,8 +225,13 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - final fallback
         def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
             return None
-from .failure_fingerprint import FailureFingerprint, find_similar, log_fingerprint
-from .failure_retry_utils import check_similarity_and_warn, record_failure
+_failure_fingerprint = _import_from_package("failure_fingerprint")
+FailureFingerprint = _failure_fingerprint.FailureFingerprint
+find_similar = _failure_fingerprint.find_similar
+log_fingerprint = _failure_fingerprint.log_fingerprint
+_failure_retry_utils = _import_from_package("failure_retry_utils")
+check_similarity_and_warn = _failure_retry_utils.check_similarity_and_warn
+record_failure = _failure_retry_utils.record_failure
 from snippet_compressor import compress_snippets
 from vector_service.roi_tags import RoiTag
 try:  # pragma: no cover - optional dependency for metrics
@@ -178,10 +257,9 @@ _PATCH_ESCALATIONS = _me.Gauge(
     "Patch escalation events",
     labelnames=["level"],
 )
-from .self_improvement.baseline_tracker import (  # noqa: E402
-    BaselineTracker,
-    TRACKER as METRIC_BASELINES,
-)
+_baseline_tracker = _import_from_package("self_improvement.baseline_tracker")
+BaselineTracker = _baseline_tracker.BaselineTracker  # noqa: E402
+METRIC_BASELINES = _baseline_tracker.TRACKER
 try:  # pragma: no cover - optional dependency
     from .self_improvement.init import FileLock, _atomic_write
 except Exception:  # pragma: no cover - fallback for flat layout
