@@ -13,14 +13,20 @@ from typing import Any, Dict, Iterator
 from uuid import uuid4
 
 from filelock import FileLock
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 
 from sandbox_settings import SandboxSettings
 from .prompt_strategy_manager import PromptStrategyManager
 
 _settings = SandboxSettings()
 
-_strategy_stats_path = Path(resolve_path("_strategy_stats.json"))
+try:
+    _strategy_stats_path = Path(resolve_path("_strategy_stats.json"))
+except FileNotFoundError:
+    # The stats file is optional and may not exist in fresh checkouts.  Fall
+    # back to the repository root so the module can lazily create it when
+    # updates are recorded.
+    _strategy_stats_path = Path(get_project_root()) / "_strategy_stats.json"
 _strategy_lock = FileLock(str(_strategy_stats_path) + ".lock")
 
 
