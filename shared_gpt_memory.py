@@ -38,40 +38,50 @@ def _ensure_package_alias() -> None:
         sys.modules["menace_sandbox"] = module
 
 
-def _import_with_optional_package(module: str) -> ModuleType:
-    """Import *module* preferring the ``menace_sandbox`` package."""
+def _alias_submodule(name: str, module: ModuleType) -> ModuleType:
+    """Register ``module`` under both flat and package-qualified names."""
 
-    qualified = f"menace_sandbox.{module}"
-    try:
-        return import_module(qualified)
-    except ModuleNotFoundError as exc:
-        if exc.name not in {"menace_sandbox", qualified}:
-            raise
+    sys.modules.setdefault(name, module)
+    sys.modules.setdefault(f"menace_sandbox.{name}", module)
+    return module
+
+
+def _bootstrap_package() -> None:
+    """Ensure the package structure exists when executed as a script."""
+
+    global __package__
+
+    if __package__ not in {None, ""}:
+        return
+
+    package_root = Path(__file__).resolve().parent
+    repository_root = package_root.parent
+    repository_root_str = str(repository_root)
+    if repository_root_str not in sys.path:
+        sys.path.insert(0, repository_root_str)
 
     _ensure_package_alias()
+    __package__ = "menace_sandbox"
 
-    try:
-        return import_module(qualified)
-    except ModuleNotFoundError as exc:
-        if exc.name != qualified:
-            raise
 
-    module_obj = import_module(module)
-    sys.modules.setdefault(qualified, module_obj)
-    return module_obj
+_bootstrap_package()
 
 
 try:  # pragma: no cover - exercised via dedicated import test
     from .gpt_memory import GPTMemoryManager
 except ImportError:  # pragma: no cover - fallback for flat layout
-    GPTMemoryManager = _import_with_optional_package("gpt_memory").GPTMemoryManager
+    _bootstrap_package()
+    gpt_memory = import_module("gpt_memory")
+    gpt_memory = _alias_submodule("gpt_memory", gpt_memory)
+    GPTMemoryManager = gpt_memory.GPTMemoryManager
 
 try:  # pragma: no cover - exercised via dedicated import test
     from .shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE
 except ImportError:  # pragma: no cover - fallback for flat layout
-    LOCAL_KNOWLEDGE_MODULE = _import_with_optional_package(
-        "shared_knowledge_module"
-    ).LOCAL_KNOWLEDGE_MODULE
+    _bootstrap_package()
+    knowledge_module = import_module("shared_knowledge_module")
+    knowledge_module = _alias_submodule("shared_knowledge_module", knowledge_module)
+    LOCAL_KNOWLEDGE_MODULE = knowledge_module.LOCAL_KNOWLEDGE_MODULE
 
 # Single global GPT memory instance reused across bots
 GPT_MEMORY_MANAGER: GPTMemoryManager = LOCAL_KNOWLEDGE_MODULE.memory
