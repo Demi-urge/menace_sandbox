@@ -20,21 +20,26 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-if __package__ in {None, ""}:  # pragma: no cover - support execution as script
+
+def _bootstrap_self() -> None:
+    """Ensure this module can be executed directly."""
+
     _THIS_FILE = Path(__file__).resolve()
-    _REPO_ROOT = _THIS_FILE.parent
-    if str(_REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(_REPO_ROOT))
+    _PACKAGE_ROOT = _THIS_FILE.parent
+    _REPO_PARENT = _PACKAGE_ROOT.parent
+    if str(_REPO_PARENT) not in sys.path:
+        sys.path.insert(0, str(_REPO_PARENT))
 
     _PKG_NAME = "menace_sandbox"
     globals()["__package__"] = _PKG_NAME
 
-    _pkg_module = sys.modules.get(_PKG_NAME)
-    if _pkg_module is None:
+    try:
+        _pkg_module = importlib.import_module(_PKG_NAME)
+    except ModuleNotFoundError:
         _spec = importlib.util.spec_from_file_location(
             _PKG_NAME,
-            _REPO_ROOT / "__init__.py",
-            submodule_search_locations=[str(_REPO_ROOT)],
+            _PACKAGE_ROOT / "__init__.py",
+            submodule_search_locations=[str(_PACKAGE_ROOT)],
         )
         if _spec and _spec.loader:
             _pkg_module = importlib.util.module_from_spec(_spec)
@@ -42,12 +47,14 @@ if __package__ in {None, ""}:  # pragma: no cover - support execution as script
             _spec.loader.exec_module(_pkg_module)
         else:  # pragma: no cover - fallback when spec cannot be created
             _pkg_module = ModuleType(_PKG_NAME)
-            _pkg_module.__file__ = str(_REPO_ROOT / "__init__.py")
-            _pkg_module.__path__ = [str(_REPO_ROOT)]
+            _pkg_module.__file__ = str(_PACKAGE_ROOT / "__init__.py")
+            _pkg_module.__path__ = [str(_PACKAGE_ROOT)]
             sys.modules[_PKG_NAME] = _pkg_module
+    else:
+        _pkg_module = sys.modules[_PKG_NAME]
 
     _pkg_path = getattr(_pkg_module, "__path__", None)
-    _pkg_root_str = str(_REPO_ROOT)
+    _pkg_root_str = str(_PACKAGE_ROOT)
     if _pkg_path is None:
         _pkg_module.__path__ = [_pkg_root_str]
     else:
@@ -67,13 +74,50 @@ if __package__ in {None, ""}:  # pragma: no cover - support execution as script
         _module = ModuleType(__name__)
         _module.__file__ = str(_THIS_FILE)
         sys.modules[__name__] = _module
+
     sys.modules.setdefault(f"{_PKG_NAME}.embeddable_db_mixin", _module)
     sys.modules.setdefault("embeddable_db_mixin", _module)
+
+
+if __package__ in {None, ""}:  # pragma: no cover - support execution as script
+    _bootstrap_self()
 
 _CURRENT_MODULE = sys.modules.get(__name__)
 if _CURRENT_MODULE is not None:
     sys.modules.setdefault("menace_sandbox.embeddable_db_mixin", _CURRENT_MODULE)
     sys.modules.setdefault("embeddable_db_mixin", _CURRENT_MODULE)
+
+_MODULE_CACHE: dict[str, ModuleType] = {}
+
+
+def _load_internal_module(name: str) -> ModuleType:
+    """Import ``name`` from this package falling back to flat modules."""
+
+    cached = _MODULE_CACHE.get(name)
+    if cached is not None:
+        return cached
+
+    module: ModuleType | None = None
+    last_exc: ModuleNotFoundError | None = None
+    if __package__:
+        qualified = f"{__package__}.{name}"
+        try:
+            module = importlib.import_module(qualified)
+        except ModuleNotFoundError as exc:
+            last_exc = exc
+            if exc.name != qualified:
+                raise
+
+    if module is None:
+        try:
+            module = importlib.import_module(name)
+        except ModuleNotFoundError as exc:
+            if last_exc is not None:
+                raise last_exc from exc
+            raise
+
+    _MODULE_CACHE[name] = module
+    return module
 
 from datetime import datetime
 from time import perf_counter
@@ -110,17 +154,22 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-from menace_sandbox.data_bot import MetricsDB
-from menace_sandbox.embedding_stats_db import EmbeddingStatsDB
-from menace_sandbox.metrics_exporter import (
-    embedding_store_latency_seconds as _EMBED_STORE_LAST,
-    embedding_store_seconds_total as _EMBED_STORE_TOTAL,
-    embedding_stale_cost_seconds as _EMBED_STALE,
-    embedding_tokens_total as _EMBED_TOKENS,
-    embedding_wall_seconds_total as _EMBED_WALL_TOTAL,
-    embedding_wall_time_seconds as _EMBED_WALL_LAST,
-)
-from menace_sandbox.vector_metrics_db import VectorMetricsDB
+_metrics_exporter = _load_internal_module("metrics_exporter")
+_EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
+_EMBED_STORE_TOTAL = _metrics_exporter.embedding_store_seconds_total
+_EMBED_STALE = _metrics_exporter.embedding_stale_cost_seconds
+_EMBED_TOKENS = _metrics_exporter.embedding_tokens_total
+_EMBED_WALL_TOTAL = _metrics_exporter.embedding_wall_seconds_total
+_EMBED_WALL_LAST = _metrics_exporter.embedding_wall_time_seconds
+
+_vector_metrics_db = _load_internal_module("vector_metrics_db")
+VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
+
+_embedding_stats_db = _load_internal_module("embedding_stats_db")
+EmbeddingStatsDB = _embedding_stats_db.EmbeddingStatsDB
+
+_data_bot = _load_internal_module("data_bot")
+MetricsDB = _data_bot.MetricsDB
 
 logger = logging.getLogger(__name__)
 
