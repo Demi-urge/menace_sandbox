@@ -8,6 +8,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Callable, Iterable
 
 from logging_utils import get_logger, set_correlation_id, log_record
@@ -40,6 +41,74 @@ _INITIALISED = False
 
 
 logger = get_logger(__name__)
+
+
+def _import_optional_module(name: str) -> ModuleType:
+    """Import ``name`` preferring in-repo modules and align aliases.
+
+    Optional integrations live next to the sandbox sources, which means they
+    can be imported either via their flat module name (``quick_fix_engine``)
+    when running from a checkout or via the installed package namespace (for
+    example ``menace_sandbox.quick_fix_engine``).  This helper resolves those
+    modules by first attempting the qualified import for every plausible root
+    package and only falling back to the flat import when the qualified module
+    truly does not exist.  When an import succeeds the helper ensures both the
+    flat and qualified names reference the same module object inside
+    :data:`sys.modules` so legacy callers keep working.
+    """
+
+    repo_root = Path(__file__).resolve().parents[1]
+    module_rel_path = name.replace(".", os.sep)
+    module_file = repo_root / f"{module_rel_path}.py"
+    package_init = repo_root / module_rel_path / "__init__.py"
+
+    package_hint = __package__ or ""
+    root_candidates: list[str] = []
+    if package_hint:
+        package_root = package_hint.split(".", 1)[0]
+        if package_root:
+            root_candidates.append(package_root)
+    repo_root_package = repo_root.name
+    if repo_root_package not in root_candidates:
+        root_candidates.append(repo_root_package)
+
+    is_local = module_file.exists() or package_init.exists()
+    module: ModuleType | None = None
+    last_exc: ModuleNotFoundError | None = None
+
+    if is_local:
+        for root_package in root_candidates:
+            qualified_name = f"{root_package}.{name}"
+            try:
+                module = importlib.import_module(qualified_name)
+            except ModuleNotFoundError as exc:
+                missing = getattr(exc, "name", "") or ""
+                missing_candidates = {qualified_name, root_package}
+                if "." in qualified_name:
+                    missing_candidates.add(qualified_name.split(".", 1)[0])
+                if missing in missing_candidates:
+                    last_exc = exc
+                    continue
+                raise
+            else:
+                break
+        else:
+            try:
+                module = importlib.import_module(name)
+            except ModuleNotFoundError as exc:
+                raise last_exc or exc
+    else:
+        module = importlib.import_module(name)
+
+    if is_local and module is not None:
+        for root_package in root_candidates:
+            sys.modules[f"{root_package}.{name}"] = module
+    if module is not None:
+        sys.modules[name] = module
+
+    if module is None:
+        raise ModuleNotFoundError(name)
+    return module
 
 
 def _ensure_sqlite_db(path: Path) -> None:
@@ -85,7 +154,7 @@ def _verify_optional_modules(
     missing: set[str] = set()
     for mod in modules:
         try:
-            importlib.import_module(mod)
+            _import_optional_module(mod)
         except ModuleNotFoundError:
             missing.add(mod)
             min_ver = versions.get(mod, "")
@@ -302,7 +371,7 @@ def _initialize_autonomous_sandbox(
             # Already warned about the missing module above.
             continue
         try:
-            module = importlib.import_module(mod)
+            module = _import_optional_module(mod)
         except ModuleNotFoundError:
             logger.warning(
                 "%s service not found; install with 'pip install %s>=%s' to enable it",
