@@ -145,8 +145,15 @@ from orphan_analyzer import classify_module
 from logging_utils import log_record, get_logger
 from pydantic import ValidationError
 
-from .self_services_config import SelfTestConfig
-from .sandbox_runner.scoring import record_run
+try:  # pragma: no cover - allow execution without package context
+    from .self_services_config import SelfTestConfig
+except (ImportError, ValueError):  # pragma: no cover - fallback for manual bootstrap
+    from self_services_config import SelfTestConfig  # type: ignore
+
+try:  # pragma: no cover - allow execution without package context
+    from .sandbox_runner.scoring import record_run
+except (ImportError, ValueError):  # pragma: no cover - fallback for manual bootstrap
+    from sandbox_runner.scoring import record_run  # type: ignore
 
 try:
     from self_improvement.metrics import (
