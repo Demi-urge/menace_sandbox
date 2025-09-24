@@ -7,168 +7,198 @@ components.  If ``vector_service`` is unavailable an informative
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
-import sys
-import types
-from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping, Callable
-import subprocess
-import json
-import base64
-import logging
 import ast
-import tempfile
+import base64
+import contextvars
+import importlib.util
+import json
+import logging
 import py_compile
 import re
+import subprocess
+import sys
+import tempfile
 import traceback
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import contextvars
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, TYPE_CHECKING
 
-if not __package__:
-    _REPO_ROOT = Path(__file__).resolve().parent
-    if str(_REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(_REPO_ROOT))
-    _PACKAGE_NAME = _REPO_ROOT.name
-    package_module = sys.modules.get(_PACKAGE_NAME)
-    if package_module is None:
-        init_file = _REPO_ROOT / "__init__.py"
-        spec = importlib.util.spec_from_file_location(
-            _PACKAGE_NAME,
-            init_file,
-            submodule_search_locations=[str(_REPO_ROOT)],
-        )
-        if spec and spec.loader:
-            package_module = importlib.util.module_from_spec(spec)
-            sys.modules[_PACKAGE_NAME] = package_module
-            spec.loader.exec_module(package_module)  # type: ignore[attr-defined]
-        else:  # pragma: no cover - defensive fallback when spec missing
-            package_module = types.ModuleType(_PACKAGE_NAME)
-            package_module.__path__ = [str(_REPO_ROOT)]  # type: ignore[attr-defined]
-            sys.modules[_PACKAGE_NAME] = package_module
-    else:
-        package_module.__dict__.setdefault("__path__", [str(_REPO_ROOT)])
-    package_module.__dict__.setdefault("__path__", [str(_REPO_ROOT)])
-    globals()["__package__"] = _PACKAGE_NAME
-    sys.modules.setdefault(f"{_PACKAGE_NAME}.self_coding_engine", sys.modules[__name__])
-    setattr(package_module, "self_coding_engine", sys.modules[__name__])
+from types import SimpleNamespace
 
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-def _import_from_package(module_name: str) -> types.ModuleType:
-    """Import ``module_name`` relative to this package with flat fallback."""
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-    package = __package__ or ""
-    if package:
-        qualified = f"{package}.{module_name}"
-        try:
-            return importlib.import_module(qualified)
-        except ModuleNotFoundError as exc:
-            if exc.name == package:
-                return importlib.import_module(module_name)
-            raise
-    return importlib.import_module(module_name)
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
 
-from context_builder import handle_failure, PromptBuildError
+_context_builder = load_internal("context_builder")
+handle_failure = _context_builder.handle_failure
+PromptBuildError = _context_builder.PromptBuildError
 
-_code_database = _import_from_package("code_database")
+_code_database = load_internal("code_database")
 CodeDB = _code_database.CodeDB
 CodeRecord = _code_database.CodeRecord
 PatchHistoryDB = _code_database.PatchHistoryDB
 PatchRecord = _code_database.PatchRecord
-_unified_event_bus = _import_from_package("unified_event_bus")
+
+_unified_event_bus = load_internal("unified_event_bus")
 UnifiedEventBus = _unified_event_bus.UnifiedEventBus
-_trend_predictor = _import_from_package("trend_predictor")
+
+_trend_predictor = load_internal("trend_predictor")
 TrendPredictor = _trend_predictor.TrendPredictor
-try:  # pragma: no cover - allow flat imports
-    from .dynamic_path_router import resolve_path, path_for_prompt
-except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
-from gpt_memory_interface import GPTMemoryInterface
-_safety_monitor = _import_from_package("safety_monitor")
+
+_dynamic_path_router = load_internal("dynamic_path_router")
+resolve_path = _dynamic_path_router.resolve_path
+path_for_prompt = _dynamic_path_router.path_for_prompt
+
+GPTMemoryInterface = load_internal("gpt_memory_interface").GPTMemoryInterface
+
+_safety_monitor = load_internal("safety_monitor")
 SafetyMonitor = _safety_monitor.SafetyMonitor
+
 try:  # pragma: no cover - optional formal verification dependency
-    from .advanced_error_management import FormalVerifier
+    FormalVerifier = load_internal("advanced_error_management").FormalVerifier
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when missing
+    FormalVerifier = object  # type: ignore[misc,assignment]
 except Exception:  # pragma: no cover - degrade gracefully when missing
     FormalVerifier = object  # type: ignore[misc,assignment]
-_llm_interface = _import_from_package("llm_interface")
+
+_llm_interface = load_internal("llm_interface")
 Prompt = _llm_interface.Prompt
 LLMResult = _llm_interface.LLMResult
 LLMClient = _llm_interface.LLMClient
-_llm_router = _import_from_package("llm_router")
+
+_llm_router = load_internal("llm_router")
 client_from_settings = _llm_router.client_from_settings
-_resilience = _import_from_package("resilience")
+
+_resilience = load_internal("resilience")
 retry_with_backoff = _resilience.retry_with_backoff
 RetryError = _resilience.RetryError
-try:  # shared GPT memory instance
-    from .shared_gpt_memory import GPT_MEMORY_MANAGER
-except Exception:  # pragma: no cover - fallback for flat layout
-    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
-try:  # pragma: no cover - allow flat imports
-    from .completion_validator import ValidationResult, validate_completion
-except Exception:  # pragma: no cover - fallback for flat layout
-    from completion_validator import ValidationResult, validate_completion  # type: ignore
-try:  # canonical tag constants
-    from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
-except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT  # type: ignore
-try:  # pragma: no cover - allow flat imports
-    from .gpt_knowledge_service import GPTKnowledgeService
-except Exception:  # pragma: no cover - fallback for flat layout
-    from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
-try:  # pragma: no cover - allow flat imports
-    from .knowledge_retriever import (
-        get_feedback,
-        get_error_fixes,
-        recent_feedback,
-        recent_error_fix,
-        recent_improvement_path,
-    )
-except Exception:  # pragma: no cover - fallback for flat layout
-    from knowledge_retriever import (  # type: ignore
-        get_feedback,
-        get_error_fixes,
-        recent_feedback,
-        recent_error_fix,
-        recent_improvement_path,
-    )
-_menace_sanity_layer = _import_from_package("menace_sanity_layer")
+
+try:  # pragma: no cover - shared GPT memory instance may be optional in tests
+    GPT_MEMORY_MANAGER = load_internal("shared_gpt_memory").GPT_MEMORY_MANAGER
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when absent
+    GPT_MEMORY_MANAGER = None  # type: ignore[assignment]
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    GPT_MEMORY_MANAGER = None  # type: ignore[assignment]
+
+_completion_validator = load_internal("completion_validator")
+ValidationResult = _completion_validator.ValidationResult
+validate_completion = _completion_validator.validate_completion
+
+try:  # canonical tag constants shared across modules
+    _log_tags = load_internal("log_tags")
+except ModuleNotFoundError:  # pragma: no cover - fallback when tags unavailable
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+    INSIGHT = "insight"
+except Exception:  # pragma: no cover - degrade gracefully
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+    INSIGHT = "insight"
+else:
+    FEEDBACK = _log_tags.FEEDBACK
+    IMPROVEMENT_PATH = _log_tags.IMPROVEMENT_PATH
+    ERROR_FIX = _log_tags.ERROR_FIX
+    INSIGHT = _log_tags.INSIGHT
+
+try:  # pragma: no cover - optional knowledge service
+    GPTKnowledgeService = load_internal("gpt_knowledge_service").GPTKnowledgeService
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when missing
+    GPTKnowledgeService = object  # type: ignore[misc,assignment]
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    GPTKnowledgeService = object  # type: ignore[misc,assignment]
+
+_knowledge_retriever = load_internal("knowledge_retriever")
+get_feedback = _knowledge_retriever.get_feedback
+get_error_fixes = _knowledge_retriever.get_error_fixes
+recent_feedback = _knowledge_retriever.recent_feedback
+recent_error_fix = _knowledge_retriever.recent_error_fix
+recent_improvement_path = _knowledge_retriever.recent_improvement_path
+
+_menace_sanity_layer = load_internal("menace_sanity_layer")
 fetch_recent_billing_issues = _menace_sanity_layer.fetch_recent_billing_issues
+
 try:  # pragma: no cover - optional rollback support
-    from .rollback_manager import RollbackManager
-except Exception:  # pragma: no cover - degrade gracefully when missing
+    RollbackManager = load_internal("rollback_manager").RollbackManager
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
     RollbackManager = object  # type: ignore[misc,assignment]
-_audit_trail = _import_from_package("audit_trail")
+except Exception:  # pragma: no cover - degrade gracefully
+    RollbackManager = object  # type: ignore[misc,assignment]
+
+_audit_trail = load_internal("audit_trail")
 AuditTrail = _audit_trail.AuditTrail
-_access_control = _import_from_package("access_control")
+
+_access_control = load_internal("access_control")
 READ = _access_control.READ
 WRITE = _access_control.WRITE
 check_permission = _access_control.check_permission
-_patch_suggestion_db = _import_from_package("patch_suggestion_db")
+
+_patch_suggestion_db = load_internal("patch_suggestion_db")
 PatchSuggestionDB = _patch_suggestion_db.PatchSuggestionDB
 SuggestionRecord = _patch_suggestion_db.SuggestionRecord
-_patch_attempt_tracker = _import_from_package("patch_attempt_tracker")
+
+_patch_attempt_tracker = load_internal("patch_attempt_tracker")
 PatchAttemptTracker = _patch_attempt_tracker.PatchAttemptTracker
-from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
-    from .enhancement_classifier import EnhancementClassifier, EnhancementSuggestion
+    from menace_sandbox.enhancement_classifier import (
+        EnhancementClassifier,
+        EnhancementSuggestion,
+    )
+
 try:  # pragma: no cover - optional dependency
-    from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+    WorkflowSandboxRunner = load_internal(
+        "sandbox_runner.workflow_sandbox_runner"
+    ).WorkflowSandboxRunner
+except ModuleNotFoundError:  # pragma: no cover - graceful degradation
+    WorkflowSandboxRunner = object  # type: ignore[misc,assignment]
 except Exception:  # pragma: no cover - graceful degradation
-    WorkflowSandboxRunner = object  # type: ignore[misc]
+    WorkflowSandboxRunner = object  # type: ignore[misc,assignment]
+
 try:  # pragma: no cover - optional dependency
-    from .sandbox_runner.test_harness import run_tests, TestHarnessResult
-except Exception:  # pragma: no cover - graceful degradation
-    run_tests = None  # type: ignore
+    _sandbox_test_harness = load_internal("sandbox_runner.test_harness")
+except ModuleNotFoundError:  # pragma: no cover - graceful degradation
+    run_tests = None  # type: ignore[assignment]
 
     class TestHarnessResult:  # type: ignore[misc]
         success = False
         stdout = ""
-_sandbox_settings = _import_from_package("sandbox_settings")
-SandboxSettings = _sandbox_settings.SandboxSettings
+except Exception:  # pragma: no cover - graceful degradation
+    run_tests = None  # type: ignore[assignment]
+
+    class TestHarnessResult:  # type: ignore[misc]
+        success = False
+        stdout = ""
+else:
+    run_tests = _sandbox_test_harness.run_tests
+    TestHarnessResult = _sandbox_test_harness.TestHarnessResult
+
+SandboxSettings = load_internal("sandbox_settings").SandboxSettings
 
 try:
-    from vector_service import (
+    from vector_service import (  # type: ignore[import-not-found]
         CognitionLayer,
         ContextBuilder,
         PatchLogger,
@@ -181,67 +211,131 @@ except Exception as exc:  # pragma: no cover - fail fast when dependency missing
     ) from exc
 
 try:  # pragma: no cover - required for payment integration checks
-    import stripe_billing_router  # noqa: F401
+    _stripe_billing_router = load_internal("stripe_billing_router")
+except ModuleNotFoundError:  # pragma: no cover - optional
+    stripe_billing_router = None  # type: ignore[assignment]
 except Exception:  # pragma: no cover - optional
-    stripe_billing_router = None  # type: ignore
+    stripe_billing_router = None  # type: ignore[assignment]
+else:
+    stripe_billing_router = _stripe_billing_router
 
 try:  # pragma: no cover - optional ROI tracking
-    from .roi_tracker import ROITracker
+    ROITracker = load_internal("roi_tracker").ROITracker
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when missing
+    ROITracker = object  # type: ignore[misc,assignment]
 except Exception:  # pragma: no cover - degrade gracefully when missing
     ROITracker = object  # type: ignore[misc,assignment]
-_prompt_evolution_memory = _import_from_package("prompt_evolution_memory")
-PromptEvolutionMemory = _prompt_evolution_memory.PromptEvolutionMemory
+
+PromptEvolutionMemory = load_internal("prompt_evolution_memory").PromptEvolutionMemory
+
 try:  # pragma: no cover - optional dependency
-    from .patch_provenance import record_patch_metadata
-except Exception:  # pragma: no cover - graceful degradation
+    record_patch_metadata = load_internal("patch_provenance").record_patch_metadata
+except ModuleNotFoundError:  # pragma: no cover - graceful degradation
+
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
-_prompt_engine = _import_from_package("prompt_engine")
+
+except Exception:  # pragma: no cover - graceful degradation
+
+    def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+_prompt_engine = load_internal("prompt_engine")
 PromptEngine = _prompt_engine.PromptEngine
-_ENCODER = _prompt_engine._ENCODER
+_ENCODER = getattr(_prompt_engine, "_ENCODER", None)
 diff_within_target_region = _prompt_engine.diff_within_target_region
-_prompt_memory_trainer = _import_from_package("prompt_memory_trainer")
-PromptMemoryTrainer = _prompt_memory_trainer.PromptMemoryTrainer
-from chunking import split_into_chunks, get_chunk_summaries
-from code_summarizer import summarize_code
-try:
-    from .prompt_optimizer import PromptOptimizer
-except Exception:  # pragma: no cover - fallback for flat layout
-    from prompt_optimizer import PromptOptimizer  # type: ignore
-_error_parser = _import_from_package("error_parser")
+
+PromptMemoryTrainer = load_internal("prompt_memory_trainer").PromptMemoryTrainer
+
+_chunking = load_internal("chunking")
+split_into_chunks = _chunking.split_into_chunks
+get_chunk_summaries = _chunking.get_chunk_summaries
+
+summarize_code = load_internal("code_summarizer").summarize_code
+
+try:  # pragma: no cover - optional dependency
+    PromptOptimizer = load_internal("prompt_optimizer").PromptOptimizer
+except ModuleNotFoundError:  # pragma: no cover - fallback when unavailable
+    PromptOptimizer = object  # type: ignore[misc,assignment]
+except Exception:  # pragma: no cover - fallback when unavailable
+    PromptOptimizer = object  # type: ignore[misc,assignment]
+
+_error_parser = load_internal("error_parser")
 ErrorParser = _error_parser.ErrorParser
 ErrorReport = _error_parser.ErrorReport
 parse_failure = _error_parser.parse_failure
 FailureCache = _error_parser.FailureCache
+
+TargetRegion = load_internal("target_region").TargetRegion
+
 try:
-    from .target_region import TargetRegion
-except Exception:  # pragma: no cover - fallback for direct execution
-    from target_region import TargetRegion  # type: ignore
-try:
-    from .self_improvement.prompt_memory import log_prompt_attempt
-except Exception:  # pragma: no cover - fallback for flat layout
-    try:
-        from self_improvement.prompt_memory import log_prompt_attempt  # type: ignore
-    except Exception:  # pragma: no cover - final fallback
-        def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
-            return None
-_failure_fingerprint = _import_from_package("failure_fingerprint")
+    log_prompt_attempt = load_internal(
+        "self_improvement.prompt_memory"
+    ).log_prompt_attempt
+except ModuleNotFoundError:  # pragma: no cover - fallback when unavailable
+
+    def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+except Exception:  # pragma: no cover - fallback when unavailable
+
+    def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+_failure_fingerprint = load_internal("failure_fingerprint")
 FailureFingerprint = _failure_fingerprint.FailureFingerprint
 find_similar = _failure_fingerprint.find_similar
 log_fingerprint = _failure_fingerprint.log_fingerprint
-_failure_retry_utils = _import_from_package("failure_retry_utils")
+
+_failure_retry_utils = load_internal("failure_retry_utils")
 check_similarity_and_warn = _failure_retry_utils.check_similarity_and_warn
 record_failure = _failure_retry_utils.record_failure
-from snippet_compressor import compress_snippets
-from vector_service.roi_tags import RoiTag
+
+compress_snippets = load_internal("snippet_compressor").compress_snippets
+
+from vector_service.roi_tags import RoiTag  # type: ignore[import-not-found]
+
 try:  # pragma: no cover - optional dependency for metrics
-    from . import metrics_exporter as _me
+    _me = load_internal("metrics_exporter")
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed directly
+
+    class _GaugeStub:
+        def labels(self, *_a: Any, **_k: Any) -> "_GaugeStub":
+            return self
+
+        def inc(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def set(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    def _make_gauge_stub(*_a: Any, **_k: Any) -> _GaugeStub:
+        return _GaugeStub()
+
+    _me = SimpleNamespace(Gauge=_make_gauge_stub)
 except Exception:  # pragma: no cover - fallback when executed directly
-    import metrics_exporter as _me  # type: ignore
+
+    class _GaugeStub:
+        def labels(self, *_a: Any, **_k: Any) -> "_GaugeStub":
+            return self
+
+        def inc(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def set(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    def _make_gauge_stub(*_a: Any, **_k: Any) -> _GaugeStub:
+        return _GaugeStub()
+
+    _me = SimpleNamespace(Gauge=_make_gauge_stub)
+
 try:  # pragma: no cover - optional codex fallback handler
-    from . import codex_fallback_handler
+    codex_fallback_handler = load_internal("codex_fallback_handler")
+except ModuleNotFoundError:  # pragma: no cover - fallback for flat layout
+    codex_fallback_handler = SimpleNamespace(handle=lambda *_a, **_k: SimpleNamespace(text=""))
 except Exception:  # pragma: no cover - fallback for flat layout
-    import codex_fallback_handler  # type: ignore
+    codex_fallback_handler = SimpleNamespace(handle=lambda *_a, **_k: SimpleNamespace(text=""))
 
 MANAGER_CONTEXT: contextvars.ContextVar[object | None] = contextvars.ContextVar(
     "self_coding_manager", default=None
@@ -257,17 +351,73 @@ _PATCH_ESCALATIONS = _me.Gauge(
     "Patch escalation events",
     labelnames=["level"],
 )
-_baseline_tracker = _import_from_package("self_improvement.baseline_tracker")
+_baseline_tracker = load_internal("self_improvement.baseline_tracker")
 BaselineTracker = _baseline_tracker.BaselineTracker  # noqa: E402
 METRIC_BASELINES = _baseline_tracker.TRACKER
 try:  # pragma: no cover - optional dependency
-    from .self_improvement.init import FileLock, _atomic_write
-except Exception:  # pragma: no cover - fallback for flat layout
-    from self_improvement.init import FileLock, _atomic_write  # type: ignore
+    _self_improvement_init = load_internal("self_improvement.init")
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when missing
+
+    class FileLock:  # type: ignore[assignment]
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            self._path = _a[0] if _a else ""
+            self._locked = False
+
+        def acquire(self, *_a: Any, **_k: Any) -> bool:
+            self._locked = True
+            return True
+
+        def release(self) -> None:
+            self._locked = False
+
+        def __enter__(self) -> "FileLock":
+            self.acquire()
+            return self
+
+        def __exit__(self, *_exc: Any) -> None:
+            self.release()
+
+        @property
+        def is_locked(self) -> bool:
+            return self._locked
+
+    def _atomic_write(*_a: Any, **_k: Any) -> None:  # type: ignore[assignment]
+        raise RuntimeError("atomic write is unavailable in this environment")
+
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+
+    class FileLock:  # type: ignore[assignment]
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            self._path = _a[0] if _a else ""
+            self._locked = False
+
+        def acquire(self, *_a: Any, **_k: Any) -> bool:
+            self._locked = True
+            return True
+
+        def release(self) -> None:
+            self._locked = False
+
+        def __enter__(self) -> "FileLock":
+            self.acquire()
+            return self
+
+        def __exit__(self, *_exc: Any) -> None:
+            self.release()
+
+        @property
+        def is_locked(self) -> bool:
+            return self._locked
+
+    def _atomic_write(*_a: Any, **_k: Any) -> None:  # type: ignore[assignment]
+        raise RuntimeError("atomic write is unavailable in this environment")
+else:
+    FileLock = _self_improvement_init.FileLock
+    _atomic_write = _self_improvement_init._atomic_write
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
-    from .model_automation_pipeline import ModelAutomationPipeline
-    from .data_bot import DataBot
+    from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+    from menace_sandbox.data_bot import DataBot
 
 # logger is defined after imports to satisfy linting rules
 logger = logging.getLogger(__name__)
@@ -1718,9 +1868,8 @@ class SelfCodingEngine:
         optional prompt strategy to the underlying :class:`PromptEngine`.
         """
         path = resolve_path(path)
-        from .self_coding_manager import (
-            _manager_generate_helper_with_builder as manager_generate_helper,
-        )
+        manager_module = load_internal("self_coding_manager")
+        manager_generate_helper = manager_module._manager_generate_helper_with_builder
 
         manager = MANAGER_CONTEXT.get()
         try:
@@ -1971,9 +2120,8 @@ class SelfCodingEngine:
         # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
         code = "\n".join(original_lines)
-        from .self_coding_manager import (
-            _manager_generate_helper_with_builder as manager_generate_helper,
-        )
+        manager_module = load_internal("self_coding_manager")
+        manager_generate_helper = manager_module._manager_generate_helper_with_builder
         manager = MANAGER_CONTEXT.get()
 
         def _verify(snippet: str) -> bool:

@@ -72,9 +72,9 @@ except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
     raise ImportError("Self-coding engine is required for operation") from exc
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
-    from .bot_registry import BotRegistry
-    from .data_bot import DataBot
-    from .evolution_orchestrator import EvolutionOrchestrator
+    from menace_sandbox.bot_registry import BotRegistry
+    from menace_sandbox.data_bot import DataBot
+    from menace_sandbox.evolution_orchestrator import EvolutionOrchestrator
 else:  # pragma: no cover - runtime placeholders
     BotRegistry = Any  # type: ignore
     DataBot = Any  # type: ignore
@@ -293,10 +293,18 @@ def self_coding_managed(
 
             if orchestrator is None:
                 try:
-                    from .capital_management_bot import CapitalManagementBot  # type: ignore
-                    from .self_improvement.engine import SelfImprovementEngine  # type: ignore
-                    from .system_evolution_manager import SystemEvolutionManager  # type: ignore
-                    from .evolution_orchestrator import EvolutionOrchestrator as _EO
+                    _capital_module = load_internal("capital_management_bot")
+                    CapitalManagementBot = _capital_module.CapitalManagementBot
+                    _improvement_module = load_internal("self_improvement.engine")
+                    SelfImprovementEngine = _improvement_module.SelfImprovementEngine
+                    _evolution_manager_module = load_internal(
+                        "system_evolution_manager"
+                    )
+                    SystemEvolutionManager = (
+                        _evolution_manager_module.SystemEvolutionManager
+                    )
+                    _eo_module = load_internal("evolution_orchestrator")
+                    _EO = _eo_module.EvolutionOrchestrator
 
                     capital = CapitalManagementBot(data_bot=d_bot)
                     builder = create_context_builder()
@@ -318,6 +326,11 @@ def self_coding_managed(
                         evolution_manager=evol_mgr,
                         selfcoding_manager=manager_local,
                     )
+                except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+                    raise RuntimeError(
+                        f"{cls.__name__}: "
+                        "EvolutionOrchestrator is required but could not be instantiated"
+                    ) from exc
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
                         f"{cls.__name__}: "
@@ -332,11 +345,16 @@ def self_coding_managed(
                     pass
             if getattr(manager_local, "quick_fix", None) is None:
                 try:
-                    from .quick_fix_engine import QuickFixEngine  # type: ignore
-                    from .error_bot import ErrorDB
-                    from .self_coding_manager import (
-                        _manager_generate_helper_with_builder as _helper_fn,
-                    )
+                    _quick_fix_module = load_internal("quick_fix_engine")
+                    QuickFixEngine = _quick_fix_module.QuickFixEngine
+                    ErrorDB = load_internal("error_bot").ErrorDB
+                    _helper_fn = load_internal(
+                        "self_coding_manager"
+                    )._manager_generate_helper_with_builder
+                except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+                    raise RuntimeError(
+                        f"{cls.__name__}: QuickFixEngine is required but could not be imported"
+                    ) from exc
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine is required but could not be imported"
