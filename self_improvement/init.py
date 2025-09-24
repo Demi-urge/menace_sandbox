@@ -36,7 +36,10 @@ from filelock import FileLock
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
-from ..metrics_exporter import self_improvement_failure_total
+try:  # pragma: no cover - prefer package-relative import when available
+    from ..metrics_exporter import self_improvement_failure_total
+except ImportError:  # pragma: no cover - support flat execution layout
+    from metrics_exporter import self_improvement_failure_total  # type: ignore
 
 try:  # pragma: no cover - fallback for flat layout
     from ..dynamic_path_router import resolve_path
