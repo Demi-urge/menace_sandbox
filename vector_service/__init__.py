@@ -5,7 +5,13 @@ This package provides the canonical vector retrieval service.
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict
+
+from menace_sandbox import import_compat as _import_compat
+
+_import_compat.bootstrap(__name__, __file__)
+load_internal = _import_compat.load_internal
 
 
 class _Stub:  # pragma: no cover - simple callable placeholder
@@ -119,11 +125,15 @@ else:
     CognitionLayer = _CognitionLayer
 
 try:  # pragma: no cover - optional heavy dependency
-    from .embedding_backfill import EmbeddingBackfill as _EmbeddingBackfill
-except Exception:
-    pass
+    _embedding_backfill_module = load_internal("vector_service.embedding_backfill")
+except ModuleNotFoundError as exc:
+    if getattr(exc, "name", None) not in {
+        "vector_service.embedding_backfill",
+        "menace_sandbox.vector_service.embedding_backfill",
+    }:
+        raise
 else:
-    EmbeddingBackfill = _EmbeddingBackfill
+    EmbeddingBackfill = _embedding_backfill_module.EmbeddingBackfill  # type: ignore[attr-defined]
 
 try:  # pragma: no cover - optional heavy dependency
     from .vectorizer import SharedVectorService as _SharedVectorService
@@ -146,9 +156,20 @@ class ErrorResult(Exception):
     pass
 
 try:  # pragma: no cover - optional dependency used in tests
-    from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
-except Exception:  # pragma: no cover - fallback when dependency missing
+    _embeddable_db_module = load_internal("embeddable_db_mixin")
+except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module missing
+    if getattr(exc, "name", None) not in {
+        "embeddable_db_mixin",
+        "menace_sandbox.embeddable_db_mixin",
+    }:
+        raise
     EmbeddableDBMixin = object  # type: ignore
+else:
+    EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
+    sys.modules.setdefault("embeddable_db_mixin", _embeddable_db_module)
+    sys.modules.setdefault(
+        "menace_sandbox.embeddable_db_mixin", _embeddable_db_module
+    )
 
 
 __all__ = [
