@@ -5,6 +5,7 @@ import importlib.util
 import os
 import sqlite3
 import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -693,6 +694,39 @@ def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[s
     return errors
 
 
+def _auto_install_missing_python_packages(errors: dict[str, list[str]]) -> bool:
+    """Attempt to install missing Python packages listed in ``errors``."""
+
+    missing_required = errors.get("python", [])
+    missing_optional = errors.get("optional", [])
+
+    packages: list[str] = []
+    seen: set[str] = set()
+    for name in list(missing_required) + list(missing_optional):
+        if name not in seen:
+            packages.append(name)
+            seen.add(name)
+
+    if not packages:
+        return False
+
+    logger.info(
+        "auto-installing Python packages: %s",
+        ", ".join(packages),
+        extra=log_record(event="auto_install", packages=packages),
+    )
+
+    for package in packages:
+        cmd = [sys.executable, "-m", "pip", "install", package]
+        try:
+            subprocess.run(cmd, check=True)
+        except Exception as exc:  # pragma: no cover - subprocess behaviour varies
+            logger.error(
+                "pip install %s failed: %s", package, exc, extra=log_record(package=package)
+            )
+    return True
+
+
 def bootstrap_environment(
     settings: SandboxSettings | None = None,
     verifier: Callable[..., dict[str, list[str]]] | None = None,
@@ -750,6 +784,16 @@ def _bootstrap_environment(
             errors = verifier(settings)  # type: ignore[misc]
     else:
         errors = _verify_required_dependencies(settings)
+
+    if (
+        errors
+        and auto_install
+        and verifier is None
+        and (errors.get("python") or errors.get("optional"))
+    ):
+        if _auto_install_missing_python_packages(errors):
+            errors = _verify_required_dependencies(settings)
+
     if errors:
         messages: list[str] = []
         if errors.get("system"):
