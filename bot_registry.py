@@ -70,7 +70,7 @@ except Exception:  # pragma: no cover - optional dependency
     RollbackManager = None  # type: ignore
 
 logger = logging.getLogger(__name__)
-
+_REGISTERED_BOTS = {}
 
 def _extend_workflow_tests(target: list[str], seen: set[str], value: Any) -> None:
     for item in normalize_workflow_tests(value):

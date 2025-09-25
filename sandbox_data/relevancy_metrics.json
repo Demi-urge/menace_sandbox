@@ -2,487 +2,487 @@
   "": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2805.0,
+    "imports": 3081.0,
     "output_impact": 0.0
   },
   "__future__": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 6112.0,
+    "imports": 6606.0,
     "output_impact": 0.0
   },
   "__version__": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_abc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 56.0,
+    "imports": 70.0,
     "output_impact": 0.0
   },
   "_abnf": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "_api": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 18.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "_async": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_asyncgens": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_auth": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_backends": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 136.0,
+    "imports": 170.0,
     "output_impact": 0.0
   },
   "_cell_widths": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_cffi_backend": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_channel": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_client": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "_cmp": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 4.0,
     "output_impact": 0.0
   },
   "_compat": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 23.0,
+    "imports": 63.0,
     "output_impact": 0.0
   },
   "_concat_tb": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_config": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 44.0,
+    "imports": 56.0,
     "output_impact": 0.0
   },
   "_content": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_core": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 768.0,
+    "imports": 960.0,
     "output_impact": 0.0
   },
   "_decoders": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_deprecate": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "_dtls": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_emoji_codes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_emoji_replace": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "_entry_queue": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_eventloop": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 56.0,
+    "imports": 70.0,
     "output_impact": 0.0
   },
   "_events": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 32.0,
+    "imports": 40.0,
     "output_impact": 0.0
   },
   "_exceptions": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 234.0,
+    "imports": 288.0,
     "output_impact": 0.0
   },
   "_export_format": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_extension": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_file_io": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_fileno": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_funcs": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 16.0,
     "output_impact": 0.0
   },
   "_generated_instrumentation": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_generated_io_windows": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_generated_run": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_headers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "_highlevel_generic": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "_highlevel_open_tcp_listeners": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_highlevel_open_tcp_stream": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_highlevel_open_unix_stream": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_highlevel_serve_listeners": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_highlevel_socket": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_highlevel_ssl_helpers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_impl": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_instrumentation": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_io": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 11508.0,
+    "imports": 12670.0,
     "output_impact": 0.0
   },
   "_io_common": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_io_windows": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_ki": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 50.0,
     "output_impact": 0.0
   },
   "_local": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_log_render": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_loop": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 80.0,
+    "imports": 96.0,
     "output_impact": 0.0
   },
   "_main": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_make": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 32.0,
     "output_impact": 0.0
   },
   "_mock_clock": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_models": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 214.0,
+    "imports": 262.0,
     "output_impact": 0.0
   },
   "_multipart": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_next_gen": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 4.0,
     "output_impact": 0.0
   },
   "_palettes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_parking_lot": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_path": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_pick": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "_ratio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_readers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_receivebuffer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_resources": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 32.0,
+    "imports": 40.0,
     "output_impact": 0.0
   },
   "_run": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 56.0,
+    "imports": 70.0,
     "output_impact": 0.0
   },
   "_run_context": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_signals": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_socket": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "_sockets": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 96.0,
+    "imports": 120.0,
     "output_impact": 0.0
   },
   "_spinners": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_ssl": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "_state": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "_status_codes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "_streams": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 144.0,
+    "imports": 180.0,
     "output_impact": 0.0
   },
   "_subprocess": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_subprocess_platform": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_subprocesses": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_symtable": {
@@ -494,181 +494,181 @@
   "_sync": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 50.0,
     "output_impact": 0.0
   },
   "_synchronization": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 80.0,
+    "imports": 100.0,
     "output_impact": 0.0
   },
   "_tasks": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 64.0,
+    "imports": 80.0,
     "output_impact": 0.0
   },
   "_testing": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_thread": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 41.0,
+    "imports": 47.0,
     "output_impact": 0.0
   },
   "_thread_cache": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_threads": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_timeouts": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_trace": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "_tracemalloc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 4.0,
+    "imports": 8.0,
     "output_impact": 0.0
   },
   "_transports": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "_traps": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_types": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 120.0,
+    "imports": 144.0,
     "output_impact": 0.0
   },
   "_unbounded_queue": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_urlparse": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_urls": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 72.0,
     "output_impact": 0.0
   },
   "_util": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 224.0,
+    "imports": 280.0,
     "output_impact": 0.0
   },
   "_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 76.0,
+    "imports": 92.0,
     "output_impact": 0.0
   },
   "_version": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 44.0,
+    "imports": 52.0,
     "output_impact": 0.0
   },
   "_version_info": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 4.0,
     "output_impact": 0.0
   },
   "_wait_for_object": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "_wakeup_socketpair": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_win32sysloader": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "_winconsole": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1.0,
+    "imports": 3.0,
     "output_impact": 0.0
   },
   "_windows_cffi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_windows_pipes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "_wrap": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "_writers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "abc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 315.0,
+    "imports": 391.0,
     "output_impact": 0.0
   },
   "access_control": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 28.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "adaptive_roi_predictor": {
@@ -686,25 +686,25 @@
   "advanced_error_management": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 129.0,
+    "imports": 133.0,
     "output_impact": 0.0
   },
   "alert_dispatcher": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 107.0,
+    "imports": 117.0,
     "output_impact": 0.0
   },
   "align": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "analysis": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 183.0,
+    "imports": 197.0,
     "output_impact": 0.0
   },
   "analytics": {
@@ -722,79 +722,79 @@
   "ansi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "anyio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "api": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 254.0,
+    "imports": 274.0,
     "output_impact": 0.0
   },
   "argparse": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 180.0,
+    "imports": 186.0,
     "output_impact": 0.0
   },
   "array": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "asgi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "ast": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1434.0,
+    "imports": 1458.0,
     "output_impact": 0.0
   },
   "ast_transforms": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "asyncio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 552.0,
+    "imports": 582.0,
     "output_impact": 0.0
   },
   "atexit": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 154.0,
+    "imports": 164.0,
     "output_impact": 0.0
   },
   "attr": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 74.0,
+    "imports": 92.0,
     "output_impact": 0.0
   },
   "attrs": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 128.0,
+    "imports": 160.0,
     "output_impact": 0.0
   },
   "audit": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1.0,
+    "imports": 3.0,
     "output_impact": 0.0
   },
   "audit_logger": {
@@ -806,31 +806,31 @@
   "audit_trail": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 45.0,
+    "imports": 47.0,
     "output_impact": 0.0
   },
   "auto_link": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 108.0,
+    "imports": 128.0,
     "output_impact": 0.0
   },
   "base": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 154.0,
     "output_impact": 0.0
   },
   "base64": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 215.0,
+    "imports": 239.0,
     "output_impact": 0.0
   },
   "basehttpadapter": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "baseline_tracker": {
@@ -848,7 +848,7 @@
   "bisect": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 33.0,
+    "imports": 37.0,
     "output_impact": 0.0
   },
   "bootstrap": {
@@ -860,13 +860,13 @@
   "borderline_bucket": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "bot_registry": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 254.0,
+    "imports": 262.0,
     "output_impact": 0.0
   },
   "bot_testing_bot": {
@@ -878,19 +878,19 @@
   "box": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "brotli": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 18.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "brotlicffi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "bs4": {
@@ -902,25 +902,25 @@
   "build": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "builtins": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 175.0,
+    "imports": 183.0,
     "output_impact": 0.0
   },
   "c_lexer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "c_parser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "cache_utils": {
@@ -932,31 +932,31 @@
   "calendar": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "cells": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 70.0,
+    "imports": 84.0,
     "output_impact": 0.0
   },
   "certifi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "cffi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "chatgpt_enhancement_bot": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 70.0,
+    "imports": 72.0,
     "output_impact": 0.0
   },
   "chatgpt_idea_bot": {
@@ -968,7 +968,7 @@
   "chunking": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 140.0,
     "output_impact": 0.0
   },
   "cli": {
@@ -980,19 +980,19 @@
   "click": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "client": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "code_database": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 169.0,
+    "imports": 179.0,
     "output_impact": 0.0
   },
   "code_summarizer": {
@@ -1010,13 +1010,13 @@
   "codecs": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 21.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "codes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "coding_bot_interface": {
@@ -1028,31 +1028,31 @@
   "cognition_layer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "collections": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1143.0,
+    "imports": 1305.0,
     "output_impact": 0.0
   },
   "color": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 75.0,
+    "imports": 87.0,
     "output_impact": 0.0
   },
   "color_triplet": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "colorsys": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 35.0,
+    "imports": 39.0,
     "output_impact": 0.0
   },
   "common": {
@@ -1064,13 +1064,13 @@
   "commontypes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "compliance": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 158.0,
+    "imports": 166.0,
     "output_impact": 0.0
   },
   "composite_workflow_scorer": {
@@ -1082,163 +1082,163 @@
   "concurrent": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 202.0,
+    "imports": 208.0,
     "output_impact": 0.0
   },
   "config": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 142.0,
     "output_impact": 0.0
   },
   "config_loader": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "configparser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "connection": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "connection_pool": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 32.0,
+    "imports": 40.0,
     "output_impact": 0.0
   },
   "console": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 50.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "constants": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 240.0,
+    "imports": 264.0,
     "output_impact": 0.0
   },
   "constrain": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "container": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "containers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 50.0,
+    "imports": 56.0,
     "output_impact": 0.0
   },
   "context": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 66.0,
     "output_impact": 0.0
   },
   "context_builder": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 121.0,
+    "imports": 127.0,
     "output_impact": 0.0
   },
   "context_builder_util": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 189.0,
+    "imports": 193.0,
     "output_impact": 0.0
   },
   "contextlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 791.0,
+    "imports": 909.0,
     "output_impact": 0.0
   },
   "contextvars": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 69.0,
+    "imports": 77.0,
     "output_impact": 0.0
   },
   "control": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "converters": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 4.0,
     "output_impact": 0.0
   },
   "copy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 148.0,
     "output_impact": 0.0
   },
   "core": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 15.0,
+    "imports": 45.0,
     "output_impact": 0.0
   },
   "coverage": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 93.0,
+    "imports": 97.0,
     "output_impact": 0.0
   },
   "cryptography": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "csv": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 76.0,
+    "imports": 80.0,
     "output_impact": 0.0
   },
   "ctypes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 98.0,
     "output_impact": 0.0
   },
   "cycle": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 64.0,
+    "imports": 66.0,
     "output_impact": 0.0
   },
   "daemon": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "data_bot": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 453.0,
+    "imports": 459.0,
     "output_impact": 0.0
   },
   "data_stores": {
@@ -1250,19 +1250,19 @@
   "databases": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 89.0,
+    "imports": 93.0,
     "output_impact": 0.0
   },
   "dataclasses": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2222.0,
+    "imports": 2352.0,
     "output_impact": 0.0
   },
   "datetime": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1807.0,
+    "imports": 1941.0,
     "output_impact": 0.0
   },
   "db_dedup": {
@@ -1274,43 +1274,43 @@
   "db_router": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1398.0,
+    "imports": 1468.0,
     "output_impact": 0.0
   },
   "decimal": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 99.0,
+    "imports": 111.0,
     "output_impact": 0.0
   },
   "decode": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "decorators": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 132.0,
+    "imports": 168.0,
     "output_impact": 0.0
   },
   "default": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "default_styles": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "difflib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 75.0,
+    "imports": 81.0,
     "output_impact": 0.0
   },
   "discrepancy_db": {
@@ -1322,13 +1322,13 @@
   "django": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "docker": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 254.0,
+    "imports": 278.0,
     "output_impact": 0.0
   },
   "dynamic_module_mapper": {
@@ -1340,31 +1340,31 @@
   "dynamic_path_router": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2431.0,
+    "imports": 2537.0,
     "output_impact": 0.0
   },
   "edge_case_generator": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 32.0,
     "output_impact": 0.0
   },
   "email": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 11.0,
+    "imports": 13.0,
     "output_impact": 0.0
   },
   "embeddable_db_mixin": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 148.0,
     "output_impact": 0.0
   },
   "embedding_backfill": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 44.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "embedding_stats_db": {
@@ -1376,13 +1376,13 @@
   "emoji": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "en": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "engine": {
@@ -1394,13 +1394,13 @@
   "enhancement_score": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "enum": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 345.0,
+    "imports": 391.0,
     "output_impact": 0.0
   },
   "env_config": {
@@ -1418,13 +1418,13 @@
   "errno": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 291.0,
+    "imports": 309.0,
     "output_impact": 0.0
   },
   "error": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "error_bot": {
@@ -1442,19 +1442,19 @@
   "error_logger": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 162.0,
+    "imports": 164.0,
     "output_impact": 0.0
   },
   "error_ontology": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 148.0,
+    "imports": 152.0,
     "output_impact": 0.0
   },
   "error_parser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 195.0,
+    "imports": 197.0,
     "output_impact": 0.0
   },
   "error_vectorizer": {
@@ -1466,7 +1466,7 @@
   "errors": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 170.0,
+    "imports": 188.0,
     "output_impact": 0.0
   },
   "ethtool": {
@@ -1484,7 +1484,7 @@
   "eventlet": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "events": {
@@ -1502,19 +1502,19 @@
   "exceptions": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 142.0,
+    "imports": 206.0,
     "output_impact": 0.0
   },
   "exec_api": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "factory": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "failure_fingerprint": {
@@ -1544,13 +1544,13 @@
   "faiss": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 122.0,
+    "imports": 136.0,
     "output_impact": 0.0
   },
   "faker": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 364.0,
+    "imports": 392.0,
     "output_impact": 0.0
   },
   "fcntl": {
@@ -1562,25 +1562,25 @@
   "fcntl_compat": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 67.0,
+    "imports": 71.0,
     "output_impact": 0.0
   },
   "file_proxy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "filelock": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 167.0,
+    "imports": 175.0,
     "output_impact": 0.0
   },
   "fnmatch": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 32.0,
+    "imports": 38.0,
     "output_impact": 0.0
   },
   "forecasting": {
@@ -1592,91 +1592,91 @@
   "foresight_tracker": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 69.0,
+    "imports": 73.0,
     "output_impact": 0.0
   },
   "formatting": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 4.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "fractions": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "from_thread": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "functools": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 863.0,
+    "imports": 983.0,
     "output_impact": 0.0
   },
   "gc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 14.0,
+    "imports": 16.0,
     "output_impact": 0.0
   },
   "generator": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 75.0,
+    "imports": 81.0,
     "output_impact": 0.0
   },
   "gensim": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 5.0,
+    "imports": 7.0,
     "output_impact": 0.0
   },
   "getpass": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "gettext": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 11.0,
+    "imports": 33.0,
     "output_impact": 0.0
   },
   "gevent": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 32.0,
+    "imports": 40.0,
     "output_impact": 0.0
   },
   "globals": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 7.0,
+    "imports": 21.0,
     "output_impact": 0.0
   },
   "governance": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 28.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "governed_embeddings": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 250.0,
+    "imports": 274.0,
     "output_impact": 0.0
   },
   "governed_retrieval": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 26.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "gpt_knowledge_service": {
@@ -1694,115 +1694,115 @@
   "gpt_memory_interface": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 82.0,
+    "imports": 84.0,
     "output_impact": 0.0
   },
   "greenlet": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "gzip": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "h11": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 56.0,
+    "imports": 70.0,
     "output_impact": 0.0
   },
   "h2": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "hashlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 597.0,
+    "imports": 623.0,
     "output_impact": 0.0
   },
   "hdbscan": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 104.0,
+    "imports": 122.0,
     "output_impact": 0.0
   },
   "healthcheck": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "heapq": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 124.0,
+    "imports": 144.0,
     "output_impact": 0.0
   },
   "highlighter": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "hmac": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "html": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "http": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 46.0,
     "output_impact": 0.0
   },
   "http11": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "http2": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "http_proxy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "httpcore": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "httpx": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 13.0,
+    "imports": 15.0,
     "output_impact": 0.0
   },
   "huggingface_hub": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 232.0,
+    "imports": 268.0,
     "output_impact": 0.0
   },
   "human_alignment_flagger": {
@@ -1814,31 +1814,31 @@
   "hypothesis": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 39.0,
+    "imports": 41.0,
     "output_impact": 0.0
   },
   "idna": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 28.0,
+    "imports": 34.0,
     "output_impact": 0.0
   },
   "image": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "images": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "importlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1462.0,
+    "imports": 1560.0,
     "output_impact": 0.0
   },
   "init": {
@@ -1850,61 +1850,61 @@
   "input_history_db": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 39.0,
+    "imports": 41.0,
     "output_impact": 0.0
   },
   "inspect": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1538.0,
+    "imports": 1676.0,
     "output_impact": 0.0
   },
   "intent_clusterer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "intent_db": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "intent_vectorizer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "interfaces": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 80.0,
+    "imports": 100.0,
     "output_impact": 0.0
   },
   "io": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 534.0,
+    "imports": 594.0,
     "output_impact": 0.0
   },
   "ipaddress": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 67.0,
+    "imports": 77.0,
     "output_impact": 0.0
   },
   "isbn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "itertools": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 404.0,
+    "imports": 464.0,
     "output_impact": 0.0
   },
   "jinja2": {
@@ -1916,19 +1916,19 @@
   "joblib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 6.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "json": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2922.0,
+    "imports": 3078.0,
     "output_impact": 0.0
   },
   "jupyter": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 120.0,
+    "imports": 144.0,
     "output_impact": 0.0
   },
   "keyword": {
@@ -1940,31 +1940,31 @@
   "knowledge_graph": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 359.0,
+    "imports": 367.0,
     "output_impact": 0.0
   },
   "license_detector": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 38.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "linecache": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 12.0,
+    "imports": 18.0,
     "output_impact": 0.0
   },
   "live": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "live_render": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "llm_config": {
@@ -1976,7 +1976,7 @@
   "llm_interface": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 71.0,
+    "imports": 73.0,
     "output_impact": 0.0
   },
   "llm_pricing": {
@@ -2000,13 +2000,13 @@
   "locale": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 132.0,
     "output_impact": 0.0
   },
   "lock": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "lock_utils": {
@@ -2024,37 +2024,37 @@
   "logging": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 3331.0,
+    "imports": 3527.0,
     "output_impact": 0.0
   },
   "logging_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 657.0,
+    "imports": 675.0,
     "output_impact": 0.0
   },
   "lorem": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "lowlevel": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "markup": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "marshal": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "marshmallow": {
@@ -2066,31 +2066,31 @@
   "math": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 618.0,
+    "imports": 682.0,
     "output_impact": 0.0
   },
   "measure": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 156.0,
     "output_impact": 0.0
   },
   "menace": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 251.0,
+    "imports": 260.0,
     "output_impact": 0.0
   },
   "menace_memory_manager": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 156.0,
+    "imports": 180.0,
     "output_impact": 0.0
   },
   "menace_sandbox": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 192.0,
+    "imports": 194.0,
     "output_impact": 0.0
   },
   "messages": {
@@ -2102,7 +2102,7 @@
   "meta_logger": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 90.0,
+    "imports": 94.0,
     "output_impact": 0.0
   },
   "meta_planning": {
@@ -2126,7 +2126,7 @@
   "metrics_exporter": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 627.0,
+    "imports": 643.0,
     "output_impact": 0.0
   },
   "metrics_plugins": {
@@ -2138,25 +2138,25 @@
   "micro_models": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 142.0,
+    "imports": 148.0,
     "output_impact": 0.0
   },
   "mimetypes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 26.0,
+    "imports": 32.0,
     "output_impact": 0.0
   },
   "mmap": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "mock": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "model_automation_pipeline": {
@@ -2168,13 +2168,13 @@
   "models": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 224.0,
+    "imports": 246.0,
     "output_impact": 0.0
   },
   "module_graph_analyzer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 46.0,
+    "imports": 50.0,
     "output_impact": 0.0
   },
   "module_index_db": {
@@ -2186,13 +2186,13 @@
   "module_synergy_grapher": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 82.0,
+    "imports": 88.0,
     "output_impact": 0.0
   },
   "msvcrt": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 54.0,
+    "imports": 60.0,
     "output_impact": 0.0
   },
   "multiprocessing": {
@@ -2204,31 +2204,31 @@
   "netrc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 27.0,
+    "imports": 29.0,
     "output_impact": 0.0
   },
   "network": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "networks": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "networkx": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 344.0,
+    "imports": 366.0,
     "output_impact": 0.0
   },
   "neuroplasticity": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 168.0,
+    "imports": 172.0,
     "output_impact": 0.0
   },
   "neurosales": {
@@ -2240,43 +2240,43 @@
   "node2vec": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 27.0,
+    "imports": 29.0,
     "output_impact": 0.0
   },
   "npipeconn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "npipesocket": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "nt": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "ntpath": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "numbers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 18.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "numpy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 373.0,
+    "imports": 405.0,
     "output_impact": 0.0
   },
   "objects": {
@@ -2288,7 +2288,7 @@
   "operator": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 94.0,
+    "imports": 116.0,
     "output_impact": 0.0
   },
   "orchestration": {
@@ -2300,13 +2300,13 @@
   "orphan_analyzer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 63.0,
+    "imports": 65.0,
     "output_impact": 0.0
   },
   "orphan_discovery": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 105.0,
+    "imports": 107.0,
     "output_impact": 0.0
   },
   "orphan_handling": {
@@ -2324,13 +2324,13 @@
   "os": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 3274.0,
+    "imports": 3540.0,
     "output_impact": 0.0
   },
   "outcome": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 64.0,
+    "imports": 80.0,
     "output_impact": 0.0
   },
   "override_db": {
@@ -2354,43 +2354,43 @@
   "padding": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "pager": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "palette": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "pandas": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 135.0,
+    "imports": 141.0,
     "output_impact": 0.0
   },
   "panel": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "paramiko": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "parser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 5.0,
+    "imports": 15.0,
     "output_impact": 0.0
   },
   "parsers": {
@@ -2420,7 +2420,7 @@
   "patch_logger": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 80.0,
+    "imports": 88.0,
     "output_impact": 0.0
   },
   "patch_provenance": {
@@ -2432,55 +2432,55 @@
   "patch_safety": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 62.0,
+    "imports": 68.0,
     "output_impact": 0.0
   },
   "patch_score_backend": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "pathlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 3351.0,
+    "imports": 3509.0,
     "output_impact": 0.0
   },
   "pickle": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 142.0,
+    "imports": 156.0,
     "output_impact": 0.0
   },
   "pkgutil": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 52.0,
     "output_impact": 0.0
   },
   "platform": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 74.0,
+    "imports": 80.0,
     "output_impact": 0.0
   },
   "plugin": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "ply": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "plyparser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "prediction_manager_bot": {
@@ -2498,19 +2498,19 @@
   "pretty": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "progress_bar": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "prometheus_client": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 7.0,
+    "imports": 9.0,
     "output_impact": 0.0
   },
   "prompt_db": {
@@ -2552,19 +2552,19 @@
   "prompt_types": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 74.0,
+    "imports": 78.0,
     "output_impact": 0.0
   },
   "protocol": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "psutil": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 67.0,
+    "imports": 71.0,
     "output_impact": 0.0
   },
   "py_compile": {
@@ -2576,25 +2576,25 @@
   "pycparser": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "pydantic": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 326.0,
+    "imports": 342.0,
     "output_impact": 0.0
   },
   "pydantic_settings": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 73.0,
+    "imports": 75.0,
     "output_impact": 0.0
   },
   "pygments": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 250.0,
+    "imports": 300.0,
     "output_impact": 0.0
   },
   "pylint": {
@@ -2612,25 +2612,25 @@
   "python": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "pywin32_system32": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "pywintypes": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "queue": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 291.0,
+    "imports": 317.0,
     "output_impact": 0.0
   },
   "quick_fix_engine": {
@@ -2642,19 +2642,19 @@
   "radon": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 66.0,
+    "imports": 70.0,
     "output_impact": 0.0
   },
   "random": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 459.0,
+    "imports": 509.0,
     "output_impact": 0.0
   },
   "ranking_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "rate_limit": {
@@ -2666,25 +2666,25 @@
   "re": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1294.0,
+    "imports": 1416.0,
     "output_impact": 0.0
   },
   "readiness_index": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "redaction_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 64.0,
     "output_impact": 0.0
   },
   "region": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "relevancy_metrics_db": {
@@ -2696,7 +2696,7 @@
   "relevancy_radar": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 67.0,
+    "imports": 69.0,
     "output_impact": 0.0
   },
   "report": {
@@ -2708,85 +2708,85 @@
   "repr": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "reprlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "requests": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 492.0,
+    "imports": 534.0,
     "output_impact": 0.0
   },
   "research_aggregator_bot": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 28.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "resilience": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 107.0,
+    "imports": 111.0,
     "output_impact": 0.0
   },
   "resource": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 243.0,
+    "imports": 263.0,
     "output_impact": 0.0
   },
   "resource_tuner": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 71.0,
+    "imports": 75.0,
     "output_impact": 0.0
   },
   "retrieval_cache": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 26.0,
     "output_impact": 0.0
   },
   "retriever": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 66.0,
     "output_impact": 0.0
   },
   "retry_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 94.0,
+    "imports": 108.0,
     "output_impact": 0.0
   },
   "rich": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 90.0,
+    "imports": 108.0,
     "output_impact": 0.0
   },
   "roi_calculator": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 146.0,
+    "imports": 152.0,
     "output_impact": 0.0
   },
   "roi_results_db": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 199.0,
+    "imports": 203.0,
     "output_impact": 0.0
   },
   "roi_tags": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "roi_thresholds": {
@@ -2798,7 +2798,7 @@
   "roi_tracker": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 298.0,
+    "imports": 308.0,
     "output_impact": 0.0
   },
   "roi_tracking": {
@@ -2810,19 +2810,19 @@
   "roles": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 48.0,
+    "imports": 52.0,
     "output_impact": 0.0
   },
   "rollback_manager": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 102.0,
+    "imports": 104.0,
     "output_impact": 0.0
   },
   "rules": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "safety_monitor": {
@@ -2834,7 +2834,7 @@
   "sandbox_recovery_manager": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 87.0,
+    "imports": 91.0,
     "output_impact": 0.0
   },
   "sandbox_results_logger": {
@@ -2846,7 +2846,7 @@
   "sandbox_runner": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 160.0,
+    "imports": 162.0,
     "output_impact": 0.0
   },
   "sandbox_score": {
@@ -2858,31 +2858,31 @@
   "sandbox_settings": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 943.0,
+    "imports": 953.0,
     "output_impact": 0.0
   },
   "sbn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "scipy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 53.0,
+    "imports": 55.0,
     "output_impact": 0.0
   },
   "scope": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "scope_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 398.0,
+    "imports": 432.0,
     "output_impact": 0.0
   },
   "scoring": {
@@ -2894,7 +2894,7 @@
   "screen": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "scripts": {
@@ -2906,7 +2906,7 @@
   "secret": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "secret_redactor": {
@@ -2930,13 +2930,13 @@
   "segment": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 140.0,
+    "imports": 168.0,
     "output_impact": 0.0
   },
   "select": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 55.0,
+    "imports": 65.0,
     "output_impact": 0.0
   },
   "self_coding_engine": {
@@ -2972,37 +2972,37 @@
   "sentence_transformers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 348.0,
+    "imports": 402.0,
     "output_impact": 0.0
   },
   "sentry_client": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 87.0,
+    "imports": 91.0,
     "output_impact": 0.0
   },
   "sentry_sdk": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1017.0,
+    "imports": 1259.0,
     "output_impact": 0.0
   },
   "service": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "services": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "shared_event_bus": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 200.0,
+    "imports": 210.0,
     "output_impact": 0.0
   },
   "shared_gpt_memory": {
@@ -3014,25 +3014,25 @@
   "shlex": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 249.0,
+    "imports": 255.0,
     "output_impact": 0.0
   },
   "shutil": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 685.0,
+    "imports": 711.0,
     "output_impact": 0.0
   },
   "signal": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 125.0,
+    "imports": 141.0,
     "output_impact": 0.0
   },
   "sklearn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 277.0,
+    "imports": 307.0,
     "output_impact": 0.0
   },
   "smtplib": {
@@ -3056,55 +3056,55 @@
   "sniffio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 50.0,
     "output_impact": 0.0
   },
   "snippet_compressor": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 100.0,
+    "imports": 106.0,
     "output_impact": 0.0
   },
   "socket": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 375.0,
+    "imports": 421.0,
     "output_impact": 0.0
   },
   "socks_proxy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "socksio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "sortedcontainers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "sorteddict": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "sortedlist": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "sortedset": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 16.0,
+    "imports": 20.0,
     "output_impact": 0.0
   },
   "source": {
@@ -3116,49 +3116,49 @@
   "spinner": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "sqlalchemy": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 76.0,
+    "imports": 86.0,
     "output_impact": 0.0
   },
   "sqlite3": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 645.0,
+    "imports": 689.0,
     "output_impact": 0.0
   },
   "sqlparse": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 3.0,
+    "imports": 9.0,
     "output_impact": 0.0
   },
   "sshconn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "ssl": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 180.0,
+    "imports": 224.0,
     "output_impact": 0.0
   },
   "stat": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 29.0,
+    "imports": 35.0,
     "output_impact": 0.0
   },
   "statistics": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 169.0,
+    "imports": 171.0,
     "output_impact": 0.0
   },
   "stats": {
@@ -3176,7 +3176,7 @@
   "store": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "strategy_analytics": {
@@ -3188,13 +3188,13 @@
   "streams": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 24.0,
+    "imports": 30.0,
     "output_impact": 0.0
   },
   "string": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 245.0,
+    "imports": 265.0,
     "output_impact": 0.0
   },
   "stripe_billing_router": {
@@ -3206,37 +3206,37 @@
   "struct": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 117.0,
+    "imports": 123.0,
     "output_impact": 0.0
   },
   "stub_providers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 72.0,
+    "imports": 74.0,
     "output_impact": 0.0
   },
   "style": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 180.0,
+    "imports": 216.0,
     "output_impact": 0.0
   },
   "styled": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "subprocess": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 734.0,
+    "imports": 758.0,
     "output_impact": 0.0
   },
   "swarm": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "symtable": {
@@ -3254,37 +3254,37 @@
   "synergy_history_db": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 27.0,
+    "imports": 29.0,
     "output_impact": 0.0
   },
   "sys": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1985.0,
+    "imports": 2215.0,
     "output_impact": 0.0
   },
   "table": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 36.0,
     "output_impact": 0.0
   },
   "tarfile": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 126.0,
+    "imports": 140.0,
     "output_impact": 0.0
   },
   "target_region": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 42.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "task_handoff_bot": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 59.0,
+    "imports": 61.0,
     "output_impact": 0.0
   },
   "task_manager": {
@@ -3296,55 +3296,55 @@
   "telemetry_backend": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "tempfile": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 719.0,
+    "imports": 755.0,
     "output_impact": 0.0
   },
   "terminal_theme": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 48.0,
     "output_impact": 0.0
   },
   "termui": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 15.0,
+    "imports": 45.0,
     "output_impact": 0.0
   },
   "test_harness": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 4.0,
     "output_impact": 0.0
   },
   "text": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 150.0,
+    "imports": 180.0,
     "output_impact": 0.0
   },
   "textwrap": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 77.0,
+    "imports": 85.0,
     "output_impact": 0.0
   },
   "theme": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 24.0,
     "output_impact": 0.0
   },
   "threading": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1066.0,
+    "imports": 1148.0,
     "output_impact": 0.0
   },
   "threshold_service": {
@@ -3356,55 +3356,55 @@
   "tiktoken": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 71.0,
+    "imports": 77.0,
     "output_impact": 0.0
   },
   "time": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 1842.0,
+    "imports": 1944.0,
     "output_impact": 0.0
   },
   "tls": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 60.0,
+    "imports": 66.0,
     "output_impact": 0.0
   },
   "tokenize": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 50.0,
+    "imports": 56.0,
     "output_impact": 0.0
   },
   "tomllib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 15.0,
+    "imports": 17.0,
     "output_impact": 0.0
   },
   "torch": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 363.0,
+    "imports": 409.0,
     "output_impact": 0.0
   },
   "tqdm": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 232.0,
+    "imports": 268.0,
     "output_impact": 0.0
   },
   "traceback": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 344.0,
+    "imports": 354.0,
     "output_impact": 0.0
   },
   "tracemalloc": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 63.0,
+    "imports": 65.0,
     "output_impact": 0.0
   },
   "transaction": {
@@ -3416,13 +3416,13 @@
   "transformers": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 268.0,
+    "imports": 300.0,
     "output_impact": 0.0
   },
   "transport": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 80.0,
+    "imports": 88.0,
     "output_impact": 0.0
   },
   "trend_predictor": {
@@ -3434,43 +3434,43 @@
   "trio": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 264.0,
+    "imports": 330.0,
     "output_impact": 0.0
   },
   "truth_adapter": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 30.0,
+    "imports": 34.0,
     "output_impact": 0.0
   },
   "types": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 723.0,
+    "imports": 865.0,
     "output_impact": 0.0
   },
   "typing": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 7651.0,
+    "imports": 8443.0,
     "output_impact": 0.0
   },
   "typing_extensions": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "unicodedata": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 27.0,
+    "imports": 31.0,
     "output_impact": 0.0
   },
   "unified_event_bus": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 505.0,
+    "imports": 543.0,
     "output_impact": 0.0
   },
   "unittest": {
@@ -3482,13 +3482,13 @@
   "universal_retriever": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "unixconn": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "unsafe_patterns": {
@@ -3500,31 +3500,31 @@
   "upgrade_forecaster": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "urllib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 443.0,
+    "imports": 489.0,
     "output_impact": 0.0
   },
   "urllib3": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 116.0,
+    "imports": 130.0,
     "output_impact": 0.0
   },
   "utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 623.0,
+    "imports": 713.0,
     "output_impact": 0.0
   },
   "uuid": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 574.0,
+    "imports": 604.0,
     "output_impact": 0.0
   },
   "vaderSentiment": {
@@ -3542,31 +3542,31 @@
   "vector_metrics_db": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 296.0,
+    "imports": 318.0,
     "output_impact": 0.0
   },
   "vector_service": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 896.0,
+    "imports": 934.0,
     "output_impact": 0.0
   },
   "vector_utils": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 130.0,
+    "imports": 138.0,
     "output_impact": 0.0
   },
   "vectorizer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "version": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 40.0,
+    "imports": 44.0,
     "output_impact": 0.0
   },
   "view": {
@@ -3584,91 +3584,91 @@
   "volume": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "warnings": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 315.0,
+    "imports": 375.0,
     "output_impact": 0.0
   },
   "watchdog": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 14.0,
+    "imports": 18.0,
     "output_impact": 0.0
   },
   "watchfiles": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 2.0,
+    "imports": 6.0,
     "output_impact": 0.0
   },
   "weakref": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 116.0,
+    "imports": 132.0,
     "output_impact": 0.0
   },
   "weight_adjuster": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "win32api": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "win32event": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "win32file": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "win32pipe": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "windows": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 8.0,
+    "imports": 10.0,
     "output_impact": 0.0
   },
   "winreg": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 54.0,
+    "imports": 58.0,
     "output_impact": 0.0
   },
   "workflow_graph": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 58.0,
+    "imports": 62.0,
     "output_impact": 0.0
   },
   "workflow_run_summary": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 20.0,
+    "imports": 22.0,
     "output_impact": 0.0
   },
   "workflow_sandbox_runner": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 44.0,
+    "imports": 46.0,
     "output_impact": 0.0
   },
   "workflow_scorer_core": {
@@ -3680,7 +3680,7 @@
   "workflow_spec": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 11.0,
+    "imports": 13.0,
     "output_impact": 0.0
   },
   "workflow_stability_db": {
@@ -3698,61 +3698,61 @@
   "workflow_synergy_comparator": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 75.0,
+    "imports": 77.0,
     "output_impact": 0.0
   },
   "workflow_synthesizer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "workflow_vectorizer": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 27.0,
+    "imports": 29.0,
     "output_impact": 0.0
   },
   "wsgi": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   },
   "xgboost": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 4.0,
+    "imports": 6.0,
     "output_impact": 0.0
   },
   "yaml": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 688.0,
+    "imports": 714.0,
     "output_impact": 0.0
   },
   "zipfile": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "zlib": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 28.0,
+    "imports": 34.0,
     "output_impact": 0.0
   },
   "zoneinfo": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 25.0,
+    "imports": 27.0,
     "output_impact": 0.0
   },
   "zstandard": {
     "executions": 0.0,
     "impact": 0.0,
-    "imports": 10.0,
+    "imports": 12.0,
     "output_impact": 0.0
   }
 }

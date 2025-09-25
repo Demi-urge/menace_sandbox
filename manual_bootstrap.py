@@ -1,21 +1,3 @@
-"""Manual bootstrap helper for preparing the sandbox environment.
-
-This script consolidates the two bootstrap phases that are normally handled
-by the automation tooling:
-
-* :func:`sandbox_runner.bootstrap.bootstrap_environment` ensures the sandbox
-  specific configuration files, SQLite databases and optional services are in
-  place.
-* :class:`environment_bootstrap.EnvironmentBootstrapper` verifies external
-  dependencies such as system packages, secrets and optional background
-  services.
-
-The helper keeps both steps accessible when automation is unavailable.  It can
-be executed directly (``python manual_bootstrap.py``) or imported and invoked
-via :func:`main`.  All heavy lifting remains in the existing bootstrap modules;
-this wrapper simply wires them together with a small CLI and friendlier logging.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -26,10 +8,9 @@ import sys
 from pathlib import Path
 from typing import MutableMapping, Sequence
 
+# === BEGIN PATH SETUP ===
 
 def _ensure_package_on_path() -> Path:
-    """Return the repository root and ensure the package is importable."""
-
     script_path = Path(__file__).resolve()
     package_root = script_path.parent
     marker = package_root / "__init__.py"
@@ -37,11 +18,10 @@ def _ensure_package_on_path() -> Path:
         parent = package_root.parent
         if str(parent) not in sys.path:
             sys.path.insert(0, str(parent))
-    else:  # pragma: no cover - fallback for unusual layouts
+    else:
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
     return package_root
-
 
 _REPO_ROOT = _ensure_package_on_path()
 _DEFAULT_DATA_DIR = _REPO_ROOT / "sandbox_data"
@@ -52,49 +32,29 @@ sys.modules["dynamic_path_router"] = _DYNAMIC_PATH_ROUTER
 for _alias in ("unified_event_bus", "resilience"):
     try:
         module = importlib.import_module(f"menace_sandbox.{_alias}")
-    except ModuleNotFoundError:  # pragma: no cover - optional alias
+    except ModuleNotFoundError:
         continue
     sys.modules[_alias] = module
 
 _menace_pkg = importlib.import_module("menace")
-if not getattr(_menace_pkg, "RAISE_ERRORS", None):  # pragma: no cover - defensive reload
+if not getattr(_menace_pkg, "RAISE_ERRORS", None):
     _menace_pkg = importlib.reload(_menace_pkg)
+
+# === END PATH SETUP ===
 
 from menace_sandbox.environment_bootstrap import EnvironmentBootstrapper
 from menace_sandbox.sandbox_runner.bootstrap import bootstrap_environment
 from menace_sandbox.sandbox_settings import SandboxSettings
 
-
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command line arguments for the manual bootstrap helper."""
-
     parser = argparse.ArgumentParser(description="Run Menace sandbox bootstrap tasks manually")
-    parser.add_argument(
-        "--skip-sandbox",
-        action="store_true",
-        help="Skip sandbox-specific checks (bootstrap_environment)",
-    )
-    parser.add_argument(
-        "--skip-environment",
-        action="store_true",
-        help="Skip system/environment bootstrap (EnvironmentBootstrapper)",
-    )
-    parser.add_argument(
-        "--auto-install",
-        action="store_true",
-        help="Allow sandbox bootstrap to install missing Python packages",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        help="Logging level (e.g. DEBUG, INFO, WARNING)",
-    )
+    parser.add_argument("--skip-sandbox", action="store_true", help="Skip sandbox-specific checks")
+    parser.add_argument("--skip-environment", action="store_true", help="Skip system/environment bootstrap")
+    parser.add_argument("--auto-install", action="store_true", help="Allow bootstrap to install missing packages")
+    parser.add_argument("--log-level", default="INFO", help="Logging level (e.g. DEBUG, INFO, WARNING)")
     return parser.parse_args(argv)
 
-
 def _setup_logging(level: str) -> logging.Logger:
-    """Configure logging and return a module logger."""
-
     numeric_level = getattr(logging, str(level).upper(), logging.INFO)
     root = logging.getLogger()
     if not root.handlers:
@@ -103,24 +63,15 @@ def _setup_logging(level: str) -> logging.Logger:
         root.setLevel(numeric_level)
     return logging.getLogger("manual_bootstrap")
 
-
-def _configure_environment(
-    repo_root: Path,
-    env: MutableMapping[str, str] | None = None,
-) -> None:
-    """Ensure key environment variables point at *repo_root*."""
-
+def _configure_environment(repo_root: Path, env: MutableMapping[str, str] | None = None) -> None:
     target = env if env is not None else os.environ
     target.setdefault("SANDBOX_REPO_PATH", str(repo_root))
     target.setdefault("SANDBOX_DATA_DIR", str(_DEFAULT_DATA_DIR))
 
-
 def _describe_settings(logger: logging.Logger, settings: SandboxSettings) -> None:
-    """Emit a short summary for the provided sandbox *settings*."""
-
     try:
         env_file = Path(settings.menace_env_file)
-    except Exception:  # pragma: no cover - defensive guard
+    except Exception:
         env_file = Path(".env")
     logger.info(
         "Sandbox configuration ready (repo=%s data_dir=%s env_file=%s)",
@@ -129,28 +80,28 @@ def _describe_settings(logger: logging.Logger, settings: SandboxSettings) -> Non
         env_file.resolve(),
     )
 
+def _register_balolos_coder():
+    from menace.self_coding_engine import SelfCodingEngine
+    from menace.data_bot import DataBot
+    from menace.bot_registry import BotRegistry, internalize_coding_bot
+    from menace.model_automation_pipeline import ModelAutomationPipeline
 
-def main(
-    argv: Sequence[str] | None = None,
-    env: MutableMapping[str, str] | None = None,
-) -> int:
-    """Execute the manual bootstrap routine.
+    engine = SelfCodingEngine()
+    data_bot = DataBot()
+    registry = BotRegistry()
+    pipeline = ModelAutomationPipeline()
 
-    Parameters
-    ----------
-    argv:
-        Optional command line arguments.  When ``None`` (the default) they are
-        pulled from :data:`sys.argv`.
-    env:
-        Optional environment mapping.  When ``None`` the real process
-        environment is used.
+    internalize_coding_bot(
+        name="Balolos Coder",
+        engine=engine,
+        data_bot=data_bot,
+        pipeline=pipeline,
+        registry=registry
+    )
 
-    Returns
-    -------
-    int
-        ``0`` on success, otherwise a non-zero exit status describing the error.
-    """
+    print("Bots now in registry:", registry.get_all_bots())
 
+def main(argv: Sequence[str] | None = None, env: MutableMapping[str, str] | None = None) -> int:
     args = _parse_args(argv)
     logger = _setup_logging(args.log_level)
     _configure_environment(_REPO_ROOT, env)
@@ -162,10 +113,8 @@ def main(
         try:
             settings = bootstrap_environment(auto_install=args.auto_install)
         except SystemExit as exc:
-            message = str(exc) or "sandbox dependency verification failed"
-            logger.error(message)
-            code = exc.code if isinstance(exc.code, int) else 1
-            return code or 1
+            logger.error(str(exc) or "sandbox dependency verification failed")
+            return exc.code if isinstance(exc.code, int) else 1
         except KeyboardInterrupt:
             logger.info("sandbox bootstrap interrupted")
             return 130
@@ -179,22 +128,22 @@ def main(
     else:
         logger.info("sandbox bootstrap completed successfully (skipped)")
 
-    if args.skip_environment:
-        return exit_code
+    if not args.skip_environment:
+        try:
+            EnvironmentBootstrapper().bootstrap()
+        except KeyboardInterrupt:
+            logger.info("environment bootstrap interrupted")
+            return 130
+        except Exception:
+            logger.exception("environment bootstrap failed")
+            return 1
+        else:
+            logger.info("environment bootstrap completed successfully")
 
-    try:
-        EnvironmentBootstrapper().bootstrap()
-    except KeyboardInterrupt:
-        logger.info("environment bootstrap interrupted")
-        exit_code = 130
-    except Exception:
-        logger.exception("environment bootstrap failed")
-        return 1
-    else:
-        logger.info("environment bootstrap completed successfully")
+    # Register the Balolos Coder after environment is ready
+    _register_balolos_coder()
 
-    return exit_code
+    return 0
 
-
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
+if __name__ == "__main__":
     raise SystemExit(main())
