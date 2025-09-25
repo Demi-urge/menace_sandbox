@@ -14,6 +14,17 @@ from typing import TYPE_CHECKING
 import types
 from pathlib import Path
 
+# Allow optional exception propagation in modules that normally swallow errors.
+# The flag needs to be defined before importing any submodules because several of
+# them import :mod:`config_discovery` during their module initialisation.  That
+# module in turn performs ``from menace_sandbox import RAISE_ERRORS``.  When the
+# attribute was defined at the bottom of this file the circular import meant the
+# name was missing which surfaced as ``ImportError: cannot import name
+# 'RAISE_ERRORS'`` when running the docker entrypoint.  Defining it eagerly keeps
+# the attribute available throughout module import, avoiding the circular
+# dependency.
+RAISE_ERRORS = os.getenv("MENACE_RAISE_ERRORS") == "1"
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
@@ -225,7 +236,7 @@ if "sklearn" not in sys.modules and _sk_dir.is_dir():
 logger = logging.getLogger(__name__)
 
 # Allow optional exception propagation in modules that normally swallow errors.
-RAISE_ERRORS = os.getenv("MENACE_RAISE_ERRORS") == "1"
+# (See comment near top of file for reasoning.)
 
 if not os.getenv("MENACE_LIGHT_IMPORTS"):
     _submodules = [
@@ -251,6 +262,7 @@ if not os.getenv("MENACE_LIGHT_IMPORTS"):
         )
 
 __all__ = [
+    "RAISE_ERRORS",
     "__version__",
     "ROICalculator",
     "roi_calculator",
