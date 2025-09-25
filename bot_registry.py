@@ -1290,5 +1290,8 @@ def get_bot_workflow_tests(
 
     return _collect_workflow_tests(bot_name, registry=registry, settings=settings)
 
+def get_all_registered_bots():
+    return list(_REGISTERED_BOTS.keys())
+
 
 __all__ = ["BotRegistry", "get_bot_workflow_tests"]
