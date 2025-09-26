@@ -76,8 +76,95 @@ class ConfigDiscovery:
             os.environ.setdefault("CLUSTER_HOSTS", ",".join(hosts))
             os.environ.setdefault("REMOTE_HOSTS", ",".join(hosts))
 
+        self._ensure_stack_env()
         self._detect_hardware()
         self._detect_cloud()
+
+    # ------------------------------------------------------------------
+    def _ensure_stack_env(self, save_path: str | Path = ".env.auto") -> None:
+        """Ensure Stack-related environment variables exist.
+
+        ``ConfigDiscovery`` historically focussed on infrastructure hints such
+        as Terraform directories.  Stack ingestion and retrieval now depend on
+        a small set of environment variables.  This helper mirrors the
+        behaviour of :func:`ensure_config` by exporting sensible defaults to the
+        process environment and persisting them to ``.env.auto`` so other
+        services pick them up automatically.
+        """
+
+        env_path = Path(save_path)
+        existing: dict[str, str] = {}
+        if env_path.exists():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    existing.setdefault(key.strip(), value.strip())
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning("failed reading %s: %s", env_path, exc)
+
+        env_updates: dict[str, str] = {}
+
+        def _truthy(value: str | None) -> bool:
+            if value is None:
+                return False
+            return value.strip().lower() in {"1", "true", "yes", "on", "y"}
+
+        stack_streaming = os.environ.get("STACK_STREAMING")
+        if not stack_streaming:
+            stack_streaming = existing.get("STACK_STREAMING") or "1"
+            if "STACK_STREAMING" not in existing:
+                env_updates["STACK_STREAMING"] = stack_streaming
+
+        token_sources = (
+            os.environ.get("HUGGINGFACE_TOKEN"),
+            os.environ.get("HUGGINGFACE_API_TOKEN"),
+            os.environ.get("HUGGINGFACEHUB_API_TOKEN"),
+            os.environ.get("HF_TOKEN"),
+        )
+        token_value = next((val for val in token_sources if val), None)
+        if token_value is None:
+            token_value = existing.get("HUGGINGFACE_TOKEN")
+        if token_value is None:
+            token_value = ""
+            env_updates["HUGGINGFACE_TOKEN"] = token_value
+            os.environ.setdefault("HUGGINGFACE_TOKEN", token_value)
+        else:
+            os.environ["HUGGINGFACE_TOKEN"] = token_value
+            if "HUGGINGFACE_TOKEN" not in existing:
+                env_updates["HUGGINGFACE_TOKEN"] = token_value
+
+        if stack_streaming is not None:
+            os.environ.setdefault("STACK_STREAMING", stack_streaming)
+
+        missing_credentials = []
+        if not token_value:
+            missing_credentials.append("HUGGINGFACE_TOKEN")
+
+        stack_enabled = _truthy(os.environ.get("STACK_STREAMING"))
+        if not stack_enabled:
+            self.logger.warning(
+                "STACK_STREAMING disabled via environment; Stack ingestion will not run"
+            )
+
+        if env_updates:
+            try:
+                with env_path.open("a", encoding="utf-8") as fh:
+                    for key, value in env_updates.items():
+                        fh.write(f"{key}={value}\n")
+            except Exception as exc:
+                logger.exception("Failed to save config to %s: %s", env_path, exc)
+                if RAISE_ERRORS:
+                    raise
+
+        if missing_credentials:
+            joined = ", ".join(sorted(set(missing_credentials)))
+            self.logger.warning(
+                "Stack processing disabled or degraded; set %s in %s",
+                joined,
+                env_path,
+            )
 
     # ------------------------------------------------------------------
     def _detect_hardware(self) -> None:

@@ -63,6 +63,15 @@ UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
 
+_HF_ENV_KEYS = (
+    "HUGGINGFACE_TOKEN",
+    "HUGGINGFACE_API_TOKEN",
+    "HUGGINGFACEHUB_API_TOKEN",
+    "HF_TOKEN",
+)
+
+_STACK_WARNED_FLAGS: set[str] = set()
+
 # ---------------------------------------------------------------------------
 # Stack dataset configuration helpers
 # ---------------------------------------------------------------------------
@@ -401,7 +410,18 @@ class ContextBuilder:
         self.prompt_max_tokens = prompt_max_tokens
 
         stack_cfg = _stack_dataset_config()
-        if stack_cfg.enabled:
+        stack_env_enabled = _truthy(os.environ.get("STACK_STREAMING", "1"))
+        if stack_cfg.enabled and not stack_env_enabled:
+            _warn_once(
+                "stack_streaming_disabled",
+                "STACK_STREAMING disabled via environment; skipping Stack retrieval",
+            )
+        if stack_cfg.enabled and stack_env_enabled:
+            if not _resolve_hf_token():
+                _warn_once(
+                    "missing_hf_token",
+                    "HUGGINGFACE_TOKEN not configured; Stack ingestion will be disabled",
+                )
             try:
                 service = getattr(self.patch_retriever, "vector_service", None)
                 if service is None:
@@ -2241,3 +2261,26 @@ def build_prompt(
 
 
 __all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags", "build_prompt"]
+
+
+def _truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _warn_once(flag: str, message: str) -> None:
+    if flag in _STACK_WARNED_FLAGS:
+        return
+    logger.warning(message)
+    _STACK_WARNED_FLAGS.add(flag)
+
+
+def _resolve_hf_token() -> str | None:
+    for key in _HF_ENV_KEYS:
+        token = os.environ.get(key)
+        if token:
+            if key != "HUGGINGFACE_TOKEN":
+                os.environ.setdefault("HUGGINGFACE_TOKEN", token)
+            return token
+    return None

@@ -185,6 +185,22 @@ python -m vector_service.download_model
 The command fetches the model from Hugging Face and writes the compressed
 archive to the expected location.
 
+### Stack dataset ingestion
+
+`vector_service.stack_ingestion` streams repositories from The Stack dataset.
+Set `STACK_STREAMING=1` (the default) to enable the pipeline and provide a
+valid Hugging Face access token via `HUGGINGFACE_TOKEN`.  The bootstrap process
+adds both variables to `.env.auto`; update the placeholder token before running
+the ingestion CLI:
+
+```bash
+STACK_STREAMING=1 HUGGINGFACE_TOKEN=hf_your_token \
+python -m vector_service.stack_ingestion --languages python javascript
+```
+
+When `STACK_STREAMING` is disabled or the token is missing, the ingestion script
+logs a warning and exits without processing.
+
 ## Safety filtering
 
 `ContextBuilder` and `Retriever` apply configurable safety thresholds:

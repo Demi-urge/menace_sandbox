@@ -17,6 +17,36 @@ def test_discover(tmp_path, monkeypatch):
     assert os.environ.get("REMOTE_HOSTS") == "h1,h2"
 
 
+def test_discover_populates_stack_env(tmp_path, monkeypatch, caplog):
+    monkeypatch.chdir(tmp_path)
+    for var in ["STACK_STREAMING", "HUGGINGFACE_TOKEN", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_API_TOKEN"]:
+        monkeypatch.delenv(var, raising=False)
+    caplog.set_level("WARNING")
+    cd.ConfigDiscovery().discover()
+    env_file = tmp_path / ".env.auto"
+    assert env_file.exists()
+    text = env_file.read_text()
+    assert "STACK_STREAMING=1" in text
+    assert "HUGGINGFACE_TOKEN=" in text
+    assert os.environ.get("STACK_STREAMING") == "1"
+    assert "HUGGINGFACE_TOKEN" in os.environ
+    assert any("HUGGINGFACE_TOKEN" in rec.message for rec in caplog.records)
+
+
+def test_discover_persists_existing_token(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.setenv("HF_TOKEN", "abc123")
+    cd.ConfigDiscovery().discover()
+    env_file = tmp_path / ".env.auto"
+    assert "HUGGINGFACE_TOKEN=abc123" in env_file.read_text()
+    assert os.environ.get("HUGGINGFACE_TOKEN") == "abc123"
+    # Running again should not duplicate entries
+    cd.ConfigDiscovery().discover()
+    lines = [line for line in env_file.read_text().splitlines() if line.startswith("HUGGINGFACE_TOKEN=")]
+    assert len(lines) == 1
+
+
 def test_bootstrap_uses_discover(monkeypatch):
     called = []
     def fake_discover(self):

@@ -2395,7 +2395,11 @@ provision infrastructure automatically.
 `DefaultConfigManager` now auto-generates missing configuration values and
 persists them to `.env` so the system can start unattended. `ConfigDiscovery`
 additionally inspects Terraform directories and host lists to set
-`TERRAFORM_DIR`, `CLUSTER_HOSTS` and `REMOTE_HOSTS` automatically.
+`TERRAFORM_DIR`, `CLUSTER_HOSTS` and `REMOTE_HOSTS` automatically. When Stack
+retrieval or ingestion is enabled it also ensures `.env.auto` contains
+`STACK_STREAMING` (defaulting to `1`) and a placeholder `HUGGINGFACE_TOKEN` so
+Hugging Face credentials can be shared with downstream services. Populate
+`HUGGINGFACE_TOKEN` with a valid API token to unlock Stack ingestion.
 
 ### Autoscaling and self-healing
 `Autoscaler` integrates with `PredictiveResourceAllocator` for dynamic scaling, while `SelfHealingOrchestrator` redeploys crashed bots and triggers automatic rollbacks when failures persist.
