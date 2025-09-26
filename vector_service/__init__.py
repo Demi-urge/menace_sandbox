@@ -86,7 +86,7 @@ class VectorServiceError(Exception):  # pragma: no cover - default error type
 
 RateLimitError = MalformedPromptError = VectorServiceError
 
-Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = ContextBuilder = _Stub  # type: ignore
+Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = ContextBuilder = StackRetriever = _Stub  # type: ignore
 SharedVectorService: type[_SimpleSharedVectorService] | type[_Stub] = _SimpleSharedVectorService
 
 try:  # pragma: no cover - upgrade default errors when available
@@ -103,12 +103,17 @@ else:
     MalformedPromptError = _MalformedPromptError
 
 try:  # pragma: no cover - optional heavy dependency
-    from .retriever import Retriever as _Retriever, FallbackResult as _FallbackResult
+    from .retriever import (
+        Retriever as _Retriever,
+        FallbackResult as _FallbackResult,
+        StackRetriever as _StackRetriever,
+    )
 except Exception:
     pass
 else:
     Retriever = _Retriever
     FallbackResult = _FallbackResult
+    StackRetriever = _StackRetriever
 
 try:  # pragma: no cover - optional heavy dependency
     from .patch_logger import PatchLogger as _PatchLogger
@@ -178,6 +183,7 @@ __all__ = [
     "PatchLogger",
     "CognitionLayer",
     "EmbeddingBackfill",
+    "StackRetriever",
     "SharedVectorService",
     "ContextBuilder",
     "EmbeddableDBMixin",

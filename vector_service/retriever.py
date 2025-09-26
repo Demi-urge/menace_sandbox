@@ -540,6 +540,290 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 @dataclass
+class StackRetriever:
+    """Query Stack embeddings stored in the shared vector store."""
+
+    context_builder: Any
+    vector_service: "SharedVectorService" | None = None
+    vector_store: "VectorStore" | None = None
+    namespace: str = "stack"
+    top_k: int = 5
+    metric: str = "cosine"
+    max_lines: int = 200
+    max_alert_severity: float = 1.0
+    max_alerts: int = 5
+    license_denylist: set[str] = field(
+        default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
+    )
+    risk_penalty: float = 1.0
+    roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+    patch_safety: PatchSafety | None = None
+
+    def __post_init__(self) -> None:
+        if not hasattr(self.context_builder, "roi_tag_penalties"):
+            raise TypeError(
+                "context_builder must define 'roi_tag_penalties' for StackRetriever"
+            )
+        if not self.roi_tag_weights:
+            try:
+                self.roi_tag_weights = dict(
+                    getattr(self.context_builder, "roi_tag_penalties", {})
+                )
+            except Exception:
+                self.roi_tag_weights = {}
+        if self.patch_safety is None:
+            ps = getattr(self.context_builder, "patch_safety", None)
+            self.patch_safety = ps if isinstance(ps, PatchSafety) else PatchSafety()
+        self.license_denylist = set(self.license_denylist or ())
+        if self.vector_service is None:
+            try:  # pragma: no cover - heavy dependency handled lazily
+                from .vectorizer import SharedVectorService  # type: ignore
+            except Exception:  # pragma: no cover - fallback when running as script
+                from vector_service.vectorizer import (  # type: ignore
+                    SharedVectorService,
+                )
+            self.vector_service = SharedVectorService()
+        if self.vector_store is None and self.vector_service is not None:
+            self.vector_store = getattr(self.vector_service, "vector_store", None)
+        self.metric = str(self.metric or "cosine").lower()
+        self.embedder = getattr(self.vector_service, "text_embedder", None)
+
+    # ------------------------------------------------------------------
+    def embed_query(self, query: str) -> List[float]:
+        if not isinstance(query, str) or not query.strip():
+            return []
+        if self.vector_service is None:
+            return []
+        try:
+            vec = self.vector_service.vectorise("text", {"text": query})
+        except Exception:
+            return []
+        coerced: List[float] = []
+        try:
+            coerced = [float(x) for x in vec]
+        except Exception:
+            return []
+        return coerced
+
+    # ------------------------------------------------------------------
+    def _coerce_vector(self, query: str | Sequence[float]) -> List[float] | None:
+        if isinstance(query, str):
+            return self.embed_query(query)
+        try:
+            return [float(x) for x in query]  # type: ignore[arg-type]
+        except Exception:
+            return None
+
+    def _trim_snippet(self, text: str) -> str:
+        if not text:
+            return ""
+        if self.max_lines and self.max_lines > 0:
+            lines = text.splitlines()
+            if len(lines) > self.max_lines:
+                return "\n".join(lines[: self.max_lines])
+        return text
+
+    def _similarity(self, a: Sequence[float], b: Sequence[float]) -> float:
+        metric = (self.metric or "cosine").lower()
+        if metric == "inner_product":
+            return sum(float(x) * float(y) for x, y in zip(a, b))
+        # default to cosine similarity
+        dot = sum(float(x) * float(y) for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(float(x) ** 2 for x in a))
+        norm_b = math.sqrt(sum(float(x) ** 2 for x in b))
+        if not norm_a or not norm_b:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _to_unit_interval(self, score: float) -> float:
+        if (self.metric or "cosine").lower() == "inner_product":
+            return (score + 1.0) / 2.0
+        return 1.0 / (1.0 + math.exp(-score))
+
+    def _normalise_distance(self, dist: float, backend: str) -> float:
+        if "qdrant" in backend:
+            return max(0.0, min(1.0, float(dist)))
+        return 1.0 / (1.0 + float(dist))
+
+    def _compute_similarity(
+        self,
+        query_vec: Sequence[float],
+        stored_vec: Sequence[float],
+        distance: float,
+        backend: str,
+    ) -> float:
+        if stored_vec:
+            return self._to_unit_interval(self._similarity(query_vec, stored_vec))
+        return self._normalise_distance(distance, backend)
+
+    def _extract_entry(
+        self, store: "VectorStore", record_id: str
+    ) -> tuple[Dict[str, Any], Sequence[float], Dict[str, Any]]:
+        ids = list(getattr(store, "ids", []) or [])
+        meta = list(getattr(store, "meta", []) or [])
+        vectors = getattr(store, "vectors", None)
+        rid = str(record_id)
+        idx = -1
+        if rid in ids:
+            idx = ids.index(rid)
+        elif record_id in ids:
+            idx = ids.index(record_id)
+        entry: Dict[str, Any] = {"id": rid}
+        vec: Sequence[float] = []
+        raw_meta: Dict[str, Any] = {}
+        if idx >= 0:
+            if idx < len(meta) and isinstance(meta[idx], dict):
+                entry = dict(meta[idx])
+                raw = entry.get("metadata", {})
+                raw_meta = dict(raw) if isinstance(raw, dict) else {}
+            if vectors is not None and idx < len(vectors):
+                try:
+                    vec = [float(x) for x in vectors[idx]]  # type: ignore[assignment]
+                except Exception:
+                    vec = []
+        entry.setdefault("id", rid)
+        return entry, vec, raw_meta
+
+    def _prepare_metadata(self, raw: Dict[str, Any], record_id: str) -> Dict[str, Any]:
+        meta: Dict[str, Any] = {}
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                if value is None:
+                    continue
+                meta[key] = value
+        meta.setdefault("record_id", record_id)
+        meta.setdefault("origin", self.namespace)
+        meta.setdefault("redacted", True)
+        return meta
+
+    # ------------------------------------------------------------------
+    def retrieve(
+        self,
+        query: str | Sequence[float],
+        *,
+        k: int | None = None,
+        exclude_tags: Iterable[str] | None = None,
+    ) -> List[Dict[str, Any]]:
+        vector = self._coerce_vector(query)
+        if not vector:
+            return []
+        store = self.vector_store
+        if store is None:
+            return []
+        max_hits = max(0, int(k if k is not None else self.top_k))
+        if max_hits == 0:
+            return []
+        try:
+            raw_hits = store.query(vector, top_k=max(max_hits * 3, max_hits))
+        except Exception:
+            return []
+        excluded = {str(tag) for tag in (exclude_tags or []) if tag is not None}
+        backend = store.__class__.__name__.lower()
+        results: List[Dict[str, Any]] = []
+        filtered = 0
+        for record_id, distance in raw_hits:
+            entry, stored_vec, raw_meta = self._extract_entry(store, record_id)
+            entry_type = str(
+                entry.get("type")
+                or entry.get("kind")
+                or raw_meta.get("origin")
+                or self.namespace
+            ).lower()
+            if entry_type and entry_type != self.namespace.lower():
+                continue
+            rid = str(entry.get("id") or record_id)
+            meta = self._prepare_metadata(raw_meta, rid)
+            tags = meta.get("tags")
+            tag_set = (
+                {str(t) for t in tags}
+                if isinstance(tags, (list, tuple, set))
+                else {str(tags)}
+                if tags
+                else set()
+            )
+            if excluded and tag_set & excluded:
+                continue
+            snippet_source = (
+                meta.get("summary")
+                or meta.get("snippet")
+                or meta.get("content")
+                or meta.get("text")
+                or ""
+            )
+            if not isinstance(snippet_source, str):
+                snippet_source = ""
+            snippet = self._trim_snippet(snippet_source)
+            if not snippet:
+                continue
+            meta["summary"] = snippet
+            for key in ("snippet", "content", "text"):
+                if key in meta:
+                    meta.pop(key, None)
+            governed = govern_retrieval(
+                snippet,
+                meta,
+                entry.get("reason"),
+                max_alert_severity=self.max_alert_severity,
+            )
+            if governed is None:
+                filtered += 1
+                continue
+            meta, reason = governed
+            ps = self.patch_safety or PatchSafety()
+            ps.max_alert_severity = self.max_alert_severity
+            ps.max_alerts = self.max_alerts
+            ps.license_denylist = self.license_denylist
+            passed, risk_score, _ = ps.evaluate(meta, meta, origin=self.namespace)
+            if not passed:
+                filtered += 1
+                continue
+            penalty = float(risk_score) * float(self.risk_penalty)
+            severity = meta.get("alignment_severity")
+            if severity is not None:
+                try:
+                    penalty += float(severity)
+                except Exception:
+                    pass
+            lic = meta.get("license")
+            fp = meta.get("license_fingerprint")
+            if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
+                penalty += 1.0
+            similarity = self._compute_similarity(
+                vector, stored_vec, float(distance), backend
+            )
+            score = max(similarity - penalty, 0.0)
+            roi_tag = meta.get("roi_tag")
+            if roi_tag is not None:
+                score = max(
+                    score - self.roi_tag_weights.get(str(roi_tag), 0.0),
+                    0.0,
+                )
+            meta["risk_score"] = risk_score
+            meta.setdefault("license_fingerprint", fp)
+            item = {
+                "origin_db": self.namespace,
+                "record_id": rid,
+                "text": snippet,
+                "score": score,
+                "similarity": similarity,
+                "metadata": meta,
+            }
+            if reason is not None:
+                item["reason"] = reason
+            item = redact_dict(pii_redact_dict(item))
+            results.append(item)
+            if len(results) >= max_hits:
+                break
+        if filtered:
+            try:
+                _VECTOR_RISK.labels("filtered").inc(filtered)
+            except Exception:
+                pass
+        results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+        return results
+
+
+@dataclass
 class PatchRetriever:
     """Lightweight retriever that queries a local :class:`VectorStore`.
 
@@ -851,6 +1135,7 @@ def fts_search(
 __all__ = [
     "Retriever",
     "PatchRetriever",
+    "StackRetriever",
     "FallbackResult",
     "fts_search",
     "search_patches",

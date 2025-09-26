@@ -197,11 +197,24 @@ else:
 
 SandboxSettings = load_internal("sandbox_settings").SandboxSettings
 
+try:  # pragma: no cover - configuration optional in tests
+    _config_module = load_internal("config")
+except Exception:
+    StackDatasetConfig = None  # type: ignore[misc,assignment]
+
+    def get_config() -> SimpleNamespace:  # type: ignore[override]
+        return SimpleNamespace(stack_dataset=SimpleNamespace(enabled=False))
+
+else:
+    StackDatasetConfig = _config_module.StackDatasetConfig
+    get_config = _config_module.get_config
+
 try:
     from vector_service import (  # type: ignore[import-not-found]
         CognitionLayer,
         ContextBuilder,
         PatchLogger,
+        StackRetriever,
         VectorServiceError,
     )
 except Exception as exc:  # pragma: no cover - fail fast when dependency missing
@@ -648,6 +661,42 @@ class SelfCodingEngine:
             priv = None
         self.audit_trail = AuditTrail(path, priv)
         self.logger = logging.getLogger("SelfCodingEngine")
+        stack_cfg_default = (
+            StackDatasetConfig()  # type: ignore[operator]
+            if StackDatasetConfig is not None
+            else SimpleNamespace(enabled=False)
+        )
+        try:
+            cfg = get_config()
+            stack_cfg = getattr(cfg, "stack_dataset", stack_cfg_default)
+        except Exception:
+            stack_cfg = stack_cfg_default
+        stack_enabled = bool(getattr(stack_cfg, "enabled", False))
+        stack_cls = StackRetriever if hasattr(StackRetriever, "retrieve") else None
+        if stack_enabled and stack_cls is not None and getattr(builder, "stack_retriever", None) is None:
+            patch_service = getattr(getattr(builder, "patch_retriever", None), "vector_service", None)
+            if patch_service is None:
+                patch_service = getattr(getattr(builder, "retriever", None), "vector_service", None)
+            stack_store = getattr(patch_service, "vector_store", None) if patch_service else None
+            try:
+                builder.stack_retriever = stack_cls(  # type: ignore[call-arg]
+                    context_builder=builder,
+                    vector_service=patch_service,
+                    vector_store=stack_store,
+                    top_k=max(1, int(getattr(stack_cfg, "retrieval_top_k", 5) or 5)),
+                    max_lines=max(0, int(getattr(stack_cfg, "max_lines_per_document", 0) or 0)),
+                    patch_safety=getattr(builder, "patch_safety", None),
+                    license_denylist=set(getattr(builder, "license_denylist", set())),
+                    risk_penalty=getattr(builder, "risk_penalty", 1.0),
+                    roi_tag_weights=dict(getattr(builder, "roi_tag_penalties", {})),
+                    max_alert_severity=getattr(builder, "max_alignment_severity", 1.0),
+                    max_alerts=getattr(builder, "max_alerts", 5),
+                )
+            except Exception:
+                self.logger.exception(
+                    "failed to initialise stack retriever for context builder"
+                )
+        self.stack_retriever = getattr(builder, "stack_retriever", None)
         self._patch_tracker = PatchAttemptTracker(
             logger=self.logger, escalation_counter=_PATCH_ESCALATIONS
         )
