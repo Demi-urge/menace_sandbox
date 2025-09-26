@@ -62,11 +62,22 @@ class _FlatPackageAliasFinder(importlib.abc.MetaPathFinder):
         self._aliases = tuple(aliases)
 
     def find_spec(self, fullname: str, path, target=None):  # type: ignore[override]
-        if fullname in sys.modules:
+        if fullname in sys.modules or fullname == self._canonical:
             return None
 
         parts = fullname.split(".")
         candidates: list[tuple[str, str]] = []
+
+        # Ensure the canonical package is available so ``PathFinder`` can resolve
+        # submodules without raising ``KeyError`` when ``fullname`` is an alias
+        # import (e.g. ``dynamic_path_router``).  ``PathFinder`` expects the
+        # parent package to be present in :mod:`sys.modules` when provided with a
+        # package search path.  During the very first alias import the canonical
+        # package might not yet be loaded which previously caused
+        # ``KeyError('menace_sandbox')``.  Importing it eagerly is safe because we
+        # explicitly ignore the canonical package name above to avoid recursion.
+        if self._canonical not in sys.modules:
+            importlib.import_module(self._canonical)
 
         # Handle flat imports (e.g. ``error_logger``).
         if len(parts) == 1:
