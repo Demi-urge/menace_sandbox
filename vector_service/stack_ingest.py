@@ -387,52 +387,12 @@ class StackIngestor:
             except Exception:
                 coerced_index = Path(str(index_path))
 
-        resolved_store: VectorStore | None = vector_store
-        if resolved_store is None:
-            candidate = getattr(self.vector_service, "vector_store", None)
-            if candidate is not None and coerced_index is not None:
-                try:
-                    candidate_path = Path(getattr(candidate, "path"))
-                except Exception:
-                    candidate_path = None
-                if candidate_path is not None and candidate_path != coerced_index:
-                    candidate = None
-            resolved_store = cast(VectorStore | None, candidate)
+        self.vector_store: VectorStore | None = self._initialise_vector_store(
+            vector_store, coerced_index
+        )
 
-        if resolved_store is None:
-            stack_store = get_stack_vector_store()
-            if stack_store is not None and coerced_index is not None:
-                try:
-                    stack_path = Path(getattr(stack_store, "path"))
-                except Exception:
-                    stack_path = None
-                if stack_path is not None and stack_path != coerced_index:
-                    stack_store = None
-            if stack_store is None:
-                dim = 384
-                backend = None
-                metric = "angular"
-                default_path: Path | None = None
-                if _stack_vector_store_config is not None:
-                    try:
-                        cfg_dim, cfg_path, cfg_backend, cfg_metric, _ = _stack_vector_store_config()
-                        dim = int(cfg_dim)
-                        backend = cfg_backend
-                        metric = cfg_metric
-                        default_path = cfg_path
-                    except Exception:
-                        pass
-                target_path = coerced_index or default_path or Path("stack_embeddings.index")
-                try:
-                    resolved_store = create_vector_store(dim, target_path, backend=backend, metric=metric)
-                except Exception:
-                    resolved_store = None
-            else:
-                resolved_store = stack_store
-
-        self.vector_store: VectorStore | None = resolved_store
-        if resolved_store is not None:
-            setattr(self.vector_service, "vector_store", resolved_store)
+        if self.vector_store is not None:
+            setattr(self.vector_service, "vector_store", self.vector_store)
 
         self.stream = StackDatasetStream(
             dataset_name,
@@ -445,6 +405,48 @@ class StackIngestor:
         )
 
         self.metadata_store = metadata_store or StackMetadataStore(metadata_path, namespace=namespace)
+
+    def _initialise_vector_store(
+        self, provided_store: VectorStore | None, index_path: Path | None
+    ) -> VectorStore | None:
+        if provided_store is not None:
+            return provided_store
+
+        existing = cast(VectorStore | None, getattr(self.vector_service, "vector_store", None))
+        if existing is not None and index_path is None:
+            return existing
+
+        if index_path is not None:
+            created = self._create_store_for_path(index_path)
+            if created is not None:
+                return created
+
+        stack_store = get_stack_vector_store()
+        if stack_store is not None and index_path is None:
+            return stack_store
+
+        return self._create_store_for_path(index_path)
+
+    def _create_store_for_path(self, index_path: Path | None) -> VectorStore | None:
+        dim = 384
+        backend: str | None = None
+        metric = "angular"
+        default_path: Path | None = None
+        if _stack_vector_store_config is not None:
+            try:
+                cfg_dim, cfg_path, cfg_backend, cfg_metric, _ = _stack_vector_store_config()
+                dim = int(cfg_dim)
+                backend = cfg_backend
+                metric = cfg_metric
+                default_path = cfg_path
+            except Exception:
+                pass
+
+        target_path = index_path or default_path or Path("stack_embeddings.index")
+        try:
+            return create_vector_store(dim, target_path, backend=backend, metric=metric)
+        except Exception:
+            return None
 
     # Public API -------------------------------------------------------------
     def ingest(self, *, resume: bool = False, limit: int | None = None) -> int:
@@ -554,6 +556,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-bytes", type=int, default=None, help="Maximum bytes retained per file")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
     parser.add_argument("--cache", default="stack_embeddings.db", help="SQLite/DuckDB cache path")
+    parser.add_argument("--index", dest="index_path", default=None, help="Vector index path")
     parser.add_argument("--namespace", default="stack", help="Namespace for cache tables")
     parser.add_argument("--record-kind", default="stack_code", help="Record kind used for SharedVectorService")
     parser.add_argument("--limit", type=int, default=None, help="Optional limit on processed files")
@@ -602,6 +605,7 @@ def main(argv: Sequence[str] | argparse.Namespace | None = None) -> int:
         record_kind=args.record_kind,
         metadata_path=args.cache,
         namespace=args.namespace,
+        index_path=args.index_path,
         use_auth_token=auth_token,
     )
 
