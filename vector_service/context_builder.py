@@ -671,6 +671,10 @@ class ContextBuilder:
         self.prompt_score_weight = prompt_score_weight
         self.prompt_max_tokens = prompt_max_tokens
 
+        self._stack_ready_checked = False
+        self._stack_last_ingest = 0
+        self._stack_ingest_lock = threading.Lock()
+
         stack_env_enabled = _truthy(os.environ.get("STACK_STREAMING", "1"))
         if self.stack_enabled and not stack_env_enabled:
             _warn_once(
@@ -897,6 +901,274 @@ class ContextBuilder:
                 if coerced:
                     return coerced
         return None
+
+    # ------------------------------------------------------------------
+    def _stack_namespace(self) -> str:
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None:
+            return "stack"
+        return str(getattr(retr, "namespace", "stack") or "stack")
+
+    # ------------------------------------------------------------------
+    def _stack_metadata_path(self) -> Path | None:
+        if isinstance(self.stack_metadata_path, Path):
+            return self.stack_metadata_path
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None:
+            return None
+        getter = getattr(retr, "get_metadata_path", None)
+        if callable(getter):
+            try:
+                path = getter()
+            except Exception:
+                path = None
+            if isinstance(path, Path):
+                return path
+            if isinstance(path, str):
+                try:
+                    return Path(path)
+                except Exception:
+                    return None
+        candidate = getattr(retr, "metadata_db_path", None)
+        if isinstance(candidate, Path):
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                return Path(candidate)
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    def _stack_index_path(self) -> Path | None:
+        if isinstance(self.stack_index_path, Path):
+            return self.stack_index_path
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None:
+            return None
+        getter = getattr(retr, "get_index_path", None)
+        if callable(getter):
+            try:
+                path = getter()
+            except Exception:
+                path = None
+            if isinstance(path, Path):
+                return path
+            if isinstance(path, str):
+                try:
+                    return Path(path)
+                except Exception:
+                    return None
+        store = getattr(retr, "stack_index", None) or getattr(retr, "vector_store", None)
+        candidate = getattr(store, "path", None) or getattr(store, "index_path", None)
+        if isinstance(candidate, Path):
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                return Path(candidate)
+            except Exception:
+                return None
+        metadata = self._stack_metadata_path()
+        if isinstance(metadata, Path):
+            return metadata.with_suffix(".index")
+        return None
+
+    # ------------------------------------------------------------------
+    def _is_stack_index_stale(self) -> bool:
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None:
+            return False
+        checker = getattr(retr, "is_index_stale", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                logger.exception("stack retriever staleness check failed")
+                return True
+        path = self._stack_metadata_path()
+        if path is None or not path.exists():
+            return True
+        try:
+            conn = sqlite3.connect(str(path))
+        except Exception:
+            return True
+        tables = {
+            getattr(retr, "_metadata_table", ""),
+            f"{self._stack_namespace()}_embeddings",
+        }
+        try:
+            tables = {t for t in tables if t}
+            for table in tables:
+                try:
+                    cur = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                except Exception:
+                    continue
+                row = cur.fetchone()
+                if row and row[0]:
+                    try:
+                        if int(row[0]) > 0:
+                            return False
+                    except Exception:
+                        return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        store = getattr(retr, "stack_index", None) or getattr(retr, "vector_store", None)
+        ids = getattr(store, "ids", None)
+        if isinstance(ids, list) and ids:
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    def _ingest_stack_embeddings(
+        self,
+        *,
+        resume: bool = True,
+        limit: int | None = None,
+    ) -> int:
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None:
+            return 0
+        try:
+            from .stack_ingestor import StackIngestor  # type: ignore
+        except Exception:
+            logger.exception("stack ingestion helpers unavailable")
+            raise
+
+        stack_cfg = _stack_dataset_config()
+        languages = [
+            str(lang).strip().lower()
+            for lang in (self.stack_languages or set())
+            if isinstance(lang, str) and lang.strip()
+        ]
+        if not languages:
+            try:
+                languages = [
+                    str(lang).strip().lower()
+                    for lang in getattr(stack_cfg, "allowed_languages", set())
+                    if isinstance(lang, str) and lang.strip()
+                ]
+            except Exception:
+                languages = []
+        language_seq: Tuple[str, ...] | None = tuple(sorted(set(languages))) or None
+
+        max_lines = max(0, int(self.stack_max_lines)) if self.stack_max_lines else 0
+        if not max_lines:
+            try:
+                max_lines = max(
+                    0, int(getattr(stack_cfg, "max_lines_per_document", 0))
+                )
+            except Exception:
+                max_lines = 0
+        max_lines_arg: int | None = max_lines or None
+
+        metadata_path = self._stack_metadata_path() or get_stack_metadata_path()
+        if metadata_path is None:
+            metadata_path = Path("stack_embeddings.db")
+        elif not isinstance(metadata_path, Path):
+            metadata_path = Path(str(metadata_path))
+
+        index_path = self._stack_index_path()
+        if index_path is None and isinstance(metadata_path, Path):
+            index_path = metadata_path.with_suffix(".index")
+
+        vector_store = getattr(retr, "stack_index", None) or getattr(retr, "vector_store", None)
+
+        token = _resolve_hf_token()
+        if token is None:
+            _warn_once(
+                "stack_ingest_missing_token",
+                "HUGGINGFACE_TOKEN not configured; Stack ingestion may fail",
+            )
+
+        ingestor = StackIngestor(
+            languages=language_seq,
+            max_lines=max_lines_arg,
+            namespace=self._stack_namespace(),
+            metadata_path=metadata_path,
+            index_path=index_path,
+            vector_store=vector_store,
+            use_auth_token=token,
+        )
+        processed = ingestor.ingest(resume=resume, limit=limit)
+
+        updated_meta_path = Path(ingestor.metadata_store.path)
+        self.stack_metadata_path = updated_meta_path
+        try:
+            retr.metadata_db_path = updated_meta_path
+        except Exception:
+            pass
+        try:
+            retr._metadata_conn = None  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        if hasattr(ingestor.vector_store, "path"):
+            try:
+                self.stack_index_path = Path(ingestor.vector_store.path)
+            except Exception:
+                pass
+        try:
+            retr.stack_index = ingestor.vector_store
+            setattr(retr, "vector_store", ingestor.vector_store)
+        except Exception:
+            pass
+
+        self._stack_last_ingest = processed
+        return processed
+
+    # ------------------------------------------------------------------
+    def ensure_stack_embeddings(
+        self,
+        *,
+        force: bool = False,
+        limit: int | None = None,
+        resume: bool = True,
+    ) -> int:
+        if not self.stack_enabled or self.stack_retriever is None:
+            return 0
+        with self._stack_ingest_lock:
+            needs_refresh = force or self._is_stack_index_stale()
+            if not needs_refresh:
+                self._stack_ready_checked = True
+                return 0
+            try:
+                processed = self._ingest_stack_embeddings(resume=resume, limit=limit)
+            except Exception:
+                logger.exception("stack ingestion failed")
+                self._stack_ready_checked = False
+                return 0
+            self._stack_ready_checked = True
+            return processed
+
+    # ------------------------------------------------------------------
+    def _ensure_stack_ready(self) -> None:
+        if not self.stack_enabled or self.stack_retriever is None:
+            return
+        if self._stack_ready_checked:
+            return
+        self.ensure_stack_embeddings()
+
+    # ------------------------------------------------------------------
+    def ingest(
+        self,
+        *,
+        force_stack: bool = True,
+        stack_limit: int | None = None,
+        stack_resume: bool = True,
+    ) -> Dict[str, Any]:
+        """Trigger background ingestion tasks such as Stack streaming."""
+
+        results: Dict[str, Any] = {}
+        if not self.stack_enabled or self.stack_retriever is None:
+            return results
+        processed = self.ensure_stack_embeddings(
+            force=force_stack, limit=stack_limit, resume=stack_resume
+        )
+        results["stack"] = processed
+        return results
 
     # ------------------------------------------------------------------
     def _normalise_stack_hit(self, raw: Any, query: str) -> Dict[str, Any] | None:
@@ -1887,6 +2159,7 @@ class ContextBuilder:
                 hits.extend(patch_hits)
             except Exception:
                 pass
+        self._ensure_stack_ready()
         stack_cfg = _stack_dataset_config()
         stack_hits: List[Dict[str, Any]] = []
         if self.stack_retriever is not None and self.stack_enabled:

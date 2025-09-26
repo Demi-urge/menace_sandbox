@@ -772,6 +772,76 @@ class StackRetriever:
         return meta
 
     # ------------------------------------------------------------------
+    def get_index_path(self) -> Path | None:
+        """Best-effort resolution of the backing vector index path."""
+
+        store = self.stack_index or getattr(self, "vector_store", None)
+        candidate = getattr(store, "path", None) or getattr(store, "index_path", None)
+        if isinstance(candidate, Path):
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                return Path(candidate)
+            except Exception:
+                return None
+        if isinstance(self.metadata_db_path, Path):
+            return self.metadata_db_path.with_suffix(".index")
+        return None
+
+    # ------------------------------------------------------------------
+    def get_metadata_path(self) -> Path | None:
+        """Return the SQLite database path storing Stack metadata when known."""
+
+        path = getattr(self, "metadata_db_path", None)
+        if isinstance(path, Path):
+            return path
+        if isinstance(path, str):
+            try:
+                return Path(path)
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    def is_index_stale(self) -> bool:
+        """Return ``True`` when no Stack embeddings appear to be available."""
+
+        meta_path = self.get_metadata_path()
+        if meta_path is None or not meta_path.exists():
+            return True
+
+        store = self.stack_index or getattr(self, "vector_store", None)
+        ids = getattr(store, "ids", None)
+        if isinstance(ids, list) and ids:
+            return False
+
+        tables = {self._metadata_table, f"{self.namespace}_embeddings"}
+        try:
+            conn = sqlite3.connect(str(meta_path))
+        except Exception:
+            return True
+        try:
+            tables = {t for t in tables if t}
+            for table in tables:
+                try:
+                    cur = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                except Exception:
+                    continue
+                row = cur.fetchone()
+                if row and row[0]:
+                    try:
+                        if int(row[0]) > 0:
+                            return False
+                    except Exception:
+                        return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return True
+
+    # ------------------------------------------------------------------
     def retrieve(
         self,
         query: str | Sequence[float],
