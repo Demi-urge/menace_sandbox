@@ -1,3 +1,32 @@
+stack:
+  context_builder:
+    enabled: false
+    languages:
+      - python
+      - javascript
+    max_lines: 200
+    max_bytes: 65536
+    top_k: 3
+    index_path: stack/index.faiss
+    metadata_path: stack/metadata.db
+    cache_dir: stack/cache
+    progress_path: stack/cache/progress.sqlite
+    requests_per_minute: 60
+    tokens_per_minute: 60000
+  dataset:
+    enabled: false
+    languages:
+      - python
+      - javascript
+    max_lines: 200
+    max_bytes: 65536
+    top_k: 3
+    index_path: stack/index.faiss
+    metadata_path: stack/metadata.db
+    cache_dir: stack/cache
+    progress_path: stack/cache/progress.sqlite
+    chunk_lines: 256
+
 default:
   roi_drop: -0.1
   error_increase: 1.0

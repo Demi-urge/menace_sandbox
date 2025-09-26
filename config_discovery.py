@@ -8,7 +8,7 @@ import subprocess
 import shutil
 import urllib.request
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Any
 import threading
 import logging
 
@@ -46,6 +46,8 @@ class ConfigDiscovery:
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "STACK_CACHE_DIR",
+        "STACK_PROGRESS_PATH",
         "HUGGINGFACE_TOKEN",
         "HF_TOKEN",
     )
@@ -53,9 +55,15 @@ class ConfigDiscovery:
         ("stack_dataset", "enabled", "STACK_STREAMING"),
         ("stack_dataset", "index_path", "STACK_INDEX_PATH"),
         ("stack_dataset", "metadata_path", "STACK_METADATA_PATH"),
+        ("stack_dataset", "cache_dir", "STACK_CACHE_DIR"),
+        ("stack_dataset", "progress_path", "STACK_PROGRESS_PATH"),
         ("context_builder", "stack", "enabled", "STACK_STREAMING"),
         ("context_builder", "stack", "index_path", "STACK_INDEX_PATH"),
         ("context_builder", "stack", "metadata_path", "STACK_METADATA_PATH"),
+        ("context_builder", "stack", "cache_dir", "STACK_CACHE_DIR"),
+        ("context_builder", "stack", "progress_path", "STACK_PROGRESS_PATH"),
+        ("context_builder", "stack_cache_dir", "STACK_CACHE_DIR"),
+        ("context_builder", "stack_progress_path", "STACK_PROGRESS_PATH"),
     )
     STACK_ENV_FILES = (
         Path(".env"),
@@ -147,6 +155,37 @@ class ConfigDiscovery:
                 if key in entries:
                     hints[key] = entries[key]
 
+        def _apply_config_hints(data: Any) -> None:
+            if not isinstance(data, dict):
+                return
+            for hint in self.STACK_CONFIG_HINTS:
+                *keys, env_name = hint
+                section: Any = data
+                try:
+                    for key in keys:
+                        if section is None:
+                            break
+                        section = section.get(key)
+                except AttributeError:
+                    section = None
+                if isinstance(section, dict):
+                    continue
+                if section in {None, "", "~"}:
+                    continue
+                value = section
+                if isinstance(value, bool):
+                    hints.setdefault(env_name, "1" if value else "0")
+                    continue
+                if isinstance(value, (int, float)) and env_name == "STACK_STREAMING":
+                    hints.setdefault(env_name, "1" if value else "0")
+                    continue
+                if isinstance(value, (str, Path)):
+                    text = str(value).strip()
+                    if text:
+                        hints.setdefault(env_name, text)
+                elif value is not None:
+                    hints.setdefault(env_name, str(value))
+
         context_path = Path("config/stack_context.yaml")
         if context_path.exists():
             try:
@@ -154,33 +193,30 @@ class ConfigDiscovery:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.warning("failed reading %s: %s", context_path, exc)
             else:
-                for hint in self.STACK_CONFIG_HINTS:
-                    *keys, env_name = hint
-                    section = data
-                    try:
-                        for key in keys:
-                            if section is None:
-                                break
-                            section = section.get(key)
-                    except AttributeError:
-                        section = None
-                    if isinstance(section, dict):
-                        continue
-                    if section in {None, "", "~"}:
-                        continue
-                    value = section
-                    if isinstance(value, bool):
-                        hints.setdefault(env_name, "1" if value else "0")
-                        continue
-                    if isinstance(value, (int, float)) and env_name == "STACK_STREAMING":
-                        hints.setdefault(env_name, "1" if value else "0")
-                        continue
-                    if isinstance(value, (str, Path)):
-                        text = str(value).strip()
-                        if text:
-                            hints.setdefault(env_name, text)
-                    elif value is not None:
-                        hints.setdefault(env_name, str(value))
+                _apply_config_hints(data)
+
+        thresholds_path = Path("config/self_coding_thresholds.yaml")
+        if thresholds_path.exists():
+            try:
+                thresholds_data = yaml.safe_load(
+                    thresholds_path.read_text(encoding="utf-8")
+                ) or {}
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning("failed reading %s: %s", thresholds_path, exc)
+            else:
+                stack_section = thresholds_data.get("stack")
+                if isinstance(stack_section, dict):
+                    composite: dict[str, Any] = {}
+                    cb_defaults = stack_section.get("context_builder")
+                    dataset_defaults = stack_section.get("dataset")
+                    if isinstance(cb_defaults, dict):
+                        cb_data = dict(cb_defaults)
+                        cb_data["stack"] = dict(cb_defaults)
+                        composite["context_builder"] = cb_data
+                    if isinstance(dataset_defaults, dict):
+                        composite["stack_dataset"] = dict(dataset_defaults)
+                    if composite:
+                        _apply_config_hints(composite)
 
         return hints
 
@@ -223,6 +259,8 @@ class ConfigDiscovery:
             "HF_TOKEN": _HF_PLACEHOLDER,
             "STACK_INDEX_PATH": "",
             "STACK_METADATA_PATH": "",
+            "STACK_CACHE_DIR": "",
+            "STACK_PROGRESS_PATH": "",
         }
 
         def _truthy(value: str | None) -> bool:
