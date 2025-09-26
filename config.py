@@ -337,6 +337,43 @@ class ContextBuilderConfig(_StrictBaseModel):
         1.0,
         description="Multiplier applied to similarity scores when ranking prompt examples",
     )
+    stack_enabled: bool = Field(
+        False,
+        description="Enable retrieval from the Stack dataset when embeddings are available",
+    )
+    stack_languages: Set[str] = Field(
+        default_factory=lambda: {"python", "javascript"},
+        description="Preferred languages for Stack snippets (case-insensitive)",
+    )
+    stack_max_lines: int = Field(
+        200,
+        ge=0,
+        description="Trim Stack summaries to this many lines (0 to disable)",
+    )
+    stack_top_k: int = Field(
+        3,
+        ge=0,
+        description="Maximum Stack candidates fetched per query",
+    )
+    stack_index_path: str | None = Field(
+        None,
+        description="Optional override for the Stack vector index location",
+    )
+    stack_metadata_path: str | None = Field(
+        None,
+        description="Optional override for the Stack metadata SQLite database",
+    )
+
+    @field_validator("stack_languages")
+    @classmethod
+    def _normalise_stack_languages(
+        cls, value: Set[str], _info
+    ) -> Set[str]:  # type: ignore[override]
+        return {
+            str(language).strip().lower()
+            for language in value
+            if isinstance(language, str) and language.strip()
+        }
 
 
 class Config(_StrictBaseModel):

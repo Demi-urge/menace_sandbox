@@ -452,6 +452,25 @@ def _stack_vector_store_config() -> Tuple[int, Path, str, str, Path | None]:
                 if coerced is not None:
                     metadata_path = coerced
 
+        ctx_builder_cfg = getattr(CONFIG, "context_builder", None)
+        if ctx_builder_cfg is not None:
+            try:
+                candidate = getattr(ctx_builder_cfg, "stack_index_path")
+            except AttributeError:
+                candidate = None
+            if index_path is None and candidate:
+                coerced = _coerce_path(candidate)
+                if coerced is not None:
+                    index_path = coerced
+            try:
+                candidate = getattr(ctx_builder_cfg, "stack_metadata_path")
+            except AttributeError:
+                candidate = None
+            if metadata_path is None and candidate:
+                coerced = _coerce_path(candidate)
+                if coerced is not None:
+                    metadata_path = coerced
+
         stack_dataset_cfg = getattr(CONFIG, "stack_dataset", None)
         if stack_dataset_cfg is not None:
             for attr in ("index_path", "vector_index_path"):
