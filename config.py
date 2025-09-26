@@ -363,6 +363,15 @@ class ContextBuilderConfig(_StrictBaseModel):
         None,
         description="Optional override for the Stack metadata SQLite database",
     )
+    stack_prompt_enabled: bool = Field(
+        True,
+        description="Include Stack snippets when assembling prompts by default",
+    )
+    stack_prompt_limit: int = Field(
+        2,
+        ge=0,
+        description="Maximum number of Stack snippets surfaced in prompts (0 disables)",
+    )
 
     @field_validator("stack_languages")
     @classmethod
