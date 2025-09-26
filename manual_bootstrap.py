@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
 import logging
 import os
 import sys
@@ -25,6 +28,89 @@ def _ensure_package_on_path() -> Path:
 
 _REPO_ROOT = _ensure_package_on_path()
 _DEFAULT_DATA_DIR = _REPO_ROOT / "sandbox_data"
+_CANONICAL_SPEC = importlib.util.find_spec("menace_sandbox")
+if _CANONICAL_SPEC is None or _CANONICAL_SPEC.submodule_search_locations is None:
+    raise RuntimeError("Unable to locate menace_sandbox package for manual bootstrap")
+_CANONICAL_NAME = _CANONICAL_SPEC.name
+_CANONICAL_PACKAGE_PATH = list(_CANONICAL_SPEC.submodule_search_locations)
+
+
+class _FlatPackageAliasLoader(importlib.abc.Loader):
+    """Loader that aliases top-level modules to ``menace_sandbox`` package."""
+
+    def __init__(self, alias: str, target: str) -> None:
+        self._alias = alias
+        self._target = target
+
+    def create_module(self, spec):  # type: ignore[override]
+        module = sys.modules.get(self._target)
+        if module is None:
+            module = importlib.import_module(self._target)
+        sys.modules[self._alias] = module
+        return module
+
+    def exec_module(self, module):  # type: ignore[override]
+        # Module is fully initialised by :func:`create_module`.
+        return None
+
+
+class _FlatPackageAliasFinder(importlib.abc.MetaPathFinder):
+    """Resolve imports like ``error_logger`` to ``menace_sandbox.error_logger``."""
+
+    def __init__(self, canonical: str, aliases: Sequence[str]) -> None:
+        self._canonical = canonical
+        self._aliases = tuple(aliases)
+
+    def find_spec(self, fullname: str, path, target=None):  # type: ignore[override]
+        if fullname in sys.modules:
+            return None
+
+        parts = fullname.split(".")
+        candidates: list[tuple[str, str]] = []
+
+        # Handle flat imports (e.g. ``error_logger``).
+        if len(parts) == 1:
+            target_name = f"{self._canonical}.{fullname}"
+            candidates.append((fullname, target_name))
+
+        # Handle alias imports (e.g. ``menace.error_logger``).
+        for alias in self._aliases:
+            alias_parts = alias.split(".")
+            if parts[: len(alias_parts)] != alias_parts:
+                continue
+            remainder = parts[len(alias_parts) :]
+            if not remainder:
+                continue
+            target_name = ".".join((self._canonical, *remainder))
+            candidates.append((fullname, target_name))
+
+        for alias_name, target_name in candidates:
+            target_spec = importlib.machinery.PathFinder.find_spec(
+                target_name, _CANONICAL_PACKAGE_PATH
+            )
+            if target_spec is None:
+                continue
+            loader = _FlatPackageAliasLoader(alias_name, target_name)
+            return importlib.util.spec_from_loader(
+                fullname,
+                loader,
+                origin=target_spec.origin,
+                is_package=bool(target_spec.submodule_search_locations),
+            )
+        return None
+
+
+def _install_flat_alias_importer() -> None:
+    """Install an import hook for flat ``menace_sandbox`` module aliases."""
+
+    if any(isinstance(finder, _FlatPackageAliasFinder) for finder in sys.meta_path):
+        return
+
+    finder = _FlatPackageAliasFinder(_CANONICAL_NAME, aliases=("menace",))
+    sys.meta_path.insert(0, finder)
+
+
+_install_flat_alias_importer()
 
 _DYNAMIC_PATH_ROUTER = importlib.import_module("menace_sandbox.dynamic_path_router")
 sys.modules["dynamic_path_router"] = _DYNAMIC_PATH_ROUTER
