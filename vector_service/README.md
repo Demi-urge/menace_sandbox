@@ -188,18 +188,22 @@ archive to the expected location.
 ### Stack dataset ingestion
 
 `vector_service.stack_ingestion` streams repositories from The Stack dataset.
-Set `STACK_STREAMING=1` (the default) to enable the pipeline and provide a
-valid Hugging Face access token via `HUGGINGFACE_TOKEN`.  The bootstrap process
-adds both variables to `.env.auto`; update the placeholder token before running
-the ingestion CLI:
+Set `STACK_STREAMING=1` to enable the pipeline and provide a valid Hugging Face
+access token via either `STACK_HF_TOKEN` or `HUGGINGFACE_TOKEN`.  The bootstrap
+process seeds `.env.auto` with safe defaults
+(`STACK_STREAMING=0`, `STACK_HF_TOKEN=`, `STACK_INDEX_PATH=`,
+`STACK_METADATA_PATH=` and `HUGGINGFACE_TOKEN=`); update the placeholders before
+running the ingestion CLI:
 
 ```bash
 STACK_STREAMING=1 HUGGINGFACE_TOKEN=hf_your_token \
 python -m vector_service.stack_ingestion --languages python javascript
 ```
 
-When `STACK_STREAMING` is disabled or the token is missing, the ingestion script
-logs a warning and exits without processing.
+Use `STACK_INDEX_PATH` and `STACK_METADATA_PATH` to point ingestion at existing
+Stack indices if they are stored outside the default locations. When
+`STACK_STREAMING` is disabled or the token is missing, the ingestion script logs
+a warning and exits without processing.
 
 ## Safety filtering
 

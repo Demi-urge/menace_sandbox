@@ -19,23 +19,43 @@ def test_discover(tmp_path, monkeypatch):
 
 def test_discover_populates_stack_env(tmp_path, monkeypatch, caplog):
     monkeypatch.chdir(tmp_path)
-    for var in ["STACK_STREAMING", "HUGGINGFACE_TOKEN", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_API_TOKEN"]:
+    for var in [
+        "STACK_STREAMING",
+        "STACK_HF_TOKEN",
+        "STACK_INDEX_PATH",
+        "STACK_METADATA_PATH",
+        "HUGGINGFACE_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+        "HUGGINGFACE_API_TOKEN",
+    ]:
         monkeypatch.delenv(var, raising=False)
     caplog.set_level("WARNING")
     cd.ConfigDiscovery().discover()
     env_file = tmp_path / ".env.auto"
     assert env_file.exists()
     text = env_file.read_text()
-    assert "STACK_STREAMING=1" in text
+    assert "STACK_STREAMING=0" in text
+    assert "STACK_HF_TOKEN=" in text
+    assert "STACK_INDEX_PATH=" in text
+    assert "STACK_METADATA_PATH=" in text
     assert "HUGGINGFACE_TOKEN=" in text
-    assert os.environ.get("STACK_STREAMING") == "1"
+    assert os.environ.get("STACK_STREAMING") == "0"
+    assert os.environ.get("STACK_HF_TOKEN") == ""
     assert "HUGGINGFACE_TOKEN" in os.environ
-    assert any("HUGGINGFACE_TOKEN" in rec.message for rec in caplog.records)
+    assert any("STACK_HF_TOKEN" in rec.message for rec in caplog.records)
 
 
 def test_discover_persists_existing_token(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    for var in [
+        "STACK_STREAMING",
+        "STACK_HF_TOKEN",
+        "STACK_INDEX_PATH",
+        "STACK_METADATA_PATH",
+        "HUGGINGFACE_TOKEN",
+    ]:
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("HF_TOKEN", "abc123")
     cd.ConfigDiscovery().discover()
     env_file = tmp_path / ".env.auto"
@@ -45,6 +65,47 @@ def test_discover_persists_existing_token(tmp_path, monkeypatch):
     cd.ConfigDiscovery().discover()
     lines = [line for line in env_file.read_text().splitlines() if line.startswith("HUGGINGFACE_TOKEN=")]
     assert len(lines) == 1
+
+
+def test_discover_reads_stack_hints(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "STACK_STREAMING=1",
+                "STACK_HF_TOKEN=hf_stack",
+                "STACK_INDEX_PATH=/var/lib/stack/index",
+                "STACK_METADATA_PATH=/var/lib/stack/meta.sqlite",
+            ]
+        )
+    )
+    (tmp_path / "config" / "stack_context.yaml").write_text(
+        """
+stack_dataset:
+  enabled: true
+context_builder:
+  stack_index_path: /opt/index
+  stack_metadata_path: /opt/meta.db
+"""
+    )
+    for var in [
+        "STACK_STREAMING",
+        "STACK_HF_TOKEN",
+        "STACK_INDEX_PATH",
+        "STACK_METADATA_PATH",
+        "HUGGINGFACE_TOKEN",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+
+    cd.ConfigDiscovery().discover()
+
+    assert os.environ.get("STACK_STREAMING") == "1"
+    assert os.environ.get("STACK_HF_TOKEN") == "hf_stack"
+    assert os.environ.get("HUGGINGFACE_TOKEN") == "hf_stack"
+    # values from the environment file take precedence over config hints
+    assert os.environ.get("STACK_INDEX_PATH") == "/var/lib/stack/index"
+    assert os.environ.get("STACK_METADATA_PATH") == "/var/lib/stack/meta.sqlite"
 
 
 def test_bootstrap_uses_discover(monkeypatch):
