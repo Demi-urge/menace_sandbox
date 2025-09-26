@@ -1411,6 +1411,22 @@ class SandboxSettings(BaseSettings):
             "is unavailable."
         ),
     )
+    stack_prompt_enabled: bool = Field(
+        True,
+        env="STACK_PROMPT_ENABLED",
+        description="Enable inclusion of Stack dataset context when building prompts.",
+    )
+    stack_prompt_snippets: int | None = Field(
+        2,
+        env="STACK_PROMPT_SNIPPETS",
+        description="Maximum Stack snippets appended to prompts (0 disables).",
+    )
+    
+    @field_validator("stack_prompt_snippets")
+    def _validate_stack_prompt_snippets(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("stack_prompt_snippets must be non-negative")
+        return value
     chunk_token_threshold: int = Field(
         3500,
         env="CHUNK_TOKEN_THRESHOLD",

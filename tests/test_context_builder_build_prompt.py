@@ -54,3 +54,63 @@ def test_build_prompt_enriches_metadata(monkeypatch):
     assert prompt.metadata["vectors"][0] == ("code", "v1", 0.9)
     # vector confidence averaged
     assert prompt.vector_confidence == pytest.approx((0.9 + 0.5 + 0.7) / 3)
+
+
+def test_build_prompt_surfaces_stack_snippets(monkeypatch):
+    captured = {}
+
+    def fake_pe_build(goal, *, retrieval_context=None, context_builder=None, **kwargs):
+        captured["retrieval_context"] = retrieval_context
+        return Prompt("built", metadata={})
+
+    monkeypatch.setattr("prompt_engine.build_prompt", fake_pe_build)
+
+    class StackBuilder(DummyBuilder):
+        stack_prompt_enabled = True
+        stack_prompt_limit = 1
+
+        def build_context(self, query, *, top_k=5, include_vectors=True, return_metadata=True, **kwargs):
+            context = json.dumps({"stack": []}, separators=(",", ":"))
+            vectors = [("stack", "s1", 0.9), ("stack", "s2", 0.8)]
+            meta = {
+                "stack": [
+                    {
+                        "desc": "repo1/main.py [python]\nprint('hello')",
+                        "score": 0.9,
+                        "repo": "repo1",
+                        "path": "main.py",
+                        "language": "python",
+                        "vector_id": "s1",
+                        "origin": "stack",
+                    },
+                    {
+                        "desc": "repo2/app.js [javascript]\nconsole.log('hi')",
+                        "score": 0.8,
+                        "repo": "repo2",
+                        "path": "app.js",
+                        "language": "javascript",
+                        "vector_id": "s2",
+                        "origin": "stack",
+                    },
+                ]
+            }
+            return context, "sid", vectors, meta
+
+    builder = StackBuilder()
+    prompt = build_prompt(
+        "use stack",
+        context_builder=builder,
+        include_stack_snippets=True,
+        stack_snippet_limit=1,
+    )
+
+    assert "repo1/main.py" in captured["retrieval_context"]
+    assert "repo2/app.js" not in captured["retrieval_context"]
+    stack_meta = prompt.metadata["stack_snippets"]
+    assert len(stack_meta) == 1
+    entry = stack_meta[0]
+    assert entry["key"] == "stack:s1"
+    assert entry["language"] == "python"
+    retrieval_meta = prompt.metadata["retrieval_metadata"]
+    assert "stack:s1" in retrieval_meta
+    assert retrieval_meta["stack:s1"]["prompt_tokens"] > 0

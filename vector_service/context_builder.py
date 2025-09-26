@@ -328,6 +328,8 @@ class ContextBuilder:
         stack_max_lines: int | None = None,
         stack_index_path: str | None = None,
         stack_metadata_path: str | None = None,
+        stack_prompt_enabled: bool | None = None,
+        stack_prompt_limit: int | None = None,
     ) -> None:
         defaults = ContextBuilderConfig()
         dataset_cfg = _stack_dataset_config()
@@ -572,6 +574,24 @@ class ContextBuilder:
         self.stack_max_lines = max(0, stack_max_lines_int)
         self.stack_index_path = _resolve_optional_path(index_source)
         self.stack_metadata_path = _resolve_optional_path(metadata_source)
+        prompt_enabled_val = (
+            stack_prompt_enabled
+            if stack_prompt_enabled is not None
+            else _cfg("stack_prompt_enabled", getattr(defaults, "stack_prompt_enabled", True))
+        )
+        self.stack_prompt_enabled = _coerce_bool(prompt_enabled_val, bool(prompt_enabled_val))
+        prompt_limit_val = (
+            stack_prompt_limit
+            if stack_prompt_limit is not None
+            else _cfg("stack_prompt_limit", getattr(defaults, "stack_prompt_limit", 0))
+        )
+        try:
+            prompt_limit_int = int(prompt_limit_val)
+        except Exception:
+            prompt_limit_int = int(getattr(defaults, "stack_prompt_limit", 0))
+        if prompt_limit_int < 0:
+            prompt_limit_int = 0
+        self.stack_prompt_limit = prompt_limit_int
 
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -1619,6 +1639,10 @@ class ContextBuilder:
         full: Dict[str, Any] = dict(scored.entry)
         meta = scored.metadata or {}
         full.update(meta)
+        full.setdefault("vector_id", scored.vector_id)
+        full.setdefault("origin", scored.origin)
+        full.setdefault("bucket", bucket)
+        full.setdefault("score", scored.score)
 
         patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
         try:
@@ -2352,6 +2376,9 @@ def _build_prompt_internal(
     if error_log:
         queries = [f"{q} {error_log}" for q in queries]
 
+    include_stack = kwargs.pop("include_stack_snippets", None)
+    stack_limit_override = kwargs.pop("stack_snippet_limit", None)
+
     combined_meta: Dict[str, List[Dict[str, Any]]] = {}
     vectors: List[Tuple[str, str, float]] = []
     for q in queries:
@@ -2368,13 +2395,48 @@ def _build_prompt_internal(
             vecs = []
             meta = {}
         for bucket, items in meta.items():
-            combined_meta.setdefault(bucket, []).extend(items)
+            bucket_items = combined_meta.setdefault(bucket, [])
+            for item in items:
+                if isinstance(item, dict):
+                    item.setdefault("bucket", bucket)
+                bucket_items.append(item)
         vectors.extend(vecs)
 
-    dedup: Dict[str, Tuple[float, str]] = {}
+    if include_stack is None:
+        include_stack = getattr(builder, "stack_prompt_enabled", True)
+    include_stack = bool(include_stack)
+    if stack_limit_override is None:
+        stack_limit_override = getattr(builder, "stack_prompt_limit", None)
+    try:
+        stack_limit = (
+            None
+            if stack_limit_override is None
+            else int(stack_limit_override)
+        )
+    except Exception:
+        stack_limit = 0
+    if stack_limit is not None and stack_limit < 0:
+        stack_limit = 0
+    if not include_stack:
+        combined_meta.pop("stack", None)
+    else:
+        stack_items = combined_meta.get("stack")
+        if stack_items:
+            stack_items.sort(
+                key=lambda item: float((item or {}).get("score") or 0.0),
+                reverse=True,
+            )
+            if stack_limit == 0:
+                combined_meta.pop("stack", None)
+            elif stack_limit is not None:
+                combined_meta["stack"] = stack_items[:stack_limit]
+
+    dedup: Dict[str, Tuple[float, str, Dict[str, Any]]] = {}
     scores: List[float] = []
-    for items in combined_meta.values():
+    for bucket, items in combined_meta.items():
         for item in items:
+            if not isinstance(item, dict):
+                continue
             try:
                 item.update(compress_snippets(item))
             except Exception:
@@ -2396,25 +2458,81 @@ def _build_prompt_internal(
                 - risk * saf_w
             )
             scores.append(score)
+            meta_item = dict(item)
+            meta_item.setdefault("bucket", bucket)
             cur = dedup.get(key)
             if cur is None or priority > cur[0]:
-                dedup[key] = (priority, desc)
+                dedup[key] = (priority, desc, meta_item)
 
     ranked = sorted(dedup.values(), key=lambda x: x[0], reverse=True)
     examples: List[str] = []
     used = 0
-    for _, desc in ranked:
+    used_entries: List[Tuple[str, Dict[str, Any]]] = []
+    for _, desc, meta_item in ranked:
         tokens = builder._count_tokens(desc)
         if used + tokens > builder.prompt_max_tokens:
             break
         examples.append(desc)
+        used_entries.append((desc, meta_item))
         used += tokens
+
+    retrieval_meta: Dict[str, Dict[str, Any]] = {}
+    stack_snippet_meta: List[Dict[str, Any]] = []
+    for desc, meta_item in used_entries:
+        origin = str(meta_item.get("origin") or meta_item.get("bucket") or "")
+        vector_id = str(meta_item.get("vector_id") or meta_item.get("record_id") or "")
+        key = ":".join([part for part in (origin, vector_id) if part])
+        if not key:
+            key = f"snippet:{len(retrieval_meta)}"
+        prompt_tokens = builder._count_tokens(desc)
+        bucket = meta_item.get("bucket") or origin
+        entry: Dict[str, Any] = {
+            "bucket": bucket,
+            "origin": origin,
+            "vector_id": vector_id,
+            "score": float(meta_item.get("score") or 0.0),
+            "prompt_tokens": prompt_tokens,
+            "desc": desc,
+        }
+        for extra_key in (
+            "repo",
+            "path",
+            "language",
+            "roi",
+            "roi_delta",
+            "recency",
+            "risk_score",
+            "tags",
+            "summary",
+        ):
+            if meta_item.get(extra_key) is not None:
+                entry[extra_key] = meta_item.get(extra_key)
+        retrieval_meta[key] = entry
+        if bucket == "stack":
+            stack_snippet_meta.append(
+                {
+                    "key": key,
+                    "repo": meta_item.get("repo"),
+                    "path": meta_item.get("path"),
+                    "language": meta_item.get("language"),
+                    "summary": desc,
+                    "score": entry["score"],
+                    "prompt_tokens": prompt_tokens,
+                }
+            )
 
     avg_conf = sum(scores) / len(scores) if scores else None
     meta_out: Dict[str, Any] = {
         "vector_confidences": scores,
         "vectors": vectors,
     }
+    meta_out["stack_snippets_enabled"] = bool(include_stack)
+    if stack_limit is not None:
+        meta_out["stack_snippet_limit"] = stack_limit
+    if retrieval_meta:
+        meta_out["retrieval_metadata"] = retrieval_meta
+    if stack_snippet_meta:
+        meta_out["stack_snippets"] = stack_snippet_meta
     if intent_meta:
         if isinstance(intent_meta, dict):
             meta_out["intent"] = dict(intent_meta)
@@ -2463,9 +2581,11 @@ def build_prompt(
     if latent_queries:
         queries.extend(q for q in latent_queries if isinstance(q, str) and q)
 
+    include_stack = kwargs.pop("include_stack_snippets", None)
+    stack_limit_override = kwargs.pop("stack_snippet_limit", None)
+
     combined_meta: Dict[str, List[Dict[str, Any]]] = {}
     vectors: List[Tuple[str, str, float]] = []
-    scores: List[float] = []
     for q in queries:
         ctx_data = builder.build_context(
             q,
@@ -2480,18 +2600,46 @@ def build_prompt(
             vecs = []
             meta = {}
         for bucket, items in meta.items():
-            combined_meta.setdefault(bucket, []).extend(items)
-        vectors.extend(vecs)
-        for items in meta.values():
+            bucket_items = combined_meta.setdefault(bucket, [])
             for item in items:
-                try:
-                    scores.append(float(item.get("score") or 0.0))
-                except Exception:
-                    pass
+                if isinstance(item, dict):
+                    item.setdefault("bucket", bucket)
+                bucket_items.append(item)
+        vectors.extend(vecs)
 
-    dedup: Dict[str, Tuple[float, str]] = {}
-    for items in combined_meta.values():
+    if include_stack is None:
+        include_stack = getattr(builder, "stack_prompt_enabled", True)
+    include_stack = bool(include_stack)
+    if stack_limit_override is None:
+        stack_limit_override = getattr(builder, "stack_prompt_limit", None)
+    try:
+        stack_limit = (
+            None if stack_limit_override is None else int(stack_limit_override)
+        )
+    except Exception:
+        stack_limit = 0
+    if stack_limit is not None and stack_limit < 0:
+        stack_limit = 0
+    if not include_stack:
+        combined_meta.pop("stack", None)
+    else:
+        stack_items = combined_meta.get("stack")
+        if stack_items:
+            stack_items.sort(
+                key=lambda item: float((item or {}).get("score") or 0.0),
+                reverse=True,
+            )
+            if stack_limit == 0:
+                combined_meta.pop("stack", None)
+            elif stack_limit is not None:
+                combined_meta["stack"] = stack_items[:stack_limit]
+
+    dedup: Dict[str, Tuple[float, str, Dict[str, Any]]] = {}
+    scores: List[float] = []
+    for bucket, items in combined_meta.items():
         for item in items:
+            if not isinstance(item, dict):
+                continue
             try:
                 item.update(compress_snippets(item))
             except Exception:
@@ -2510,12 +2658,29 @@ def build_prompt(
                 + recency * getattr(builder, "recency_weight", 1.0)
                 - risk * getattr(builder, "safety_weight", 1.0)
             )
+            scores.append(score)
+            meta_item = dict(item)
+            meta_item.setdefault("bucket", bucket)
             cur = dedup.get(key)
             if cur is None or priority > cur[0]:
-                dedup[key] = (priority, desc)
+                dedup[key] = (priority, desc, meta_item)
 
-    ranked = [desc for _, desc in sorted(dedup.values(), key=lambda x: x[0], reverse=True)]
-    retrieval_context = "\n".join(ranked)
+    ranked_entries = sorted(dedup.values(), key=lambda x: x[0], reverse=True)
+    used_entries: List[Tuple[str, Dict[str, Any]]] = []
+    retrieval_lines: List[str] = []
+    used_tokens = 0
+    for _, desc, meta_item in ranked_entries:
+        tokens = builder._count_tokens(desc)
+        if (
+            builder.prompt_max_tokens
+            and used_tokens + tokens > builder.prompt_max_tokens
+        ):
+            break
+        retrieval_lines.append(desc)
+        used_entries.append((desc, meta_item))
+        used_tokens += tokens
+
+    retrieval_context = "\n".join(retrieval_lines)
 
     from prompt_engine import build_prompt as _pe_build_prompt  # local import to avoid cycle
 
@@ -2528,12 +2693,77 @@ def build_prompt(
 
     avg_conf = sum(scores) / len(scores) if scores else None
     existing_meta = dict(getattr(prompt, "metadata", {}) or {})
+    retrieval_meta: Dict[str, Dict[str, Any]] = {}
+    stack_snippet_meta: List[Dict[str, Any]] = []
+    for desc, meta_item in used_entries:
+        origin = str(meta_item.get("origin") or meta_item.get("bucket") or "")
+        vector_id = str(meta_item.get("vector_id") or meta_item.get("record_id") or "")
+        key = ":".join([part for part in (origin, vector_id) if part])
+        if not key:
+            key = f"snippet:{len(retrieval_meta)}"
+        prompt_tokens = builder._count_tokens(desc)
+        bucket = meta_item.get("bucket") or origin
+        entry: Dict[str, Any] = {
+            "bucket": bucket,
+            "origin": origin,
+            "vector_id": vector_id,
+            "score": float(meta_item.get("score") or 0.0),
+            "prompt_tokens": prompt_tokens,
+            "desc": desc,
+        }
+        for extra_key in (
+            "repo",
+            "path",
+            "language",
+            "roi",
+            "roi_delta",
+            "recency",
+            "risk_score",
+            "tags",
+            "summary",
+        ):
+            if meta_item.get(extra_key) is not None:
+                entry[extra_key] = meta_item.get(extra_key)
+        retrieval_meta[key] = entry
+        if bucket == "stack":
+            stack_snippet_meta.append(
+                {
+                    "key": key,
+                    "repo": meta_item.get("repo"),
+                    "path": meta_item.get("path"),
+                    "language": meta_item.get("language"),
+                    "summary": desc,
+                    "score": entry["score"],
+                    "prompt_tokens": prompt_tokens,
+                }
+            )
+
     meta_out: Dict[str, Any] = {
         "vector_confidences": scores,
         "vectors": vectors,
     }
+    meta_out["stack_snippets_enabled"] = bool(include_stack)
+    if stack_limit is not None:
+        meta_out["stack_snippet_limit"] = stack_limit
+    if retrieval_meta:
+        meta_out["retrieval_metadata"] = retrieval_meta
+    if stack_snippet_meta:
+        meta_out["stack_snippets"] = stack_snippet_meta
+
     combined_meta = dict(meta_out)
     combined_meta.update(existing_meta)
+    if "retrieval_metadata" in meta_out:
+        merged_retrieval = dict(existing_meta.get("retrieval_metadata", {}))
+        merged_retrieval.update(meta_out["retrieval_metadata"])
+        combined_meta["retrieval_metadata"] = merged_retrieval
+    if "stack_snippets" in meta_out:
+        merged_snippets = list(existing_meta.get("stack_snippets", []))
+        merged_snippets.extend(meta_out["stack_snippets"])
+        combined_meta["stack_snippets"] = merged_snippets
+    if "stack_snippets_enabled" in meta_out:
+        combined_meta["stack_snippets_enabled"] = meta_out["stack_snippets_enabled"]
+    if "stack_snippet_limit" in meta_out:
+        combined_meta["stack_snippet_limit"] = meta_out["stack_snippet_limit"]
 
     if intent:
         merged_intent: Dict[str, Any] = {}

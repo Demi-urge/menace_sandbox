@@ -657,6 +657,24 @@ def build_section_prompt(
     if prior:
         intent_payload["prior"] = prior
 
+    settings_obj = getattr(engine, "settings", None)
+    if settings_obj is None:
+        try:
+            settings_obj = SandboxSettings()
+        except Exception:
+            settings_obj = None
+    stack_enabled = True
+    stack_limit: int | None = None
+    if settings_obj is not None:
+        stack_enabled = bool(getattr(settings_obj, "stack_prompt_enabled", True))
+        stack_limit_val = getattr(settings_obj, "stack_prompt_snippets", None)
+        try:
+            stack_limit = (
+                int(stack_limit_val) if stack_limit_val is not None else None
+            )
+        except (TypeError, ValueError):
+            stack_limit = None
+
     build_fn = getattr(engine, "build_enriched_prompt", None)
     try:
         if callable(build_fn):
@@ -671,6 +689,8 @@ def build_section_prompt(
                 intent=intent_payload,
                 top_k=0,
                 session_id=session_id,
+                include_stack_snippets=stack_enabled,
+                **({"stack_snippet_limit": stack_limit} if stack_limit is not None else {}),
             )
     except PromptBuildError:
         raise

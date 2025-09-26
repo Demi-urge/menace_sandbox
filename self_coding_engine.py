@@ -1259,6 +1259,19 @@ class SelfCodingEngine:
             "intent": intent,
             "error_log": error_log,
         }
+        stack_enabled = getattr(_settings, "stack_prompt_enabled", True)
+        prompt_kwargs.setdefault("include_stack_snippets", bool(stack_enabled))
+        stack_limit_setting = getattr(_settings, "stack_prompt_snippets", None)
+        try:
+            stack_limit_int = (
+                int(stack_limit_setting)
+                if stack_limit_setting is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            stack_limit_int = None
+        if stack_limit_int is not None:
+            prompt_kwargs.setdefault("stack_snippet_limit", stack_limit_int)
         if isinstance(intent, Mapping):
             if "top_k" in intent:
                 try:
