@@ -34,6 +34,7 @@ from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
 import re
+from types import SimpleNamespace
 
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
@@ -105,51 +106,99 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from .coding_bot_interface import self_coding_managed
-from .bot_registry import BotRegistry
-from .data_bot import DataBot, persist_sc_thresholds
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
-from .threshold_service import ThresholdService
-from .code_database import CodeDB
-from .gpt_memory import GPTMemoryManager
-from .self_coding_thresholds import get_thresholds
-from vector_service.context_builder import ContextBuilder
-from .shared_evolution_orchestrator import get_orchestrator
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from context_builder_util import create_context_builder
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+try:
+    from .coding_bot_interface import self_coding_managed
+    from .bot_registry import BotRegistry
+    from .data_bot import persist_sc_thresholds
+    from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+    from .self_coding_engine import SelfCodingEngine
+    from .model_automation_pipeline import ModelAutomationPipeline
+    from .threshold_service import ThresholdService
+    from .code_database import CodeDB
+    from .gpt_memory import GPTMemoryManager
+    from .self_coding_thresholds import get_thresholds
+    from vector_service.context_builder import ContextBuilder
+    from .shared_evolution_orchestrator import get_orchestrator
+except ImportError as exc:  # pragma: no cover - degrade gracefully during bootstrap
+    logger.warning("self-coding integration unavailable: %s", exc)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+    def self_coding_managed(*_, **__):  # type: ignore[override]
+        def decorator(cls: type) -> type:
+            return cls
+
+        return decorator
+
+    BotRegistry = None  # type: ignore[assignment]
+    persist_sc_thresholds = lambda *_, **__: None  # type: ignore
+    SelfCodingManager = Any  # type: ignore
+    internalize_coding_bot = lambda *_, **__: None  # type: ignore
+    SelfCodingEngine = Any  # type: ignore
+    ModelAutomationPipeline = Any  # type: ignore
+    ThresholdService = Any  # type: ignore
+    CodeDB = Any  # type: ignore
+    GPTMemoryManager = Any  # type: ignore
+    get_thresholds = lambda *_args, **_kwargs: SimpleNamespace(  # type: ignore
+        roi_drop=0.0,
+        error_increase=0.0,
+        test_failure_increase=0.0,
+    )
+    ContextBuilder = Any  # type: ignore
+    get_orchestrator = lambda *_, **__: None  # type: ignore
+    _SELF_CODING_AVAILABLE = False
+else:
+    _SELF_CODING_AVAILABLE = True
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
 
-evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, engine)
-_th = get_thresholds("ErrorBot")
-persist_sc_thresholds(
-    "ErrorBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "ErrorBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
+if _SELF_CODING_AVAILABLE:
+    registry = BotRegistry()  # type: ignore[call-arg]
+    data_bot = DataBot(start_server=False)
+
+    _context_builder = create_context_builder()
+    engine = SelfCodingEngine(  # type: ignore[call-arg]
+        CodeDB(),
+        GPTMemoryManager(),
+        context_builder=_context_builder,
+    )
+    pipeline = ModelAutomationPipeline(context_builder=_context_builder)  # type: ignore[call-arg]
+
+    evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, engine)
+    _th = get_thresholds("ErrorBot")
+    persist_sc_thresholds(
+        "ErrorBot",
+        roi_drop=_th.roi_drop,
+        error_increase=_th.error_increase,
+        test_failure_increase=_th.test_failure_increase,
+    )
+    manager = internalize_coding_bot(
+        "ErrorBot",
+        engine,
+        pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        evolution_orchestrator=evolution_orchestrator,
+        threshold_service=ThresholdService(),
+        roi_threshold=_th.roi_drop,
+        error_threshold=_th.error_increase,
+        test_failure_threshold=_th.test_failure_increase,
+    )
+else:
+    registry = None
+    data_bot = None
+    _context_builder = None
+    engine = None
+    pipeline = None
+    evolution_orchestrator = None
+    _th = SimpleNamespace(
+        roi_drop=0.0,
+        error_increase=0.0,
+        test_failure_increase=0.0,
+    )
+    manager = None
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager

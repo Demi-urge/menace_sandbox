@@ -26,6 +26,7 @@ import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
+import contextvars
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -64,12 +65,37 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when absent
 except Exception:  # pragma: no cover - degrade gracefully when unavailable
     SelfCodingManager = Any  # type: ignore
 
-try:  # pragma: no cover - allow tests to stub engine
-    MANAGER_CONTEXT = load_internal("self_coding_engine").MANAGER_CONTEXT
-except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
-    raise ImportError("Self-coding engine is required for operation") from exc
-except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
-    raise ImportError("Self-coding engine is required for operation") from exc
+MANAGER_CONTEXT: contextvars.ContextVar[Any] | None = None
+_MANAGER_CONTEXT_ERROR: Exception | None = None
+
+
+def _ensure_manager_context() -> contextvars.ContextVar[Any]:
+    """Return the shared manager context, importing lazily when required."""
+
+    global MANAGER_CONTEXT, _MANAGER_CONTEXT_ERROR
+
+    if MANAGER_CONTEXT is not None:
+        return MANAGER_CONTEXT
+
+    if _MANAGER_CONTEXT_ERROR is not None:
+        raise ImportError("Self-coding engine is required for operation") from _MANAGER_CONTEXT_ERROR
+
+    try:  # pragma: no cover - defer import to avoid circular dependency
+        module = load_internal("self_coding_engine")
+    except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
+        _MANAGER_CONTEXT_ERROR = exc
+        raise ImportError("Self-coding engine is required for operation") from exc
+    except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
+        _MANAGER_CONTEXT_ERROR = exc
+        raise ImportError("Self-coding engine is required for operation") from exc
+
+    context = getattr(module, "MANAGER_CONTEXT", None)
+    if context is None:  # pragma: no cover - defensive check
+        _MANAGER_CONTEXT_ERROR = RuntimeError("Self-coding engine missing MANAGER_CONTEXT")
+        raise ImportError("Self-coding engine is required for operation") from _MANAGER_CONTEXT_ERROR
+
+    MANAGER_CONTEXT = context
+    return context
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from menace_sandbox.bot_registry import BotRegistry
@@ -108,14 +134,15 @@ def manager_generate_helper(
     if engine is None:  # pragma: no cover - defensive guard
         raise RuntimeError("manager must provide an engine for helper generation")
 
-    token = MANAGER_CONTEXT.set(manager)
+    context = _ensure_manager_context()
+    token = context.set(manager)
     previous_builder = getattr(engine, "context_builder", None)
     try:
         engine.context_builder = context_builder
         return engine.generate_helper(description, **kwargs)
     finally:
         engine.context_builder = previous_builder
-        MANAGER_CONTEXT.reset(token)
+        context.reset(token)
 
 
 def _resolve_helpers(
