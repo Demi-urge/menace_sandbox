@@ -20,7 +20,7 @@ except Exception:  # pragma: no cover - fallback for package layout
     from .dynamic_path_router import resolve_path  # type: ignore
 
 try:
-    from .self_improvement.target_region import (
+    from .target_region import (
         TargetRegion,
         extract_target_region as _extract_target_region,
     )
@@ -30,7 +30,7 @@ except Exception:  # pragma: no cover - fallback for direct execution
 
     spec = importlib.util.spec_from_file_location(
         "_target_region_fallback",
-        resolve_path("self_improvement/target_region.py"),
+        resolve_path("target_region.py"),
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["_target_region_fallback"] = module
