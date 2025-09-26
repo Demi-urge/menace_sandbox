@@ -21,6 +21,7 @@ class DummyDataset:
 class DummyVectorService:
     def __init__(self) -> None:
         self.calls: List[dict] = []
+        self.vector_store = None
 
     def vectorise_and_store(
         self,
@@ -41,7 +42,31 @@ class DummyVectorService:
             }
         )
         text = str(record.get("text", ""))
-        return [float(len(text)), float(text.count("\n") + 1)]
+        vector = [float(len(text)), float(text.count("\n") + 1)]
+        store = getattr(self, "vector_store", None)
+        if store is not None:
+            try:
+                store.add(kind.lower(), record_id, vector, origin_db=origin_db, metadata=metadata)
+            except Exception:
+                pass
+        return vector
+
+
+class DummyVectorStore:
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.records: List[tuple[str, str, List[float]]] = []
+
+    def add(
+        self,
+        kind: str,
+        record_id: str,
+        vector: List[float],
+        *,
+        origin_db: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        self.records.append((kind, record_id, list(vector)))
 
 
 @pytest.fixture
@@ -200,4 +225,76 @@ def test_stack_ingestor_filters_and_metadata(tmp_path: Path, monkeypatch: pytest
     )
     progress = cur.fetchall()
     assert progress == [("stack/project:main.py", "python")]
+
+
+def test_stack_ingestor_reuses_supplied_vector_store(
+    tmp_path: Path, sample_records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loader = _patch_load_dataset(monkeypatch, sample_records)
+
+    store = DummyVectorStore(tmp_path / "custom.index")
+    vector_service = DummyVectorService()
+    ingestor = StackIngestor(
+        languages=("python",),
+        chunk_lines=1,
+        batch_size=2,
+        vector_store=store,
+        vector_service=vector_service,
+        dataset_loader=loader,
+    )
+
+    processed = ingestor.ingest(resume=False)
+
+    assert processed == 2
+    assert ingestor.vector_store is store
+    assert vector_service.vector_store is store
+    assert len(store.records) == 4
+
+
+def test_stack_ingestor_honours_index_path(
+    tmp_path: Path, sample_records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loader = _patch_load_dataset(monkeypatch, sample_records)
+
+    created: dict[str, object] = {}
+
+    class StubStore(DummyVectorStore):
+        pass
+
+    def fake_get_stack_store():
+        return None
+
+    def fake_create_store(
+        dim: int,
+        path: Path,
+        *,
+        backend: str | None = None,
+        metric: str = "angular",
+    ):
+        created["args"] = (dim, Path(path), backend, metric)
+        return StubStore(Path(path))
+
+    monkeypatch.setattr("vector_service.stack_ingest.get_stack_vector_store", fake_get_stack_store)
+    monkeypatch.setattr("vector_service.stack_ingest.create_vector_store", fake_create_store)
+
+    custom_index = tmp_path / "stack.index"
+    vector_service = DummyVectorService()
+    ingestor = StackIngestor(
+        languages=("python",),
+        chunk_lines=1,
+        batch_size=2,
+        index_path=custom_index,
+        vector_service=vector_service,
+        dataset_loader=loader,
+    )
+
+    processed = ingestor.ingest(resume=False)
+
+    assert processed == 2
+    assert "args" in created
+    assert created["args"][1] == custom_index
+    assert ingestor.vector_store is not None
+    assert Path(ingestor.vector_store.path) == custom_index
+    assert vector_service.vector_store is ingestor.vector_store
+    assert len(getattr(ingestor.vector_store, "records", [])) == 4
 

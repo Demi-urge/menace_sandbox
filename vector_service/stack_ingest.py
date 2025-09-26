@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Mapping, MutableMapping, Sequence
+from typing import Iterable, Iterator, Mapping, MutableMapping, Sequence, cast
 
 import argparse
 import hashlib
@@ -37,6 +37,12 @@ except Exception:  # pragma: no cover - tests provide a stub
 
 from config import StackDatasetConfig, get_config
 from vector_service import SharedVectorService
+from .vector_store import VectorStore, create_vector_store, get_stack_vector_store
+
+try:  # pragma: no cover - helper is optional at import time
+    from .vector_store import _stack_vector_store_config  # type: ignore
+except Exception:  # pragma: no cover - fallback when helper unavailable
+    _stack_vector_store_config = None  # type: ignore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -361,6 +367,8 @@ class StackIngestor:
         dataset_loader=load_dataset,
         vector_service: SharedVectorService | None = None,
         metadata_store: StackMetadataStore | None = None,
+        index_path: str | Path | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
@@ -371,6 +379,60 @@ class StackIngestor:
         self.batch_size = int(batch_size)
         self.record_kind = record_kind
         self.vector_service = vector_service or SharedVectorService()
+
+        coerced_index: Path | None = None
+        if index_path is not None:
+            try:
+                coerced_index = Path(index_path)
+            except Exception:
+                coerced_index = Path(str(index_path))
+
+        resolved_store: VectorStore | None = vector_store
+        if resolved_store is None:
+            candidate = getattr(self.vector_service, "vector_store", None)
+            if candidate is not None and coerced_index is not None:
+                try:
+                    candidate_path = Path(getattr(candidate, "path"))
+                except Exception:
+                    candidate_path = None
+                if candidate_path is not None and candidate_path != coerced_index:
+                    candidate = None
+            resolved_store = cast(VectorStore | None, candidate)
+
+        if resolved_store is None:
+            stack_store = get_stack_vector_store()
+            if stack_store is not None and coerced_index is not None:
+                try:
+                    stack_path = Path(getattr(stack_store, "path"))
+                except Exception:
+                    stack_path = None
+                if stack_path is not None and stack_path != coerced_index:
+                    stack_store = None
+            if stack_store is None:
+                dim = 384
+                backend = None
+                metric = "angular"
+                default_path: Path | None = None
+                if _stack_vector_store_config is not None:
+                    try:
+                        cfg_dim, cfg_path, cfg_backend, cfg_metric, _ = _stack_vector_store_config()
+                        dim = int(cfg_dim)
+                        backend = cfg_backend
+                        metric = cfg_metric
+                        default_path = cfg_path
+                    except Exception:
+                        pass
+                target_path = coerced_index or default_path or Path("stack_embeddings.index")
+                try:
+                    resolved_store = create_vector_store(dim, target_path, backend=backend, metric=metric)
+                except Exception:
+                    resolved_store = None
+            else:
+                resolved_store = stack_store
+
+        self.vector_store: VectorStore | None = resolved_store
+        if resolved_store is not None:
+            setattr(self.vector_service, "vector_store", resolved_store)
 
         self.stream = StackDatasetStream(
             dataset_name,
