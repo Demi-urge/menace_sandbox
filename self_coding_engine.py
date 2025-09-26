@@ -708,6 +708,15 @@ class SelfCodingEngine:
                 self.logger.exception(
                     "failed to initialise stack retriever for context builder"
                 )
+        ensure_stack = getattr(builder, "ensure_stack_embeddings", None)
+        if callable(ensure_stack):
+            try:
+                ensure_stack()
+            except Exception:
+                self.logger.warning(
+                    "stack ingestion check failed during self-coding init",
+                    exc_info=True,
+                )
         self.stack_retriever = getattr(builder, "stack_retriever", None)
         self._patch_tracker = PatchAttemptTracker(
             logger=self.logger, escalation_counter=_PATCH_ESCALATIONS

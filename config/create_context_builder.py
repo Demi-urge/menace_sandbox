@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
@@ -48,9 +49,18 @@ def create_context_builder() -> ContextBuilder:
         builder_kwargs[attr] = _ensure_readable(path, filename)
 
     try:
-        return ContextBuilder(**builder_kwargs)
+        builder = ContextBuilder(**builder_kwargs)
     except TypeError as exc:  # pragma: no cover - for simple stubs in tests
         raise ValueError(
             "ContextBuilder requires paths to 'bots.db', 'code.db', 'errors.db', "
             "and 'workflows.db'"
         ) from exc
+    try:
+        ensure_stack = getattr(builder, "ensure_stack_embeddings", None)
+        if callable(ensure_stack):
+            ensure_stack()
+    except Exception as exc:  # pragma: no cover - best effort warning
+        logging.getLogger(__name__).warning(
+            "Stack ingestion check failed: %s", exc
+        )
+    return builder
