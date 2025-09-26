@@ -19,6 +19,10 @@ class _Stub:  # pragma: no cover - simple callable placeholder
         pass
 
 
+def _noop(*args, **kwargs):  # pragma: no cover - trivial fallback
+    return False
+
+
 class _SimpleSharedVectorService:
     """Lightweight fallback implementation used when vectorizer is unavailable."""
 
@@ -88,6 +92,9 @@ RateLimitError = MalformedPromptError = VectorServiceError
 
 Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = ContextBuilder = _Stub  # type: ignore
 SharedVectorService: type[_SimpleSharedVectorService] | type[_Stub] = _SimpleSharedVectorService
+StackDatasetStreamer = _Stub  # type: ignore
+ensure_stack_background = _noop
+run_stack_ingestion_async = _Stub  # type: ignore
 
 try:  # pragma: no cover - upgrade default errors when available
     from .exceptions import (
@@ -143,6 +150,19 @@ else:
     SharedVectorService = _SharedVectorService
 
 try:  # pragma: no cover - optional heavy dependency
+    from .stack_ingestion import (
+        StackDatasetStreamer as _StackDatasetStreamer,
+        ensure_background_task as _ensure_stack_background,
+        run_stack_ingestion_async as _run_stack_ingestion_async,
+    )
+except Exception:
+    pass
+else:
+    StackDatasetStreamer = _StackDatasetStreamer
+    ensure_stack_background = _ensure_stack_background
+    run_stack_ingestion_async = _run_stack_ingestion_async
+
+try:  # pragma: no cover - optional heavy dependency
     from .context_builder import ContextBuilder as _ContextBuilder
 except Exception:
     pass
@@ -180,6 +200,9 @@ __all__ = [
     "EmbeddingBackfill",
     "SharedVectorService",
     "ContextBuilder",
+    "StackDatasetStreamer",
+    "ensure_stack_background",
+    "run_stack_ingestion_async",
     "EmbeddableDBMixin",
     "VectorServiceError",
     "RateLimitError",

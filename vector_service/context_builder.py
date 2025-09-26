@@ -57,6 +57,15 @@ except Exception:  # pragma: no cover
 
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
+try:  # pragma: no cover - optional dependency
+    from .stack_ingestion import (
+        ensure_background_task as _ensure_stack_background,
+        StackDatasetStreamer as _StackDatasetStreamer,
+    )
+except Exception:  # pragma: no cover - stack ingestion optional
+    _ensure_stack_background = None  # type: ignore
+    _StackDatasetStreamer = None  # type: ignore
+
 # Alias retained for backward compatibility with tests expecting
 # ``UniversalRetriever`` to be injectable.
 UniversalRetriever = Retriever
@@ -409,6 +418,12 @@ class ContextBuilder:
             threading.Thread(
                 target=self._embedding_checker, daemon=True
             ).start()
+
+        if _ensure_stack_background is not None:
+            try:
+                _ensure_stack_background()
+            except Exception:
+                logger.exception("failed to start stack ingestion background task")
 
     # ------------------------------------------------------------------
     def _embedding_checker(self) -> None:
@@ -1439,6 +1454,30 @@ class ContextBuilder:
                 exc,
                 logger=logger,
             )
+
+    # ------------------------------------------------------------------
+    def run_stack_ingestion(
+        self, *, limit: int | None = None, continuous: bool = False
+    ) -> int:
+        """Trigger Stack dataset ingestion using current configuration."""
+
+        if _StackDatasetStreamer is None:
+            raise RuntimeError("stack ingestion unavailable")
+        streamer = _StackDatasetStreamer.from_environment()
+        return streamer.process(limit=limit, continuous=continuous)
+
+    async def run_stack_ingestion_async(
+        self, *, limit: int | None = None, continuous: bool = False
+    ) -> int:
+        if _StackDatasetStreamer is None:
+            raise RuntimeError("stack ingestion unavailable")
+        streamer = _StackDatasetStreamer.from_environment()
+        return await streamer.process_async(limit=limit, continuous=continuous)
+
+    def start_stack_ingestion_background(self) -> bool:
+        if _ensure_stack_background is None:
+            raise RuntimeError("stack ingestion unavailable")
+        return _ensure_stack_background()
 
     # ------------------------------------------------------------------
     @log_and_measure

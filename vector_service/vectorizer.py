@@ -117,6 +117,8 @@ class SharedVectorService:
             return handler(record)
         if kind in {"text", "prompt"}:
             return self._encode_text(str(record.get("text", "")))
+        if kind in {"stack"}:
+            return self._encode_text(str(record.get("text", "")))
         raise ValueError(f"unknown record type: {kind}")
 
     def vectorise_and_store(
