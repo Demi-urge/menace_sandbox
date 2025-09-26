@@ -1,7 +1,7 @@
 """Streaming ingestion pipeline for The Stack dataset.
 
 This module provides a high level façade for streaming repository files from
-`bigcode/the-stack-dedup`, chunking them into manageable snippets and
+`bigcode/the-stack-v2-dedup`, chunking them into manageable snippets and
 generating embeddings via :class:`~vector_service.vectorizer.SharedVectorService`.
 
 Only the resulting embeddings and their associated metadata are cached in a
@@ -253,7 +253,7 @@ class StackDatasetStream:
 
     def __init__(
         self,
-        dataset_name: str = "bigcode/the-stack-dedup",
+        dataset_name: str = "bigcode/the-stack-v2-dedup",
         *,
         split: str = "train",
         languages: Sequence[str] | None = None,
@@ -357,7 +357,7 @@ class StackIngestor:
     def __init__(
         self,
         *,
-        dataset_name: str = "bigcode/the-stack-dedup",
+        dataset_name: str = "bigcode/the-stack-v2-dedup",
         split: str = "train",
         languages: Sequence[str] | None = None,
         max_lines: int | None = None,
@@ -598,7 +598,7 @@ def _resolve_hf_token() -> str | None:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stream embeddings from The Stack dataset")
-    parser.add_argument("--dataset", default="bigcode/the-stack-dedup", help="Dataset identifier")
+    parser.add_argument("--dataset", default="bigcode/the-stack-v2-dedup", help="Dataset identifier")
     parser.add_argument("--split", default="train", help="Dataset split to stream")
     parser.add_argument("--languages", nargs="*", default=None, help="Languages to include")
     parser.add_argument("--chunk-lines", type=int, default=None, help="Maximum lines per embedded chunk")
