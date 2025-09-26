@@ -205,6 +205,21 @@ Stack indices if they are stored outside the default locations. When
 `STACK_STREAMING` is disabled or the token is missing, the ingestion script logs
 a warning and exits without processing.
 
+#### Configuration
+
+`ContextBuilder` reads Stack retrieval settings from the nested
+`context_builder.stack` section in `config/settings.yaml`. The defaults keep the
+integration disabled and favour conservative limits (`max_lines`, `max_bytes`
+and `retrieval_top_k`) so deployments can opt-in gradually. Paths for the Stack
+index, metadata store and caches can be customised per environment; relative
+paths are resolved against `SANDBOX_DATA_DIR` by `config.create_context_builder`.
+
+Environment variables `STACK_INDEX_PATH`, `STACK_METADATA_PATH`,
+`STACK_CACHE_DIR` and `STACK_PROGRESS_PATH` override the YAML values. When the
+Stack integration is enabled but either the index or metadata store is missing,
+`create_context_builder` raises a clear error instead of silently disabling the
+feature.
+
 ## Safety filtering
 
 `ContextBuilder` and `Retriever` apply configurable safety thresholds:

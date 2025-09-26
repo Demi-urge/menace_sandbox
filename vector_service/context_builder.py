@@ -83,9 +83,27 @@ def _stack_dataset_config() -> StackDatasetConfig:
     """Return the active Stack dataset configuration."""
 
     try:
-        return get_config().stack_dataset
+        cfg = get_config()
     except Exception:  # pragma: no cover - defensive fallback
         logger.exception("failed to access stack dataset configuration")
+        return StackDatasetConfig()
+
+    stack_cfg: StackDatasetConfig | None = None
+    try:
+        context_cfg = getattr(cfg, "context_builder", None)
+        if context_cfg is not None:
+            stack_cfg = getattr(context_cfg, "stack", None)
+    except Exception:
+        stack_cfg = None
+
+    if stack_cfg is None:
+        stack_cfg = getattr(cfg, "stack_dataset", None)
+
+    if isinstance(stack_cfg, StackDatasetConfig):
+        return stack_cfg
+    try:
+        return StackDatasetConfig.model_validate(stack_cfg)
+    except Exception:
         return StackDatasetConfig()
 
 
@@ -328,16 +346,34 @@ class ContextBuilder:
         stack_max_lines: int | None = None,
         stack_index_path: str | None = None,
         stack_metadata_path: str | None = None,
+        stack_max_bytes: int | None = None,
+        stack_cache_dir: str | None = None,
+        stack_progress_path: str | None = None,
         stack_prompt_enabled: bool | None = None,
         stack_prompt_limit: int | None = None,
+        stack_config: StackDatasetConfig | None = None,
     ) -> None:
         defaults = ContextBuilderConfig()
-        dataset_cfg = _stack_dataset_config()
+        global_stack_cfg = _stack_dataset_config()
         try:
             cfg_source = config or getattr(get_config(), "context_builder", defaults)
         except Exception:
             cfg_source = config or defaults
         cfg = cfg_source or defaults
+
+        stack_defaults = getattr(defaults, "stack", StackDatasetConfig())
+        cfg_stack = getattr(cfg, "stack", None)
+        if cfg_stack is not None and not isinstance(cfg_stack, StackDatasetConfig):
+            try:
+                cfg_stack = StackDatasetConfig.model_validate(cfg_stack)
+            except Exception:
+                cfg_stack = None
+        if not isinstance(global_stack_cfg, StackDatasetConfig):
+            try:
+                global_stack_cfg = StackDatasetConfig.model_validate(global_stack_cfg)
+            except Exception:
+                global_stack_cfg = stack_defaults
+        dataset_cfg = stack_config or cfg_stack or global_stack_cfg or stack_defaults
 
         def _cfg(name: str, fallback: Any) -> Any:
             try:
@@ -486,94 +522,137 @@ class ContextBuilder:
             if isinstance(lic, str) and lic.strip()
         }
 
-        dataset_enabled = bool(getattr(dataset_cfg, "enabled", False))
-        if stack_enabled is None:
-            stack_enabled = _coerce_bool(
-                _cfg("stack_enabled", defaults.stack_enabled), defaults.stack_enabled
-            )
-            if not stack_enabled and dataset_enabled:
-                stack_enabled = True
-        else:
-            stack_enabled = _coerce_bool(stack_enabled, bool(stack_enabled))
+        dataset_enabled = bool(getattr(dataset_cfg, "enabled", False)) or bool(
+            getattr(global_stack_cfg, "enabled", False)
+        )
 
-        if stack_languages is None:
-            stack_languages = _cfg("stack_languages", defaults.stack_languages)
+        enabled_candidate = stack_enabled
+        if enabled_candidate is None:
+            enabled_candidate = _first_non_none(
+                getattr(cfg, "stack_enabled", None),
+                getattr(cfg_stack, "enabled", None),
+                getattr(global_stack_cfg, "enabled", None),
+                getattr(stack_defaults, "enabled", None),
+            )
+        enabled_value = enabled_candidate if enabled_candidate is not None else False
+        stack_enabled_bool = _coerce_bool(enabled_value, bool(enabled_value))
+        if not stack_enabled_bool and dataset_enabled:
+            stack_enabled_bool = True
+
+        language_source = _first_non_none(
+            stack_languages,
+            getattr(cfg, "stack_languages", None),
+            getattr(cfg_stack, "languages", None),
+            getattr(dataset_cfg, "languages", None),
+            getattr(global_stack_cfg, "languages", None),
+            getattr(stack_defaults, "languages", None),
+        )
         lang_set = {
             str(language).strip().lower()
-            for language in (stack_languages or [])
+            for language in (language_source or [])
             if isinstance(language, str) and language.strip()
         }
-        if not lang_set:
-            try:
-                lang_set = {
-                    str(language).strip().lower()
-                    for language in getattr(dataset_cfg, "allowed_languages", set())
-                    if isinstance(language, str) and language.strip()
-                }
-            except Exception:
-                lang_set = set()
 
-        stack_top_k_val = (
-            stack_top_k if stack_top_k is not None else _cfg("stack_top_k", defaults.stack_top_k)
+        stack_top_k_val = _first_non_none(
+            stack_top_k,
+            getattr(cfg, "stack_top_k", None),
+            getattr(cfg_stack, "retrieval_top_k", None),
+            getattr(dataset_cfg, "retrieval_top_k", None),
+            getattr(global_stack_cfg, "retrieval_top_k", None),
+            getattr(stack_defaults, "retrieval_top_k", None),
         )
+        top_k_fallback = getattr(stack_defaults, "retrieval_top_k", 0)
         stack_top_k_int = _coerce_int(
-            stack_top_k_val,
-            defaults.stack_top_k,
+            stack_top_k_val if stack_top_k_val is not None else top_k_fallback,
+            top_k_fallback,
         )
         if stack_top_k_int <= 0:
             try:
                 stack_top_k_int = max(
                     0,
-                    int(getattr(dataset_cfg, "retrieval_top_k", stack_top_k_int)),
+                    int(getattr(global_stack_cfg, "retrieval_top_k", stack_top_k_int)),
                 )
             except Exception:
                 stack_top_k_int = max(0, stack_top_k_int)
 
-        stack_max_lines_val = (
-            stack_max_lines
-            if stack_max_lines is not None
-            else _cfg("stack_max_lines", defaults.stack_max_lines)
+        stack_max_lines_val = _first_non_none(
+            stack_max_lines,
+            getattr(cfg, "stack_max_lines", None),
+            getattr(cfg_stack, "max_lines", None),
+            getattr(dataset_cfg, "max_lines", None),
+            getattr(global_stack_cfg, "max_lines", None),
+            getattr(stack_defaults, "max_lines", None),
         )
+        lines_fallback = getattr(stack_defaults, "max_lines", 0)
         stack_max_lines_int = _coerce_int(
-            stack_max_lines_val,
-            defaults.stack_max_lines,
+            stack_max_lines_val if stack_max_lines_val is not None else lines_fallback,
+            lines_fallback,
         )
-        if stack_max_lines_int <= 0:
-            try:
-                stack_max_lines_int = max(
-                    0,
-                    int(getattr(dataset_cfg, "max_lines_per_document", stack_max_lines_int)),
-                )
-            except Exception:
-                stack_max_lines_int = max(0, stack_max_lines_int)
+        if stack_max_lines_int < 0:
+            stack_max_lines_int = 0
 
-        index_source = (
-            stack_index_path if stack_index_path is not None else _cfg("stack_index_path", defaults.stack_index_path)
+        stack_max_bytes_val = _first_non_none(
+            stack_max_bytes,
+            getattr(cfg, "stack_max_bytes", None),
+            getattr(cfg_stack, "max_bytes", None),
+            getattr(dataset_cfg, "max_bytes", None),
+            getattr(global_stack_cfg, "max_bytes", None),
+            getattr(stack_defaults, "max_bytes", None),
         )
-        metadata_source = (
-            stack_metadata_path
-            if stack_metadata_path is not None
-            else _cfg("stack_metadata_path", defaults.stack_metadata_path)
-        )
-        if index_source is None:
-            for attr in ("index_path", "vector_index_path"):
-                candidate = getattr(dataset_cfg, attr, None)
-                if candidate:
-                    index_source = candidate
-                    break
-        if metadata_source is None:
-            for attr in ("metadata_path", "metadata_db", "db_path"):
-                candidate = getattr(dataset_cfg, attr, None)
-                if candidate:
-                    metadata_source = candidate
-                    break
+        stack_max_bytes_int: int | None
+        if stack_max_bytes_val is None:
+            stack_max_bytes_int = None
+        else:
+            stack_max_bytes_int = _coerce_int(stack_max_bytes_val, int(stack_max_bytes_val))
+            if stack_max_bytes_int < 0:
+                stack_max_bytes_int = 0
 
-        self.stack_enabled = bool(stack_enabled)
+        index_source = _first_non_none(
+            stack_index_path,
+            getattr(cfg, "stack_index_path", None),
+            getattr(cfg_stack, "index_path", None),
+            getattr(dataset_cfg, "index_path", None),
+            getattr(global_stack_cfg, "index_path", None),
+            getattr(stack_defaults, "index_path", None),
+        )
+
+        metadata_source = _first_non_none(
+            stack_metadata_path,
+            getattr(cfg, "stack_metadata_path", None),
+            getattr(cfg_stack, "metadata_path", None),
+            getattr(dataset_cfg, "metadata_path", None),
+            getattr(global_stack_cfg, "metadata_path", None),
+            getattr(stack_defaults, "metadata_path", None),
+        )
+
+        cache_dir_source = _first_non_none(
+            stack_cache_dir,
+            getattr(cfg, "stack_cache_dir", None),
+            getattr(cfg_stack, "cache_dir", None),
+            getattr(dataset_cfg, "cache_dir", None),
+            getattr(global_stack_cfg, "cache_dir", None),
+            getattr(stack_defaults, "cache_dir", None),
+        )
+
+        progress_source = _first_non_none(
+            stack_progress_path,
+            getattr(cfg, "stack_progress_path", None),
+            getattr(cfg_stack, "progress_path", None),
+            getattr(dataset_cfg, "progress_path", None),
+            getattr(global_stack_cfg, "progress_path", None),
+            getattr(stack_defaults, "progress_path", None),
+        )
+
+        self.stack_enabled = bool(stack_enabled_bool)
         self.stack_languages = set(lang_set)
         self.stack_top_k = max(0, stack_top_k_int)
         self.stack_max_lines = max(0, stack_max_lines_int)
+        self.stack_max_bytes = None if stack_max_bytes_int is None else max(0, stack_max_bytes_int)
         self.stack_index_path = _resolve_optional_path(index_source)
         self.stack_metadata_path = _resolve_optional_path(metadata_source)
+        self.stack_cache_dir = _resolve_optional_path(cache_dir_source)
+        self.stack_progress_path = _resolve_optional_path(progress_source)
+        self.stack_config = dataset_cfg
         prompt_enabled_val = (
             stack_prompt_enabled
             if stack_prompt_enabled is not None
@@ -698,7 +777,7 @@ class ContextBuilder:
                 if self.stack_retriever is None:
                     top_k = self.stack_top_k or getattr(dataset_cfg, "retrieval_top_k", 5) or 5
                     max_lines = self.stack_max_lines or getattr(
-                        dataset_cfg, "max_lines_per_document", 0
+                        dataset_cfg, "max_lines", 0
                     )
                     self.stack_retriever = StackRetriever(
                         context_builder=self,
@@ -1047,7 +1126,7 @@ class ContextBuilder:
             try:
                 languages = [
                     str(lang).strip().lower()
-                    for lang in getattr(stack_cfg, "allowed_languages", set())
+                    for lang in getattr(stack_cfg, "languages", set())
                     if isinstance(lang, str) and lang.strip()
                 ]
             except Exception:
@@ -1058,23 +1137,67 @@ class ContextBuilder:
         if not max_lines:
             try:
                 max_lines = max(
-                    0, int(getattr(stack_cfg, "max_lines_per_document", 0))
+                    0, int(getattr(stack_cfg, "max_lines", 0))
                 )
             except Exception:
                 max_lines = 0
         max_lines_arg: int | None = max_lines or None
 
+        max_bytes: int | None = None
+        if getattr(self, "stack_max_bytes", None):
+            try:
+                max_bytes = max(0, int(self.stack_max_bytes)) or None
+            except Exception:
+                max_bytes = None
+        if max_bytes is None:
+            try:
+                candidate_bytes = getattr(stack_cfg, "max_bytes", None)
+                if candidate_bytes:
+                    max_bytes = max(0, int(candidate_bytes)) or None
+            except Exception:
+                max_bytes = None
+
         metadata_path = self._stack_metadata_path() or get_stack_metadata_path()
         if metadata_path is None:
-            metadata_path = Path("stack_embeddings.db")
+            cache_dir = getattr(self, "stack_cache_dir", None)
+            if isinstance(cache_dir, Path):
+                metadata_path = cache_dir / "stack_embeddings.db"
+            else:
+                metadata_path = Path("stack_embeddings.db")
         elif not isinstance(metadata_path, Path):
             metadata_path = Path(str(metadata_path))
+
+        cache_dir = getattr(self, "stack_cache_dir", None)
+        if metadata_path is not None and isinstance(cache_dir, Path):
+            try:
+                metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
 
         index_path = self._stack_index_path()
         if index_path is None and isinstance(metadata_path, Path):
             index_path = metadata_path.with_suffix(".index")
+        if index_path is None and isinstance(cache_dir, Path):
+            index_path = cache_dir / "stack.index"
 
         vector_store = getattr(retr, "stack_index", None) or getattr(retr, "vector_store", None)
+
+        chunk_lines: int | None = None
+        stack_config = getattr(self, "stack_config", None)
+        try:
+            candidate_chunk = getattr(stack_config, "chunk_lines", None)
+        except Exception:
+            candidate_chunk = None
+        if candidate_chunk is None:
+            try:
+                candidate_chunk = getattr(stack_cfg, "chunk_lines", None)
+            except Exception:
+                candidate_chunk = None
+        if candidate_chunk:
+            try:
+                chunk_lines = max(1, int(candidate_chunk))
+            except Exception:
+                chunk_lines = None
 
         token = _resolve_hf_token()
         if token is None:
@@ -1086,6 +1209,8 @@ class ContextBuilder:
         ingestor = StackIngestor(
             languages=language_seq,
             max_lines=max_lines_arg,
+            max_bytes=max_bytes,
+            chunk_lines=chunk_lines if chunk_lines is not None else 200,
             namespace=self._stack_namespace(),
             metadata_path=metadata_path,
             index_path=index_path,
@@ -1314,6 +1439,15 @@ class ContextBuilder:
             score = 0.0
 
         text = clean_meta.get("summary") or ""
+        if text and isinstance(self.stack_max_bytes, int) and self.stack_max_bytes > 0:
+            try:
+                encoded = text.encode("utf-8")
+                if len(encoded) > self.stack_max_bytes:
+                    text = encoded[: self.stack_max_bytes].decode("utf-8", errors="ignore")
+                    clean_meta["summary"] = text
+                    clean_meta["stack_truncated_bytes"] = self.stack_max_bytes
+            except Exception:
+                pass
 
         bundle = {
             "origin_db": "stack",
@@ -2227,7 +2361,7 @@ class ContextBuilder:
             try:
                 allowed_stack_languages = {
                     str(lang).lower()
-                    for lang in getattr(stack_cfg, "allowed_languages", set())
+                    for lang in getattr(stack_cfg, "languages", set())
                     if isinstance(lang, str)
                 }
             except Exception:
@@ -2239,7 +2373,7 @@ class ContextBuilder:
         if not max_stack_lines:
             try:
                 max_stack_lines = max(
-                    0, int(getattr(stack_cfg, "max_lines_per_document", 0))
+                    0, int(getattr(stack_cfg, "max_lines", 0))
                 )
             except Exception:
                 max_stack_lines = 0

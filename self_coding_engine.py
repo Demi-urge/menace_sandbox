@@ -696,7 +696,7 @@ class SelfCodingEngine:
                     stack_index=stack_store,
                     metadata_db_path=metadata_path,
                     top_k=max(1, int(getattr(stack_cfg, "retrieval_top_k", 5) or 5)),
-                    max_lines=max(0, int(getattr(stack_cfg, "max_lines_per_document", 0) or 0)),
+                    max_lines=max(0, int(getattr(stack_cfg, "max_lines", 0) or 0)),
                     patch_safety=getattr(builder, "patch_safety", None),
                     license_denylist=set(getattr(builder, "license_denylist", set())),
                     risk_penalty=getattr(builder, "risk_penalty", 1.0),

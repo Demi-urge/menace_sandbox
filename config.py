@@ -220,30 +220,51 @@ class BotConfig(_StrictBaseModel):
 
 
 class StackDatasetConfig(_StrictBaseModel):
-    """Configuration for Stack dataset ingestion and retrieval."""
+    """Configuration shared by Stack ingestion and retrieval."""
 
     enabled: bool = False
-    allowed_languages: Set[str] = Field(
+    languages: Set[str] = Field(
         default_factory=lambda: {"python"},
         description="Whitelisted programming languages from The Stack dataset",
     )
-    max_lines_per_document: int = Field(
-        800,
+    max_lines: int = Field(
+        200,
         ge=0,
-        description="Maximum number of lines retained per Stack document",
+        description="Maximum number of lines retained per Stack snippet",
     )
-    chunk_size: int = Field(
-        2048,
-        ge=1,
-        description="Character chunk size used when embedding Stack documents",
+    max_bytes: int | None = Field(
+        262_144,
+        ge=0,
+        description="Maximum number of bytes preserved for each Stack file",
     )
     retrieval_top_k: int = Field(
-        5,
+        3,
         ge=0,
         description="Maximum Stack records to retrieve per query",
     )
+    index_path: str | None = Field(
+        None,
+        description="Optional override for the Stack vector index location",
+    )
+    metadata_path: str | None = Field(
+        None,
+        description="Optional override for the Stack metadata SQLite database",
+    )
+    cache_dir: str | None = Field(
+        None,
+        description="Directory used for Stack snippet caches and progress files",
+    )
+    progress_path: str | None = Field(
+        None,
+        description="Explicit checkpoint file tracking Stack ingestion progress",
+    )
+    chunk_lines: int = Field(
+        512,
+        ge=1,
+        description="Number of lines per Stack chunk during embedding",
+    )
 
-    @field_validator("allowed_languages")
+    @field_validator("languages")
     @classmethod
     def _normalise_languages(
         cls, value: Set[str], _info
@@ -337,31 +358,9 @@ class ContextBuilderConfig(_StrictBaseModel):
         1.0,
         description="Multiplier applied to similarity scores when ranking prompt examples",
     )
-    stack_enabled: bool = Field(
-        False,
-        description="Enable retrieval from the Stack dataset when embeddings are available",
-    )
-    stack_languages: Set[str] = Field(
-        default_factory=lambda: {"python", "javascript"},
-        description="Preferred languages for Stack snippets (case-insensitive)",
-    )
-    stack_max_lines: int = Field(
-        200,
-        ge=0,
-        description="Trim Stack summaries to this many lines (0 to disable)",
-    )
-    stack_top_k: int = Field(
-        3,
-        ge=0,
-        description="Maximum Stack candidates fetched per query",
-    )
-    stack_index_path: str | None = Field(
-        None,
-        description="Optional override for the Stack vector index location",
-    )
-    stack_metadata_path: str | None = Field(
-        None,
-        description="Optional override for the Stack metadata SQLite database",
+    stack: StackDatasetConfig = Field(
+        default_factory=StackDatasetConfig,
+        description="Stack retrieval defaults applied when embeddings are available",
     )
     stack_prompt_enabled: bool = Field(
         True,
@@ -372,17 +371,6 @@ class ContextBuilderConfig(_StrictBaseModel):
         ge=0,
         description="Maximum number of Stack snippets surfaced in prompts (0 disables)",
     )
-
-    @field_validator("stack_languages")
-    @classmethod
-    def _normalise_stack_languages(
-        cls, value: Set[str], _info
-    ) -> Set[str]:  # type: ignore[override]
-        return {
-            str(language).strip().lower()
-            for language in value
-            if isinstance(language, str) and language.strip()
-        }
 
 
 class Config(_StrictBaseModel):

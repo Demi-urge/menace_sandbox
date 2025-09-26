@@ -12,6 +12,8 @@ from typing import Iterable
 import threading
 import logging
 
+import yaml
+
 try:  # pragma: no cover - allow lightweight test stubs
     from . import RAISE_ERRORS
 except Exception:  # pragma: no cover - fallback when package stubbed
@@ -45,10 +47,12 @@ class ConfigDiscovery:
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
     )
-    STACK_CONFIG_HINTS = {
-        "stack_index_path": "STACK_INDEX_PATH",
-        "stack_metadata_path": "STACK_METADATA_PATH",
-    }
+    STACK_CONFIG_HINTS = (
+        ("stack_dataset", "index_path", "STACK_INDEX_PATH"),
+        ("stack_dataset", "metadata_path", "STACK_METADATA_PATH"),
+        ("context_builder", "stack", "index_path", "STACK_INDEX_PATH"),
+        ("context_builder", "stack", "metadata_path", "STACK_METADATA_PATH"),
+    )
     STACK_ENV_FILES = (
         Path(".env"),
         Path(".env.local"),
@@ -140,22 +144,29 @@ class ConfigDiscovery:
         context_path = Path("config/stack_context.yaml")
         if context_path.exists():
             try:
-                for line in context_path.read_text(encoding="utf-8").splitlines():
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    for cfg_key, env_key in self.STACK_CONFIG_HINTS.items():
-                        prefix = f"{cfg_key}:"
-                        if not stripped.startswith(prefix):
-                            continue
-                        value = stripped[len(prefix) :].strip()
-                        if not value or value.lower() in {"null", "~"}:
-                            continue
-                        if value.startswith(("'", '"')) and value.endswith(value[0]):
-                            value = value[1:-1]
-                        hints.setdefault(env_key, value)
+                data = yaml.safe_load(context_path.read_text(encoding="utf-8")) or {}
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.warning("failed reading %s: %s", context_path, exc)
+            else:
+                for hint in self.STACK_CONFIG_HINTS:
+                    *keys, env_name = hint
+                    section = data
+                    try:
+                        for key in keys:
+                            if section is None:
+                                break
+                            section = section.get(key)
+                    except AttributeError:
+                        section = None
+                    if isinstance(section, dict):
+                        continue
+                    if section in {None, "", "~"}:
+                        continue
+                    value = section
+                    if isinstance(value, (str, Path)):
+                        text = str(value).strip()
+                        if text:
+                            hints.setdefault(env_name, text)
 
         return hints
 

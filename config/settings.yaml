@@ -29,3 +29,17 @@ context_builder:
     bug-introduced: 0.5
     needs-review: 0.3
     blocked: 1.0
+  stack:
+    enabled: false
+    languages:
+      - python
+    max_lines: 200
+    max_bytes: 65536
+    retrieval_top_k: 3
+    index_path: stack/index.faiss
+    metadata_path: stack/metadata.db
+    cache_dir: stack/cache
+    progress_path: stack/cache/progress.sqlite
+    chunk_lines: 256
+  stack_prompt_enabled: false
+  stack_prompt_limit: 2

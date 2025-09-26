@@ -10,6 +10,13 @@ bot:
 api_keys:
   openai: prod-openai-key
   serp: prod-serp-key
+# Dedicated Stack retrieval paths for production deployments
+context_builder:
+  stack:
+    index_path: /srv/igi/data/stack/index.faiss
+    metadata_path: /srv/igi/data/stack/metadata.db
+    cache_dir: /srv/igi/data/stack/cache
+    progress_path: /srv/igi/data/stack/cache/progress.sqlite
 # Ranker scheduler environment variables:
 # - RANKER_SCHEDULER_INTERVAL: seconds between retrains (0 disables)
 # - RANKER_SCHEDULER_ROI_THRESHOLD: ROI delta triggering immediate retrain

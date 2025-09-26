@@ -82,10 +82,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     languages = args.languages
     if languages is None:
-        languages = sorted(stack_cfg.allowed_languages)
+        languages = sorted(stack_cfg.languages)
 
-    chunk_lines = args.chunk_lines if args.chunk_lines is not None else stack_cfg.chunk_size
-    max_lines = args.max_lines if args.max_lines is not None else stack_cfg.max_lines_per_document
+    chunk_lines = args.chunk_lines if args.chunk_lines is not None else stack_cfg.chunk_lines
+    max_lines = args.max_lines if args.max_lines is not None else stack_cfg.max_lines
+    max_bytes = args.max_bytes if args.max_bytes is not None else stack_cfg.max_bytes
 
     auth_token = _resolve_hf_token()
     if not auth_token:
@@ -98,7 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         split=args.split,
         languages=languages,
         max_lines=max_lines,
-        max_bytes=args.max_bytes,
+        max_bytes=max_bytes,
         chunk_lines=chunk_lines,
         batch_size=args.batch_size,
         namespace=args.namespace,
