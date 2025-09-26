@@ -36,6 +36,7 @@ except Exception:  # pragma: no cover - tests provide a stub
     load_dataset = None  # type: ignore
 
 from config import StackDatasetConfig, get_config
+from redaction_utils import redact_text
 from vector_service import SharedVectorService
 from .vector_store import VectorStore, create_vector_store, get_stack_vector_store
 
@@ -350,6 +351,9 @@ class StackDatasetStream:
 class StackIngestor:
     """Stream Stack files, chunk them and persist embeddings + metadata."""
 
+    _SNIPPET_MAX_LINES = 200
+    _SNIPPET_MAX_BYTES = 4096
+
     def __init__(
         self,
         *,
@@ -515,6 +519,10 @@ class StackIngestor:
                 "chunk_index": chunk.index,
                 "chunk_hash": chunk.sha256,
             }
+            snippet, snippet_meta = self._prepare_snippet(chunk)
+            if snippet:
+                metadata["summary"] = snippet
+                metadata.update(snippet_meta)
             vector = self.vector_service.vectorise_and_store(
                 self.record_kind,
                 record_id,
@@ -523,6 +531,48 @@ class StackIngestor:
                 metadata=metadata,
             )
             self.metadata_store.upsert_embedding(embedding_id=record_id, file=file, chunk=chunk, vector=vector)
+
+    def _prepare_snippet(self, chunk: StackChunk) -> tuple[str | None, dict[str, int]]:
+        text = chunk.text
+        if not text or not text.strip():
+            return None, {}
+
+        snippet = text
+        limits: list[int] = []
+        for value in (self.chunk_lines, getattr(self.stream, "max_lines", None), self._SNIPPET_MAX_LINES):
+            if isinstance(value, int) and value > 0:
+                limits.append(value)
+        truncated_lines: int | None = None
+        if limits:
+            max_lines = min(limits)
+            lines = snippet.splitlines()
+            if len(lines) > max_lines:
+                snippet = "\n".join(lines[:max_lines])
+                truncated_lines = max_lines
+
+        byte_limits: list[int] = []
+        for value in (getattr(self.stream, "max_bytes", None), self._SNIPPET_MAX_BYTES):
+            if isinstance(value, int) and value > 0:
+                byte_limits.append(value)
+        truncated_bytes: int | None = None
+        if byte_limits:
+            max_bytes = min(byte_limits)
+            encoded = snippet.encode("utf-8")
+            if len(encoded) > max_bytes:
+                snippet = encoded[:max_bytes].decode("utf-8", errors="ignore")
+                truncated_bytes = max_bytes
+
+        snippet = redact_text(snippet)
+        snippet = snippet.lstrip("\n\r").rstrip("\n\r")
+        if not snippet.strip():
+            return None, {}
+
+        extra: dict[str, int] = {}
+        if truncated_lines is not None:
+            extra["stack_truncated_lines"] = truncated_lines
+        if truncated_bytes is not None:
+            extra["stack_truncated_bytes"] = truncated_bytes
+        return snippet, extra
 
 
 # ---------------------------------------------------------------------------

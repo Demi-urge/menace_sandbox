@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Iterable, Iterator, List, Mapping
-import hashlib
 
 import pytest
 
@@ -55,7 +55,7 @@ class DummyVectorService:
 class DummyVectorStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self.records: List[tuple[str, str, List[float]]] = []
+        self.records: List[tuple[str, str, List[float], Mapping[str, object]]] = []
 
     def add(
         self,
@@ -66,7 +66,7 @@ class DummyVectorStore:
         origin_db: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
-        self.records.append((kind, record_id, list(vector)))
+        self.records.append((kind, record_id, list(vector), dict(metadata or {})))
 
 
 @pytest.fixture
@@ -115,8 +115,17 @@ def test_stack_ingestor_batches_and_persists_metadata(tmp_path: Path, sample_rec
 
     assert processed == 2
     assert len(vector_service.calls) == 4
-    assert all(call["metadata"].keys() >= {"repo", "path", "language", "chunk_hash"} for call in vector_service.calls)
+    assert all(call["metadata"].keys() >= {"repo", "path", "language", "chunk_hash", "summary"} for call in vector_service.calls)
     assert all("text" in call["record"] for call in vector_service.calls)
+    assert all(call["metadata"]["summary"].strip() for call in vector_service.calls)
+    assert all(
+        len(call["metadata"]["summary"].splitlines()) <= StackIngestor._SNIPPET_MAX_LINES
+        for call in vector_service.calls
+    )
+    assert all(
+        len(call["metadata"]["summary"].encode("utf-8")) <= StackIngestor._SNIPPET_MAX_BYTES
+        for call in vector_service.calls
+    )
 
     cur = metadata_store.conn.cursor()
     cur.execute(f"PRAGMA table_info({metadata_store.metadata_table})")
@@ -202,6 +211,7 @@ def test_stack_ingestor_filters_and_metadata(tmp_path: Path, monkeypatch: pytest
     assert len(vector_service.calls) == 2  # two chunks after truncation
     assert {call["record"]["language"] for call in vector_service.calls} == {"python"}
     assert all(len(call["record"]["text"].encode("utf-8")) <= 40 for call in vector_service.calls)
+    assert all(len(call["metadata"]["summary"].encode("utf-8")) <= 40 for call in vector_service.calls)
 
     chunk_lookup = {
         call["record_id"]: call["record"]["text"]
@@ -249,6 +259,74 @@ def test_stack_ingestor_reuses_supplied_vector_store(
     assert ingestor.vector_store is store
     assert vector_service.vector_store is store
     assert len(store.records) == 4
+    assert all(record[3].get("summary") for record in store.records)
+
+
+def test_stack_ingestor_metadata_sanitises_and_truncates_snippets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    long_secret = "api_key='ABCDEFGHIJKLMNOPQRSTUVWXYZ123456'"
+    many_lines = "\n".join(
+        f"line {idx}"
+        for idx in range(StackIngestor._SNIPPET_MAX_LINES + 5)
+    )
+    long_line = "x" * (StackIngestor._SNIPPET_MAX_BYTES + 100)
+    samples = [
+        {
+            "language": "python",
+            "repo_name": "stack/project",
+            "path": "many_lines.py",
+            "content": f"{long_secret}\n{many_lines}",
+        },
+        {
+            "language": "python",
+            "repo_name": "stack/project",
+            "path": "long_line.py",
+            "content": f"{long_secret}\n{long_line}",
+        },
+    ]
+    loader = _patch_load_dataset(monkeypatch, samples)
+
+    metadata_path = tmp_path / "sanitised.db"
+    metadata_store = StackMetadataStore(metadata_path, namespace="sanitised")
+    vector_service = DummyVectorService()
+    ingestor = StackIngestor(
+        languages=("python",),
+        chunk_lines=StackIngestor._SNIPPET_MAX_LINES + 10,
+        batch_size=1,
+        metadata_store=metadata_store,
+        vector_service=vector_service,
+        dataset_loader=loader,
+    )
+
+    ingestor.ingest(resume=False)
+
+    summaries = [call["metadata"].get("summary", "") for call in vector_service.calls]
+    assert summaries and all(summary.strip() for summary in summaries)
+    assert all("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456" not in summary for summary in summaries)
+    assert any("[REDACTED]" in summary for summary in summaries)
+    assert all(
+        len(summary.splitlines()) <= StackIngestor._SNIPPET_MAX_LINES for summary in summaries
+    )
+    assert all(
+        len(summary.encode("utf-8")) <= StackIngestor._SNIPPET_MAX_BYTES for summary in summaries
+    )
+
+    truncated_line_calls = [
+        call for call in vector_service.calls if call["metadata"].get("stack_truncated_lines")
+    ]
+    assert truncated_line_calls
+    assert {
+        call["metadata"].get("stack_truncated_lines") for call in truncated_line_calls
+    } == {StackIngestor._SNIPPET_MAX_LINES}
+
+    truncated_byte_calls = [
+        call for call in vector_service.calls if call["metadata"].get("stack_truncated_bytes")
+    ]
+    assert truncated_byte_calls
+    assert {
+        call["metadata"].get("stack_truncated_bytes") for call in truncated_byte_calls
+    } == {StackIngestor._SNIPPET_MAX_BYTES}
 
 
 def test_stack_ingestor_honours_index_path(
