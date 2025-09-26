@@ -160,6 +160,47 @@ entry maps a short name to the module and class implementing
 }
 ```
 
+## Stack ingestion
+
+`vector_service.stack_ingestion.StackDatasetStreamer` streams files from
+[`bigcode/the-stack-v2-dedup`](https://huggingface.co/datasets/bigcode/the-stack-v2-dedup)
+using the Hugging Face datasets library with `streaming=True`.  Files are
+filtered by language, normalised to POSIX-style paths and chunked to the
+configured line count before calling `SharedVectorService.vectorise_and_store`
+with the record type `"stack"`.  Only the embedding and structured metadata are
+persisted; raw file content is discarded immediately after embedding.
+
+State is kept in a compact SQLite catalogue (`stack_metadata.db` by default)
+which tracks processed chunk hashes and the last dataset cursor.  This allows
+ingestion to resume after failures without duplicating work.  The embeddings are
+stored in a dedicated vector store constructed via `create_vector_store`.  Both
+the vector store and metadata database paths may be overridden to place them on
+larger disks.
+
+### Configuration
+
+The streamer consumes the following environment variables:
+
+| Variable | Description |
+| --- | --- |
+| `STACK_STREAMING` | Set to `1`/`true` to enable continuous background ingestion.  Any other value pauses the loop. |
+| `STACK_LANGUAGES` | Comma-separated allow-list of languages to embed (empty = all). |
+| `STACK_MAX_LINES` | Maximum number of lines per chunk (default `200`). |
+| `STACK_VECTOR_DIM` | Expected embedding dimensionality when creating the vector store. |
+| `STACK_VECTOR_BACKEND` / `STACK_VECTOR_METRIC` | Backend and metric passed to `create_vector_store`. |
+| `STACK_VECTOR_PATH` | Filesystem location for the dedicated vector store. |
+| `STACK_METADATA_PATH` | Location of the SQLite metadata catalogue. |
+| `STACK_CACHE_DIR` | Directory used for the datasets disk cache. |
+| `STACK_BATCH_SIZE` | When set, limits each background pass to at most this many chunks before sleeping. |
+
+Any Hugging Face token defined in `CONFIG.huggingface_token` (or exposed via
+`HUGGINGFACE_API_TOKEN`/`HF_TOKEN`) is forwarded to `datasets.load_dataset`.  The
+module keeps memory usage bounded by chunking files eagerly, avoiding in-memory
+storage of processed content and leaning on the datasets cache directory for
+intermediate artifacts.  `StackDatasetStreamer.process_async` and the
+`ensure_background_task` helper can be used to integrate ingestion with
+`ContextBuilder` or other background schedulers.
+
 `EmbeddingBackfill` loads this registry at runtime so new sources can be added
 simply by editing the file—no code changes are required.  The JSON object uses
 the following format where each key is the canonical name for a database
