@@ -20,6 +20,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - dataset ingestion optional in tests
     load_dataset = None  # type: ignore
 
+from config import StackDatasetConfig, get_config
+
 from .vectorizer import SharedVectorService
 
 LOGGER = logging.getLogger(__name__)
@@ -120,16 +122,19 @@ class SQLiteVectorStore:
 class StackIngestionService:
     """Stream and embed documents from The Stack dataset."""
 
-    languages: Sequence[str]
+    languages: Sequence[str] | None = None
     chunk_size: int = 2048
     dataset_name: str = "bigcode/the-stack-dedup"
     split: str = "train"
     namespace: str = "stack"
     db_path: str | Path = "stack_embeddings.db"
     use_auth_token: str | None = None
+    max_lines_per_document: int = 0
 
     def __post_init__(self) -> None:
-        self.languages = tuple(lang.lower() for lang in self.languages)
+        self.languages = tuple(lang.lower() for lang in (self.languages or ()))
+        if self.max_lines_per_document < 0:
+            raise ValueError("max_lines_per_document must be non-negative")
         self.store = SQLiteVectorStore(self.db_path, namespace=self.namespace)
         self.vector_service = SharedVectorService(vector_store=self.store)
         LOGGER.debug("StackIngestionService initialised", extra={"languages": self.languages})
@@ -184,6 +189,15 @@ class StackIngestionService:
             LOGGER.debug("Skipping empty content for file: %s", file_id)
             self.store.mark_processed(file_id)
             return True
+        if self.max_lines_per_document:
+            lines = content.splitlines()
+            if len(lines) > self.max_lines_per_document:
+                LOGGER.debug(
+                    "Truncating %s to %d lines before embedding",
+                    file_id,
+                    self.max_lines_per_document,
+                )
+                content = "\n".join(lines[: self.max_lines_per_document])
         chunk_count = 0
         for chunk_index, start, end, chunk in self._chunk_content(content):
             record_id = self._chunk_identifier(file_id, chunk_index)
@@ -236,8 +250,18 @@ class StackIngestionService:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stream embeddings from The Stack dataset")
-    parser.add_argument("--languages", nargs="*", default=["python"], help="Languages to include (default: python)")
-    parser.add_argument("--chunk-size", type=int, default=2048, help="Maximum characters per chunk")
+    parser.add_argument(
+        "--languages",
+        nargs="*",
+        default=None,
+        help="Languages to include (defaults to stack_dataset.allowed_languages)",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Maximum characters per chunk (defaults to stack_dataset.chunk_size)",
+    )
     parser.add_argument("--split", default="train", help="Dataset split to stream")
     parser.add_argument("--dataset", default="bigcode/the-stack-dedup", help="Dataset identifier")
     parser.add_argument("--db", default="stack_embeddings.db", help="SQLite database path")
@@ -257,16 +281,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.warning("STACK_STREAMING disabled - exiting without processing")
         return 0
 
+    cfg = get_config()
+    stack_cfg: StackDatasetConfig = getattr(cfg, "stack_dataset", StackDatasetConfig())
+    if not stack_cfg.enabled:
+        LOGGER.info("Stack dataset ingestion disabled via configuration")
+        return 0
+
     auth_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
 
+    languages = args.languages
+    if languages is None:
+        languages = sorted(stack_cfg.allowed_languages)
+
+    chunk_size = args.chunk_size if args.chunk_size is not None else stack_cfg.chunk_size
+
     service = StackIngestionService(
-        languages=args.languages,
-        chunk_size=args.chunk_size,
+        languages=languages,
+        chunk_size=chunk_size,
         dataset_name=args.dataset,
         split=args.split,
         namespace=args.namespace,
         db_path=args.db,
         use_auth_token=auth_token,
+        max_lines_per_document=stack_cfg.max_lines_per_document,
     )
     service.run(resume=args.resume, limit=args.limit)
     return 0

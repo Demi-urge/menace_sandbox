@@ -219,6 +219,43 @@ class BotConfig(_StrictBaseModel):
     epsilon: float = Field(ge=0.0, le=1.0)
 
 
+class StackDatasetConfig(_StrictBaseModel):
+    """Configuration for Stack dataset ingestion and retrieval."""
+
+    enabled: bool = False
+    allowed_languages: Set[str] = Field(
+        default_factory=lambda: {"python"},
+        description="Whitelisted programming languages from The Stack dataset",
+    )
+    max_lines_per_document: int = Field(
+        800,
+        ge=0,
+        description="Maximum number of lines retained per Stack document",
+    )
+    chunk_size: int = Field(
+        2048,
+        ge=1,
+        description="Character chunk size used when embedding Stack documents",
+    )
+    retrieval_top_k: int = Field(
+        5,
+        ge=0,
+        description="Maximum Stack records to retrieve per query",
+    )
+
+    @field_validator("allowed_languages")
+    @classmethod
+    def _normalise_languages(
+        cls, value: Set[str], _info
+    ) -> Set[str]:  # type: ignore[override]
+        normalised = {
+            str(language).strip().lower()
+            for language in value
+            if isinstance(language, str) and language.strip()
+        }
+        return normalised
+
+
 class ContextBuilderConfig(_StrictBaseModel):
     """Context builder tuning parameters."""
 
@@ -313,6 +350,7 @@ class Config(_StrictBaseModel):
     vector_store: VectorStoreConfig = VectorStoreConfig()
     bot: BotConfig
     context_builder: ContextBuilderConfig = ContextBuilderConfig()
+    stack_dataset: StackDatasetConfig = StackDatasetConfig()
     watch_config: bool = True
 
     # ------------------------------------------------------------------
@@ -387,6 +425,7 @@ class Config(_StrictBaseModel):
 BASE_DIR = get_project_root()
 CONFIG_DIR = BASE_DIR / "config"
 DEFAULT_SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
+STACK_CONTEXT_FILE = CONFIG_DIR / "stack_context.yaml"
 
 _MODE: str | None = None
 _CONFIG_PATH: Path | None = None
@@ -518,6 +557,9 @@ def load_config(
         raise FileNotFoundError(
             f"Config profile '{active_mode}' not found at {profile_file}"
         )
+
+    if STACK_CONTEXT_FILE.exists():
+        data = _merge_dict(data, _load_yaml(STACK_CONTEXT_FILE))
 
     if config_file:
         data = _merge_dict(data, _load_yaml(Path(config_file)))
