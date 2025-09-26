@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Iterator, List, Mapping
+import hashlib
 
 import pytest
 
@@ -130,4 +131,73 @@ def test_stack_ingestor_resume_skips_existing(tmp_path: Path, sample_records, mo
     assert first_processed == 2
     assert second_processed == 0
     assert len(vector_service.calls) == initial_records
+
+
+def test_stack_ingestor_filters_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    python_sample = {
+        "language": "python",
+        "repo_name": "stack/project",
+        "path": "main.py",
+        "content": "line 1\nline 2\nline 3\nline 4 extra",
+    }
+    other_samples = [
+        {
+            "language": "java",
+            "repo_name": "stack/project",
+            "path": "Main.java",
+            "content": "public class Main {}",
+        },
+        {
+            "language": "python",
+            "repo_name": "stack/project",
+            "path": "empty.py",
+            "content": "",  # skipped because content is blank
+        },
+    ]
+    samples = [python_sample, *other_samples]
+    loader = _patch_load_dataset(monkeypatch, samples)
+
+    metadata_path = tmp_path / "stack-meta.db"
+    metadata_store = StackMetadataStore(metadata_path, namespace="filters")
+    vector_service = DummyVectorService()
+    ingestor = StackIngestor(
+        languages=("python",),
+        max_lines=3,
+        max_bytes=40,
+        chunk_lines=2,
+        batch_size=2,
+        metadata_store=metadata_store,
+        vector_service=vector_service,
+        dataset_loader=loader,
+    )
+
+    processed = ingestor.ingest(resume=False)
+
+    assert processed == 1
+    assert len(vector_service.calls) == 2  # two chunks after truncation
+    assert {call["record"]["language"] for call in vector_service.calls} == {"python"}
+    assert all(len(call["record"]["text"].encode("utf-8")) <= 40 for call in vector_service.calls)
+
+    chunk_lookup = {
+        call["record_id"]: call["record"]["text"]
+        for call in vector_service.calls
+    }
+
+    cur = metadata_store.conn.cursor()
+    cur.execute(
+        f"SELECT embedding_id, chunk_hash, file_lines, chunk_lines FROM {metadata_store.metadata_table}"
+    )
+    rows = cur.fetchall()
+    assert len(rows) == len(chunk_lookup)
+    for embedding_id, chunk_hash, file_lines, chunk_lines in rows:
+        text = chunk_lookup[embedding_id]
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest() == chunk_hash
+        assert file_lines <= 3
+        assert 0 < chunk_lines <= 2
+
+    cur.execute(
+        f"SELECT file_id, language FROM {metadata_store.progress_table}"
+    )
+    progress = cur.fetchall()
+    assert progress == [("stack/project:main.py", "python")]
 

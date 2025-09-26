@@ -2403,6 +2403,39 @@ placeholders for `STACK_STREAMING=0`, `STACK_HF_TOKEN=`,
 `HUGGINGFACE_TOKEN=`. Overwrite the defaults with real values to enable Stack
 streaming and point the retrievers at pre-built Stack indices.
 
+### Stack dataset ingestion workflow
+The Stack ingestion pipeline is provided by `vector_service.stack_ingest` and
+streams deduplicated repositories from Hugging Face using `datasets.load_dataset`.
+Install the optional `datasets` dependency and ensure `SharedVectorService`
+is available before invoking the ingestor; otherwise the module raises a
+runtime error. 【F:vector_service/stack_ingest.py†L20-L38】【F:vector_service/stack_ingest.py†L344-L388】
+
+Provide credentials via `STACK_HF_TOKEN` or any of the supported
+Hugging Face environment variables. When `STACK_STREAMING=0` the CLI exits
+without processing, allowing operators to disable ingestion in low-storage
+environments. The command-line entry point accepts overrides for dataset name,
+chunking parameters and cache locations, so you can run
+
+```bash
+python -m vector_service.stack_ingest --limit 100 --batch-size 8
+```
+
+to build a small local cache. 【F:vector_service/stack_ingest.py†L52-L141】【F:vector_service/stack_ingest.py†L486-L540】
+
+`StackIngestor` normalises languages, enforces per-file limits, chunks source
+files and zeroes out raw text after each batch so only embeddings and metadata
+are retained. The metadata store persists chunk hashes, file summaries and a
+progress table in SQLite or DuckDB for later retrieval. Default safeguards are
+defined in `StackDatasetConfig`, covering language allowlists, maximum lines
+and bytes, retrieval limits and cache locations. 【F:vector_service/stack_ingest.py†L82-L188】【F:vector_service/stack_ingest.py†L360-L438】【F:config.py†L222-L311】
+
+Configure the runtime by setting `STACK_INDEX_PATH`, `STACK_METADATA_PATH`,
+`STACK_CACHE_DIR` and `STACK_PROGRESS_PATH`. These values inform both the
+ingestor and `ContextBuilder` so Stack results are appended to prompts only when
+embeddings are available. The ingestion cache defaults to `stack_embeddings.db`
+in the working directory, keeping only vectors and metadata to limit disk
+usage. 【F:vector_service/stack_ingest.py†L101-L202】【F:config.py†L247-L312】【F:vector_service/context_builder.py†L520-L638】
+
 ### Autoscaling and self-healing
 `Autoscaler` integrates with `PredictiveResourceAllocator` for dynamic scaling, while `SelfHealingOrchestrator` redeploys crashed bots and triggers automatic rollbacks when failures persist.
 
