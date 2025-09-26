@@ -1302,6 +1302,7 @@ class ContextBuilder:
             metadata_path=metadata_path,
             index_path=index_path,
             vector_store=vector_store,
+            vector_service=getattr(retr, "vector_service", None),
             use_auth_token=token,
         )
         processed = ingestor.ingest(resume=resume, limit=limit)
@@ -1317,14 +1318,16 @@ class ContextBuilder:
         except Exception:
             pass
 
-        if hasattr(ingestor.vector_store, "path"):
+        ingestor_store = getattr(ingestor, "vector_store", None)
+        store_path = getattr(ingestor_store, "path", None)
+        if store_path:
             try:
-                self.stack_index_path = Path(ingestor.vector_store.path)
+                self.stack_index_path = Path(store_path)
             except Exception:
                 pass
         try:
-            retr.stack_index = ingestor.vector_store
-            setattr(retr, "vector_store", ingestor.vector_store)
+            retr.stack_index = ingestor_store
+            setattr(retr, "vector_store", ingestor_store)
         except Exception:
             pass
 
