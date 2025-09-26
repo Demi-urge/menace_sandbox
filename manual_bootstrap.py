@@ -80,26 +80,43 @@ def _describe_settings(logger: logging.Logger, settings: SandboxSettings) -> Non
         env_file.resolve(),
     )
 
-def _register_balolos_coder():
-    from menace.self_coding_engine import SelfCodingEngine
-    from menace.data_bot import DataBot
-    from menace.bot_registry import BotRegistry, internalize_coding_bot
-    from menace.model_automation_pipeline import ModelAutomationPipeline
+def _register_balolos_coder() -> None:
+    logger = logging.getLogger("manual_bootstrap")
 
-    engine = SelfCodingEngine()
-    data_bot = DataBot()
-    registry = BotRegistry()
-    pipeline = ModelAutomationPipeline()
+    try:
+        from menace.self_coding_engine import SelfCodingEngine
+        from menace.data_bot import DataBot
+        from menace.bot_registry import BotRegistry
+        from menace.self_coding_manager import internalize_coding_bot
+        from menace.model_automation_pipeline import ModelAutomationPipeline
+    except Exception:
+        logger.warning(
+            "Skipping Balolos Coder registration; dependencies unavailable",
+            exc_info=True,
+        )
+        return
 
-    internalize_coding_bot(
-        name="Balolos Coder",
-        engine=engine,
-        data_bot=data_bot,
-        pipeline=pipeline,
-        registry=registry
-    )
+    try:
+        engine = SelfCodingEngine()
+        data_bot = DataBot()
+        registry = BotRegistry()
+        pipeline = ModelAutomationPipeline()
 
-    print("Bots now in registry:", registry.get_all_bots())
+        internalize_coding_bot(
+            name="Balolos Coder",
+            engine=engine,
+            data_bot=data_bot,
+            pipeline=pipeline,
+            registry=registry,
+        )
+    except Exception:
+        logger.warning(
+            "Balolos Coder registration failed; continuing without it",
+            exc_info=True,
+        )
+        return
+
+    logger.info("Bots now in registry: %s", registry.get_all_bots())
 
 def main(argv: Sequence[str] | None = None, env: MutableMapping[str, str] | None = None) -> int:
     args = _parse_args(argv)

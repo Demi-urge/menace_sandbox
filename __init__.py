@@ -29,14 +29,37 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
+
+def _resolve_with_package_root(target: os.PathLike[str] | str) -> Path:
+    """Return *target* as a :class:`Path` rooted at the package directory."""
+
+    path = Path(target)
+    if path.is_absolute():
+        return path
+    return (_PACKAGE_ROOT / path).resolve(strict=False)
+
+
+def _resolve_module_with_package_root(module: str) -> Path:
+    """Return the filesystem path for ``module`` relative to the package."""
+
+    module_path = Path(module.replace(".", "/"))
+    return _resolve_with_package_root(module_path.with_suffix(".py"))
+
+
+def _path_for_prompt_stub(target: os.PathLike[str] | str) -> str:
+    """Return a POSIX path suitable for prompt ingestion."""
+
+    return _resolve_with_package_root(target).as_posix()
+
+
 sys.modules.setdefault(
     "dynamic_path_router",
     types.SimpleNamespace(
-        resolve_path=lambda p: Path(p),
-        resolve_dir=lambda p: Path(p),
-        resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
-        path_for_prompt=lambda p: Path(p).as_posix(),
-        get_project_root=lambda: Path("."),
+        resolve_path=_resolve_with_package_root,
+        resolve_dir=_resolve_with_package_root,
+        resolve_module_path=_resolve_module_with_package_root,
+        path_for_prompt=_path_for_prompt_stub,
+        get_project_root=lambda: _PACKAGE_ROOT,
     ),
 )
 
