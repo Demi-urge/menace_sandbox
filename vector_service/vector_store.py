@@ -379,6 +379,115 @@ def create_vector_store(
 
 
 _default_store: VectorStore | None = None
+_stack_store: VectorStore | None = None
+_stack_metadata_path: Path | None = None
+
+
+def _coerce_path(value: Any) -> Path | None:
+    if value in {None, "", b""}:
+        return None
+    try:
+        path = Path(str(value))
+    except Exception:
+        return None
+    try:
+        return resolve_path(path)
+    except Exception:
+        return path.resolve() if path.is_absolute() else path
+
+
+def _stack_vector_store_config() -> Tuple[int, Path, str, str, Path | None]:
+    """Return configuration for the dedicated Stack vector index.
+
+    The helper inspects the global configuration object for optional
+    ``stack_vector_store`` and ``stack_dataset`` sections.  When settings are
+    absent sensible defaults are used so tests can rely on ephemeral indexes.
+    """
+
+    dim = 384
+    backend = "annoy"
+    metric = "angular"
+    index_path: Path | None = None
+    metadata_path: Path | None = None
+
+    try:  # pragma: no cover - configuration may be missing in tests
+        from config import CONFIG
+
+        vec_cfg = getattr(CONFIG, "vector", None)
+        if vec_cfg is not None:
+            try:
+                dim = int(getattr(vec_cfg, "dimensions", dim))
+            except Exception:
+                pass
+
+        stack_store_cfg = getattr(CONFIG, "stack_vector_store", None)
+        if stack_store_cfg is None:
+            stack_store_cfg = getattr(CONFIG, "vector_store", None)
+
+        if stack_store_cfg is not None:
+            try:
+                backend = str(getattr(stack_store_cfg, "backend", backend))
+            except Exception:
+                pass
+            try:
+                metric = str(getattr(stack_store_cfg, "metric", metric))
+            except Exception:
+                pass
+            index_candidate = None
+            try:
+                index_candidate = getattr(stack_store_cfg, "path")
+            except AttributeError:
+                index_candidate = None
+            if index_candidate:
+                coerced = _coerce_path(index_candidate)
+                if coerced is not None:
+                    index_path = coerced
+            meta_candidate = None
+            try:
+                meta_candidate = getattr(stack_store_cfg, "metadata_path")
+            except AttributeError:
+                meta_candidate = None
+            if meta_candidate:
+                coerced = _coerce_path(meta_candidate)
+                if coerced is not None:
+                    metadata_path = coerced
+
+        stack_dataset_cfg = getattr(CONFIG, "stack_dataset", None)
+        if stack_dataset_cfg is not None:
+            for attr in ("index_path", "vector_index_path"):
+                try:
+                    value = getattr(stack_dataset_cfg, attr)
+                except AttributeError:
+                    value = None
+                if value:
+                    coerced = _coerce_path(value)
+                    if coerced is not None:
+                        index_path = coerced
+                        break
+            if metadata_path is None:
+                for attr in ("metadata_path", "metadata_db", "db_path"):
+                    try:
+                        value = getattr(stack_dataset_cfg, attr)
+                    except AttributeError:
+                        value = None
+                    if value:
+                        coerced = _coerce_path(value)
+                        if coerced is not None:
+                            metadata_path = coerced
+                            break
+            if index_path is None and metadata_path is not None:
+                index_path = metadata_path.with_suffix(".index")
+    except Exception:
+        pass
+
+    if index_path is None:
+        index_path = _coerce_path("stack_embeddings.index") or Path(
+            "stack_embeddings.index"
+        )
+    if metadata_path is None:
+        metadata_path = _coerce_path("stack_embeddings.db")
+
+    return dim, index_path, backend, metric, metadata_path
 
 
 def get_default_vector_store() -> VectorStore | None:
@@ -406,6 +515,31 @@ def get_default_vector_store() -> VectorStore | None:
     return _default_store
 
 
+def get_stack_vector_store() -> VectorStore | None:
+    """Return a cached :class:`VectorStore` dedicated to Stack embeddings."""
+
+    global _stack_store, _stack_metadata_path
+    if _stack_store is not None:
+        return _stack_store
+
+    dim, index_path, backend, metric, metadata_path = _stack_vector_store_config()
+    _stack_metadata_path = metadata_path
+    try:
+        _stack_store = create_vector_store(dim, index_path, backend=backend, metric=metric)
+    except Exception:
+        _stack_store = None
+    return _stack_store
+
+
+def get_stack_metadata_path() -> Path | None:
+    """Return the resolved metadata database path for Stack embeddings."""
+
+    global _stack_store, _stack_metadata_path
+    if _stack_store is None:
+        get_stack_vector_store()
+    return _stack_metadata_path
+
+
 __all__ = [
     "VectorStore",
     "FaissVectorStore",
@@ -414,4 +548,6 @@ __all__ = [
     "ChromaVectorStore",
     "create_vector_store",
     "get_default_vector_store",
+    "get_stack_vector_store",
+    "get_stack_metadata_path",
 ]

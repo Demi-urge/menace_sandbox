@@ -14,6 +14,8 @@ import asyncio
 import math
 import os
 import json
+import sqlite3
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
 
 import urllib.request
@@ -541,11 +543,13 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass
 class StackRetriever:
-    """Query Stack embeddings stored in the shared vector store."""
+    """Query Stack embeddings stored in a dedicated index."""
 
     context_builder: Any
-    vector_service: "SharedVectorService" | None = None
+    stack_index: "VectorStore" | None = None
     vector_store: "VectorStore" | None = None
+    metadata_db_path: str | Path | None = None
+    vector_service: "SharedVectorService" | None = None
     namespace: str = "stack"
     top_k: int = 5
     metric: str = "cosine"
@@ -574,7 +578,13 @@ class StackRetriever:
         if self.patch_safety is None:
             ps = getattr(self.context_builder, "patch_safety", None)
             self.patch_safety = ps if isinstance(ps, PatchSafety) else PatchSafety()
-        self.license_denylist = set(self.license_denylist or ())
+        normalised = {
+            str(lic).strip()
+            for lic in (self.license_denylist or set())
+            if isinstance(lic, str) and lic.strip()
+        }
+        self.license_denylist = set(normalised)
+        self._license_denylist_lower = {lic.lower() for lic in self.license_denylist}
         if self.vector_service is None:
             try:  # pragma: no cover - heavy dependency handled lazily
                 from .vectorizer import SharedVectorService  # type: ignore
@@ -583,8 +593,21 @@ class StackRetriever:
                     SharedVectorService,
                 )
             self.vector_service = SharedVectorService()
-        if self.vector_store is None and self.vector_service is not None:
-            self.vector_store = getattr(self.vector_service, "vector_store", None)
+        if isinstance(self.metadata_db_path, (str, Path)):
+            try:
+                self.metadata_db_path = Path(self.metadata_db_path)
+            except Exception:
+                self.metadata_db_path = None
+        self._metadata_table = f"{self.namespace}_metadata"
+        self._metadata_conn: sqlite3.Connection | None = None
+        if self.stack_index is None and self.vector_service is not None:
+            self.stack_index = getattr(self.vector_service, "vector_store", None)
+        # Backwards compatibility for callers using the old ``vector_store`` name
+        vector_store_alias = getattr(self, "vector_store", None)
+        if vector_store_alias is not None and self.stack_index is None:
+            self.stack_index = vector_store_alias
+        elif vector_store_alias is None:
+            setattr(self, "vector_store", self.stack_index)
         self.metric = str(self.metric or "cosine").lower()
         self.embedder = getattr(self.vector_service, "text_embedder", None)
 
@@ -684,11 +707,63 @@ class StackRetriever:
         entry.setdefault("id", rid)
         return entry, vec, raw_meta
 
-    def _prepare_metadata(self, raw: Dict[str, Any], record_id: str) -> Dict[str, Any]:
+    def _get_metadata_connection(self) -> sqlite3.Connection | None:
+        if not isinstance(self.metadata_db_path, Path):
+            return None
+        if not self.metadata_db_path.exists():
+            return None
+        if self._metadata_conn is None:
+            try:
+                conn = sqlite3.connect(
+                    str(self.metadata_db_path), check_same_thread=False
+                )
+                conn.row_factory = sqlite3.Row
+                self._metadata_conn = conn
+            except Exception:
+                self._metadata_conn = None
+        return self._metadata_conn
+
+    def _load_metadata(self, record_id: str) -> Dict[str, Any]:
+        conn = self._get_metadata_connection()
+        if conn is None:
+            return {}
+        try:
+            cur = conn.execute(
+                f"""
+                SELECT repo, path, language, license, chunk_index, start_line,
+                       end_line, token_count
+                FROM {self._metadata_table}
+                WHERE embedding_id = ?
+                """,
+                (record_id,),
+            )
+            row = cur.fetchone()
+        except Exception:
+            return {}
+        if row is None:
+            return {}
+        if isinstance(row, sqlite3.Row):
+            data = {key: row[key] for key in row.keys()}
+        else:  # pragma: no cover - defensive fallback for custom cursors
+            cols = [desc[0] for desc in getattr(cur, "description", [])]
+            data = {col: row[idx] for idx, col in enumerate(cols)}
+        return {k: v for k, v in data.items() if v is not None}
+
+    def _prepare_metadata(
+        self,
+        raw: Dict[str, Any],
+        record_id: str,
+        db_meta: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         meta: Dict[str, Any] = {}
+        if isinstance(db_meta, dict):
+            for key, value in db_meta.items():
+                if value is None:
+                    continue
+                meta[key] = value
         if isinstance(raw, dict):
             for key, value in raw.items():
-                if value is None:
+                if value is None or key in meta:
                     continue
                 meta[key] = value
         meta.setdefault("record_id", record_id)
@@ -707,7 +782,7 @@ class StackRetriever:
         vector = self._coerce_vector(query)
         if not vector:
             return []
-        store = self.vector_store
+        store = self.stack_index
         if store is None:
             return []
         max_hits = max(0, int(k if k is not None else self.top_k))
@@ -732,7 +807,24 @@ class StackRetriever:
             if entry_type and entry_type != self.namespace.lower():
                 continue
             rid = str(entry.get("id") or record_id)
-            meta = self._prepare_metadata(raw_meta, rid)
+            db_meta = self._load_metadata(rid)
+            meta = self._prepare_metadata(raw_meta, rid, db_meta)
+            license_value = str(meta.get("license") or "").strip()
+            if license_value:
+                meta["license"] = license_value
+            if (
+                license_value
+                and license_value.lower() in self._license_denylist_lower
+            ):
+                continue
+            fp_value = meta.get("license_fingerprint")
+            if fp_value is not None:
+                mapped_license = _LICENSE_DENYLIST.get(str(fp_value))
+                if (
+                    mapped_license
+                    and mapped_license.lower() in self._license_denylist_lower
+                ):
+                    continue
             tags = meta.get("tags")
             tag_set = (
                 {str(t) for t in tags}
@@ -784,9 +876,12 @@ class StackRetriever:
                     penalty += float(severity)
                 except Exception:
                     pass
-            lic = meta.get("license")
+            lic = str(meta.get("license") or "").strip()
             fp = meta.get("license_fingerprint")
-            if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
+            mapped = _LICENSE_DENYLIST.get(str(fp))
+            if lic and lic.lower() in self._license_denylist_lower:
+                penalty += 1.0
+            elif mapped and mapped.lower() in self._license_denylist_lower:
                 penalty += 1.0
             similarity = self._compute_similarity(
                 vector, stored_vec, float(distance), backend
@@ -807,6 +902,7 @@ class StackRetriever:
                 "score": score,
                 "similarity": similarity,
                 "metadata": meta,
+                "redacted": True,
             }
             if reason is not None:
                 item["reason"] = reason

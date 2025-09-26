@@ -70,6 +70,14 @@ _dynamic_path_router = load_internal("dynamic_path_router")
 resolve_path = _dynamic_path_router.resolve_path
 path_for_prompt = _dynamic_path_router.path_for_prompt
 
+_vector_store_module = load_internal("vector_service.vector_store")
+get_stack_vector_store = getattr(
+    _vector_store_module, "get_stack_vector_store", lambda: None
+)
+get_stack_metadata_path = getattr(
+    _vector_store_module, "get_stack_metadata_path", lambda: None
+)
+
 GPTMemoryInterface = load_internal("gpt_memory_interface").GPTMemoryInterface
 
 _safety_monitor = load_internal("safety_monitor")
@@ -677,12 +685,16 @@ class SelfCodingEngine:
             patch_service = getattr(getattr(builder, "patch_retriever", None), "vector_service", None)
             if patch_service is None:
                 patch_service = getattr(getattr(builder, "retriever", None), "vector_service", None)
-            stack_store = getattr(patch_service, "vector_store", None) if patch_service else None
+            stack_store = get_stack_vector_store()
+            if stack_store is None and patch_service is not None:
+                stack_store = getattr(patch_service, "vector_store", None)
+            metadata_path = get_stack_metadata_path()
             try:
                 builder.stack_retriever = stack_cls(  # type: ignore[call-arg]
                     context_builder=builder,
                     vector_service=patch_service,
-                    vector_store=stack_store,
+                    stack_index=stack_store,
+                    metadata_db_path=metadata_path,
                     top_k=max(1, int(getattr(stack_cfg, "retrieval_top_k", 5) or 5)),
                     max_lines=max(0, int(getattr(stack_cfg, "max_lines_per_document", 0) or 0)),
                     patch_safety=getattr(builder, "patch_safety", None),
