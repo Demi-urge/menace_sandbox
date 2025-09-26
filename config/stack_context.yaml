@@ -21,6 +21,10 @@ context_builder:
   # embeddings are unavailable in the current deployment.
   stack_enabled: false
 
+  # The environment variable STACK_STREAMING should remain 0 until Stack
+  # ingestion is explicitly enabled with valid STACK_HF_TOKEN/HUGGINGFACE_TOKEN
+  # credentials. Updating this file alone does not trigger ingestion.
+
   # Restrict Stack snippets to these languages. Leave empty to accept every
   # language present in the embeddings.
   stack_languages:
@@ -36,6 +40,7 @@ context_builder:
   stack_max_lines: 200
 
   # Optional overrides for deployments storing Stack embeddings outside the
-  # default locations. Leave unset to rely on automatic discovery.
+  # default locations. Leave unset to rely on automatic discovery. You can also
+  # export STACK_INDEX_PATH / STACK_METADATA_PATH to set these at runtime.
   stack_index_path: null
   stack_metadata_path: null

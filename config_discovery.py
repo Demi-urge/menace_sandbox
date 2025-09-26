@@ -12,7 +12,10 @@ from typing import Iterable
 import threading
 import logging
 
-from . import RAISE_ERRORS
+try:  # pragma: no cover - allow lightweight test stubs
+    from . import RAISE_ERRORS
+except Exception:  # pragma: no cover - fallback when package stubbed
+    RAISE_ERRORS = False  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,24 @@ class ConfigDiscovery:
         "deployment/terraform",
     ]
     HOST_FILES = ["hosts", "hosts.txt", "cluster_hosts", "/etc/menace/hosts"]
+    STACK_ENV_KEYS = (
+        "STACK_STREAMING",
+        "STACK_HF_TOKEN",
+        "STACK_INDEX_PATH",
+        "STACK_METADATA_PATH",
+    )
+    STACK_CONFIG_HINTS = {
+        "stack_index_path": "STACK_INDEX_PATH",
+        "stack_metadata_path": "STACK_METADATA_PATH",
+    }
+    STACK_ENV_FILES = (
+        Path(".env"),
+        Path(".env.local"),
+        Path(".env.auto"),
+        Path("config/.env"),
+        Path("config/.env.local"),
+        Path("config/stack.env"),
+    )
 
     def _find_terraform_dir(self) -> str | None:
         for name in self.TERRAFORM_PATHS:
@@ -76,12 +97,74 @@ class ConfigDiscovery:
             os.environ.setdefault("CLUSTER_HOSTS", ",".join(hosts))
             os.environ.setdefault("REMOTE_HOSTS", ",".join(hosts))
 
-        self._ensure_stack_env()
+        stack_hints = self._collect_stack_hints()
+        for key, value in stack_hints.items():
+            if key in self.STACK_ENV_KEYS and key not in os.environ and value is not None:
+                os.environ[key] = value
+        token_hint = stack_hints.get("STACK_HF_TOKEN")
+        if token_hint:
+            os.environ.setdefault("HUGGINGFACE_TOKEN", token_hint)
+
+        self._ensure_stack_env(hints=stack_hints)
         self._detect_hardware()
         self._detect_cloud()
 
     # ------------------------------------------------------------------
-    def _ensure_stack_env(self, save_path: str | Path = ".env.auto") -> None:
+    def _parse_env_file(self, path: Path) -> dict[str, str]:
+        data: dict[str, str] = {}
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if value.startswith(("'", '"')) and value.endswith(value[0]):
+                    value = value[1:-1]
+                data[key] = value
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.warning("failed reading %s: %s", path, exc)
+        return data
+
+    def _collect_stack_hints(self) -> dict[str, str]:
+        hints: dict[str, str] = {}
+        for path in self.STACK_ENV_FILES:
+            if not path.exists():
+                continue
+            entries = self._parse_env_file(path)
+            for key in self.STACK_ENV_KEYS:
+                if key in entries:
+                    hints[key] = entries[key]
+
+        context_path = Path("config/stack_context.yaml")
+        if context_path.exists():
+            try:
+                for line in context_path.read_text(encoding="utf-8").splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    for cfg_key, env_key in self.STACK_CONFIG_HINTS.items():
+                        prefix = f"{cfg_key}:"
+                        if not stripped.startswith(prefix):
+                            continue
+                        value = stripped[len(prefix) :].strip()
+                        if not value or value.lower() in {"null", "~"}:
+                            continue
+                        if value.startswith(("'", '"')) and value.endswith(value[0]):
+                            value = value[1:-1]
+                        hints.setdefault(env_key, value)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning("failed reading %s: %s", context_path, exc)
+
+        return hints
+
+    def _ensure_stack_env(
+        self,
+        save_path: str | Path = ".env.auto",
+        *,
+        hints: dict[str, str] | None = None,
+    ) -> None:
         """Ensure Stack-related environment variables exist.
 
         ``ConfigDiscovery`` historically focussed on infrastructure hints such
@@ -95,60 +178,97 @@ class ConfigDiscovery:
         env_path = Path(save_path)
         existing: dict[str, str] = {}
         if env_path.exists():
-            try:
-                for line in env_path.read_text(encoding="utf-8").splitlines():
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    existing.setdefault(key.strip(), value.strip())
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.warning("failed reading %s: %s", env_path, exc)
+            existing = self._parse_env_file(env_path)
+
+        hints = hints or {}
+        combined: dict[str, str] = dict(existing)
+        for key, value in hints.items():
+            if value is not None:
+                combined[key] = value
 
         env_updates: dict[str, str] = {}
+        generated_defaults: set[str] = set()
+        file_values: dict[str, str] = dict(existing)
+        needs_rewrite = False
+
+        placeholders = {
+            "STACK_STREAMING": "0",
+            "STACK_HF_TOKEN": "",
+            "STACK_INDEX_PATH": "",
+            "STACK_METADATA_PATH": "",
+        }
 
         def _truthy(value: str | None) -> bool:
             if value is None:
                 return False
             return value.strip().lower() in {"1", "true", "yes", "on", "y"}
 
-        stack_streaming = os.environ.get("STACK_STREAMING")
-        if not stack_streaming:
-            stack_streaming = existing.get("STACK_STREAMING") or "1"
-            if "STACK_STREAMING" not in existing:
-                env_updates["STACK_STREAMING"] = stack_streaming
+        for key, placeholder in placeholders.items():
+            value = os.environ.get(key)
+            if value is None:
+                value = combined.get(key)
+            if value is None:
+                value = placeholder
+                generated_defaults.add(key)
+            if key not in existing:
+                env_updates[key] = value
+            elif existing.get(key) != value:
+                needs_rewrite = True
+            file_values[key] = value
+            os.environ.setdefault(key, value)
 
         token_sources = (
+            os.environ.get("STACK_HF_TOKEN"),
             os.environ.get("HUGGINGFACE_TOKEN"),
             os.environ.get("HUGGINGFACE_API_TOKEN"),
             os.environ.get("HUGGINGFACEHUB_API_TOKEN"),
             os.environ.get("HF_TOKEN"),
+            combined.get("STACK_HF_TOKEN"),
+            combined.get("HUGGINGFACE_TOKEN"),
         )
         token_value = next((val for val in token_sources if val), None)
         if token_value is None:
-            token_value = existing.get("HUGGINGFACE_TOKEN")
+            token_value = combined.get("HUGGINGFACE_TOKEN")
         if token_value is None:
             token_value = ""
-            env_updates["HUGGINGFACE_TOKEN"] = token_value
+            if "HUGGINGFACE_TOKEN" not in existing:
+                env_updates["HUGGINGFACE_TOKEN"] = token_value
+            else:
+                if existing.get("HUGGINGFACE_TOKEN") != token_value:
+                    needs_rewrite = True
             os.environ.setdefault("HUGGINGFACE_TOKEN", token_value)
         else:
             os.environ["HUGGINGFACE_TOKEN"] = token_value
             if "HUGGINGFACE_TOKEN" not in existing:
                 env_updates["HUGGINGFACE_TOKEN"] = token_value
-
-        if stack_streaming is not None:
-            os.environ.setdefault("STACK_STREAMING", stack_streaming)
+            elif existing.get("HUGGINGFACE_TOKEN") != token_value:
+                needs_rewrite = True
+        file_values["HUGGINGFACE_TOKEN"] = token_value
 
         missing_credentials = []
+        for alias in ("STACK_HF_TOKEN", "HUGGINGFACE_TOKEN"):
+            if not os.environ.get(alias):
+                missing_credentials.append(alias)
         if not token_value:
             missing_credentials.append("HUGGINGFACE_TOKEN")
 
         stack_enabled = _truthy(os.environ.get("STACK_STREAMING"))
-        if not stack_enabled:
+        if not stack_enabled and "STACK_STREAMING" not in generated_defaults:
             self.logger.warning(
                 "STACK_STREAMING disabled via environment; Stack ingestion will not run"
             )
 
-        if env_updates:
+        if needs_rewrite:
+            file_values.update({k: v for k, v in env_updates.items()})
+            try:
+                with env_path.open("w", encoding="utf-8") as fh:
+                    for key, value in file_values.items():
+                        fh.write(f"{key}={value}\n")
+            except Exception as exc:
+                logger.exception("Failed to save config to %s: %s", env_path, exc)
+                if RAISE_ERRORS:
+                    raise
+        elif env_updates:
             try:
                 with env_path.open("a", encoding="utf-8") as fh:
                     for key, value in env_updates.items():
@@ -237,15 +357,25 @@ class ConfigDiscovery:
         return self._thread
 
 
+_STACK_PLACEHOLDERS = {
+    "STACK_STREAMING": "0",
+    "STACK_HF_TOKEN": "",
+    "STACK_INDEX_PATH": "",
+    "STACK_METADATA_PATH": "",
+}
+
 _DEFAULT_VARS = [
     # Stripe keys are intentionally excluded; stripe_billing_router loads them
     # directly from the environment to avoid storing secrets in config files.
     "DATABASE_URL",
     "OPENAI_API_KEY",
+    *list(_STACK_PLACEHOLDERS.keys()),
 ]
 
 
 def _generate_value(name: str) -> str:
+    if name in _STACK_PLACEHOLDERS:
+        return _STACK_PLACEHOLDERS[name]
     if name.endswith("_URL"):
         return f"sqlite:///{name.lower()}.db"
     return secrets.token_hex(16)
