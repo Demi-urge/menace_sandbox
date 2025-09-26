@@ -1305,11 +1305,38 @@ class SelfCodingEngine:
         except Exception as exc:
             if isinstance(exc, PromptBuildError):
                 raise
-            handle_failure(
-                "context builder failed while creating enriched prompt",
-                exc,
-                logger=self.logger,
+            stack_enabled = bool(prompt_kwargs.get("include_stack_snippets", False))
+            stack_available = stack_enabled and bool(
+                getattr(context_builder, "stack_retriever", None)
             )
+            if stack_available:
+                fallback_kwargs = dict(prompt_kwargs)
+                fallback_kwargs["include_stack_snippets"] = False
+                self.logger.warning(
+                    "Stack prompt context unavailable; retrying without external snippets",
+                    exc_info=True,
+                )
+                try:
+                    prompt_obj = context_builder.build_prompt(
+                        query,
+                        **fallback_kwargs,
+                    )
+                except Exception as fallback_exc:
+                    if isinstance(fallback_exc, PromptBuildError):
+                        raise
+                    handle_failure(
+                        "context builder fallback without Stack context failed",
+                        fallback_exc,
+                        logger=self.logger,
+                    )
+                    raise
+            else:
+                handle_failure(
+                    "context builder failed while creating enriched prompt",
+                    exc,
+                    logger=self.logger,
+                )
+                raise
 
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
 
