@@ -556,6 +556,9 @@ class StackRetriever:
     max_lines: int = 200
     max_alert_severity: float = 1.0
     max_alerts: int = 5
+    languages: Iterable[str] | None = None
+    min_similarity: float | None = None
+    min_score: float | None = None
     license_denylist: set[str] = field(
         default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
     )
@@ -610,6 +613,16 @@ class StackRetriever:
             setattr(self, "vector_store", self.stack_index)
         self.metric = str(self.metric or "cosine").lower()
         self.embedder = getattr(self.vector_service, "text_embedder", None)
+        self.set_languages(self.languages)
+
+    # ------------------------------------------------------------------
+    def set_languages(self, languages: Iterable[str] | None) -> None:
+        normalised = {
+            str(lang).strip().lower()
+            for lang in (languages or [])
+            if isinstance(lang, str) and lang.strip()
+        }
+        self.languages = normalised or None
 
     # ------------------------------------------------------------------
     def embed_query(self, query: str) -> List[float]:
@@ -882,18 +895,12 @@ class StackRetriever:
             license_value = str(meta.get("license") or "").strip()
             if license_value:
                 meta["license"] = license_value
-            if (
-                license_value
-                and license_value.lower() in self._license_denylist_lower
-            ):
-                continue
+                if license_value.lower() in self._license_denylist_lower:
+                    continue
             fp_value = meta.get("license_fingerprint")
             if fp_value is not None:
                 mapped_license = _LICENSE_DENYLIST.get(str(fp_value))
-                if (
-                    mapped_license
-                    and mapped_license.lower() in self._license_denylist_lower
-                ):
+                if mapped_license and mapped_license.lower() in self._license_denylist_lower:
                     continue
             tags = meta.get("tags")
             tag_set = (
@@ -905,6 +912,11 @@ class StackRetriever:
             )
             if excluded and tag_set & excluded:
                 continue
+            language_value = str(meta.get("language") or "").strip().lower()
+            if self.languages:
+                if not language_value or language_value not in self.languages:
+                    continue
+                meta["language"] = language_value
             snippet_source = (
                 meta.get("summary")
                 or meta.get("snippet")
@@ -913,8 +925,27 @@ class StackRetriever:
                 or ""
             )
             if not isinstance(snippet_source, str):
-                snippet_source = ""
+                snippet_source = str(snippet_source or "")
+            snippet_source = snippet_source.strip()
+            if not snippet_source:
+                continue
             snippet = self._trim_snippet(snippet_source)
+            truncated_lines: int | None = None
+            if (
+                snippet != snippet_source
+                and self.max_lines
+                and isinstance(self.max_lines, int)
+                and self.max_lines > 0
+            ):
+                try:
+                    truncated_lines = int(self.max_lines)
+                except Exception:
+                    try:
+                        truncated_lines = int(float(self.max_lines))
+                    except Exception:
+                        truncated_lines = None
+                if truncated_lines is not None:
+                    meta["stack_truncated_lines"] = truncated_lines
             if not snippet:
                 continue
             meta["summary"] = snippet
@@ -931,6 +962,10 @@ class StackRetriever:
                 filtered += 1
                 continue
             meta, reason = governed
+            if truncated_lines is not None:
+                meta.setdefault("stack_truncated_lines", truncated_lines)
+            if self.languages and language_value:
+                meta.setdefault("language", language_value)
             ps = self.patch_safety or PatchSafety()
             ps.max_alert_severity = self.max_alert_severity
             ps.max_alerts = self.max_alerts
@@ -956,6 +991,8 @@ class StackRetriever:
             similarity = self._compute_similarity(
                 vector, stored_vec, float(distance), backend
             )
+            if self.min_similarity is not None and similarity < float(self.min_similarity):
+                continue
             score = max(similarity - penalty, 0.0)
             roi_tag = meta.get("roi_tag")
             if roi_tag is not None:
@@ -963,6 +1000,8 @@ class StackRetriever:
                     score - self.roi_tag_weights.get(str(roi_tag), 0.0),
                     0.0,
                 )
+            if self.min_score is not None and score < float(self.min_score):
+                continue
             meta["risk_score"] = risk_score
             meta.setdefault("license_fingerprint", fp)
             item = {

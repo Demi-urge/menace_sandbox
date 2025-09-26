@@ -774,64 +774,11 @@ class ContextBuilder:
                 if stack_store is None and service is not None:
                     stack_store = getattr(service, "vector_store", None)
                 metadata_path = self.stack_metadata_path or get_stack_metadata_path()
-                if self.stack_retriever is None:
-                    top_k = self.stack_top_k or getattr(dataset_cfg, "retrieval_top_k", 5) or 5
-                    max_lines = self.stack_max_lines or getattr(
-                        dataset_cfg, "max_lines", 0
-                    )
-                    self.stack_retriever = StackRetriever(
-                        context_builder=self,
-                        vector_service=service,
-                        stack_index=stack_store,
-                        metadata_db_path=metadata_path,
-                        top_k=max(1, int(top_k)),
-                        max_lines=max(0, int(max_lines)),
-                        patch_safety=self.patch_safety,
-                        license_denylist=set(self.license_denylist),
-                        risk_penalty=self.risk_penalty,
-                        roi_tag_weights=dict(self.roi_tag_penalties),
-                        max_alert_severity=self.max_alignment_severity,
-                        max_alerts=self.max_alerts,
-                    )
-                else:
-                    retr = self.stack_retriever
-                    try:
-                        if hasattr(retr, "patch_safety"):
-                            retr.patch_safety = self.patch_safety  # type: ignore[attr-defined]
-                        if hasattr(retr, "license_denylist"):
-                            retr.license_denylist = set(self.license_denylist)  # type: ignore[attr-defined]
-                        if hasattr(retr, "risk_penalty"):
-                            retr.risk_penalty = self.risk_penalty  # type: ignore[attr-defined]
-                        if hasattr(retr, "roi_tag_weights") and not getattr(
-                            retr, "roi_tag_weights", {}
-                        ):
-                            retr.roi_tag_weights = dict(self.roi_tag_penalties)  # type: ignore[attr-defined]
-                        if hasattr(retr, "max_alert_severity"):
-                            retr.max_alert_severity = self.max_alignment_severity  # type: ignore[attr-defined]
-                        if hasattr(retr, "max_alerts"):
-                            retr.max_alerts = self.max_alerts  # type: ignore[attr-defined]
-                        if hasattr(retr, "max_lines"):
-                            retr.max_lines = max(0, int(self.stack_max_lines))  # type: ignore[attr-defined]
-                        if hasattr(retr, "top_k") and self.stack_top_k:
-                            retr.top_k = max(1, int(self.stack_top_k))  # type: ignore[attr-defined]
-                        if hasattr(retr, "vector_service") and getattr(
-                            retr, "vector_service", None
-                        ) is None and service is not None:
-                            retr.vector_service = service  # type: ignore[attr-defined]
-                        if hasattr(retr, "stack_index") and getattr(
-                            retr, "stack_index", None
-                        ) is None and stack_store is not None:
-                            retr.stack_index = stack_store  # type: ignore[attr-defined]
-                        if hasattr(retr, "metadata_db_path") and getattr(
-                            retr, "metadata_db_path", None
-                        ) is None and metadata_path is not None:
-                            retr.metadata_db_path = metadata_path  # type: ignore[attr-defined]
-                        if hasattr(retr, "vector_store") and getattr(
-                            retr, "vector_store", None
-                        ) is None and stack_store is not None:
-                            retr.vector_store = stack_store  # type: ignore[attr-defined]
-                    except Exception:
-                        logger.exception("stack retriever configuration failed")
+                self.register_stack_index(
+                    stack_index=stack_store,
+                    metadata_path=metadata_path,
+                    vector_service=service,
+                )
             except Exception:
                 logger.exception("stack retriever initialisation failed")
                 self.stack_retriever = None
@@ -1053,6 +1000,146 @@ class ContextBuilder:
         return None
 
     # ------------------------------------------------------------------
+    def register_stack_index(
+        self,
+        *,
+        stack_index: Any | None = None,
+        metadata_path: Path | str | None = None,
+        vector_service: Any | None = None,
+        languages: Iterable[str] | None = None,
+    ) -> Any | None:
+        if not self.stack_enabled:
+            return None
+
+        resolved_languages = {
+            str(lang).strip().lower()
+            for lang in (languages or self.stack_languages or set())
+            if isinstance(lang, str) and lang.strip()
+        }
+
+        service = vector_service
+        if service is None:
+            try:
+                service = getattr(self.patch_retriever, "vector_service", None)
+            except Exception:
+                service = None
+        if service is None:
+            try:
+                service = getattr(self.retriever, "vector_service", None)
+            except Exception:
+                service = None
+
+        store = stack_index
+        if store is None and service is not None:
+            store = getattr(service, "vector_store", None)
+
+        meta_path: Path | None
+        if isinstance(metadata_path, Path):
+            meta_path = metadata_path
+        elif isinstance(metadata_path, str):
+            try:
+                meta_path = Path(metadata_path)
+            except Exception:
+                meta_path = None
+        else:
+            meta_path = None
+        if meta_path is None:
+            candidate = self.stack_metadata_path or get_stack_metadata_path()
+            if isinstance(candidate, Path):
+                meta_path = candidate
+            elif isinstance(candidate, str):
+                try:
+                    meta_path = Path(candidate)
+                except Exception:
+                    meta_path = None
+
+        retr = getattr(self, "stack_retriever", None)
+        if retr is None and store is not None:
+            top_k = self.stack_top_k or 0
+            if top_k <= 0:
+                top_k = 5
+            max_lines = self.stack_max_lines or 0
+            try:
+                retr = StackRetriever(
+                    context_builder=self,
+                    vector_service=service,
+                    stack_index=store,
+                    metadata_db_path=meta_path,
+                    top_k=max(1, int(top_k)),
+                    max_lines=max(0, int(max_lines)),
+                    patch_safety=self.patch_safety,
+                    license_denylist=set(self.license_denylist),
+                    risk_penalty=self.risk_penalty,
+                    roi_tag_weights=dict(self.roi_tag_penalties),
+                    max_alert_severity=self.max_alignment_severity,
+                    max_alerts=self.max_alerts,
+                    languages=resolved_languages or None,
+                )
+            except Exception:
+                logger.exception("failed to create stack retriever")
+                retr = None
+            self.stack_retriever = retr
+        elif retr is not None:
+            try:
+                if store is not None:
+                    setattr(retr, "stack_index", store)
+                    setattr(retr, "vector_store", store)
+                if service is not None:
+                    setattr(retr, "vector_service", service)
+                if meta_path is not None:
+                    setattr(retr, "metadata_db_path", meta_path)
+                    setattr(retr, "_metadata_conn", None)
+                if hasattr(retr, "patch_safety"):
+                    setattr(retr, "patch_safety", self.patch_safety)
+                if hasattr(retr, "license_denylist"):
+                    setattr(retr, "license_denylist", set(self.license_denylist))
+                if hasattr(retr, "risk_penalty"):
+                    setattr(retr, "risk_penalty", self.risk_penalty)
+                if hasattr(retr, "roi_tag_weights") and not getattr(
+                    retr, "roi_tag_weights", {}
+                ):
+                    setattr(retr, "roi_tag_weights", dict(self.roi_tag_penalties))
+                if hasattr(retr, "max_alert_severity"):
+                    setattr(retr, "max_alert_severity", self.max_alignment_severity)
+                if hasattr(retr, "max_alerts"):
+                    setattr(retr, "max_alerts", self.max_alerts)
+                if hasattr(retr, "max_lines") and self.stack_max_lines:
+                    setattr(retr, "max_lines", max(0, int(self.stack_max_lines)))
+                if hasattr(retr, "top_k") and self.stack_top_k:
+                    setattr(retr, "top_k", max(1, int(self.stack_top_k)))
+                if resolved_languages:
+                    if hasattr(retr, "set_languages"):
+                        retr.set_languages(resolved_languages)
+                    elif hasattr(retr, "languages"):
+                        setattr(retr, "languages", set(resolved_languages))
+            except Exception:
+                logger.exception("stack retriever configuration failed")
+
+        if isinstance(store, Path):
+            self.stack_index_path = store
+        else:
+            index_path = getattr(store, "path", None) or getattr(store, "index_path", None)
+            if isinstance(index_path, (str, Path)):
+                try:
+                    self.stack_index_path = Path(index_path)
+                except Exception:
+                    pass
+        if meta_path is not None:
+            self.stack_metadata_path = meta_path
+
+        if retr is None:
+            return None
+
+        if resolved_languages:
+            try:
+                self.stack_languages = set(resolved_languages)
+            except Exception:
+                pass
+
+        self._stack_ready_checked = False
+        return retr
+
+    # ------------------------------------------------------------------
     def _is_stack_index_stale(self) -> bool:
         retr = getattr(self, "stack_retriever", None)
         if retr is None:
@@ -1267,6 +1354,18 @@ class ContextBuilder:
                 return 0
             self._stack_ready_checked = True
             return processed
+
+    # ------------------------------------------------------------------
+    def trigger_stack_ingestion(
+        self,
+        *,
+        force: bool = False,
+        limit: int | None = None,
+        resume: bool = True,
+    ) -> int:
+        """Explicitly refresh Stack embeddings when external caches change."""
+
+        return self.ensure_stack_embeddings(force=force, limit=limit, resume=resume)
 
     # ------------------------------------------------------------------
     def _ensure_stack_ready(self) -> None:
@@ -2304,7 +2403,9 @@ class ContextBuilder:
                 retrieval_k = 0
             if retrieval_k > 0:
                 try:
-                    stack_hits = self.stack_retriever.retrieve(query, k=retrieval_k)
+                    stack_hits = self.stack_retriever.retrieve(
+                        query, k=retrieval_k, exclude_tags=exclude
+                    )
                 except Exception:
                     logger.exception("stack retriever failed")
                     stack_hits = []
