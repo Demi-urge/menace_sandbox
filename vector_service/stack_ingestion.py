@@ -26,11 +26,28 @@ from .vectorizer import SharedVectorService
 
 LOGGER = logging.getLogger(__name__)
 
+_HF_ENV_KEYS = (
+    "HUGGINGFACE_TOKEN",
+    "HUGGINGFACE_API_TOKEN",
+    "HUGGINGFACEHUB_API_TOKEN",
+    "HF_TOKEN",
+)
+
 
 def _truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_hf_token() -> str | None:
+    for key in _HF_ENV_KEYS:
+        token = os.environ.get(key)
+        if token:
+            if key != "HUGGINGFACE_TOKEN":
+                os.environ.setdefault("HUGGINGFACE_TOKEN", token)
+            return token
+    return None
 
 
 class SQLiteVectorStore:
@@ -287,7 +304,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.info("Stack dataset ingestion disabled via configuration")
         return 0
 
-    auth_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+    auth_token = _resolve_hf_token()
+    if not auth_token:
+        LOGGER.warning(
+            "No Hugging Face credentials found (set HUGGINGFACE_TOKEN); skipping Stack ingestion"
+        )
+        return 0
 
     languages = args.languages
     if languages is None:
