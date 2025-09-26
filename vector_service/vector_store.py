@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Protocol
+import os
 
 import json
 import math
@@ -409,6 +410,17 @@ def _stack_vector_store_config() -> Tuple[int, Path, str, str, Path | None]:
     metric = "angular"
     index_path: Path | None = None
     metadata_path: Path | None = None
+
+    env_index_override = os.getenv("STACK_INDEX_PATH")
+    env_metadata_override = os.getenv("STACK_METADATA_PATH")
+    if env_index_override:
+        coerced = _coerce_path(env_index_override)
+        if coerced is not None:
+            index_path = coerced
+    if env_metadata_override:
+        coerced = _coerce_path(env_metadata_override)
+        if coerced is not None:
+            metadata_path = coerced
 
     try:  # pragma: no cover - configuration may be missing in tests
         from config import CONFIG
