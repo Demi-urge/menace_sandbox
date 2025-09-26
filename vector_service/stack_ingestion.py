@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
 import argparse
-import json
 import logging
 import os
 import sqlite3
@@ -20,13 +19,18 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - dataset ingestion optional in tests
     load_dataset = None  # type: ignore
 
+from chunking import CodeChunk, split_into_chunks
+from code_vectorizer import CodeVectorizer
 from config import StackDatasetConfig, get_config
+from vector_service.embed_utils import EMBED_DIM
+from vector_service.vector_store import VectorStore, create_vector_store
 
 from .vectorizer import SharedVectorService
 
 LOGGER = logging.getLogger(__name__)
 
 _HF_ENV_KEYS = (
+    "STACK_HF_TOKEN",
     "HUGGINGFACE_TOKEN",
     "HUGGINGFACE_API_TOKEN",
     "HUGGINGFACEHUB_API_TOKEN",
@@ -50,13 +54,13 @@ def _resolve_hf_token() -> str | None:
     return None
 
 
-class SQLiteVectorStore:
-    """Minimal SQLite-based vector store dedicated to Stack embeddings."""
+class SQLiteMetadataStore:
+    """Track Stack ingestion metadata and progress in SQLite."""
 
     def __init__(self, path: str | Path, namespace: str = "stack") -> None:
         self.path = Path(path)
         self.namespace = namespace
-        self.table = f"{namespace}_embeddings"
+        self.metadata_table = f"{namespace}_metadata"
         self.progress_table = f"{namespace}_progress"
         self.conn = sqlite3.connect(self.path)
         self._init_schema()
@@ -65,12 +69,18 @@ class SQLiteVectorStore:
         cur = self.conn.cursor()
         cur.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS {self.table} (
-                id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL,
-                origin_db TEXT,
-                vector TEXT NOT NULL,
-                metadata TEXT
+            CREATE TABLE IF NOT EXISTS {self.metadata_table} (
+                embedding_id TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                repo TEXT,
+                path TEXT,
+                language TEXT,
+                license TEXT,
+                chunk_index INTEGER NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                token_count INTEGER,
+                updated_at REAL NOT NULL
             )
             """
         )
@@ -84,37 +94,53 @@ class SQLiteVectorStore:
         )
         self.conn.commit()
 
-    # VectorStore protocol -------------------------------------------------
-    def add(
+    def upsert_chunk_metadata(
         self,
-        kind: str,
-        record_id: str,
-        vector: Sequence[float],
         *,
-        origin_db: str | None = None,
-        metadata: Mapping[str, object] | None = None,
+        embedding_id: str,
+        file_id: str,
+        repo: str,
+        path: str,
+        language: str,
+        license: str,
+        chunk_index: int,
+        start_line: int | None,
+        end_line: int | None,
+        token_count: int | None,
     ) -> None:
-        if kind != self.namespace:
-            raise ValueError(f"unexpected kind '{kind}', expected '{self.namespace}'")
-        payload = json.dumps(list(vector))
-        meta = json.dumps(dict(metadata or {}))
         cur = self.conn.cursor()
         cur.execute(
             f"""
-            INSERT OR REPLACE INTO {self.table} (id, kind, origin_db, vector, metadata)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO {self.metadata_table} (
+                embedding_id,
+                file_id,
+                repo,
+                path,
+                language,
+                license,
+                chunk_index,
+                start_line,
+                end_line,
+                token_count,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (record_id, kind, origin_db, payload, meta),
+            (
+                embedding_id,
+                file_id,
+                repo or None,
+                path or None,
+                language or None,
+                license or None,
+                chunk_index,
+                start_line,
+                end_line,
+                token_count,
+                time.time(),
+            ),
         )
         self.conn.commit()
 
-    def query(self, vector: Sequence[float], top_k: int = 5) -> list[tuple[str, float]]:  # pragma: no cover - unused
-        raise NotImplementedError("Querying Stack embeddings is not supported by the ingestion pipeline")
-
-    def load(self) -> None:  # pragma: no cover - no-op for SQLite store
-        return
-
-    # Progress helpers -----------------------------------------------------
     def has_processed(self, file_id: str) -> bool:
         cur = self.conn.cursor()
         cur.execute(f"SELECT 1 FROM {self.progress_table} WHERE file_id = ?", (file_id,))
@@ -130,7 +156,7 @@ class SQLiteVectorStore:
 
     def reset(self) -> None:
         cur = self.conn.cursor()
-        cur.execute(f"DELETE FROM {self.table}")
+        cur.execute(f"DELETE FROM {self.metadata_table}")
         cur.execute(f"DELETE FROM {self.progress_table}")
         self.conn.commit()
 
@@ -145,22 +171,35 @@ class StackIngestionService:
     split: str = "train"
     namespace: str = "stack"
     db_path: str | Path = "stack_embeddings.db"
+    index_path: str | Path | None = None
+    vector_backend: str | None = None
     use_auth_token: str | None = None
     max_lines_per_document: int = 0
+    max_chunk_lines: int | None = None
 
     def __post_init__(self) -> None:
         self.languages = tuple(lang.lower() for lang in (self.languages or ()))
         if self.max_lines_per_document < 0:
             raise ValueError("max_lines_per_document must be non-negative")
-        self.store = SQLiteVectorStore(self.db_path, namespace=self.namespace)
-        self.vector_service = SharedVectorService(vector_store=self.store)
-        LOGGER.debug("StackIngestionService initialised", extra={"languages": self.languages})
+        if self.max_chunk_lines is None and self.max_lines_per_document:
+            self.max_chunk_lines = self.max_lines_per_document
+        self.metadata_store = SQLiteMetadataStore(self.db_path, namespace=self.namespace)
+        self.index_path = Path(self.index_path or Path(self.db_path).with_suffix(".index"))
+        self._vector_store: VectorStore | None = None
+        self.vector_service: SharedVectorService | None = None
+        self.code_vectorizer = CodeVectorizer()
+        LOGGER.debug(
+            "StackIngestionService initialised",
+            extra={
+                "languages": self.languages,
+                "index_path": str(self.index_path),
+                "backend": self.vector_backend or "annoy",
+            },
+        )
 
     # Public API -----------------------------------------------------------
     def run(self, *, resume: bool = False, limit: int | None = None) -> None:
-        if not resume:
-            LOGGER.info("Resetting existing Stack embeddings at %s", self.db_path)
-            self.store.reset()
+        self._initialise_vector_pipeline(reset=not resume)
         dataset_iter = self._stream_dataset()
         processed = 0
         for sample in dataset_iter:
@@ -192,19 +231,19 @@ class StackIngestionService:
         return iter(load_dataset(self.dataset_name, **kwargs))
 
     def _handle_sample(self, sample: Mapping[str, object]) -> bool:
-        language = str(sample.get("language", "")).lower()
+        language = str(sample.get("language") or "").lower()
         if self.languages and language not in self.languages:
             return False
-        repo = str(sample.get("repo_name", ""))
-        path = str(sample.get("path", ""))
+        repo = str(sample.get("repo_name") or "")
+        path = str(sample.get("path") or "")
         file_id = self._file_identifier(repo, path, sample)
-        if self.store.has_processed(file_id):
+        if self.metadata_store.has_processed(file_id):
             LOGGER.debug("Skipping previously processed file: %s", file_id)
             return False
         content = sample.get("content")
         if not isinstance(content, str) or not content.strip():
             LOGGER.debug("Skipping empty content for file: %s", file_id)
-            self.store.mark_processed(file_id)
+            self.metadata_store.mark_processed(file_id)
             return True
         if self.max_lines_per_document:
             lines = content.splitlines()
@@ -215,26 +254,46 @@ class StackIngestionService:
                     self.max_lines_per_document,
                 )
                 content = "\n".join(lines[: self.max_lines_per_document])
+
         chunk_count = 0
-        for chunk_index, start, end, chunk in self._chunk_content(content):
+        license_info = str(sample.get("license") or "")
+        for chunk_index, chunk in self._chunk_content(content):
             record_id = self._chunk_identifier(file_id, chunk_index)
+            vector = self._embed_chunk(chunk)
             metadata = {
                 "repo": repo,
                 "path": path,
                 "language": language,
+                "license": license_info,
                 "chunk_index": chunk_index,
-                "start": start,
-                "end": end,
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "token_count": chunk.token_count,
             }
-            self.vector_service.vectorise_and_store(
+            if self._vector_store is None:
+                raise RuntimeError("Vector store not initialised")
+            self._vector_store.add(
                 self.namespace,
                 record_id,
-                {"text": chunk},
+                vector,
                 origin_db=self.namespace,
                 metadata=metadata,
             )
+            self.metadata_store.upsert_chunk_metadata(
+                embedding_id=record_id,
+                file_id=file_id,
+                repo=repo,
+                path=path,
+                language=language,
+                license=license_info,
+                chunk_index=chunk_index,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
+                token_count=chunk.token_count,
+            )
             chunk_count += 1
-        self.store.mark_processed(file_id)
+
+        self.metadata_store.mark_processed(file_id)
         LOGGER.info(
             "Embedded %d chunks for %s (%s)",
             chunk_count,
@@ -243,15 +302,33 @@ class StackIngestionService:
         )
         return True
 
-    def _chunk_content(self, content: str) -> Iterable[tuple[int, int, int, str]]:
-        size = max(1, int(self.chunk_size))
-        length = len(content)
-        chunk_index = 0
-        for start in range(0, length, size):
-            end = min(start + size, length)
-            chunk = content[start:end]
-            yield chunk_index, start, end, chunk
-            chunk_index += 1
+    def _chunk_content(self, content: str) -> Iterable[tuple[int, CodeChunk]]:
+        token_limit = max(1, int(self.chunk_size))
+        chunks = split_into_chunks(content, token_limit)
+        for idx, chunk in enumerate(chunks):
+            text = chunk.text
+            if self.max_chunk_lines:
+                lines = text.splitlines()
+                if len(lines) > self.max_chunk_lines:
+                    text = "\n".join(lines[: self.max_chunk_lines])
+                    approx_tokens = len(text.split())
+                    chunk = CodeChunk(
+                        start_line=chunk.start_line,
+                        end_line=min(chunk.end_line, chunk.start_line + self.max_chunk_lines - 1),
+                        text=text,
+                        hash=chunk.hash,
+                        token_count=approx_tokens,
+                    )
+            yield idx, chunk
+
+    def _embed_chunk(self, chunk: CodeChunk) -> Sequence[float]:
+        record = {"content": chunk.text}
+        if self.vector_service is not None:
+            try:
+                return self.vector_service.vectorise("code", record)
+            except Exception as exc:
+                LOGGER.debug("SharedVectorService fallback for chunk failed: %s", exc)
+        return self.code_vectorizer.transform(record)
 
     @staticmethod
     def _file_identifier(repo: str, path: str, sample: Mapping[str, object]) -> str:
@@ -263,6 +340,37 @@ class StackIngestionService:
     @staticmethod
     def _chunk_identifier(file_id: str, chunk_index: int) -> str:
         return f"{file_id}::chunk-{chunk_index}"
+
+    def _initialise_vector_pipeline(self, *, reset: bool) -> None:
+        if reset:
+            LOGGER.info("Resetting existing Stack embeddings at %s", self.db_path)
+            self.metadata_store.reset()
+            self._reset_vector_index()
+        backend = (self.vector_backend or "annoy").lower()
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self._vector_store = create_vector_store(
+            EMBED_DIM,
+            self.index_path,
+            backend=backend,
+            metric="angular",
+        )
+        self.vector_service = SharedVectorService(vector_store=self._vector_store)
+
+    def _reset_vector_index(self) -> None:
+        path = Path(self.index_path)
+        candidates = {
+            path,
+            path.with_suffix(path.suffix + ".meta"),
+            path.with_suffix(path.suffix + ".meta.json"),
+            path.with_suffix(".meta"),
+            path.with_suffix(".meta.json"),
+        }
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+            except Exception:
+                LOGGER.debug("Failed to remove vector index file: %s", candidate)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -277,12 +385,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--chunk-size",
         type=int,
         default=None,
-        help="Maximum characters per chunk (defaults to stack_dataset.chunk_size)",
+        help="Maximum tokens per chunk (defaults to stack_dataset.chunk_size)",
     )
     parser.add_argument("--split", default="train", help="Dataset split to stream")
     parser.add_argument("--dataset", default="bigcode/the-stack-dedup", help="Dataset identifier")
     parser.add_argument("--db", default="stack_embeddings.db", help="SQLite database path")
     parser.add_argument("--namespace", default="stack", help="Vector store namespace")
+    parser.add_argument(
+        "--index-path",
+        default=None,
+        help="Path for the dedicated Stack vector index (defaults to <db>.index)",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        help="Vector index backend (faiss, annoy, chroma, qdrant - defaults to annoy)",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Optional limit on processed files")
     parser.add_argument("--resume", action="store_true", help="Resume from previous progress checkpoint")
     return parser
@@ -306,10 +424,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     auth_token = _resolve_hf_token()
     if not auth_token:
-        LOGGER.warning(
-            "No Hugging Face credentials found (set HUGGINGFACE_TOKEN); skipping Stack ingestion"
+        LOGGER.info(
+            "No Hugging Face credentials found (set STACK_HF_TOKEN if required); proceeding unauthenticated"
         )
-        return 0
 
     languages = args.languages
     if languages is None:
@@ -324,8 +441,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         split=args.split,
         namespace=args.namespace,
         db_path=args.db,
+        index_path=args.index_path,
+        vector_backend=args.backend,
         use_auth_token=auth_token,
         max_lines_per_document=stack_cfg.max_lines_per_document,
+        max_chunk_lines=stack_cfg.max_lines_per_document,
     )
     service.run(resume=args.resume, limit=args.limit)
     return 0
