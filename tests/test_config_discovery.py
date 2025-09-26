@@ -84,9 +84,12 @@ def test_discover_reads_stack_hints(tmp_path, monkeypatch):
         """
 stack_dataset:
   enabled: true
+  index_path: /opt/index-dataset
+  metadata_path: /opt/meta-dataset.db
 context_builder:
-  stack_index_path: /opt/index
-  stack_metadata_path: /opt/meta.db
+  stack:
+    index_path: /opt/index-cb
+    metadata_path: /opt/meta-cb.db
 """
     )
     for var in [

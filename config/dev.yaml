@@ -8,6 +8,13 @@ bot:
 api_keys:
   openai: dev-openai-key
   serp: dev-serp-key
+# Stack retrieval paths for local development
+context_builder:
+  stack:
+    index_path: ./data/stack/index.faiss
+    metadata_path: ./data/stack/metadata.db
+    cache_dir: ./data/stack/cache
+    progress_path: ./data/stack/cache/progress.sqlite
 # Ranker scheduler environment variables:
 # - RANKER_SCHEDULER_INTERVAL: seconds between retrains (0 disables)
 # - RANKER_SCHEDULER_ROI_THRESHOLD: ROI delta triggering immediate retrain
