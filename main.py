@@ -11,6 +11,7 @@ import importlib
 import inspect
 import logging
 import os
+from pathlib import Path
 import pkgutil
 import sys
 from typing import Iterable, List
@@ -28,9 +29,14 @@ logger = logging.getLogger(__name__)
 # without explicit dependency injection.  A unique ``menace_id`` keeps local
 # tables isolated for this process. Explicit paths avoid relying on defaults.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv(
-    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+default_local_db_path = Path(
+    os.getenv("MENACE_LOCAL_DB_PATH", "")
+    or get_project_root() / f"menace_{MENACE_ID}_local.db"
 )
+if not default_local_db_path.is_absolute():
+    default_local_db_path = get_project_root() / default_local_db_path
+default_local_db_path.parent.mkdir(parents=True, exist_ok=True)
+LOCAL_DB_PATH = str(default_local_db_path)
 SHARED_DB_PATH = os.getenv(
     "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
 )
