@@ -27,6 +27,7 @@ from context_builder import handle_failure, PromptBuildError
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, PatchRetriever, StackRetriever, FallbackResult
+from .vector_store import get_stack_vector_store, get_stack_metadata_path
 from config import ContextBuilderConfig, StackDatasetConfig, get_config
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
@@ -426,14 +427,18 @@ class ContextBuilder:
                 service = getattr(self.patch_retriever, "vector_service", None)
                 if service is None:
                     service = getattr(self.retriever, "vector_service", None)
-                store = getattr(service, "vector_store", None) if service else None
+                stack_store = get_stack_vector_store()
+                if stack_store is None and service is not None:
+                    stack_store = getattr(service, "vector_store", None)
+                metadata_path = get_stack_metadata_path()
                 if self.stack_retriever is None:
                     top_k = getattr(stack_cfg, "retrieval_top_k", 5) or 5
                     max_lines = getattr(stack_cfg, "max_lines_per_document", 0) or 0
                     self.stack_retriever = StackRetriever(
                         context_builder=self,
                         vector_service=service,
-                        vector_store=store,
+                        stack_index=stack_store,
+                        metadata_db_path=metadata_path,
                         top_k=max(1, int(top_k)),
                         max_lines=max(0, int(max_lines)),
                         patch_safety=self.patch_safety,
@@ -466,10 +471,18 @@ class ContextBuilder:
                             retr, "vector_service", None
                         ) is None and service is not None:
                             retr.vector_service = service  # type: ignore[attr-defined]
+                        if hasattr(retr, "stack_index") and getattr(
+                            retr, "stack_index", None
+                        ) is None and stack_store is not None:
+                            retr.stack_index = stack_store  # type: ignore[attr-defined]
+                        if hasattr(retr, "metadata_db_path") and getattr(
+                            retr, "metadata_db_path", None
+                        ) is None and metadata_path is not None:
+                            retr.metadata_db_path = metadata_path  # type: ignore[attr-defined]
                         if hasattr(retr, "vector_store") and getattr(
                             retr, "vector_store", None
-                        ) is None and store is not None:
-                            retr.vector_store = store  # type: ignore[attr-defined]
+                        ) is None and stack_store is not None:
+                            retr.vector_store = stack_store  # type: ignore[attr-defined]
                     except Exception:
                         logger.exception("stack retriever configuration failed")
             except Exception:
