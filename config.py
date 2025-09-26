@@ -506,6 +506,26 @@ def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any
     return diff
 
 
+def _env_flag(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on", "y"}:
+        return True
+    if lowered in {"0", "false", "no", "off", "n"}:
+        return False
+    return None
+
+
+def _env_text(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
 class _ConfigChangeHandler(FileSystemEventHandler):
     """Watchdog handler that reloads configuration on file changes."""
 
@@ -609,6 +629,37 @@ def load_config(
         if serp_env:
             env_overrides["api_keys"]["serp"] = serp_env
         data = _merge_dict(data, env_overrides)
+
+    stack_env_overrides: Dict[str, Any] = {}
+    streaming_override = _env_flag("STACK_STREAMING")
+    if streaming_override is not None:
+        stack_env_overrides["enabled"] = streaming_override
+    for env_name, attr in (
+        ("STACK_INDEX_PATH", "index_path"),
+        ("STACK_METADATA_PATH", "metadata_path"),
+        ("STACK_CACHE_DIR", "cache_dir"),
+        ("STACK_PROGRESS_PATH", "progress_path"),
+    ):
+        value = _env_text(env_name)
+        if value:
+            stack_env_overrides[attr] = value
+
+    if stack_env_overrides:
+        stack_dataset_cfg = data.setdefault("stack_dataset", {})
+        if not isinstance(stack_dataset_cfg, dict):
+            stack_dataset_cfg = {}
+            data["stack_dataset"] = stack_dataset_cfg
+        stack_dataset_cfg.update(stack_env_overrides)
+
+        context_builder_cfg = data.setdefault("context_builder", {})
+        if not isinstance(context_builder_cfg, dict):
+            context_builder_cfg = {}
+            data["context_builder"] = context_builder_cfg
+        stack_section = context_builder_cfg.setdefault("stack", {})
+        if not isinstance(stack_section, dict):
+            stack_section = {}
+            context_builder_cfg["stack"] = stack_section
+        stack_section.update(stack_env_overrides)
 
     cfg = Config.model_validate(data)
     if overrides:

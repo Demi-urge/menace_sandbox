@@ -46,10 +46,14 @@ class ConfigDiscovery:
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "HUGGINGFACE_TOKEN",
+        "HF_TOKEN",
     )
     STACK_CONFIG_HINTS = (
+        ("stack_dataset", "enabled", "STACK_STREAMING"),
         ("stack_dataset", "index_path", "STACK_INDEX_PATH"),
         ("stack_dataset", "metadata_path", "STACK_METADATA_PATH"),
+        ("context_builder", "stack", "enabled", "STACK_STREAMING"),
         ("context_builder", "stack", "index_path", "STACK_INDEX_PATH"),
         ("context_builder", "stack", "metadata_path", "STACK_METADATA_PATH"),
     )
@@ -105,9 +109,11 @@ class ConfigDiscovery:
         for key, value in stack_hints.items():
             if key in self.STACK_ENV_KEYS and key not in os.environ and value is not None:
                 os.environ[key] = value
-        token_hint = stack_hints.get("STACK_HF_TOKEN")
-        if token_hint:
-            os.environ.setdefault("HUGGINGFACE_TOKEN", token_hint)
+        for alias in ("STACK_HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKEN"):
+            token_hint = stack_hints.get(alias)
+            if token_hint:
+                os.environ.setdefault("HUGGINGFACE_TOKEN", token_hint)
+                break
 
         self._ensure_stack_env(hints=stack_hints)
         self._detect_hardware()
@@ -163,10 +169,18 @@ class ConfigDiscovery:
                     if section in {None, "", "~"}:
                         continue
                     value = section
+                    if isinstance(value, bool):
+                        hints.setdefault(env_name, "1" if value else "0")
+                        continue
+                    if isinstance(value, (int, float)) and env_name == "STACK_STREAMING":
+                        hints.setdefault(env_name, "1" if value else "0")
+                        continue
                     if isinstance(value, (str, Path)):
                         text = str(value).strip()
                         if text:
                             hints.setdefault(env_name, text)
+                    elif value is not None:
+                        hints.setdefault(env_name, str(value))
 
         return hints
 
@@ -204,7 +218,9 @@ class ConfigDiscovery:
 
         placeholders = {
             "STACK_STREAMING": "0",
-            "STACK_HF_TOKEN": "",
+            "STACK_HF_TOKEN": _HF_PLACEHOLDER,
+            "HUGGINGFACE_TOKEN": _HF_PLACEHOLDER,
+            "HF_TOKEN": _HF_PLACEHOLDER,
             "STACK_INDEX_PATH": "",
             "STACK_METADATA_PATH": "",
         }
@@ -218,7 +234,7 @@ class ConfigDiscovery:
             value = os.environ.get(key)
             if value is None:
                 value = combined.get(key)
-            if value is None:
+            if value is None or not value.strip():
                 value = placeholder
                 generated_defaults.add(key)
             if key not in existing:
@@ -236,37 +252,72 @@ class ConfigDiscovery:
             os.environ.get("HF_TOKEN"),
             combined.get("STACK_HF_TOKEN"),
             combined.get("HUGGINGFACE_TOKEN"),
+            combined.get("HF_TOKEN"),
         )
-        token_value = next((val for val in token_sources if val), None)
-        if token_value is None:
-            token_value = combined.get("HUGGINGFACE_TOKEN")
-        if token_value is None:
-            token_value = ""
+
+        def _real_token(value: str | None) -> str | None:
+            if value is None:
+                return None
+            text = value.strip()
+            if not text or text == _HF_PLACEHOLDER:
+                return None
+            return text
+
+        resolved_token = None
+        for candidate in token_sources:
+            candidate_value = _real_token(candidate)
+            if candidate_value:
+                resolved_token = candidate_value
+                break
+
+        token_display = resolved_token or _HF_PLACEHOLDER
+
+        if resolved_token:
+            os.environ["HUGGINGFACE_TOKEN"] = resolved_token
             if "HUGGINGFACE_TOKEN" not in existing:
-                env_updates["HUGGINGFACE_TOKEN"] = token_value
-            else:
-                if existing.get("HUGGINGFACE_TOKEN") != token_value:
-                    needs_rewrite = True
-            os.environ.setdefault("HUGGINGFACE_TOKEN", token_value)
-        else:
-            os.environ["HUGGINGFACE_TOKEN"] = token_value
-            if "HUGGINGFACE_TOKEN" not in existing:
-                env_updates["HUGGINGFACE_TOKEN"] = token_value
-            elif existing.get("HUGGINGFACE_TOKEN") != token_value:
+                env_updates["HUGGINGFACE_TOKEN"] = resolved_token
+            elif existing.get("HUGGINGFACE_TOKEN") != resolved_token:
                 needs_rewrite = True
-        file_values["HUGGINGFACE_TOKEN"] = token_value
+            for alias in ("STACK_HF_TOKEN", "HF_TOKEN"):
+                if not _real_token(os.environ.get(alias)):
+                    os.environ[alias] = resolved_token
+                current = file_values.get(alias)
+                if current != resolved_token:
+                    file_values[alias] = resolved_token
+                    env_updates[alias] = resolved_token
+                    if alias in existing and existing.get(alias) != resolved_token:
+                        needs_rewrite = True
+        else:
+            if "HUGGINGFACE_TOKEN" not in existing:
+                env_updates["HUGGINGFACE_TOKEN"] = token_display
+            elif existing.get("HUGGINGFACE_TOKEN") != token_display:
+                needs_rewrite = True
+            os.environ.setdefault("HUGGINGFACE_TOKEN", token_display)
+
+        file_values["HUGGINGFACE_TOKEN"] = (
+            resolved_token if resolved_token else token_display
+        )
+
+        def _has_token(value: str | None) -> bool:
+            return _real_token(value) is not None
 
         missing_credentials = []
-        for alias in ("STACK_HF_TOKEN", "HUGGINGFACE_TOKEN"):
-            if not os.environ.get(alias):
+        for alias in ("STACK_HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKEN"):
+            if not _has_token(os.environ.get(alias)):
                 missing_credentials.append(alias)
-        if not token_value:
-            missing_credentials.append("HUGGINGFACE_TOKEN")
 
         stack_enabled = _truthy(os.environ.get("STACK_STREAMING"))
         if not stack_enabled and "STACK_STREAMING" not in generated_defaults:
             self.logger.warning(
                 "STACK_STREAMING disabled via environment; Stack ingestion will not run"
+            )
+        elif not stack_enabled and not resolved_token and "STACK_STREAMING" in generated_defaults:
+            self.logger.info(
+                "STACK_STREAMING disabled (missing Hugging Face credentials); set HF_TOKEN or STACK_HF_TOKEN to enable streaming"
+            )
+        elif stack_enabled and not resolved_token:
+            self.logger.warning(
+                "STACK_STREAMING enabled but no Hugging Face token found; provide HF_TOKEN or STACK_HF_TOKEN to avoid ingestion failures"
             )
 
         if needs_rewrite:
@@ -368,9 +419,13 @@ class ConfigDiscovery:
         return self._thread
 
 
+_HF_PLACEHOLDER = "__SET_HF_TOKEN__"
+
 _STACK_PLACEHOLDERS = {
     "STACK_STREAMING": "0",
-    "STACK_HF_TOKEN": "",
+    "STACK_HF_TOKEN": _HF_PLACEHOLDER,
+    "HF_TOKEN": _HF_PLACEHOLDER,
+    "HUGGINGFACE_TOKEN": _HF_PLACEHOLDER,
     "STACK_INDEX_PATH": "",
     "STACK_METADATA_PATH": "",
 }
