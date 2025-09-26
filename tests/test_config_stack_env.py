@@ -12,6 +12,8 @@ def test_stack_env_overrides_enable_streaming(monkeypatch):
     monkeypatch.setenv("STACK_STREAMING", "1")
     monkeypatch.setenv("STACK_INDEX_PATH", "/tmp/stack.index")
     monkeypatch.setenv("STACK_METADATA_PATH", "/tmp/stack.db")
+    monkeypatch.setenv("STACK_CACHE_DIR", "/tmp/stack-cache")
+    monkeypatch.setenv("STACK_PROGRESS_PATH", "/tmp/stack-progress.sqlite")
     _reset_config(monkeypatch)
 
     cfg = config.load_config()
@@ -22,6 +24,13 @@ def test_stack_env_overrides_enable_streaming(monkeypatch):
     assert cfg.stack_dataset.metadata_path == "/tmp/stack.db"
     assert cfg.context_builder.stack.index_path == "/tmp/stack.index"
     assert cfg.context_builder.stack.metadata_path == "/tmp/stack.db"
+    assert cfg.context_builder.stack.cache_dir == "/tmp/stack-cache"
+    assert cfg.context_builder.stack.progress_path == "/tmp/stack-progress.sqlite"
+    assert cfg.context_builder.stack_enabled is True
+    assert cfg.context_builder.stack_index_path == "/tmp/stack.index"
+    assert cfg.context_builder.stack_metadata_path == "/tmp/stack.db"
+    assert cfg.context_builder.stack_cache_dir == "/tmp/stack-cache"
+    assert cfg.context_builder.stack_progress_path == "/tmp/stack-progress.sqlite"
 
 
 def test_stack_env_defaults_when_unset(monkeypatch):
@@ -42,3 +51,8 @@ def test_stack_env_defaults_when_unset(monkeypatch):
     assert cfg.context_builder.stack.enabled is False
     assert cfg.stack_dataset.index_path
     assert cfg.stack_dataset.metadata_path
+    assert cfg.context_builder.stack_enabled is False
+    assert cfg.context_builder.stack_index_path == cfg.stack_dataset.index_path
+    assert cfg.context_builder.stack_metadata_path == cfg.stack_dataset.metadata_path
+    assert cfg.context_builder.stack_cache_dir == cfg.stack_dataset.cache_dir
+    assert cfg.context_builder.stack_progress_path == cfg.stack_dataset.progress_path

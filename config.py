@@ -22,7 +22,7 @@ import argparse
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING, Set
+from typing import Any, Dict, TYPE_CHECKING, Set, Optional
 from types import SimpleNamespace
 import sys
 import site
@@ -371,6 +371,129 @@ class ContextBuilderConfig(_StrictBaseModel):
         ge=0,
         description="Maximum number of Stack snippets surfaced in prompts (0 disables)",
     )
+    stack_enabled: bool | None = Field(
+        None,
+        description="Toggle Stack retrieval when assembling prompts",
+    )
+    stack_languages: Set[str] | None = Field(
+        default=None,
+        description="Preferred programming languages for Stack retrieval",
+    )
+    stack_max_lines: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum number of lines retained per Stack snippet",
+    )
+    stack_max_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum number of bytes retained per Stack snippet (None keeps all)",
+    )
+    stack_top_k: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of Stack snippets retrieved per query",
+    )
+    stack_index_path: Optional[str] = Field(
+        default=None,
+        description="Explicit path to the Stack vector index",
+    )
+    stack_metadata_path: Optional[str] = Field(
+        default=None,
+        description="Explicit path to the Stack metadata database",
+    )
+    stack_cache_dir: Optional[str] = Field(
+        default=None,
+        description="Directory used for Stack snippet caches",
+    )
+    stack_progress_path: Optional[str] = Field(
+        default=None,
+        description="File path used to persist Stack ingestion progress",
+    )
+    stack_requests_per_minute: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional rate limit for Stack requests per minute",
+    )
+    stack_tokens_per_minute: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional rate limit for Stack tokens per minute",
+    )
+
+    @model_validator(mode="after")
+    def _sync_stack_fields(self) -> "ContextBuilderConfig":
+        stack_cfg = getattr(self, "stack", None)
+        if stack_cfg is None:
+            stack_cfg = StackDatasetConfig()
+        elif not isinstance(stack_cfg, StackDatasetConfig):
+            try:
+                stack_cfg = StackDatasetConfig.model_validate(stack_cfg)
+            except Exception:
+                stack_cfg = StackDatasetConfig()
+
+        if self.stack_enabled is None:
+            self.stack_enabled = bool(getattr(stack_cfg, "enabled", False))
+        else:
+            stack_cfg.enabled = bool(self.stack_enabled)
+
+        languages = self.stack_languages
+        if languages is None:
+            languages = set(getattr(stack_cfg, "languages", set()))
+        normalised_languages = {
+            str(language).strip().lower()
+            for language in (languages or set())
+            if isinstance(language, str) and language.strip()
+        }
+        self.stack_languages = normalised_languages
+        stack_cfg.languages = normalised_languages
+
+        if self.stack_top_k is None:
+            self.stack_top_k = getattr(stack_cfg, "retrieval_top_k", None)
+        else:
+            try:
+                stack_cfg.retrieval_top_k = int(self.stack_top_k)
+            except Exception:
+                stack_cfg.retrieval_top_k = getattr(stack_cfg, "retrieval_top_k", 0)
+
+        if self.stack_max_lines is None:
+            self.stack_max_lines = getattr(stack_cfg, "max_lines", None)
+        else:
+            try:
+                stack_cfg.max_lines = int(self.stack_max_lines)
+            except Exception:
+                stack_cfg.max_lines = getattr(stack_cfg, "max_lines", 0)
+
+        if self.stack_max_bytes is None:
+            self.stack_max_bytes = getattr(stack_cfg, "max_bytes", None)
+        else:
+            try:
+                stack_cfg.max_bytes = None if self.stack_max_bytes is None else int(self.stack_max_bytes)
+            except Exception:
+                stack_cfg.max_bytes = getattr(stack_cfg, "max_bytes", None)
+
+        if self.stack_index_path is None:
+            self.stack_index_path = getattr(stack_cfg, "index_path", None)
+        else:
+            stack_cfg.index_path = self.stack_index_path
+
+        if self.stack_metadata_path is None:
+            self.stack_metadata_path = getattr(stack_cfg, "metadata_path", None)
+        else:
+            stack_cfg.metadata_path = self.stack_metadata_path
+
+        if self.stack_cache_dir is None:
+            self.stack_cache_dir = getattr(stack_cfg, "cache_dir", None)
+        else:
+            stack_cfg.cache_dir = self.stack_cache_dir
+
+        if self.stack_progress_path is None:
+            self.stack_progress_path = getattr(stack_cfg, "progress_path", None)
+        else:
+            stack_cfg.progress_path = self.stack_progress_path
+
+        self.stack = stack_cfg
+        return self
 
 
 class Config(_StrictBaseModel):
@@ -460,6 +583,7 @@ BASE_DIR = get_project_root()
 CONFIG_DIR = BASE_DIR / "config"
 DEFAULT_SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
 STACK_CONTEXT_FILE = CONFIG_DIR / "stack_context.yaml"
+STACK_THRESHOLD_HINTS = CONFIG_DIR / "self_coding_thresholds.yaml"
 
 _MODE: str | None = None
 _CONFIG_PATH: Path | None = None
@@ -487,6 +611,98 @@ def _merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
         else:
             base[key] = value
     return base
+
+
+def _stack_context_overrides() -> Dict[str, Any]:
+    """Extract Stack context overrides from ``self_coding_thresholds.yaml``."""
+
+    if not STACK_THRESHOLD_HINTS.exists():
+        return {}
+    try:
+        raw = _load_yaml(STACK_THRESHOLD_HINTS)
+    except Exception:  # pragma: no cover - diagnostics handled elsewhere
+        logger.exception("failed loading %s", STACK_THRESHOLD_HINTS)
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    stack_section = raw.get("stack")
+    if not isinstance(stack_section, dict):
+        return {}
+
+    overrides: Dict[str, Any] = {}
+
+    context_defaults = stack_section.get("context_builder")
+    dataset_defaults = stack_section.get("dataset")
+
+    def _is_blank(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value) == 0
+        return False
+
+    context_builder_updates: Dict[str, Any] = {}
+    stack_updates: Dict[str, Any] = {}
+
+    if isinstance(context_defaults, dict):
+        mapping = {
+            "enabled": ("stack_enabled", "enabled"),
+            "languages": ("stack_languages", "languages"),
+            "max_lines": ("stack_max_lines", "max_lines"),
+            "max_bytes": ("stack_max_bytes", "max_bytes"),
+            "top_k": ("stack_top_k", "retrieval_top_k"),
+            "index_path": ("stack_index_path", "index_path"),
+            "metadata_path": ("stack_metadata_path", "metadata_path"),
+            "cache_dir": ("stack_cache_dir", "cache_dir"),
+            "progress_path": ("stack_progress_path", "progress_path"),
+            "requests_per_minute": ("stack_requests_per_minute", None),
+            "tokens_per_minute": ("stack_tokens_per_minute", None),
+        }
+        for source, (context_key, stack_key) in mapping.items():
+            if source not in context_defaults:
+                continue
+            value = context_defaults[source]
+            if _is_blank(value):
+                continue
+            context_builder_updates[context_key] = value
+            if stack_key:
+                stack_updates[stack_key] = value
+
+    if context_builder_updates or stack_updates:
+        cb_section: Dict[str, Any] = dict(context_builder_updates)
+        if stack_updates:
+            cb_section.setdefault("stack", {}).update(stack_updates)
+        overrides["context_builder"] = cb_section
+
+    if isinstance(dataset_defaults, dict):
+        dataset_mapping = {
+            "enabled": "enabled",
+            "languages": "languages",
+            "max_lines": "max_lines",
+            "max_bytes": "max_bytes",
+            "top_k": "retrieval_top_k",
+            "index_path": "index_path",
+            "metadata_path": "metadata_path",
+            "cache_dir": "cache_dir",
+            "progress_path": "progress_path",
+            "chunk_lines": "chunk_lines",
+        }
+        dataset_overrides = {}
+        for source, dest in dataset_mapping.items():
+            if source not in dataset_defaults:
+                continue
+            value = dataset_defaults[source]
+            if _is_blank(value):
+                continue
+            dataset_overrides[dest] = value
+        if dataset_overrides:
+            overrides.setdefault("stack_dataset", {}).update(dataset_overrides)
+
+    return overrides
 
 
 def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any]:
@@ -524,6 +740,26 @@ def _env_text(name: str) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+_SECRET_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+
+def _looks_like_secret_token(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    core = stripped.rstrip("=")
+    if len(core) not in {43, 44}:
+        return False
+    return all(char in _SECRET_TOKEN_CHARS for char in core)
+
+
+def _stack_env_text(name: str) -> str | None:
+    value = _env_text(name)
+    if value and _looks_like_secret_token(value):
+        return None
+    return value
 
 
 class _ConfigChangeHandler(FileSystemEventHandler):
@@ -615,6 +851,10 @@ def load_config(
     if STACK_CONTEXT_FILE.exists():
         data = _merge_dict(data, _load_yaml(STACK_CONTEXT_FILE))
 
+    stack_threshold_overrides = _stack_context_overrides()
+    if stack_threshold_overrides:
+        data = _merge_dict(data, stack_threshold_overrides)
+
     if config_file:
         data = _merge_dict(data, _load_yaml(Path(config_file)))
 
@@ -640,7 +880,7 @@ def load_config(
         ("STACK_CACHE_DIR", "cache_dir"),
         ("STACK_PROGRESS_PATH", "progress_path"),
     ):
-        value = _env_text(env_name)
+        value = _stack_env_text(env_name)
         if value:
             stack_env_overrides[attr] = value
 
@@ -660,6 +900,17 @@ def load_config(
             stack_section = {}
             context_builder_cfg["stack"] = stack_section
         stack_section.update(stack_env_overrides)
+
+        cb_field_map = {
+            "enabled": "stack_enabled",
+            "index_path": "stack_index_path",
+            "metadata_path": "stack_metadata_path",
+            "cache_dir": "stack_cache_dir",
+            "progress_path": "stack_progress_path",
+        }
+        for source_key, target_key in cb_field_map.items():
+            if source_key in stack_env_overrides:
+                context_builder_cfg[target_key] = stack_env_overrides[source_key]
 
     cfg = Config.model_validate(data)
     if overrides:

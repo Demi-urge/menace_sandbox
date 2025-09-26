@@ -24,6 +24,8 @@ def test_discover_populates_stack_env(tmp_path, monkeypatch, caplog):
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "STACK_CACHE_DIR",
+        "STACK_PROGRESS_PATH",
         "HUGGINGFACE_TOKEN",
         "HF_TOKEN",
         "HUGGINGFACEHUB_API_TOKEN",
@@ -39,12 +41,16 @@ def test_discover_populates_stack_env(tmp_path, monkeypatch, caplog):
     assert f"STACK_HF_TOKEN={cd._HF_PLACEHOLDER}" in text
     assert "STACK_INDEX_PATH=" in text
     assert "STACK_METADATA_PATH=" in text
+    assert "STACK_CACHE_DIR=" in text
+    assert "STACK_PROGRESS_PATH=" in text
     assert f"HUGGINGFACE_TOKEN={cd._HF_PLACEHOLDER}" in text
     assert f"HF_TOKEN={cd._HF_PLACEHOLDER}" in text
     assert os.environ.get("STACK_STREAMING") == "0"
     assert os.environ.get("STACK_HF_TOKEN") == cd._HF_PLACEHOLDER
     assert os.environ.get("HUGGINGFACE_TOKEN") == cd._HF_PLACEHOLDER
     assert os.environ.get("HF_TOKEN") == cd._HF_PLACEHOLDER
+    assert os.environ.get("STACK_CACHE_DIR") == ""
+    assert os.environ.get("STACK_PROGRESS_PATH") == ""
     assert any("missing Hugging Face credentials" in rec.message for rec in caplog.records)
     assert any("Stack processing disabled" in rec.message for rec in caplog.records)
 
@@ -56,6 +62,8 @@ def test_discover_persists_existing_token(tmp_path, monkeypatch):
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "STACK_CACHE_DIR",
+        "STACK_PROGRESS_PATH",
         "HUGGINGFACE_TOKEN",
         "HF_TOKEN",
     ]:
@@ -98,11 +106,21 @@ context_builder:
     metadata_path: /opt/meta-cb.db
 """
     )
+    (tmp_path / "config" / "self_coding_thresholds.yaml").write_text(
+        """
+stack:
+  context_builder:
+    cache_dir: /var/lib/stack/cache
+    progress_path: /var/lib/stack/progress.sqlite
+"""
+    )
     for var in [
         "STACK_STREAMING",
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "STACK_CACHE_DIR",
+        "STACK_PROGRESS_PATH",
         "HUGGINGFACE_TOKEN",
         "HF_TOKEN",
     ]:
@@ -117,6 +135,8 @@ context_builder:
     # values from the environment file take precedence over config hints
     assert os.environ.get("STACK_INDEX_PATH") == "/var/lib/stack/index"
     assert os.environ.get("STACK_METADATA_PATH") == "/var/lib/stack/meta.sqlite"
+    assert os.environ.get("STACK_CACHE_DIR") == "/var/lib/stack/cache"
+    assert os.environ.get("STACK_PROGRESS_PATH") == "/var/lib/stack/progress.sqlite"
 
 
 def test_discover_streaming_hint_from_config(tmp_path, monkeypatch, caplog):
@@ -128,6 +148,8 @@ def test_discover_streaming_hint_from_config(tmp_path, monkeypatch, caplog):
         "STACK_HF_TOKEN",
         "STACK_INDEX_PATH",
         "STACK_METADATA_PATH",
+        "STACK_CACHE_DIR",
+        "STACK_PROGRESS_PATH",
         "HUGGINGFACE_TOKEN",
         "HF_TOKEN",
     ]:
