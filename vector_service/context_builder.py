@@ -27,7 +27,7 @@ from context_builder import handle_failure, PromptBuildError
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, PatchRetriever, FallbackResult
-from config import ContextBuilderConfig
+from config import ContextBuilderConfig, StackDatasetConfig, get_config
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
@@ -62,6 +62,21 @@ _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Stack dataset configuration helpers
+# ---------------------------------------------------------------------------
+
+
+def _stack_dataset_config() -> StackDatasetConfig:
+    """Return the active Stack dataset configuration."""
+
+    try:
+        return get_config().stack_dataset
+    except Exception:  # pragma: no cover - defensive fallback
+        logger.exception("failed to access stack dataset configuration")
+        return StackDatasetConfig()
+
 
 # ---------------------------------------------------------------------------
 # Failed tag tracking
@@ -488,7 +503,8 @@ class ContextBuilder:
         base = getattr(self.retriever, "retriever", None)
         if base is not None:
             sources.append(base)
-        if self.stack_retriever is not None:
+        stack_cfg = _stack_dataset_config()
+        if self.stack_retriever is not None and stack_cfg.enabled:
             sources.append(self.stack_retriever)
             embedder = getattr(self.stack_retriever, "embedder", None)
             if embedder is not None:
@@ -1482,15 +1498,18 @@ class ContextBuilder:
                 hits.extend(patch_hits)
             except Exception:
                 pass
+        stack_cfg = _stack_dataset_config()
         stack_hits: List[Dict[str, Any]] = []
-        if self.stack_retriever is not None:
+        if self.stack_retriever is not None and stack_cfg.enabled:
             query_embedding = self._get_query_embedding(query)
             if query_embedding:
                 try:
-                    stack_hits = self.stack_retriever.retrieve(
-                        query_embedding,
-                        k=top_k * 5,
-                    )
+                    retrieval_k = max(0, int(stack_cfg.retrieval_top_k))
+                    if retrieval_k > 0:
+                        stack_hits = self.stack_retriever.retrieve(
+                            query_embedding,
+                            k=retrieval_k,
+                        )
                 except Exception:
                     logger.exception("stack retriever failed")
                     stack_hits = []
@@ -1542,11 +1561,29 @@ class ContextBuilder:
             if bucket:
                 buckets[bucket].append(scored)
 
+        allowed_stack_languages = {lang.lower() for lang in stack_cfg.allowed_languages}
+        max_stack_lines = max(0, int(stack_cfg.max_lines_per_document))
+
         if stack_hits:
             for item in stack_hits:
                 bundle = self._normalise_stack_hit(item, query)
                 if not bundle:
                     continue
+                metadata = dict(bundle.get("metadata") or {})
+                language = str(metadata.get("language", "")).lower()
+                if allowed_stack_languages and language and language not in allowed_stack_languages:
+                    continue
+                if language:
+                    metadata["language"] = language
+                if max_stack_lines:
+                    summary = bundle.get("text") or ""
+                    lines = summary.splitlines()
+                    if len(lines) > max_stack_lines:
+                        summary = "\n".join(lines[:max_stack_lines])
+                        metadata["summary"] = summary
+                        metadata["stack_truncated_lines"] = max_stack_lines
+                        bundle["text"] = summary
+                bundle["metadata"] = metadata
                 bucket, scored = self._bundle_to_entry(bundle, query)
                 if bucket:
                     buckets[bucket].append(scored)

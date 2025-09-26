@@ -1,0 +1,14 @@
+# Configuration defaults for Stack dataset ingestion and retrieval.
+#
+# These values are merged into the main configuration by ``config.load_config``
+# and can be overridden per-environment by editing this file. ``enabled`` acts
+# as a global kill-switch so deployments without Stack embeddings can skip
+# ingestion and retrieval logic entirely.
+stack_dataset:
+  enabled: false
+  allowed_languages:
+    - python
+    - javascript
+  max_lines_per_document: 800
+  chunk_size: 2048
+  retrieval_top_k: 5
