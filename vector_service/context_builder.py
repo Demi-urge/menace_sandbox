@@ -26,7 +26,7 @@ from context_builder import handle_failure, PromptBuildError
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
-from .retriever import Retriever, PatchRetriever, FallbackResult
+from .retriever import Retriever, PatchRetriever, StackRetriever, FallbackResult
 from config import ContextBuilderConfig, StackDatasetConfig, get_config
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
@@ -399,6 +399,62 @@ class ContextBuilder:
         self.patch_safety.license_denylist = self.license_denylist
         self.prompt_score_weight = prompt_score_weight
         self.prompt_max_tokens = prompt_max_tokens
+
+        stack_cfg = _stack_dataset_config()
+        if stack_cfg.enabled:
+            try:
+                service = getattr(self.patch_retriever, "vector_service", None)
+                if service is None:
+                    service = getattr(self.retriever, "vector_service", None)
+                store = getattr(service, "vector_store", None) if service else None
+                if self.stack_retriever is None:
+                    top_k = getattr(stack_cfg, "retrieval_top_k", 5) or 5
+                    max_lines = getattr(stack_cfg, "max_lines_per_document", 0) or 0
+                    self.stack_retriever = StackRetriever(
+                        context_builder=self,
+                        vector_service=service,
+                        vector_store=store,
+                        top_k=max(1, int(top_k)),
+                        max_lines=max(0, int(max_lines)),
+                        patch_safety=self.patch_safety,
+                        license_denylist=set(self.license_denylist),
+                        risk_penalty=self.risk_penalty,
+                        roi_tag_weights=dict(self.roi_tag_penalties),
+                        max_alert_severity=self.max_alignment_severity,
+                        max_alerts=self.max_alerts,
+                    )
+                else:
+                    retr = self.stack_retriever
+                    try:
+                        if hasattr(retr, "patch_safety"):
+                            retr.patch_safety = self.patch_safety  # type: ignore[attr-defined]
+                        if hasattr(retr, "license_denylist"):
+                            retr.license_denylist = set(self.license_denylist)  # type: ignore[attr-defined]
+                        if hasattr(retr, "risk_penalty"):
+                            retr.risk_penalty = self.risk_penalty  # type: ignore[attr-defined]
+                        if hasattr(retr, "roi_tag_weights") and not getattr(
+                            retr, "roi_tag_weights", {}
+                        ):
+                            retr.roi_tag_weights = dict(self.roi_tag_penalties)  # type: ignore[attr-defined]
+                        if hasattr(retr, "max_alert_severity"):
+                            retr.max_alert_severity = self.max_alignment_severity  # type: ignore[attr-defined]
+                        if hasattr(retr, "max_alerts"):
+                            retr.max_alerts = self.max_alerts  # type: ignore[attr-defined]
+                        if hasattr(retr, "max_lines") and not getattr(retr, "max_lines", 0):
+                            retr.max_lines = max(0, int(getattr(stack_cfg, "max_lines_per_document", 0)))  # type: ignore[attr-defined]
+                        if hasattr(retr, "vector_service") and getattr(
+                            retr, "vector_service", None
+                        ) is None and service is not None:
+                            retr.vector_service = service  # type: ignore[attr-defined]
+                        if hasattr(retr, "vector_store") and getattr(
+                            retr, "vector_store", None
+                        ) is None and store is not None:
+                            retr.vector_store = store  # type: ignore[attr-defined]
+                    except Exception:
+                        logger.exception("stack retriever configuration failed")
+            except Exception:
+                logger.exception("stack retriever initialisation failed")
+                self.stack_retriever = None
 
         # Attempt to use tokenizer from retriever or embedder if provided.
         tok = getattr(self.retriever, "tokenizer", None)
@@ -1501,15 +1557,16 @@ class ContextBuilder:
         stack_cfg = _stack_dataset_config()
         stack_hits: List[Dict[str, Any]] = []
         if self.stack_retriever is not None and stack_cfg.enabled:
-            query_embedding = self._get_query_embedding(query)
-            if query_embedding:
+            try:
+                retrieval_k = max(0, int(stack_cfg.retrieval_top_k))
+            except Exception:
+                retrieval_k = 0
+            if retrieval_k > 0:
                 try:
-                    retrieval_k = max(0, int(stack_cfg.retrieval_top_k))
-                    if retrieval_k > 0:
-                        stack_hits = self.stack_retriever.retrieve(
-                            query_embedding,
-                            k=retrieval_k,
-                        )
+                    stack_hits = self.stack_retriever.retrieve(
+                        query,
+                        k=retrieval_k,
+                    )
                 except Exception:
                     logger.exception("stack retriever failed")
                     stack_hits = []
