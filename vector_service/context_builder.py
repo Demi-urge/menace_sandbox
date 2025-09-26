@@ -268,6 +268,7 @@ class ContextBuilder:
         *,
         retriever: Retriever | None = None,
         patch_retriever: PatchRetriever | None = None,
+        stack_retriever: Any | None = None,
         ranking_model: Any | None = None,
         roi_tracker: Any | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
@@ -324,6 +325,7 @@ class ContextBuilder:
                     self.patch_retriever.roi_tag_weights = roi_tag_penalties
             except Exception:
                 logger.exception("patch_retriever configuration failed")
+        self.stack_retriever = stack_retriever
         self.similarity_metric = similarity_metric
         self.enhancement_weight = enhancement_weight
 
@@ -430,6 +432,225 @@ class ContextBuilder:
         for tag in tags:
             if isinstance(tag, str) and tag:
                 self._excluded_failed_strategies.add(tag)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _coerce_embedding(vector: Any) -> List[float] | None:
+        """Return ``vector`` as a list of floats when possible."""
+
+        if vector is None:
+            return None
+        try:
+            seq = list(vector)
+        except TypeError:
+            return None
+        result: List[float] = []
+        for value in seq:
+            try:
+                result.append(float(value))
+            except Exception:
+                return None
+        return result if result else None
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _coerce_mapping(value: Any) -> Dict[str, Any]:
+        """Best-effort conversion of ``value`` to a dictionary."""
+
+        if isinstance(value, dict):
+            return dict(value)
+        if hasattr(value, "to_dict"):
+            try:
+                payload = value.to_dict()
+                if isinstance(payload, dict):
+                    return dict(payload)
+            except Exception:
+                pass
+        if hasattr(value, "_asdict"):
+            try:
+                payload = value._asdict()
+                if isinstance(payload, dict):
+                    return dict(payload)
+            except Exception:
+                pass
+        if hasattr(value, "__dict__"):
+            try:
+                return dict(vars(value))
+            except Exception:
+                pass
+        return {}
+
+    # ------------------------------------------------------------------
+    def _get_query_embedding(self, query: str) -> List[float] | None:
+        """Return an embedding for ``query`` if an encoder is available."""
+
+        sources: List[Any] = [self.retriever]
+        base = getattr(self.retriever, "retriever", None)
+        if base is not None:
+            sources.append(base)
+        if self.stack_retriever is not None:
+            sources.append(self.stack_retriever)
+            embedder = getattr(self.stack_retriever, "embedder", None)
+            if embedder is not None:
+                sources.append(embedder)
+        seen: set[int] = set()
+        for source in sources:
+            if source is None:
+                continue
+            ident = id(source)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            for attr in ("embed_query", "encode", "embed"):
+                func = getattr(source, attr, None)
+                if not callable(func):
+                    continue
+                try:
+                    vector = func(query)
+                except Exception:
+                    continue
+                coerced = self._coerce_embedding(vector)
+                if coerced:
+                    return coerced
+            embedder = getattr(source, "embedder", None)
+            if embedder is None or id(embedder) in seen:
+                continue
+            seen.add(id(embedder))
+            for attr in ("embed_query", "encode", "embed"):
+                func = getattr(embedder, attr, None)
+                if not callable(func):
+                    continue
+                try:
+                    vector = func(query)
+                except Exception:
+                    continue
+                coerced = self._coerce_embedding(vector)
+                if coerced:
+                    return coerced
+        return None
+
+    # ------------------------------------------------------------------
+    def _normalise_stack_hit(self, raw: Any, query: str) -> Dict[str, Any] | None:
+        """Normalise a stack retrieval ``raw`` result into bundle format."""
+
+        data = self._coerce_mapping(raw)
+        if not data:
+            return None
+
+        metadata_raw = data.get("metadata")
+        if metadata_raw is None:
+            metadata_raw = {
+                key: value
+                for key, value in data.items()
+                if key
+                not in {
+                    "score",
+                    "similarity",
+                    "distance",
+                    "vector",
+                    "id",
+                    "record_id",
+                }
+            }
+        meta = self._coerce_mapping(metadata_raw)
+
+        for key in (
+            "repo",
+            "path",
+            "language",
+            "summary",
+            "snippet",
+            "content",
+            "text",
+            "start",
+            "end",
+            "license",
+            "license_fingerprint",
+            "semantic_alerts",
+            "alignment_severity",
+            "tags",
+        ):
+            if key not in meta and key in data:
+                meta[key] = data[key]
+
+        clean_meta: Dict[str, Any] = {}
+        for key, value in meta.items():
+            if value is None:
+                continue
+            if isinstance(value, str):
+                clean_meta[key] = redact_text(value)
+            else:
+                clean_meta[key] = value
+
+        snippet = clean_meta.get("summary") or clean_meta.get("snippet")
+        if not isinstance(snippet, str):
+            snippet = None
+        if snippet is None:
+            for candidate in ("content", "text"):
+                value = clean_meta.get(candidate)
+                if isinstance(value, str) and value:
+                    snippet = value
+                    break
+        if isinstance(snippet, str):
+            clean_meta["summary"] = redact_text(snippet)
+        clean_meta.pop("snippet", None)
+        clean_meta.pop("content", None)
+        clean_meta.pop("text", None)
+
+        clean_meta.setdefault("origin", "stack")
+        clean_meta.setdefault("redacted", True)
+
+        record_id = (
+            data.get("id")
+            or data.get("record_id")
+            or clean_meta.get("record_id")
+            or clean_meta.get("id")
+        )
+        if not record_id:
+            repo = clean_meta.get("repo") or ""
+            path = clean_meta.get("path") or ""
+            start = clean_meta.get("start") or ""
+            end = clean_meta.get("end") or ""
+            composite = "|".join(str(part) for part in (repo, path, start, end) if part)
+            if composite:
+                record_id = composite
+            else:
+                try:
+                    payload = json.dumps(
+                        {
+                            "query": query,
+                            "repo": repo,
+                            "path": path,
+                            "summary": clean_meta.get("summary", ""),
+                        },
+                        sort_keys=True,
+                    )
+                except Exception:
+                    payload = f"{repo}:{path}:{clean_meta.get('summary', '')}"
+                record_id = uuid.uuid5(uuid.NAMESPACE_URL, payload).hex
+
+        raw_score = (
+            data.get("score")
+            or data.get("similarity")
+            or clean_meta.get("score")
+            or 0.0
+        )
+        try:
+            score = float(raw_score)
+        except Exception:
+            score = 0.0
+
+        text = clean_meta.get("summary") or ""
+
+        bundle = {
+            "origin_db": "stack",
+            "record_id": record_id,
+            "metadata": clean_meta,
+            "text": text,
+            "score": score,
+            "similarity": score,
+        }
+        return bundle
 
     # ------------------------------------------------------------------
     def refresh_db_weights(
@@ -767,6 +988,34 @@ class ContextBuilder:
                 entry["lessons"] = self._summarise(
                     redact_text(str(meta["lessons"]))
                 )
+        elif origin == "stack":
+            text = text or meta.get("summary") or ""
+            summary = meta.get("summary") or text
+            summary = self._summarise(redact_text(str(summary)))
+            entry.setdefault("desc", summary)
+            entry["summary"] = summary
+            meta["summary"] = summary
+            path = meta.get("path")
+            if path:
+                entry["path"] = redact_text(str(path))
+            repo = meta.get("repo")
+            if repo:
+                entry["repo"] = redact_text(str(repo))
+            language = meta.get("language")
+            if language:
+                entry["language"] = str(language)
+            start = meta.get("start")
+            end = meta.get("end")
+            if start is not None:
+                try:
+                    entry["start"] = int(start)
+                except Exception:
+                    entry["start"] = start
+            if end is not None:
+                try:
+                    entry["end"] = int(end)
+                except Exception:
+                    entry["end"] = end
         elif origin == "discrepancy":
             text = text or meta.get("message") or meta.get("description") or ""
         elif origin == "patch":
@@ -967,6 +1216,7 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
             "patch": "patches",
+            "stack": "stack",
         }
         return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
@@ -1082,6 +1332,21 @@ class ContextBuilder:
                     full["lines_changed"] = lines_changed
                 if tests_passed is not None and "tests_passed" not in full:
                     full["tests_passed"] = tests_passed
+
+        if bucket == "stack":
+            desc = full.get("summary") or full.get("desc") or ""
+            if desc:
+                desc = self._summarise(redact_text(str(desc)))
+                full["summary"] = desc
+                full["desc"] = desc
+            for key in ("path", "repo"):
+                val = full.get(key)
+                if isinstance(val, str):
+                    full[key] = redact_text(val)
+            if "language" in full and full["language"] is not None:
+                full["language"] = str(full["language"])
+            full.pop("content", None)
+            full.pop("text", None)
 
         summary = {
             k: v
@@ -1217,6 +1482,18 @@ class ContextBuilder:
                 hits.extend(patch_hits)
             except Exception:
                 pass
+        stack_hits: List[Dict[str, Any]] = []
+        if self.stack_retriever is not None:
+            query_embedding = self._get_query_embedding(query)
+            if query_embedding:
+                try:
+                    stack_hits = self.stack_retriever.retrieve(
+                        query_embedding,
+                        k=top_k * 5,
+                    )
+                except Exception:
+                    logger.exception("stack retriever failed")
+                    stack_hits = []
         elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         if isinstance(hits, ErrorResult):
@@ -1239,6 +1516,7 @@ class ContextBuilder:
             "code": [],
             "discrepancies": [],
             "patches": [],
+            "stack": [],
         }
 
         for bundle in hits:
@@ -1263,6 +1541,15 @@ class ContextBuilder:
             bucket, scored = self._bundle_to_entry(bundle, query)
             if bucket:
                 buckets[bucket].append(scored)
+
+        if stack_hits:
+            for item in stack_hits:
+                bundle = self._normalise_stack_hit(item, query)
+                if not bundle:
+                    continue
+                bucket, scored = self._bundle_to_entry(bundle, query)
+                if bucket:
+                    buckets[bucket].append(scored)
 
         patch_confidence = 0.0
         if buckets["patches"]:
