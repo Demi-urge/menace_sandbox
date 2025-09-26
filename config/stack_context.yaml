@@ -12,3 +12,30 @@ stack_dataset:
   max_lines_per_document: 800
   chunk_size: 2048
   retrieval_top_k: 5
+
+# Context builder specific tuning for Stack retrieval. These settings control
+# whether Stack snippets are considered alongside the primary databases and how
+# the snippets are summarised before being merged into prompts.
+context_builder:
+  # Toggle Stack retrieval without touching ingestion. Disable when the Stack
+  # embeddings are unavailable in the current deployment.
+  stack_enabled: false
+
+  # Restrict Stack snippets to these languages. Leave empty to accept every
+  # language present in the embeddings.
+  stack_languages:
+    - python
+    - javascript
+
+  # Number of Stack candidates fetched for each query. Lower values reduce the
+  # amount of metadata merged into prompts.
+  stack_top_k: 3
+
+  # Maximum number of lines preserved per Stack snippet before summarisation.
+  # Set to 0 to keep the full snippet.
+  stack_max_lines: 200
+
+  # Optional overrides for deployments storing Stack embeddings outside the
+  # default locations. Leave unset to rely on automatic discovery.
+  stack_index_path: null
+  stack_metadata_path: null

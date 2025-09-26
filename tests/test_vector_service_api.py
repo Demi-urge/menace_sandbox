@@ -25,6 +25,18 @@ class ContextBuilderConfig:
             return False
         if name == "similarity_metric":
             return "cosine"
+        if name == "stack_enabled":
+            return False
+        if name == "stack_languages":
+            return {"python"}
+        if name == "stack_top_k":
+            return 0
+        if name == "stack_max_lines":
+            return 0
+        if name in {"stack_index_path", "stack_metadata_path"}:
+            return None
+        if name == "db_weights":
+            return {}
         return 0
 
 

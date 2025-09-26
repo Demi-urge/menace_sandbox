@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 # ``ParsedFailure`` previously provided structured failure info.  The new parser
 # returns dictionaries so we reference the type indirectly to avoid tight
 # coupling.
@@ -299,40 +300,279 @@ class ContextBuilder:
         memory_manager: Optional[MenaceMemoryManager] = None,
         summariser: Callable[[str], str] | None = None,
         db_weights: Dict[str, float] | None = None,
-        ranking_weight: float = ContextBuilderConfig().ranking_weight,
-        roi_weight: float = ContextBuilderConfig().roi_weight,
-        recency_weight: float = ContextBuilderConfig().recency_weight,
-        safety_weight: float = ContextBuilderConfig().safety_weight,
-        max_tokens: int = ContextBuilderConfig().max_tokens,
-        regret_penalty: float = ContextBuilderConfig().regret_penalty,
-        alignment_penalty: float = ContextBuilderConfig().alignment_penalty,
-        alert_penalty: float = ContextBuilderConfig().alert_penalty,
-        risk_penalty: float = ContextBuilderConfig().risk_penalty,
-        roi_tag_penalties: Dict[str, float] = ContextBuilderConfig().roi_tag_penalties,
-        enhancement_weight: float = ContextBuilderConfig().enhancement_weight,
-        max_alignment_severity: float = getattr(
-            ContextBuilderConfig(), "max_alignment_severity", 1.0
-        ),
-        max_alerts: int = getattr(ContextBuilderConfig(), "max_alerts", 5),
-        license_denylist: set[str] | None = getattr(
-            ContextBuilderConfig(), "license_denylist", _DEFAULT_LICENSE_DENYLIST
-        ),
-        precise_token_count: bool = getattr(
-            ContextBuilderConfig(), "precise_token_count", True
-        ),
-        max_diff_lines: int = getattr(ContextBuilderConfig(), "max_diff_lines", 200),
+        ranking_weight: float | None = None,
+        roi_weight: float | None = None,
+        recency_weight: float | None = None,
+        safety_weight: float | None = None,
+        max_tokens: int | None = None,
+        regret_penalty: float | None = None,
+        alignment_penalty: float | None = None,
+        alert_penalty: float | None = None,
+        risk_penalty: float | None = None,
+        roi_tag_penalties: Dict[str, float] | None = None,
+        enhancement_weight: float | None = None,
+        max_alignment_severity: float | None = None,
+        max_alerts: int | None = None,
+        license_denylist: set[str] | None = None,
+        precise_token_count: bool | None = None,
+        max_diff_lines: int | None = None,
         patch_safety: PatchSafety | None = None,
-        similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
-        embedding_check_interval: float = getattr(
-            ContextBuilderConfig(), "embedding_check_interval", 0
-        ),
-        prompt_score_weight: float = getattr(
-            ContextBuilderConfig(), "prompt_score_weight", 1.0
-        ),
-        prompt_max_tokens: int = getattr(
-            ContextBuilderConfig(), "prompt_max_tokens", 800
-        ),
+        similarity_metric: str | None = None,
+        embedding_check_interval: float | None = None,
+        prompt_score_weight: float | None = None,
+        prompt_max_tokens: int | None = None,
+        config: ContextBuilderConfig | None = None,
+        stack_enabled: bool | None = None,
+        stack_languages: Iterable[str] | None = None,
+        stack_top_k: int | None = None,
+        stack_max_lines: int | None = None,
+        stack_index_path: str | None = None,
+        stack_metadata_path: str | None = None,
     ) -> None:
+        defaults = ContextBuilderConfig()
+        dataset_cfg = _stack_dataset_config()
+        try:
+            cfg_source = config or getattr(get_config(), "context_builder", defaults)
+        except Exception:
+            cfg_source = config or defaults
+        cfg = cfg_source or defaults
+
+        def _cfg(name: str, fallback: Any) -> Any:
+            try:
+                return getattr(cfg, name)
+            except Exception:
+                return fallback
+
+        def _coerce_float(value: Any, fallback: float) -> float:
+            try:
+                return float(value)
+            except Exception:
+                return float(fallback)
+
+        def _coerce_int(value: Any, fallback: int) -> int:
+            try:
+                return int(value)
+            except Exception:
+                return int(fallback)
+
+        def _coerce_bool(value: Any, fallback: bool) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                return bool(value)
+            except Exception:
+                return bool(fallback)
+
+        def _resolve_optional_path(value: Any) -> Path | None:
+            if value in {None, "", b""}:
+                return None
+            try:
+                candidate = Path(str(value))
+            except Exception:
+                return None
+            try:
+                return resolve_path(candidate)
+            except Exception:
+                try:
+                    return candidate.expanduser().resolve()
+                except Exception:
+                    return candidate
+
+        ranking_weight = _coerce_float(
+            ranking_weight if ranking_weight is not None else _cfg("ranking_weight", defaults.ranking_weight),
+            defaults.ranking_weight,
+        )
+        roi_weight = _coerce_float(
+            roi_weight if roi_weight is not None else _cfg("roi_weight", defaults.roi_weight),
+            defaults.roi_weight,
+        )
+        recency_weight = _coerce_float(
+            recency_weight if recency_weight is not None else _cfg("recency_weight", defaults.recency_weight),
+            defaults.recency_weight,
+        )
+        safety_weight = _coerce_float(
+            safety_weight if safety_weight is not None else _cfg("safety_weight", defaults.safety_weight),
+            defaults.safety_weight,
+        )
+        max_tokens = _coerce_int(
+            max_tokens if max_tokens is not None else _cfg("max_tokens", defaults.max_tokens),
+            defaults.max_tokens,
+        )
+        regret_penalty = _coerce_float(
+            regret_penalty if regret_penalty is not None else _cfg("regret_penalty", defaults.regret_penalty),
+            defaults.regret_penalty,
+        )
+        alignment_penalty = _coerce_float(
+            alignment_penalty if alignment_penalty is not None else _cfg("alignment_penalty", defaults.alignment_penalty),
+            defaults.alignment_penalty,
+        )
+        alert_penalty = _coerce_float(
+            alert_penalty if alert_penalty is not None else _cfg("alert_penalty", defaults.alert_penalty),
+            defaults.alert_penalty,
+        )
+        risk_penalty = _coerce_float(
+            risk_penalty if risk_penalty is not None else _cfg("risk_penalty", defaults.risk_penalty),
+            defaults.risk_penalty,
+        )
+        enhancement_weight = _coerce_float(
+            enhancement_weight if enhancement_weight is not None else _cfg("enhancement_weight", defaults.enhancement_weight),
+            defaults.enhancement_weight,
+        )
+        prompt_score_weight = _coerce_float(
+            prompt_score_weight if prompt_score_weight is not None else _cfg("prompt_score_weight", defaults.prompt_score_weight),
+            defaults.prompt_score_weight,
+        )
+        prompt_max_tokens = _coerce_int(
+            prompt_max_tokens if prompt_max_tokens is not None else _cfg("prompt_max_tokens", defaults.prompt_max_tokens),
+            defaults.prompt_max_tokens,
+        )
+        max_alignment_severity = _coerce_float(
+            max_alignment_severity if max_alignment_severity is not None else _cfg("max_alignment_severity", defaults.max_alignment_severity),
+            defaults.max_alignment_severity,
+        )
+        max_alerts = _coerce_int(
+            max_alerts if max_alerts is not None else _cfg("max_alerts", defaults.max_alerts),
+            defaults.max_alerts,
+        )
+        max_diff_lines = _coerce_int(
+            max_diff_lines if max_diff_lines is not None else _cfg("max_diff_lines", defaults.max_diff_lines),
+            defaults.max_diff_lines,
+        )
+        embedding_check_interval = _coerce_float(
+            embedding_check_interval
+            if embedding_check_interval is not None
+            else _cfg("embedding_check_interval", defaults.embedding_check_interval),
+            defaults.embedding_check_interval,
+        )
+        similarity_metric = (
+            similarity_metric
+            if similarity_metric is not None
+            else str(_cfg("similarity_metric", defaults.similarity_metric))
+        ) or "cosine"
+        precise_token_count = _coerce_bool(
+            precise_token_count
+            if precise_token_count is not None
+            else _cfg("precise_token_count", defaults.precise_token_count),
+            defaults.precise_token_count,
+        )
+
+        if roi_tag_penalties is None:
+            try:
+                roi_tag_penalties = dict(_cfg("roi_tag_penalties", defaults.roi_tag_penalties))
+            except Exception:
+                roi_tag_penalties = dict(defaults.roi_tag_penalties)
+        else:
+            roi_tag_penalties = dict(roi_tag_penalties)
+
+        if db_weights is None:
+            try:
+                db_weights = dict(_cfg("db_weights", defaults.db_weights))
+            except Exception:
+                db_weights = dict(defaults.db_weights)
+        else:
+            db_weights = dict(db_weights)
+
+        if license_denylist is None:
+            raw_licenses = _cfg("license_denylist", defaults.license_denylist)
+        else:
+            raw_licenses = license_denylist
+        license_denylist = {
+            str(lic).strip()
+            for lic in (raw_licenses or set())
+            if isinstance(lic, str) and lic.strip()
+        }
+
+        dataset_enabled = bool(getattr(dataset_cfg, "enabled", False))
+        if stack_enabled is None:
+            stack_enabled = _coerce_bool(
+                _cfg("stack_enabled", defaults.stack_enabled), defaults.stack_enabled
+            )
+            if not stack_enabled and dataset_enabled:
+                stack_enabled = True
+        else:
+            stack_enabled = _coerce_bool(stack_enabled, bool(stack_enabled))
+
+        if stack_languages is None:
+            stack_languages = _cfg("stack_languages", defaults.stack_languages)
+        lang_set = {
+            str(language).strip().lower()
+            for language in (stack_languages or [])
+            if isinstance(language, str) and language.strip()
+        }
+        if not lang_set:
+            try:
+                lang_set = {
+                    str(language).strip().lower()
+                    for language in getattr(dataset_cfg, "allowed_languages", set())
+                    if isinstance(language, str) and language.strip()
+                }
+            except Exception:
+                lang_set = set()
+
+        stack_top_k_val = (
+            stack_top_k if stack_top_k is not None else _cfg("stack_top_k", defaults.stack_top_k)
+        )
+        stack_top_k_int = _coerce_int(
+            stack_top_k_val,
+            defaults.stack_top_k,
+        )
+        if stack_top_k_int <= 0:
+            try:
+                stack_top_k_int = max(
+                    0,
+                    int(getattr(dataset_cfg, "retrieval_top_k", stack_top_k_int)),
+                )
+            except Exception:
+                stack_top_k_int = max(0, stack_top_k_int)
+
+        stack_max_lines_val = (
+            stack_max_lines
+            if stack_max_lines is not None
+            else _cfg("stack_max_lines", defaults.stack_max_lines)
+        )
+        stack_max_lines_int = _coerce_int(
+            stack_max_lines_val,
+            defaults.stack_max_lines,
+        )
+        if stack_max_lines_int <= 0:
+            try:
+                stack_max_lines_int = max(
+                    0,
+                    int(getattr(dataset_cfg, "max_lines_per_document", stack_max_lines_int)),
+                )
+            except Exception:
+                stack_max_lines_int = max(0, stack_max_lines_int)
+
+        index_source = (
+            stack_index_path if stack_index_path is not None else _cfg("stack_index_path", defaults.stack_index_path)
+        )
+        metadata_source = (
+            stack_metadata_path
+            if stack_metadata_path is not None
+            else _cfg("stack_metadata_path", defaults.stack_metadata_path)
+        )
+        if index_source is None:
+            for attr in ("index_path", "vector_index_path"):
+                candidate = getattr(dataset_cfg, attr, None)
+                if candidate:
+                    index_source = candidate
+                    break
+        if metadata_source is None:
+            for attr in ("metadata_path", "metadata_db", "db_path"):
+                candidate = getattr(dataset_cfg, attr, None)
+                if candidate:
+                    metadata_source = candidate
+                    break
+
+        self.stack_enabled = bool(stack_enabled)
+        self.stack_languages = set(lang_set)
+        self.stack_top_k = max(0, stack_top_k_int)
+        self.stack_max_lines = max(0, stack_max_lines_int)
+        self.stack_index_path = _resolve_optional_path(index_source)
+        self.stack_metadata_path = _resolve_optional_path(metadata_source)
+
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
         if patch_retriever is None:
@@ -400,6 +640,7 @@ class ContextBuilder:
                 self.refresh_db_weights()
             except Exception:
                 logger.exception("refresh_db_weights failed")
+        self.db_weights.setdefault("stack", 1.0)
         self.max_tokens = max_tokens
         self.precise_token_count = precise_token_count
         self.max_diff_lines = max_diff_lines
@@ -410,14 +651,13 @@ class ContextBuilder:
         self.prompt_score_weight = prompt_score_weight
         self.prompt_max_tokens = prompt_max_tokens
 
-        stack_cfg = _stack_dataset_config()
         stack_env_enabled = _truthy(os.environ.get("STACK_STREAMING", "1"))
-        if stack_cfg.enabled and not stack_env_enabled:
+        if self.stack_enabled and not stack_env_enabled:
             _warn_once(
                 "stack_streaming_disabled",
                 "STACK_STREAMING disabled via environment; skipping Stack retrieval",
             )
-        if stack_cfg.enabled and stack_env_enabled:
+        if self.stack_enabled and stack_env_enabled:
             if not _resolve_hf_token():
                 _warn_once(
                     "missing_hf_token",
@@ -430,10 +670,12 @@ class ContextBuilder:
                 stack_store = get_stack_vector_store()
                 if stack_store is None and service is not None:
                     stack_store = getattr(service, "vector_store", None)
-                metadata_path = get_stack_metadata_path()
+                metadata_path = self.stack_metadata_path or get_stack_metadata_path()
                 if self.stack_retriever is None:
-                    top_k = getattr(stack_cfg, "retrieval_top_k", 5) or 5
-                    max_lines = getattr(stack_cfg, "max_lines_per_document", 0) or 0
+                    top_k = self.stack_top_k or getattr(dataset_cfg, "retrieval_top_k", 5) or 5
+                    max_lines = self.stack_max_lines or getattr(
+                        dataset_cfg, "max_lines_per_document", 0
+                    )
                     self.stack_retriever = StackRetriever(
                         context_builder=self,
                         vector_service=service,
@@ -465,8 +707,10 @@ class ContextBuilder:
                             retr.max_alert_severity = self.max_alignment_severity  # type: ignore[attr-defined]
                         if hasattr(retr, "max_alerts"):
                             retr.max_alerts = self.max_alerts  # type: ignore[attr-defined]
-                        if hasattr(retr, "max_lines") and not getattr(retr, "max_lines", 0):
-                            retr.max_lines = max(0, int(getattr(stack_cfg, "max_lines_per_document", 0)))  # type: ignore[attr-defined]
+                        if hasattr(retr, "max_lines"):
+                            retr.max_lines = max(0, int(self.stack_max_lines))  # type: ignore[attr-defined]
+                        if hasattr(retr, "top_k") and self.stack_top_k:
+                            retr.top_k = max(1, int(self.stack_top_k))  # type: ignore[attr-defined]
                         if hasattr(retr, "vector_service") and getattr(
                             retr, "vector_service", None
                         ) is None and service is not None:
@@ -593,7 +837,7 @@ class ContextBuilder:
         if base is not None:
             sources.append(base)
         stack_cfg = _stack_dataset_config()
-        if self.stack_retriever is not None and stack_cfg.enabled:
+        if self.stack_retriever is not None and self.stack_enabled:
             sources.append(self.stack_retriever)
             embedder = getattr(self.stack_retriever, "embedder", None)
             if embedder is not None:
@@ -687,23 +931,55 @@ class ContextBuilder:
             else:
                 clean_meta[key] = value
 
-        snippet = clean_meta.get("summary") or clean_meta.get("snippet")
-        if not isinstance(snippet, str):
-            snippet = None
-        if snippet is None:
+        snippet_source = clean_meta.get("summary") or clean_meta.get("snippet")
+        snippet_text = None
+        if isinstance(snippet_source, str) and snippet_source.strip():
+            snippet_text = redact_text(snippet_source)
+        if snippet_text is None:
             for candidate in ("content", "text"):
                 value = clean_meta.get(candidate)
-                if isinstance(value, str) and value:
-                    snippet = value
+                if isinstance(value, str) and value.strip():
+                    snippet_text = redact_text(value)
                     break
-        if isinstance(snippet, str):
-            clean_meta["summary"] = redact_text(snippet)
         clean_meta.pop("snippet", None)
         clean_meta.pop("content", None)
         clean_meta.pop("text", None)
 
         clean_meta.setdefault("origin", "stack")
         clean_meta.setdefault("redacted", True)
+
+        repo = clean_meta.get("repo")
+        if isinstance(repo, str) and repo:
+            repo = redact_text(repo)
+            clean_meta["repo"] = repo
+        path = clean_meta.get("path")
+        if isinstance(path, str) and path:
+            path = redact_text(path)
+            clean_meta["path"] = path
+        language = clean_meta.get("language")
+        if isinstance(language, str) and language:
+            language = language.strip().lower()
+            clean_meta["language"] = language
+
+        summary_lines: list[str] = []
+        location_bits = [
+            part
+            for part in (repo, path)
+            if isinstance(part, str) and part.strip()
+        ]
+        if location_bits:
+            location = "/".join(location_bits)
+            if isinstance(language, str) and language:
+                location = f"{location} [{language}]"
+            summary_lines.append(location)
+        if isinstance(snippet_text, str) and snippet_text.strip():
+            summary_lines.append(snippet_text.strip())
+
+        text = "\n".join(line for line in summary_lines if line).strip()
+        if text:
+            clean_meta["summary"] = text
+        else:
+            text = clean_meta.get("summary") or ""
 
         record_id = (
             data.get("id")
@@ -1589,17 +1865,15 @@ class ContextBuilder:
                 pass
         stack_cfg = _stack_dataset_config()
         stack_hits: List[Dict[str, Any]] = []
-        if self.stack_retriever is not None and stack_cfg.enabled:
+        if self.stack_retriever is not None and self.stack_enabled:
             try:
-                retrieval_k = max(0, int(stack_cfg.retrieval_top_k))
+                retrieval_k = self.stack_top_k or getattr(stack_cfg, "retrieval_top_k", 0)
+                retrieval_k = max(0, int(retrieval_k))
             except Exception:
                 retrieval_k = 0
             if retrieval_k > 0:
                 try:
-                    stack_hits = self.stack_retriever.retrieve(
-                        query,
-                        k=retrieval_k,
-                    )
+                    stack_hits = self.stack_retriever.retrieve(query, k=retrieval_k)
                 except Exception:
                     logger.exception("stack retriever failed")
                     stack_hits = []
@@ -1651,8 +1925,27 @@ class ContextBuilder:
             if bucket:
                 buckets[bucket].append(scored)
 
-        allowed_stack_languages = {lang.lower() for lang in stack_cfg.allowed_languages}
-        max_stack_lines = max(0, int(stack_cfg.max_lines_per_document))
+        allowed_stack_languages = {lang.lower() for lang in self.stack_languages}
+        if not allowed_stack_languages:
+            try:
+                allowed_stack_languages = {
+                    str(lang).lower()
+                    for lang in getattr(stack_cfg, "allowed_languages", set())
+                    if isinstance(lang, str)
+                }
+            except Exception:
+                allowed_stack_languages = set()
+        try:
+            max_stack_lines = max(0, int(self.stack_max_lines))
+        except Exception:
+            max_stack_lines = 0
+        if not max_stack_lines:
+            try:
+                max_stack_lines = max(
+                    0, int(getattr(stack_cfg, "max_lines_per_document", 0))
+                )
+            except Exception:
+                max_stack_lines = 0
 
         if stack_hits:
             for item in stack_hits:
