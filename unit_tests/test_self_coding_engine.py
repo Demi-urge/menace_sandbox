@@ -159,7 +159,14 @@ spec = importlib.util.spec_from_file_location(
 )
 sce = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("menace.self_coding_engine", sce)
+sys.modules.setdefault("self_coding_engine", sce)
 spec.loader.exec_module(sce)
+import menace.coding_bot_interface as mci
+mci.MANAGER_CONTEXT = sce.MANAGER_CONTEXT
+# ``manager_generate_helper`` captures the module globals at import time, so
+# explicitly realign its ``MANAGER_CONTEXT`` reference with the freshly loaded
+# engine module for deterministic unit behaviour.
+manager_generate_helper.__globals__["MANAGER_CONTEXT"] = sce.MANAGER_CONTEXT
 sce._settings.prompt_chunk_token_threshold = 4000
 sce._settings.chunk_summary_cache_dir = "."
 sce._settings.prompt_success_log_path = "s.log"
@@ -168,6 +175,7 @@ sce._settings.audit_log_path = "audit.log"
 sce._settings.audit_privkey = None
 sce._settings.codex_retry_delays = []
 sce.time = types.SimpleNamespace(sleep=lambda _: None)
+sce.log_prompt_attempt = lambda *a, **k: None
 
 
 def _build_check_permission():
@@ -281,9 +289,23 @@ def test_context_builder_shared(monkeypatch):
     class DummyBuilder:
         def __init__(self, *_, **kwargs):
             self.roi_tracker = kwargs.get("roi_tracker")
+            self.stack_config = types.SimpleNamespace(
+                enabled=False, top_k=3, summary_tokens=5, text_max_tokens=10
+            )
+            self.calls: list[dict] = []
+
+        def refresh_db_weights(self):
+            return None
 
         def build_context(self, query, **__):
+            self.calls.append(__)
+            if __.get("return_metadata"):
+                return f"ctx:{query}", {}
             return f"ctx:{query}"
+
+        def build_prompt(self, query, **_):
+            text = f"### Retrieval context\nctx:{query}"
+            return types.SimpleNamespace(text=text, user=text, metadata={})
 
     class DummyLayer:
         def __init__(self, *_, **kwargs):
@@ -294,15 +316,17 @@ def test_context_builder_shared(monkeypatch):
 
     code_db = types.SimpleNamespace(search=lambda q: [])
     gpt_mem = types.SimpleNamespace(
-        search_context=lambda *a, **k: [], log_interaction=lambda *a, **k: None
+        search_context=lambda *a, **k: [],
+        log_interaction=lambda *a, **k: None,
+        store=lambda *a, **k: None,
     )
     class DummyClient:
         def __init__(self):
             self.last_prompt = ""
 
         def generate(self, prompt, *, context_builder=None):
-            self.last_prompt = getattr(prompt, "text", str(prompt))
-            return types.SimpleNamespace(text="ok")
+            self.last_prompt = getattr(prompt, "user", getattr(prompt, "text", str(prompt)))
+            return types.SimpleNamespace(text="ok", raw="ok")
 
     client = DummyClient()
     builder = sce.ContextBuilder()
@@ -322,4 +346,226 @@ def test_context_builder_shared(monkeypatch):
     manager_generate_helper(manager, "alpha issue", context_builder=builder)
     assert "### Retrieval context" in client.last_prompt
     assert "ctx:alpha issue" in client.last_prompt
+    assert any(call.get("return_metadata") for call in builder.calls)
+
+
+def test_stack_snippets_appended(monkeypatch):
+    monkeypatch.setattr(sce._settings, "stack_enabled", True, raising=False)
+    class DummyBuilder:
+        def __init__(self, *_, **kwargs):
+            self.roi_tracker = kwargs.get("roi_tracker")
+            self.stack_config = types.SimpleNamespace(
+                enabled=True, top_k=3, summary_tokens=50, text_max_tokens=200
+            )
+            self.calls: list[dict] = []
+
+        def refresh_db_weights(self):
+            return None
+
+        def build_context(self, query, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("return_metadata"):
+                return f"ctx:{query}", {
+                    "stack": [
+                        {
+                            "repo": "octo/demo",
+                            "path": "src/app.py",
+                            "desc": "Helpful snippet",
+                            "score": 0.9,
+                        }
+                    ]
+                }
+            return f"ctx:{query}"
+
+        def build_prompt(self, query, **_):
+            text = f"### Retrieval context\nctx:{query}"
+            return types.SimpleNamespace(text=text, user=text, metadata={})
+
+    class DummyLayer:
+        def __init__(self, *_, **kwargs):
+            self.context_builder = kwargs.get("context_builder")
+
+    monkeypatch.setattr(sce, "ContextBuilder", DummyBuilder)
+    monkeypatch.setattr(sce, "CognitionLayer", DummyLayer)
+
+    code_db = types.SimpleNamespace(search=lambda q: [])
+    gpt_mem = types.SimpleNamespace(
+        search_context=lambda *a, **k: [],
+        log_interaction=lambda *a, **k: None,
+        store=lambda *a, **k: None,
+    )
+
+    class DummyClient:
+        def __init__(self):
+            self.last_prompt = ""
+
+        def generate(self, prompt, *, context_builder=None):
+            self.last_prompt = getattr(prompt, "user", getattr(prompt, "text", str(prompt)))
+            return types.SimpleNamespace(text="ok", raw="ok")
+
+    client = DummyClient()
+    builder = sce.ContextBuilder()
+    engine = sce.SelfCodingEngine(
+        code_db,
+        object(),
+        llm_client=client,
+        gpt_memory=gpt_mem,
+        context_builder=builder,
+    )
+
+    manager = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(manager, "alpha issue", context_builder=builder)
+
+    assert sce.STACK_PROMPT_HEADER in client.last_prompt
+    assert "Helpful snippet" in client.last_prompt
+    assert engine._last_prompt_metadata["stack_context_used"] is True
+    assert engine._last_prompt_metadata["stack_snippet_count"] == 1
+
+
+def test_stack_snippets_deduplicated(monkeypatch):
+    monkeypatch.setattr(sce._settings, "stack_enabled", True, raising=False)
+    class DummyBuilder:
+        def __init__(self, *_, **kwargs):
+            self.roi_tracker = kwargs.get("roi_tracker")
+            self.stack_config = types.SimpleNamespace(
+                enabled=True, top_k=5, summary_tokens=50, text_max_tokens=200
+            )
+
+        def refresh_db_weights(self):
+            return None
+
+        def build_context(self, query, **kwargs):
+            meta = {
+                "stack": [
+                    {
+                        "repo": "octo/demo",
+                        "path": "src/app.py",
+                        "desc": "Helpful snippet",
+                        "score": 0.9,
+                    },
+                    {
+                        "repo": "octo/demo",
+                        "path": "src/app.py",
+                        "desc": "Helpful snippet",
+                        "score": 0.8,
+                    },
+                ]
+            }
+            return (f"ctx:{query}", meta) if kwargs.get("return_metadata") else f"ctx:{query}"
+
+        def build_prompt(self, query, **_):
+            text = f"### Retrieval context\nctx:{query}"
+            return types.SimpleNamespace(text=text, user=text, metadata={})
+
+    class DummyLayer:
+        def __init__(self, *_, **kwargs):
+            self.context_builder = kwargs.get("context_builder")
+
+    monkeypatch.setattr(sce, "ContextBuilder", DummyBuilder)
+    monkeypatch.setattr(sce, "CognitionLayer", DummyLayer)
+
+    class DummyClient:
+        def __init__(self):
+            self.last_prompt = ""
+
+        def generate(self, prompt, **_):
+            self.last_prompt = getattr(prompt, "user", getattr(prompt, "text", str(prompt)))
+            return types.SimpleNamespace(text="ok", raw="ok")
+
+    client = DummyClient()
+
+    code_db = types.SimpleNamespace(search=lambda q: [])
+    gpt_mem = types.SimpleNamespace(
+        search_context=lambda *a, **k: [],
+        log_interaction=lambda *a, **k: None,
+        store=lambda *a, **k: None,
+    )
+
+    builder = sce.ContextBuilder()
+    engine = sce.SelfCodingEngine(
+        code_db,
+        object(),
+        llm_client=client,
+        gpt_memory=gpt_mem,
+        context_builder=builder,
+    )
+
+    manager = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(manager, "alpha issue", context_builder=builder)
+
+    meta = engine._last_prompt_metadata
+    assert meta["stack_snippet_count"] == 1
+    assert meta["stack_context_used"] is True
+
+
+def test_stack_snippets_disabled_override(monkeypatch):
+    monkeypatch.setattr(sce._settings, "stack_enabled", False, raising=False)
+    class DummyBuilder:
+        def __init__(self, *_, **kwargs):
+            self.roi_tracker = kwargs.get("roi_tracker")
+            self.stack_config = types.SimpleNamespace(
+                enabled=True, top_k=2, summary_tokens=50, text_max_tokens=200
+            )
+
+        def refresh_db_weights(self):
+            return None
+
+        def build_context(self, query, **kwargs):
+            if kwargs.get("return_metadata"):
+                return f"ctx:{query}", {
+                    "stack": [
+                        {
+                            "repo": "octo/demo",
+                            "path": "src/app.py",
+                            "desc": "Helpful snippet",
+                        }
+                    ]
+                }
+            return f"ctx:{query}"
+
+        def build_prompt(self, query, **_):
+            text = f"### Retrieval context\nctx:{query}"
+            return types.SimpleNamespace(text=text, user=text, metadata={})
+
+    class DummyLayer:
+        def __init__(self, *_, **kwargs):
+            self.context_builder = kwargs.get("context_builder")
+
+    monkeypatch.setattr(sce, "ContextBuilder", DummyBuilder)
+    monkeypatch.setattr(sce, "CognitionLayer", DummyLayer)
+
+    class DummyClient:
+        def __init__(self):
+            self.last_prompt = ""
+
+        def generate(self, prompt, **_):
+            self.last_prompt = getattr(prompt, "user", getattr(prompt, "text", str(prompt)))
+            return types.SimpleNamespace(text="ok", raw="ok")
+
+    client = DummyClient()
+
+    code_db = types.SimpleNamespace(search=lambda q: [])
+    gpt_mem = types.SimpleNamespace(
+        search_context=lambda *a, **k: [],
+        log_interaction=lambda *a, **k: None,
+        store=lambda *a, **k: None,
+    )
+
+    builder = sce.ContextBuilder()
+    engine = sce.SelfCodingEngine(
+        code_db,
+        object(),
+        llm_client=client,
+        gpt_memory=gpt_mem,
+        context_builder=builder,
+        stack_assist=False,
+    )
+
+    manager = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(manager, "alpha issue", context_builder=builder)
+
+    assert sce.STACK_PROMPT_HEADER not in client.last_prompt
+    meta = engine._last_prompt_metadata
+    assert meta["stack_context_used"] is False
+    assert meta["stack_snippet_count"] == 0
 

@@ -268,6 +268,12 @@ def handle_patch(args: argparse.Namespace) -> int:
     except TypeError:  # pragma: no cover - fallback for stub implementations
         db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
+    stack_override = None
+    stack_choice = getattr(args, "stack_assist", "auto")
+    if stack_choice == "on":
+        stack_override = {"enabled": True}
+    elif stack_choice == "off":
+        stack_override = {"enabled": False}
 
     manager = None
     if getattr(args, "manager", None):
@@ -295,7 +301,12 @@ def handle_patch(args: argparse.Namespace) -> int:
         bot_name = Path(args.module).stem
         data_bot = DataBot(start_server=False)
         registry = BotRegistry()
-        engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder)
+        engine = SelfCodingEngine(
+            CodeDB(),
+            MenaceMemoryManager(),
+            context_builder=builder,
+            stack_assist=stack_override,
+        )
         pipeline = ModelAutomationPipeline(context_builder=builder)
         _th = get_thresholds(bot_name)
         persist_sc_thresholds(
@@ -702,6 +713,12 @@ def main(argv: list[str] | None = None) -> int:
     p_quick.add_argument(
         "--manager",
         help="Module path exporting a SelfCodingManager instance",
+    )
+    p_quick.add_argument(
+        "--stack-assist",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="Enable or disable Stack dataset assistance for this run",
     )
     p_quick.set_defaults(func=handle_patch)
 
