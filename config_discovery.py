@@ -98,6 +98,8 @@ class ConfigDiscovery:
         token = self._discover_huggingface_token()
         if token:
             os.environ["HUGGINGFACE_TOKEN"] = token
+            os.environ.setdefault("HF_TOKEN", token)
+            os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", token)
             self._token_missing_logged = False
             return
 
@@ -216,6 +218,7 @@ class ConfigDiscovery:
             "STACK_METADATA_PATH": str(base_path / "stack_metadata.db"),
             "STACK_CACHE_DIR": str(base_path / "cache"),
             "STACK_VECTOR_PATH": str(base_path / "stack_vectors"),
+            "STACK_DOCUMENT_CACHE": str(base_path / "documents"),
         }
         for key, value in defaults.items():
             if not os.environ.get(key):
@@ -336,6 +339,7 @@ def _stack_auto_defaults() -> dict[str, str]:
         "STACK_METADATA_PATH": str(base_path / "stack_metadata.db"),
         "STACK_CACHE_DIR": str(base_path / "cache"),
         "STACK_VECTOR_PATH": str(base_path / "stack_vectors"),
+        "STACK_DOCUMENT_CACHE": str(base_path / "documents"),
     }
     return defaults
 
