@@ -9,7 +9,11 @@ quality of an enhancement.  Weights are loaded from
 
 from dataclasses import dataclass
 from pathlib import Path
-import yaml
+
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - PyYAML missing
+    yaml = None  # type: ignore
 
 from dynamic_path_router import resolve_path
 
@@ -51,11 +55,13 @@ def load_weights(path: str | Path | None = None) -> EnhancementScoreWeights:
     """
 
     cfg_path = resolve_path(path) if path else _DEFAULT_CONFIG_PATH
-    try:
-        with open(cfg_path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-    except FileNotFoundError:
-        data = {}
+    data = {}
+    if yaml is not None:
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+        except FileNotFoundError:
+            data = {}
     weights = EnhancementScoreWeights()
     for field in weights.__dataclass_fields__:  # type: ignore[attr-defined]
         if isinstance(data.get(field), (int, float)):

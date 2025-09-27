@@ -14,9 +14,18 @@ import json
 import logging
 import os
 import sqlite3
-import sqlparse
-from sqlparse.sql import Identifier, IdentifierList, Parenthesis
-from sqlparse.tokens import Keyword
+try:  # pragma: no cover - optional dependency
+    import sqlparse
+    from sqlparse.sql import Identifier, IdentifierList, Parenthesis
+    from sqlparse.tokens import Keyword
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
+    sqlparse = None  # type: ignore
+
+    class _SQLParseStub:  # pragma: no cover - lightweight placeholder
+        pass
+
+    Identifier = IdentifierList = Parenthesis = _SQLParseStub  # type: ignore
+    Keyword = object()
 import threading
 from collections import defaultdict
 from datetime import datetime
@@ -386,6 +395,8 @@ class LoggedCursor(sqlite3.Cursor):
     _rows: list[Any] | None = None
 
     def _table_from_sql(self, sql: str) -> str:
+        if sqlparse is None:  # pragma: no cover - fallback without sqlparse
+            return "unknown"
         try:
             statement = sqlparse.parse(sql)[0]
         except Exception:

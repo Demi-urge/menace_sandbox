@@ -85,8 +85,15 @@ if TYPE_CHECKING:  # pragma: no cover - circular imports
 else:  # pragma: no cover
     BotDB = InfoDB = MenaceDB = object  # type: ignore
 
-from .unified_event_bus import UnifiedEventBus
-from .knowledge_graph import KnowledgeGraph
+try:  # pragma: no cover - support flat imports
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - fallback when package not initialised
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+
+try:
+    from .knowledge_graph import KnowledgeGraph
+except Exception:  # pragma: no cover - fallback for flat layout
+    from knowledge_graph import KnowledgeGraph  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
 
 try:

@@ -14,7 +14,11 @@ from typing import List
 import json
 import os
 import urllib.request
-import numpy as np
+
+try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - numpy missing
+    np = None  # type: ignore
 
 try:  # pragma: no cover - heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -71,7 +75,14 @@ def get_text_embeddings(
     mdl = model or _MODEL
     if mdl is not None:
         vecs = mdl.encode(texts)  # type: ignore[arg-type]
-        return [list(map(float, v)) for v in np.atleast_2d(vecs)]
+        if np is not None:
+            arr = np.atleast_2d(vecs)
+            return [list(map(float, v)) for v in arr]
+        if hasattr(vecs, "tolist"):
+            vecs = vecs.tolist()
+        if isinstance(vecs, list) and vecs and isinstance(vecs[0], (list, tuple)):
+            return [list(map(float, v)) for v in vecs]
+        return [list(map(float, vecs))]
 
     svc = service
     global _SERVICE

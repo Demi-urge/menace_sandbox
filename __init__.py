@@ -32,7 +32,28 @@ sys.modules.setdefault(
 # Provide a legacy alias expected by some bootstrapping utilities.
 sys.modules.setdefault("menace", sys.modules[__name__])
 
-from .roi_calculator import ROICalculator
+# ``roi_calculator`` depends on the optional ``PyYAML`` package which is not
+# installed in the pared-down execution environment used for tests. Import the
+# calculator lazily and degrade gracefully when the dependency is absent so that
+# modules performing light imports (for example during CLI discovery) do not
+# fail at import time.
+try:  # pragma: no cover - best effort import
+    from .roi_calculator import ROICalculator as _ROICalculator
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    if getattr(exc, "name", None) not in {"yaml", "PyYAML"}:
+        raise
+
+    class _MissingROICalculator:  # pragma: no cover - informative stub
+        """Placeholder that surfaces the optional dependency on use."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise ModuleNotFoundError(
+                "PyYAML is required for ROICalculator; install menace_sandbox[yaml]"
+            ) from exc
+
+    ROICalculator = _MissingROICalculator  # type: ignore
+else:
+    ROICalculator = _ROICalculator
 # ErrorParser is optional during lightweight imports; fall back to None if heavy
 # dependencies are missing.
 try:  # pragma: no cover - best effort import

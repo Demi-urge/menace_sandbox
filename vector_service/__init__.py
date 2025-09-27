@@ -5,7 +5,9 @@ This package provides the canonical vector retrieval service.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
+from pathlib import Path
 from typing import Any, Dict
 
 # ``vector_service`` can be imported in environments where ``menace_sandbox``
@@ -20,8 +22,48 @@ except ImportError:  # pragma: no cover - defensive fallback
 
     _import_compat = importlib.import_module("import_compat")
 
-_import_compat.bootstrap(__name__, __file__)
-load_internal = _import_compat.load_internal
+try:  # pragma: no cover - optional dependencies may prevent full bootstrap
+    _import_compat.bootstrap(__name__, __file__)
+except ModuleNotFoundError as bootstrap_error:  # pragma: no cover - fallback
+    _BOOTSTRAP_ERROR = bootstrap_error
+
+    def load_internal(name: str):
+        module_name = name.lstrip(".")
+        if module_name.startswith(f"{__name__}."):
+            module_name = module_name[len(__name__) + 1 :]
+        if module_name.startswith("menace_sandbox."):
+            module_name = module_name[len("menace_sandbox.") :]
+
+        qualified = (
+            f"{__name__}.{module_name}"
+            if not module_name.startswith("vector_service")
+            else module_name
+        )
+        cached = sys.modules.get(qualified) or sys.modules.get(module_name)
+        if cached is not None:
+            return cached
+
+        root = Path(__file__).resolve().parent
+        repo_root = root.parent
+        parts = Path(*module_name.split("."))
+        for base in (root, repo_root):
+            module_path = base / parts
+            candidates = [module_path.with_suffix(".py"), module_path / "__init__.py"]
+            for candidate in candidates:
+                if not candidate.exists():
+                    continue
+                spec = importlib.util.spec_from_file_location(qualified, candidate)
+                if spec is None or spec.loader is None:
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                sys.modules[qualified] = module
+                spec.loader.exec_module(module)
+                return module
+        raise _BOOTSTRAP_ERROR
+
+else:  # pragma: no cover - fully provisioned environment
+    load_internal = _import_compat.load_internal
 
 
 class _Stub:  # pragma: no cover - simple callable placeholder
@@ -210,7 +252,13 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
         raise
     EmbeddableDBMixin = object  # type: ignore
 else:
-    EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
+    if hasattr(_embeddable_db_module, "EmbeddableDBMixin"):
+        EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
+    else:  # pragma: no cover - degrade when mixin unavailable
+
+        class EmbeddableDBMixin:  # type: ignore
+            pass
+
     sys.modules.setdefault("embeddable_db_mixin", _embeddable_db_module)
     sys.modules.setdefault(
         "menace_sandbox.embeddable_db_mixin", _embeddable_db_module

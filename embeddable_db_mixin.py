@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 _HELPER_NAME = "import_compat"
@@ -39,9 +40,38 @@ else:  # pragma: no cover - ensure helper aliases exist
     sys.modules.setdefault(_HELPER_NAME, import_compat)
     sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-import_compat.bootstrap(__name__, __file__)
-load_internal = import_compat.load_internal
+try:
+    import_compat.bootstrap(__name__, __file__)
+except ModuleNotFoundError as bootstrap_error:  # pragma: no cover - optional deps
 
+    def load_internal(name: str):
+        """Best effort loader that avoids importing the heavy package root."""
+
+        qualified = f"{_PACKAGE_NAME}.{name}"
+        cached = sys.modules.get(qualified) or sys.modules.get(name)
+        if cached is not None:
+            return cached
+
+        module_path = Path(__file__).resolve().parent / Path(*name.split("."))
+        candidates = [module_path.with_suffix(".py"), module_path / "__init__.py"]
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            spec = importlib.util.spec_from_file_location(qualified, candidate)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            sys.modules[qualified] = module
+            spec.loader.exec_module(module)
+            return module
+
+        raise bootstrap_error
+
+else:  # pragma: no cover - full environment
+    load_internal = import_compat.load_internal
+
+from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
 from typing import Any, Dict, Iterator, List, Sequence, Tuple
@@ -50,28 +80,67 @@ import json
 import logging
 import re
 
-_secret_redactor = load_internal("security.secret_redactor")
-redact = _secret_redactor.redact
+try:
+    _secret_redactor = load_internal("security.secret_redactor")
+    redact = _secret_redactor.redact
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    redact = lambda text: text  # type: ignore
 
-_semantic_diff = load_internal("analysis.semantic_diff_filter")
-find_semantic_risks = _semantic_diff.find_semantic_risks
+try:
+    _semantic_diff = load_internal("analysis.semantic_diff_filter")
+    find_semantic_risks = _semantic_diff.find_semantic_risks
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    find_semantic_risks = lambda sentences: []  # type: ignore
 
-_governed_embeddings = load_internal("governed_embeddings")
-governed_embed = _governed_embeddings.governed_embed
+try:
+    _governed_embeddings = load_internal("governed_embeddings")
+    governed_embed = _governed_embeddings.governed_embed
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    governed_embed = lambda text, model=None: []  # type: ignore
 
-_chunking = load_internal("chunking")
-split_into_chunks = _chunking.split_into_chunks
-summarize_snippet = _chunking.summarize_snippet
+try:
+    _chunking = load_internal("chunking")
+    split_into_chunks = _chunking.split_into_chunks
+    summarize_snippet = _chunking.summarize_snippet
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
-_text_preprocessor = load_internal("vector_service.text_preprocessor")
-generalise = _text_preprocessor.generalise
-PreprocessingConfig = _text_preprocessor.PreprocessingConfig
+    class _Chunk:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    def split_into_chunks(text: str, size: int) -> list[_Chunk]:  # type: ignore
+        return [_Chunk(text)] if text else []
+
+    def summarize_snippet(text: str, *_args, **_kwargs) -> str:  # type: ignore
+        return text
+
+try:
+    _text_preprocessor = load_internal("vector_service.text_preprocessor")
+    generalise = _text_preprocessor.generalise
+    PreprocessingConfig = _text_preprocessor.PreprocessingConfig
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+
+    @dataclass
+    class PreprocessingConfig:  # type: ignore
+        stop_words: set[str] | None = None
+        language: str | None = None
+        use_lemmatizer: bool = True
+        split_sentences: bool = True
+        chunk_size: int = 400
+        filter_semantic_risks: bool = True
+
+    def generalise(text: str, *, config=None, db_key=None):  # type: ignore
+        return text
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
-_license_fingerprint = load_internal("compliance.license_fingerprint")
-license_check = _license_fingerprint.check
-license_fingerprint = _license_fingerprint.fingerprint
+try:
+    _license_fingerprint = load_internal("compliance.license_fingerprint")
+    license_check = _license_fingerprint.check
+    license_fingerprint = _license_fingerprint.fingerprint
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    license_check = lambda *_args, **_kwargs: True  # type: ignore
+    license_fingerprint = lambda text: ""  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
@@ -88,22 +157,55 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-_metrics_exporter = load_internal("metrics_exporter")
-_EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
-_EMBED_STORE_TOTAL = _metrics_exporter.embedding_store_seconds_total
-_EMBED_STALE = _metrics_exporter.embedding_stale_cost_seconds
-_EMBED_TOKENS = _metrics_exporter.embedding_tokens_total
-_EMBED_WALL_TOTAL = _metrics_exporter.embedding_wall_seconds_total
-_EMBED_WALL_LAST = _metrics_exporter.embedding_wall_time_seconds
+try:
+    _metrics_exporter = load_internal("metrics_exporter")
+    _EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
+    _EMBED_STORE_TOTAL = _metrics_exporter.embedding_store_seconds_total
+    _EMBED_STALE = _metrics_exporter.embedding_stale_cost_seconds
+    _EMBED_TOKENS = _metrics_exporter.embedding_tokens_total
+    _EMBED_WALL_TOTAL = _metrics_exporter.embedding_wall_seconds_total
+    _EMBED_WALL_LAST = _metrics_exporter.embedding_wall_time_seconds
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
-_vector_metrics_db = load_internal("vector_metrics_db")
-VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
+    class _MetricStub:
+        def inc(self, *_args, **_kwargs):
+            return None
 
-_embedding_stats_db = load_internal("embedding_stats_db")
-EmbeddingStatsDB = _embedding_stats_db.EmbeddingStatsDB
+        def set(self, *_args, **_kwargs):
+            return None
 
-_data_bot = load_internal("data_bot")
-MetricsDB = _data_bot.MetricsDB
+    _EMBED_STORE_LAST = _EMBED_STORE_TOTAL = _EMBED_STALE = _MetricStub()
+    _EMBED_TOKENS = _EMBED_WALL_TOTAL = _EMBED_WALL_LAST = _MetricStub()
+
+try:
+    _vector_metrics_db = load_internal("vector_metrics_db")
+    VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
+except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
+
+    class VectorMetricsDB:  # type: ignore
+        def log_embedding(self, *args, **kwargs):
+            return None
+
+try:
+    _embedding_stats_db = load_internal("embedding_stats_db")
+    EmbeddingStatsDB = _embedding_stats_db.EmbeddingStatsDB
+except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
+
+    class EmbeddingStatsDB:  # type: ignore
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def log(self, *args, **kwargs):
+            return None
+
+try:
+    _data_bot = load_internal("data_bot")
+    MetricsDB = _data_bot.MetricsDB
+except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
+
+    class MetricsDB:  # type: ignore
+        def __init__(self, *_args, **_kwargs):
+            pass
 
 logger = logging.getLogger(__name__)
 

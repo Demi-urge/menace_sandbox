@@ -19,7 +19,20 @@ import os
 
 from dynamic_path_router import resolve_path
 
-from filelock import FileLock
+try:  # pragma: no cover - optional dependency
+    from filelock import FileLock
+except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
+
+    class FileLock:  # type: ignore
+        def __init__(self, *_args, **_kwargs) -> None:
+            self._lock = threading.Lock()
+
+        def __enter__(self):
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *_exc) -> None:
+            self._lock.release()
 
 from redaction_utils import redact_text
 from snippet_compressor import compress_snippets
@@ -28,7 +41,42 @@ from context_builder import handle_failure, PromptBuildError
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, PatchRetriever, FallbackResult, StackRetriever
-from config import ContextBuilderConfig
+try:  # pragma: no cover - optional heavy dependency
+    from config import ContextBuilderConfig
+except Exception:  # pragma: no cover - degrade when config unavailable
+
+    class ContextBuilderConfig:  # type: ignore
+        _DEFAULTS: Dict[str, object] = {
+            "ranking_weight": 1.0,
+            "roi_weight": 1.0,
+            "recency_weight": 1.0,
+            "safety_weight": 1.0,
+            "max_tokens": 800,
+            "regret_penalty": 1.0,
+            "alignment_penalty": 1.0,
+            "alert_penalty": 1.0,
+            "risk_penalty": 1.0,
+            "roi_tag_penalties": {},
+            "max_alignment_severity": 1.0,
+            "max_alerts": 5,
+            "precise_token_count": True,
+            "max_diff_lines": 200,
+            "similarity_metric": "cosine",
+            "embedding_check_interval": 0,
+            "prompt_score_weight": 1.0,
+            "prompt_max_tokens": 800,
+            "enhancement_weight": 1.0,
+        }
+
+        def __init__(self, **overrides: object) -> None:
+            self._overrides = overrides
+
+        def __getattr__(self, name: str) -> object:
+            if name in self._overrides:
+                return self._overrides[name]
+            if name == "license_denylist":
+                return globals().get("_DEFAULT_LICENSE_DENYLIST", set())
+            return self._DEFAULTS.get(name)
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
