@@ -104,6 +104,29 @@ DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = {
 }
 
 
+def _coerce_optional_bool(value: Any) -> bool | None:
+    """Coerce truthy strings into booleans while tolerating unexpected values."""
+
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        lowered = candidate.lower()
+        if lowered in {"none", "null"}:
+            return None
+        if lowered in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "f", "no", "n", "off"}:
+            return False
+        # Gracefully degrade to False for unknown sentinel strings such as "auto".
+        return False
+    return bool(value)
+
+
 def _validate_stack_languages(languages: list[str]) -> list[str]:
     unknown = [lang for lang in languages if lang not in STACK_LANGUAGE_ALLOWLIST]
     if unknown:
@@ -969,6 +992,10 @@ class SandboxSettings(BaseSettings):
 
     if PYDANTIC_V2:
 
+        @field_validator("stack_streaming", mode="before")
+        def _coerce_stack_streaming_v2(cls, value: Any) -> bool | None:
+            return _coerce_optional_bool(value)
+
         @field_validator("stack_languages", mode="before")
         def _normalise_stack_languages(cls, value: Any) -> list[str]:
             return normalise_stack_languages(value)
@@ -1059,6 +1086,16 @@ class SandboxSettings(BaseSettings):
             return v
 
     else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("stack_streaming", pre=True)
+        def _coerce_stack_streaming_v1(
+            cls,
+            value: Any,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> bool | None:
+            return _coerce_optional_bool(value)
 
         @field_validator("stack_languages", pre=True)
         def _normalise_stack_languages(
