@@ -4,6 +4,8 @@ import types
 from dataclasses import dataclass
 from menace.coding_bot_interface import manager_generate_helper
 
+from vector_service.retriever import StackRetriever as ContextStackRetriever
+
 from llm_interface import LLMResult
 
 # Stub heavy dependencies before importing the targets
@@ -730,6 +732,59 @@ def test_stack_retrieval_included(monkeypatch):
     assert data["stack"][0]["desc"].startswith("Stack helper")
     assert meta["stack"][0]["repo"] == "octo/demo"
     assert stack.calls and stack.calls[0][1] == 1
+
+
+def test_stack_context_respects_language_filter(monkeypatch):
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.2, 0.4]
+
+    class Backend:
+        def __init__(self):
+            self.calls: list[tuple[list[float], int]] = []
+
+        def retrieve(self, embedding, k=0, similarity_threshold=0.0):
+            self.calls.append((list(embedding), k))
+            return [
+                {
+                    "score": 0.9,
+                    "metadata": {
+                        "repo": "octo/demo",
+                        "path": "src/demo.py",
+                        "language": "Python",
+                        "summary": "py helper",
+                        "redacted": True,
+                    },
+                },
+                {
+                    "score": 0.7,
+                    "metadata": {
+                        "repo": "octo/demo",
+                        "path": "static/app.js",
+                        "language": "JavaScript",
+                        "summary": "js helper",
+                        "redacted": True,
+                    },
+                },
+            ]
+
+    backend = Backend()
+    stack = ContextStackRetriever(backend=backend, top_k=3)
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=stack,
+        stack_config={"enabled": True, "top_k": 2, "languages": ("python",)},
+    )
+
+    ctx, meta = builder.build_context("stack language", return_metadata=True)
+    payload = json.loads(ctx)
+
+    assert payload["stack"]
+    assert {entry["language"] for entry in meta["stack"]} == {"Python"}
+    assert backend.calls and backend.calls[0][1] == 2
 
 
 def test_stack_token_trimming(monkeypatch):

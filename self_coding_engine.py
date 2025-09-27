@@ -453,6 +453,8 @@ class StackAssistSettings:
     prompt_limit: int | None = None
     snippet_char_limit: int | None = None
     total_char_limit: int | None = None
+    languages: Tuple[str, ...] = ()
+    max_lines: int | None = None
 
     def effective_limit(self) -> int | None:
         """Return the effective snippet cap to apply when formatting prompts."""
@@ -893,6 +895,21 @@ class SelfCodingEngine:
                     settings.total_char_limit = int(text_tokens) * 4
                 except Exception:
                     pass
+            cfg_langs = getattr(cfg, "languages", None)
+            if cfg_langs:
+                if isinstance(cfg_langs, (list, tuple, set)):
+                    settings.languages = tuple(
+                        str(lang).strip() for lang in cfg_langs if str(lang).strip()
+                    )
+                elif isinstance(cfg_langs, str):
+                    parts = [part.strip() for part in cfg_langs.split(",") if part.strip()]
+                    settings.languages = tuple(parts)
+            cfg_max_lines = getattr(cfg, "max_lines", None)
+            if cfg_max_lines is not None:
+                try:
+                    settings.max_lines = int(cfg_max_lines)
+                except Exception:
+                    pass
 
         sandbox_override = getattr(_settings, "stack_enabled", None)
         if sandbox_override is not None:
@@ -917,6 +934,17 @@ class SelfCodingEngine:
                         settings.top_k = int(dataset_cfg["top_k"])
                     except Exception:
                         pass
+                if dataset_cfg.get("languages"):
+                    langs = dataset_cfg.get("languages")
+                    if isinstance(langs, (list, tuple, set)):
+                        settings.languages = tuple(
+                            str(lang).strip() for lang in langs if str(lang).strip()
+                        )
+                if dataset_cfg.get("max_lines") is not None:
+                    try:
+                        settings.max_lines = int(dataset_cfg["max_lines"])
+                    except Exception:
+                        pass
 
         override_data = self._coerce_stack_override(override)
         if override_data:
@@ -928,7 +956,20 @@ class SelfCodingEngine:
                         settings.prompt_limit = int(override_data[key])
                     except Exception:
                         pass
-                    break
+            if override_data.get("languages") is not None:
+                langs = override_data.get("languages")
+                if isinstance(langs, (list, tuple, set)):
+                    settings.languages = tuple(
+                        str(lang).strip() for lang in langs if str(lang).strip()
+                    )
+                elif isinstance(langs, str):
+                    parts = [part.strip() for part in langs.split(",") if part.strip()]
+                    settings.languages = tuple(parts)
+            if override_data.get("max_lines") is not None:
+                try:
+                    settings.max_lines = int(override_data["max_lines"])
+                except Exception:
+                    pass
             if override_data.get("top_k") is not None:
                 try:
                     settings.top_k = int(override_data["top_k"])

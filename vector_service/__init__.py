@@ -170,6 +170,13 @@ except Exception:
 else:
     StackRetriever = _StackRetriever
 
+try:  # pragma: no cover - prefer lightweight stack retriever facade when available
+    from .retriever import StackRetriever as _StackContextRetriever
+except Exception:
+    pass
+else:
+    StackRetriever = _StackContextRetriever
+
 try:  # pragma: no cover - optional heavy dependency
     from .context_builder import ContextBuilder as _ContextBuilder
 except Exception:

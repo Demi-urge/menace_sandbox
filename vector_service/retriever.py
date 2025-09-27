@@ -14,7 +14,9 @@ import asyncio
 import math
 import os
 import json
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Sequence
+import copy
+import contextlib
 
 import urllib.request
 
@@ -50,6 +52,11 @@ try:  # pragma: no cover - optional dependency
     from universal_retriever import UniversalRetriever  # type: ignore
 except Exception:  # pragma: no cover - fallback when not available
     UniversalRetriever = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency for stack integration
+    from .stack_retriever import StackRetriever as _StackDatasetRetriever  # type: ignore
+except Exception:  # pragma: no cover - stack dataset optional
+    _StackDatasetRetriever = None  # type: ignore
 
 
 @dataclass
@@ -824,6 +831,172 @@ def search_patches(
     )
 
 
+class StackRetriever:
+    """Lightweight adapter around the Stack dataset embedding store."""
+
+    def __init__(
+        self,
+        *,
+        backend: Any | None = None,
+        top_k: int = 5,
+        similarity_threshold: float = 0.0,
+        max_alert_severity: float = 1.0,
+        max_alerts: int = 5,
+        license_denylist: Iterable[str] | None = None,
+        roi_tag_weights: Mapping[str, float] | None = None,
+        **backend_kwargs: Any,
+    ) -> None:
+        self.top_k = int(top_k)
+        self.similarity_threshold = float(similarity_threshold)
+        self.max_alert_severity = float(max_alert_severity)
+        self.max_alerts = int(max_alerts)
+        self.license_denylist: set[str] = set(license_denylist or _DEFAULT_LICENSE_DENYLIST)
+        self.roi_tag_weights: Dict[str, float] = dict(roi_tag_weights or {})
+        self._backend_kwargs = dict(backend_kwargs)
+        self._backend: Any | None = backend
+
+    def _sync_backend(self, backend: Any) -> None:
+        for attr in ("top_k", "similarity_threshold", "max_alert_severity", "max_alerts"):
+            if hasattr(backend, attr):
+                setattr(backend, attr, getattr(self, attr))
+        if hasattr(backend, "license_denylist"):
+            setattr(backend, "license_denylist", set(self.license_denylist))
+        if hasattr(backend, "roi_tag_weights"):
+            setattr(backend, "roi_tag_weights", dict(self.roi_tag_weights))
+
+    def _get_backend(self) -> Any:
+        backend = self._backend
+        if backend is None:
+            if _StackDatasetRetriever is None:  # pragma: no cover - defensive
+                raise RuntimeError("Stack retriever backend unavailable")
+            kwargs = dict(self._backend_kwargs)
+            kwargs.setdefault("top_k", self.top_k)
+            kwargs.setdefault("similarity_threshold", self.similarity_threshold)
+            kwargs.setdefault("max_alert_severity", self.max_alert_severity)
+            kwargs.setdefault("max_alerts", self.max_alerts)
+            kwargs.setdefault("license_denylist", set(self.license_denylist))
+            kwargs.setdefault("roi_tag_weights", dict(self.roi_tag_weights))
+            backend = _StackDatasetRetriever(**kwargs)  # type: ignore[misc]
+            self._backend = backend
+        self._sync_backend(backend)
+        return backend
+
+    def embed_query(self, query: str) -> List[float] | None:
+        backend = self._get_backend()
+        embed_fn = getattr(backend, "embed_query", None)
+        if not callable(embed_fn):
+            return None
+        try:
+            vec = embed_fn(query)
+        except Exception:  # pragma: no cover - passthrough for backend errors
+            return None
+        if hasattr(vec, "tolist"):
+            vec = vec.tolist()  # type: ignore[attr-defined]
+        if isinstance(vec, (list, tuple)):
+            return [float(x) for x in vec]
+        return None
+
+    def warm_cache(self) -> bool:
+        backend = self._get_backend()
+        fn = getattr(backend, "warm_cache", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:  # pragma: no cover - defensive
+                return False
+        return False
+
+    def close(self) -> None:
+        backend = self._backend
+        if backend is None:
+            return
+        close_fn = getattr(backend, "close", None)
+        if callable(close_fn):
+            with contextlib.suppress(Exception):
+                close_fn()
+
+    def retrieve(
+        self,
+        query_embedding: Sequence[float],
+        k: int | None = None,
+        *,
+        languages: Iterable[str] | None = None,
+        max_lines: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        backend = self._get_backend()
+        top_k = int(k) if k is not None else self.top_k
+        try:
+            raw_hits = backend.retrieve(
+                list(query_embedding),
+                k=top_k,
+                similarity_threshold=self.similarity_threshold,
+            )
+        except TypeError:
+            raw_hits = backend.retrieve(list(query_embedding), k=top_k)
+        except Exception:  # pragma: no cover - backend failure
+            return []
+
+        allowed_languages = {
+            str(lang).strip().lower()
+            for lang in (languages or [])
+            if str(lang).strip()
+        }
+        line_cap = max_lines if max_lines is not None and max_lines > 0 else None
+        results: List[Dict[str, Any]] = []
+        for hit in raw_hits or []:
+            if not isinstance(hit, Mapping):
+                continue
+            score = float(hit.get("score", 0.0))
+            metadata = dict(copy.deepcopy(hit.get("metadata", {})) or {})
+            language = str(
+                metadata.get("language")
+                or metadata.get("lang")
+                or hit.get("language")
+                or ""
+            ).strip()
+            if allowed_languages:
+                language_key = language.lower() if language else ""
+                if language_key not in allowed_languages:
+                    continue
+            start = metadata.get("start_line")
+            end = metadata.get("end_line")
+            size = metadata.get("size")
+            try:
+                if size is None and isinstance(start, int) and isinstance(end, int):
+                    size = end - start + 1
+            except Exception:
+                size = None
+            if line_cap is not None and size is not None and size > line_cap:
+                continue
+            snippet = (
+                hit.get("summary")
+                or metadata.get("summary")
+                or hit.get("text")
+                or metadata.get("text")
+                or ""
+            )
+            result_meta = dict(metadata)
+            if language:
+                result_meta.setdefault("language", language)
+            if size is not None:
+                result_meta.setdefault("size", int(size))
+            result_meta.setdefault("source", "stack")
+            result_meta.setdefault("redacted", True)
+            result_meta.setdefault("score", score)
+            result: Dict[str, Any] = {
+                "score": score,
+                "metadata": result_meta,
+                "text": snippet,
+                "origin_db": hit.get("origin_db", "stack"),
+            }
+            for key in ("identifier", "checksum", "repo", "path", "license"):
+                if key in hit and key not in result:
+                    result[key] = hit[key]
+            results.append(result)
+        results.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return results
+
+
 def fts_search(
     query: str,
     *,
@@ -852,6 +1025,7 @@ __all__ = [
     "Retriever",
     "PatchRetriever",
     "FallbackResult",
+    "StackRetriever",
     "fts_search",
     "search_patches",
 ]

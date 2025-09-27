@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 # ``ParsedFailure`` previously provided structured failure info.  The new parser
 # returns dictionaries so we reference the type indirectly to avoid tight
@@ -26,7 +26,7 @@ from context_builder import handle_failure, PromptBuildError
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
-from .retriever import Retriever, PatchRetriever, FallbackResult
+from .retriever import Retriever, PatchRetriever, FallbackResult, StackRetriever
 from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
@@ -65,11 +65,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - stack ingestion optional
     _ensure_stack_background = None  # type: ignore
     _StackDatasetStreamer = None  # type: ignore
-
-try:  # pragma: no cover - optional dependency
-    from .stack_retriever import StackRetriever as _StackRetriever  # type: ignore
-except Exception:  # pragma: no cover - stack retriever optional
-    _StackRetriever = None  # type: ignore
 
 # Alias retained for backward compatibility with tests expecting
 # ``UniversalRetriever`` to be injectable.
@@ -295,6 +290,8 @@ class _StackContextConfig:
     ingestion_throttle_seconds: float = 600.0
     ingestion_batch_limit: int | None = None
     ensure_before_search: bool = True
+    languages: Tuple[str, ...] = field(default_factory=tuple)
+    max_lines: int | None = None
 
     @classmethod
     def from_any(cls, value: Any) -> "_StackContextConfig":
@@ -314,6 +311,22 @@ class _StackContextConfig:
             for field in fields(cls):
                 if field.name in value and value[field.name] is not None:
                     data[field.name] = value[field.name]
+        langs = data.get("languages")
+        if langs is not None:
+            if isinstance(langs, (list, tuple, set)):
+                data["languages"] = tuple(
+                    str(lang).strip() for lang in langs if str(lang).strip()
+                )
+            elif isinstance(langs, str):
+                parts = [part.strip() for part in langs.split(",") if part.strip()]
+                data["languages"] = tuple(parts)
+            else:
+                data["languages"] = tuple()
+        if "max_lines" in data and data["max_lines"] is not None:
+            try:
+                data["max_lines"] = int(data["max_lines"])
+            except Exception:
+                data["max_lines"] = None
         return cls(**data)
 
     def cache_marker(self) -> Tuple[Any, ...]:
@@ -324,6 +337,8 @@ class _StackContextConfig:
             self.text_max_tokens,
             self.weight,
             self.penalty,
+            tuple(self.languages),
+            self.max_lines,
         )
 
 
@@ -454,7 +469,10 @@ class ContextBuilder:
         self.prompt_max_tokens = prompt_max_tokens
         cfg_obj = stack_config
         if cfg_obj is None:
-            cfg_obj = getattr(ContextBuilderConfig(), "stack", None)
+            cfg = ContextBuilderConfig()
+            cfg_obj = getattr(cfg, "stack", None)
+            if cfg_obj is None:
+                cfg_obj = getattr(cfg, "stack_dataset", None)
         self.stack_config = _StackContextConfig.from_any(cfg_obj)
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
@@ -472,13 +490,21 @@ class ContextBuilder:
             )
         if _env_flag("STACK_CONTEXT_INGESTION_DISABLED", False):
             self.stack_config.ingestion_enabled = False
+        if self.stack_config.enabled:
+            self.db_weights.setdefault("stack", getattr(self.stack_config, "weight", 1.0))
         self._stack_retriever: Any | None = stack_retriever
         self._stack_ingestor: Any | None = stack_ingestor
         self._stack_retriever_factory: Callable[[], Any] | None = None
         self._stack_ingestor_factory: Callable[[], Any] | None = None
         if self.stack_config.enabled and self._stack_retriever is None:
-            if _StackRetriever is not None:
-                self._stack_retriever_factory = lambda: _StackRetriever()  # type: ignore[call-arg]
+            self._stack_retriever_factory = lambda: StackRetriever(
+                top_k=max(int(self.stack_config.top_k or 0), 0),
+                similarity_threshold=0.0,
+                max_alert_severity=self.max_alignment_severity,
+                max_alerts=self.max_alerts,
+                license_denylist=self.license_denylist,
+                roi_tag_weights=self.roi_tag_penalties,
+            )
         if self.stack_config.enabled and self._stack_ingestor is None:
             if _StackDatasetStreamer is not None:
                 self._stack_ingestor_factory = (
@@ -1264,7 +1290,29 @@ class ContextBuilder:
             except Exception:
                 logger.exception("failed to initialise stack retriever")
                 self._stack_retriever = None
-        return self._stack_retriever
+        retriever = self._stack_retriever
+        if retriever is not None:
+            try:
+                retriever.top_k = max(int(self.stack_config.top_k or 0), 0)
+            except Exception:
+                pass
+            try:
+                retriever.max_alert_severity = self.max_alignment_severity
+            except Exception:
+                pass
+            try:
+                retriever.max_alerts = self.max_alerts
+            except Exception:
+                pass
+            try:
+                retriever.license_denylist = set(self.license_denylist)
+            except Exception:
+                pass
+            try:
+                retriever.roi_tag_weights = dict(self.roi_tag_penalties)
+            except Exception:
+                pass
+        return retriever
 
     def _get_stack_ingestor(self) -> Any | None:
         if self._stack_ingestor is None and self._stack_ingestor_factory is not None:
@@ -1400,7 +1448,12 @@ class ContextBuilder:
         if embedding is None:
             return []
         try:
-            hits = retriever.retrieve(embedding, k=self.stack_config.top_k)
+            hits = retriever.retrieve(
+                embedding,
+                k=self.stack_config.top_k,
+                languages=self.stack_config.languages,
+                max_lines=self.stack_config.max_lines,
+            )
         except Exception:
             logger.exception("stack retriever failure")
             return []
