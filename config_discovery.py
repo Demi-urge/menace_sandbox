@@ -33,7 +33,9 @@ class ConfigDiscovery:
         self.failure_count = 0
         self._stack_env_values: dict[str, str] = {}
         self._stack_explicit_overrides: set[str] = {
-            key for key in ("STACK_STREAMING", "STACK_DATA_DIR") if key in os.environ
+            key
+            for key in ("STACK_STREAMING", "STACK_DATA_DIR", "STACK_DATA_CACHE")
+            if key in os.environ
         }
         self._token_missing_logged = False
 
@@ -98,8 +100,9 @@ class ConfigDiscovery:
         token = self._discover_huggingface_token()
         if token:
             os.environ["HUGGINGFACE_TOKEN"] = token
-            os.environ.setdefault("HF_TOKEN", token)
-            os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", token)
+            os.environ["HF_TOKEN"] = token
+            os.environ["HUGGINGFACEHUB_API_TOKEN"] = token
+            os.environ["HUGGINGFACE_API_TOKEN"] = token
             self._token_missing_logged = False
             return
 
@@ -123,6 +126,10 @@ class ConfigDiscovery:
                 self._apply_stack_env_value("STACK_DATA_DIR", values.pop("STACK_DATA_DIR"))
             if "STACK_STREAMING" in values:
                 self._apply_stack_env_value("STACK_STREAMING", values.pop("STACK_STREAMING"))
+            if "STACK_DATA_CACHE" in values:
+                self._apply_stack_env_value(
+                    "STACK_DATA_CACHE", values.pop("STACK_DATA_CACHE")
+                )
             for key, value in values.items():
                 if key.startswith("STACK_"):
                     self._apply_stack_env_value(key, value)
@@ -219,6 +226,7 @@ class ConfigDiscovery:
             "STACK_CACHE_DIR": str(base_path / "cache"),
             "STACK_VECTOR_PATH": str(base_path / "stack_vectors"),
             "STACK_DOCUMENT_CACHE": str(base_path / "documents"),
+            "STACK_DATA_CACHE": str(base_path / "data_cache"),
         }
         for key, value in defaults.items():
             if not os.environ.get(key):
@@ -231,7 +239,7 @@ class ConfigDiscovery:
 
         current = os.environ.get(key)
         previous_default = self._stack_env_values.get(key)
-        if key in {"STACK_STREAMING", "STACK_DATA_DIR"}:
+        if key in {"STACK_STREAMING", "STACK_DATA_DIR", "STACK_DATA_CACHE"}:
             if current is not None and previous_default is None and current != value:
                 self._stack_explicit_overrides.add(key)
                 return
@@ -340,6 +348,7 @@ def _stack_auto_defaults() -> dict[str, str]:
         "STACK_CACHE_DIR": str(base_path / "cache"),
         "STACK_VECTOR_PATH": str(base_path / "stack_vectors"),
         "STACK_DOCUMENT_CACHE": str(base_path / "documents"),
+        "STACK_DATA_CACHE": str(base_path / "data_cache"),
     }
     return defaults
 
