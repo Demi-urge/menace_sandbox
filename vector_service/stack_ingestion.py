@@ -56,6 +56,14 @@ def _lookup_hf_token() -> str | None:
     except Exception:
         pass
 
+    try:  # pragma: no cover - sandbox settings optional during tests
+        from sandbox_settings import SandboxSettings  # type: ignore
+
+        settings = SandboxSettings()
+        candidates.append(getattr(settings, "huggingface_token", None))
+    except Exception:
+        pass
+
     env_fallbacks = [
         os.environ.get("HUGGINGFACE_API_TOKEN"),
         os.environ.get("HF_TOKEN"),
@@ -295,7 +303,8 @@ class StackChunk:
     license: str
     start_line: int
     end_line: int
-    checksum: str
+    vector_id: str
+    summary_hash: str
     text: str
 
     def release(self) -> None:
@@ -343,6 +352,7 @@ class StackMetadataStore:
                     license TEXT DEFAULT 'unknown',
                     start_line INTEGER NOT NULL,
                     end_line INTEGER NOT NULL,
+                    summary_hash TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -360,6 +370,7 @@ class StackMetadataStore:
                 "CREATE INDEX IF NOT EXISTS idx_chunks_repo_path ON chunks(repo, path)"
             )
         self._ensure_column("license", "TEXT DEFAULT 'unknown'")
+        self._ensure_column("summary_hash", "TEXT DEFAULT '' NOT NULL")
 
     def _ensure_column(self, column: str, definition: str) -> None:
         cur = self._conn.execute("PRAGMA table_info(chunks)")
@@ -388,18 +399,20 @@ class StackMetadataStore:
                     language,
                     license,
                     start_line,
-                    end_line
+                    end_line,
+                    summary_hash
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    chunk.checksum,
+                    chunk.vector_id,
                     chunk.repo,
                     chunk.path,
                     chunk.language,
                     chunk.license,
                     chunk.start_line,
                     chunk.end_line,
+                    chunk.summary_hash,
                 ),
             )
 
@@ -424,6 +437,10 @@ class StackMetadataStore:
         if row:
             return str(row[0])
         return None
+
+    def clear_cursor(self, split: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM cursors WHERE split = ?", (split,))
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -544,10 +561,21 @@ class StackDatasetStreamer:
     def _process_once(self, *, limit: int | None = None) -> int:
         dataset_iter = self._load_dataset_with_retry()
         embedded = 0
+        resume_cursor = self.metadata_store.last_cursor(self.config.split)
+        cursor_seen = resume_cursor is None or resume_cursor == ""
+        cursor_found = cursor_seen
         for index, record in enumerate(dataset_iter):
-            stack_record = self._coerce_record(record, position=index)
+            identifier = self._extract_identifier(record, position=index)
+            if not cursor_seen and identifier == resume_cursor:
+                cursor_seen = True
+                cursor_found = True
+                self.metadata_store.update_cursor(self.config.split, identifier)
+                continue
+            stack_record = self._coerce_record(record, position=index, identifier=identifier)
             if stack_record is None:
                 self.metrics.files_skipped += 1
+                if identifier:
+                    self.metadata_store.update_cursor(self.config.split, identifier)
                 continue
             self.metrics.files_seen += 1
             try:
@@ -557,9 +585,12 @@ class StackDatasetStreamer:
                 logger.exception(
                     "failed to process stack record %s:%s", stack_record.repo, stack_record.path
                 )
-            self.metadata_store.update_cursor(self.config.split, stack_record.identifier)
+            self.metadata_store.update_cursor(self.config.split, identifier)
             if limit is not None and embedded >= limit:
                 break
+        if resume_cursor and not cursor_found:
+            logger.warning("stack resume cursor %s not found; resetting", resume_cursor)
+            self.metadata_store.clear_cursor(self.config.split)
         return embedded
 
     def _load_dataset_with_retry(self) -> Iterable[Dict[str, Any]]:
@@ -587,7 +618,17 @@ class StackDatasetStreamer:
                 self._sleep(delay)
                 delay *= self.config.retry_backoff
 
-    def _coerce_record(self, record: Dict[str, Any], *, position: int) -> StackRecord | None:
+    def _extract_identifier(self, record: Dict[str, Any], *, position: int) -> str:
+        repo = str(record.get("repo_name", record.get("repo", "unknown")))
+        path_raw = str(record.get("path", ""))
+        identifier = record.get("id")
+        if identifier is None:
+            identifier = f"{repo}:{path_raw}:{position}"
+        return str(identifier)
+
+    def _coerce_record(
+        self, record: Dict[str, Any], *, position: int, identifier: str
+    ) -> StackRecord | None:
         content = record.get("content")
         language = str(record.get("language", "")).strip()
         license_name = str(record.get("license", "unknown")).strip() or "unknown"
@@ -597,7 +638,6 @@ class StackDatasetStreamer:
             return None
         path_raw = str(record.get("path", ""))
         repo = str(record.get("repo_name", record.get("repo", "unknown")))
-        identifier = str(record.get("id", f"{repo}:{path_raw}:{position}"))
         path = self._normalise_path(path_raw)
         return StackRecord(
             repo=repo,
@@ -605,7 +645,7 @@ class StackDatasetStreamer:
             language=language or "unknown",
             license=license_name,
             content=content,
-            identifier=identifier,
+            identifier=str(identifier),
         )
 
     def _normalise_path(self, raw: str) -> str:
@@ -624,7 +664,7 @@ class StackDatasetStreamer:
     def _process_record(self, record: StackRecord, *, limit: int | None, so_far: int) -> int:
         embedded = 0
         for chunk in self._chunk_record(record):
-            if self.metadata_store.has_chunk(chunk.checksum):
+            if self.metadata_store.has_chunk(chunk.vector_id):
                 self.metrics.chunks_skipped += 1
                 continue
             self._embed_chunk(chunk)
@@ -651,9 +691,10 @@ class StackDatasetStreamer:
                 continue
             start_line = start + 1
             end_line = start + len(chunk_lines)
-            checksum = hashlib.sha1(
+            vector_id = hashlib.sha1(
                 f"{record.repo}:{record.path}:{start_line}:{end_line}:{text}".encode("utf-8")
             ).hexdigest()
+            summary_hash = hashlib.sha1(text.encode("utf-8")).hexdigest()
             yield StackChunk(
                 repo=record.repo,
                 path=record.path,
@@ -661,7 +702,8 @@ class StackDatasetStreamer:
                 license=record.license,
                 start_line=start_line,
                 end_line=end_line,
-                checksum=checksum,
+                vector_id=vector_id,
+                summary_hash=summary_hash,
                 text=text,
             )
 
@@ -671,10 +713,17 @@ class StackDatasetStreamer:
             "repo": chunk.repo,
             "language": chunk.language,
             "license": chunk.license,
+            "summary_hash": chunk.summary_hash,
+            "start_line": chunk.start_line,
+            "end_line": chunk.end_line,
         }
         record = {"text": chunk.text, "language": chunk.language, "path": chunk.path}
         self.vector_service.vectorise_and_store(
-            "stack", chunk.checksum, record, origin_db="stack", metadata=metadata
+            "code",
+            chunk.vector_id,
+            record,
+            origin_db="stack",
+            metadata=metadata,
         )
 
 
