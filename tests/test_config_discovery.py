@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from menace import config_discovery as cd
 
 
@@ -134,4 +135,97 @@ def test_run_continuous(monkeypatch):
     stop.set()
     t.join(1)
     assert calls
+
+
+def test_huggingface_token_from_cache(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    token_dir = home / ".huggingface"
+    token_dir.mkdir(parents=True)
+    (token_dir / "token").write_text("abc123\n")
+    monkeypatch.setenv("HOME", str(home))
+    for key in [
+        "HUGGINGFACE_TOKEN",
+        "HUGGINGFACE_API_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    disc = cd.ConfigDiscovery()
+    disc.reload_tokens()
+    assert os.environ.get("HUGGINGFACE_TOKEN") == "abc123"
+    assert disc.failure_count == 0
+
+
+def test_missing_huggingface_token_increments_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for key in [
+        "HUGGINGFACE_TOKEN",
+        "HUGGINGFACE_API_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    disc = cd.ConfigDiscovery()
+    disc.reload_tokens()
+    assert disc.failure_count == 1
+
+
+def test_stack_env_defaults_and_overrides(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    stack_dir = tmp_path / "stack_state"
+    env_path = tmp_path / ".stack_env"
+    env_path.write_text("STACK_DATA_DIR=%s\nSTACK_STREAMING=1\n" % stack_dir)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("STACK_DATA_DIR", raising=False)
+    monkeypatch.delenv("STACK_STREAMING", raising=False)
+    monkeypatch.delenv("STACK_METADATA_DB", raising=False)
+    monkeypatch.delenv("STACK_METADATA_PATH", raising=False)
+    monkeypatch.delenv("STACK_CACHE_DIR", raising=False)
+    monkeypatch.delenv("STACK_VECTOR_PATH", raising=False)
+
+    disc = cd.ConfigDiscovery()
+    disc.reload_stack_settings()
+
+    base = str(Path(stack_dir))
+    assert os.environ.get("STACK_DATA_DIR") == base
+    assert os.environ.get("STACK_STREAMING") == "1"
+    assert os.environ.get("STACK_METADATA_DB") == str(Path(base) / "stack_metadata.db")
+    assert os.environ.get("STACK_METADATA_PATH") == str(Path(base) / "stack_metadata.db")
+    assert os.environ.get("STACK_CACHE_DIR") == str(Path(base) / "cache")
+    assert os.environ.get("STACK_VECTOR_PATH") == str(Path(base) / "stack_vectors")
+
+
+def test_stack_reload_respects_manual_streaming_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".stack_env"
+    env_path.write_text("STACK_STREAMING=1\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("STACK_STREAMING", raising=False)
+
+    disc = cd.ConfigDiscovery()
+    disc.reload_stack_settings()
+    assert os.environ.get("STACK_STREAMING") == "1"
+
+    os.environ["STACK_STREAMING"] = "0"
+    disc.reload_stack_settings()
+    assert os.environ.get("STACK_STREAMING") == "0"
+
+    env_path.write_text("STACK_STREAMING=1\n")
+    disc.reload_stack_settings()
+    assert os.environ.get("STACK_STREAMING") == "0"
+
+
+def test_stack_reload_updates_data_dir_when_not_overridden(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".stack_env"
+    env_path.write_text("STACK_DATA_DIR=%s\n" % (tmp_path / "one"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("STACK_DATA_DIR", raising=False)
+    disc = cd.ConfigDiscovery()
+    disc.reload_stack_settings()
+    assert os.environ.get("STACK_DATA_DIR") == str(tmp_path / "one")
+
+    env_path.write_text("STACK_DATA_DIR=%s\n" % (tmp_path / "two"))
+    disc.reload_stack_settings()
+    assert os.environ.get("STACK_DATA_DIR") == str(tmp_path / "two")
 
