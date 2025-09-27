@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 from vector_service.context_builder import ContextBuilder
+from vector_service.retriever import StackRetriever
 
 DB_SPEC: Tuple[Tuple[str, str, str], ...] = (
     ("bots_db", "bots.db", "BOT_DB_PATH"),
@@ -46,6 +47,39 @@ def create_context_builder() -> ContextBuilder:
     builder_kwargs: Dict[str, str] = {}
     for attr, filename, path in _resolve_db_paths(data_dir):
         builder_kwargs[attr] = _ensure_readable(path, filename)
+
+    stack_overrides: Dict[str, object] = {}
+    enabled_env = os.getenv("STACK_CONTEXT_ENABLED")
+    if enabled_env is not None:
+        stack_overrides["enabled"] = enabled_env.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    top_k_env = os.getenv("STACK_CONTEXT_TOP_K")
+    if top_k_env:
+        try:
+            stack_overrides["top_k"] = int(top_k_env)
+        except ValueError:
+            pass
+    langs_env = os.getenv("STACK_CONTEXT_LANGUAGES")
+    if langs_env:
+        languages = [part.strip() for part in langs_env.split(",") if part.strip()]
+        stack_overrides["languages"] = tuple(languages)
+    max_lines_env = os.getenv("STACK_CONTEXT_MAX_LINES")
+    if max_lines_env:
+        try:
+            stack_overrides["max_lines"] = int(max_lines_env)
+        except ValueError:
+            pass
+    if stack_overrides:
+        builder_kwargs["stack_config"] = stack_overrides
+
+    try:
+        builder_kwargs.setdefault("stack_retriever", StackRetriever())
+    except Exception:
+        pass
 
     try:
         return ContextBuilder(**builder_kwargs)

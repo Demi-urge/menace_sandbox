@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import contextlib
 from dataclasses import dataclass, fields, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
 # ``ParsedFailure`` previously provided structured failure info.  The new parser
 # returns dictionaries so we reference the type indirectly to avoid tight
 # coupling.
@@ -1390,6 +1391,69 @@ class ContextBuilder:
                 pass
         return retriever
 
+    def _apply_stack_preferences(
+        self, preferences: Mapping[str, Any] | None
+    ) -> Callable[[], None] | None:
+        if not preferences:
+            return None
+        cfg = getattr(self, "stack_config", None)
+        if cfg is None:
+            return None
+        data = _to_dict(preferences)
+        if not data:
+            return None
+        original: Dict[str, Any] = {}
+        mutated = False
+
+        def _store(attr: str, value: Any) -> None:
+            nonlocal mutated
+            if attr not in original:
+                original[attr] = getattr(cfg, attr, None)
+            try:
+                setattr(cfg, attr, value)
+                mutated = True
+            except Exception:
+                pass
+
+        for key, value in data.items():
+            if not hasattr(cfg, key):
+                continue
+            if key in {"enabled", "ingestion_enabled", "ensure_before_search"}:
+                _store(key, bool(value))
+            elif key in {"top_k", "summary_tokens", "text_max_tokens", "max_lines"}:
+                if value is None:
+                    _store(key, None)
+                else:
+                    try:
+                        _store(key, int(value))
+                    except Exception:
+                        continue
+            elif key == "languages":
+                if value is None:
+                    _store(key, tuple())
+                elif isinstance(value, str):
+                    parts = [part.strip() for part in value.split(",") if part.strip()]
+                    _store(key, tuple(parts))
+                elif isinstance(value, (list, tuple, set)):
+                    langs = tuple(
+                        str(lang).strip() for lang in value if str(lang).strip()
+                    )
+                    _store(key, langs)
+                else:
+                    continue
+            else:
+                _store(key, value)
+
+        if not mutated:
+            return None
+
+        def restore() -> None:
+            for attr, value in original.items():
+                with contextlib.suppress(Exception):
+                    setattr(cfg, attr, value)
+
+        return restore
+
     def _get_stack_ingestor(self) -> Any | None:
         if self._stack_ingestor is None and self._stack_ingestor_factory is not None:
             try:
@@ -1665,6 +1729,7 @@ class ContextBuilder:
         exclude_tags: Iterable[str] | None = None,
         exclude_strategies: Iterable[str] | None = None,
         failure: dict | None = None,
+        stack_preferences: Mapping[str, Any] | None = None,
         **_: Any,
     ) -> Any:
         """Return a compact JSON context for ``query``.
@@ -1705,275 +1770,283 @@ class ContextBuilder:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
-        try:
-            self.refresh_db_weights()
-        except Exception:
-            pass
-        _ensure_vector_service()
-        dbs_to_check = list(self.db_weights.keys()) or ["code", "bot", "error", "workflow"]
-        try:
-            ensure_embeddings_fresh(dbs_to_check)
-        except StaleEmbeddingsError as exc:
-            details = ", ".join(f"{n} ({r})" for n, r in exc.stale_dbs.items())
-            logger.error("embeddings missing or stale: %s", details)
-            raise VectorServiceError(f"embeddings missing or stale: {details}") from exc
-        try:
-            self.patch_safety.load_failures()
-        except Exception:
-            pass
+        restore_stack_config = None
+        if stack_preferences:
+            restore_stack_config = self._apply_stack_preferences(stack_preferences)
 
-        prompt_tokens = len(query.split())
-        if failure:
-            parts = [query]
-            if failure.error_type:
-                parts.append(failure.error_type)
-            parts.extend(failure.reproduction_steps)
-            query = " ".join(parts)
-        query = redact_text(query)
-        exclude = set(exclude_tags or [])
-        exclude.update(_get_failed_tags())
-        exclude_strats = set(exclude_strategies or [])
-        exclude_strats.update(getattr(self, "_excluded_failed_strategies", set()))
-        cache_key = (
-            query,
-            top_k,
-            tuple(sorted(exclude)),
-            tuple(sorted(exclude_strats)),
-            self.stack_config.cache_marker(),
-        )
-        if not include_vectors and not return_metadata and cache_key in self._cache:
-            return self._cache[cache_key]
-
-        session_id = session_id or uuid.uuid4().hex
-        start = time.perf_counter()
         try:
-            hits = self.retriever.search(
-                query,
-                top_k=top_k * 5,
-                session_id=session_id,
-                max_alert_severity=self.max_alignment_severity,
-            )
-        except RateLimitError:
-            raise
-        except VectorServiceError:
-            raise
-        except Exception as exc:  # pragma: no cover - defensive
-            raise VectorServiceError("retriever failure") from exc
-        patch_hits: List[Dict[str, Any]] = []
-        if self.patch_retriever is not None:
             try:
-                patch_hits = self.patch_retriever.search(query, top_k=top_k)
-            except Exception:
-                patch_hits = []
-        if patch_hits:
-            try:
-                hits.extend(patch_hits)
+                self.refresh_db_weights()
             except Exception:
                 pass
-        stack_stats: Dict[str, Any] = {
-            "enabled": bool(self.stack_config.enabled),
-            "hits": 0,
-            "ingestion_triggered": False,
-        }
-        stack_bundles: List[Dict[str, Any]] = []
-        if self.stack_config.enabled:
+            _ensure_vector_service()
+            dbs_to_check = list(self.db_weights.keys()) or ["code", "bot", "error", "workflow"]
             try:
-                if self.stack_config.ensure_before_search:
-                    stack_stats["ingestion_triggered"] = self.ensure_stack_index_up_to_date()
+                ensure_embeddings_fresh(dbs_to_check)
+            except StaleEmbeddingsError as exc:
+                details = ", ".join(f"{n} ({r})" for n, r in exc.stale_dbs.items())
+                logger.error("embeddings missing or stale: %s", details)
+                raise VectorServiceError(f"embeddings missing or stale: {details}") from exc
+            try:
+                self.patch_safety.load_failures()
             except Exception:
-                stack_stats["ingestion_triggered"] = False
-            stack_bundles = self._retrieve_stack_hits(query)
-            stack_stats["hits"] = len(stack_bundles)
-            if stack_bundles:
-                hits.extend(stack_bundles)
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
+                pass
 
-        if isinstance(hits, ErrorResult):
-            return "{}"
-        if isinstance(hits, FallbackResult):
-            logger.debug(
-                "retriever returned fallback for %s: %s",
+            prompt_tokens = len(query.split())
+            if failure:
+                parts = [query]
+                if failure.error_type:
+                    parts.append(failure.error_type)
+                parts.extend(failure.reproduction_steps)
+                query = " ".join(parts)
+            query = redact_text(query)
+            exclude = set(exclude_tags or [])
+            exclude.update(_get_failed_tags())
+            exclude_strats = set(exclude_strategies or [])
+            exclude_strats.update(getattr(self, "_excluded_failed_strategies", set()))
+            cache_key = (
                 query,
-                getattr(hits, "reason", ""),
+                top_k,
+                tuple(sorted(exclude)),
+                tuple(sorted(exclude_strats)),
+                self.stack_config.cache_marker(),
             )
-            hits = list(hits)
-        elif not isinstance(hits, list):
-            hits = list(hits)
+            if not include_vectors and not return_metadata and cache_key in self._cache:
+                return self._cache[cache_key]
 
-        hits = self._deduplicate_bundles(hits)
-
-        buckets: Dict[str, List[_ScoredEntry]] = {
-            "errors": [],
-            "bots": [],
-            "workflows": [],
-            "enhancements": [],
-            "actions": [],
-            "information": [],
-            "code": [],
-            "discrepancies": [],
-            "patches": [],
-            "stack": [],
-        }
-
-        for bundle in hits:
-            meta = bundle.get("metadata", {}) or {}
-            tags = ()
+            session_id = session_id or uuid.uuid4().hex
+            start = time.perf_counter()
             try:
-                tags = meta.get("tags") or bundle.get("tags") or ()
-            except Exception:
-                tags = ()
-            tag_set = (
-                {str(t) for t in tags}
-                if isinstance(tags, (list, tuple, set))
-                else {str(tags)}
-                if tags
-                else set()
-            )
-            strat_hash = meta.get("strategy_hash")
-            if exclude and tag_set & exclude:
-                continue
-            if exclude_strats and strat_hash and str(strat_hash) in exclude_strats:
-                continue
-            bucket, scored = self._bundle_to_entry(bundle, query)
-            if bucket:
-                buckets[bucket].append(scored)
-
-        patch_confidence = 0.0
-        if buckets["patches"]:
-            try:
-                patch_db = PatchHistoryDB() if PatchHistoryDB is not None else None
-            except Exception:
-                patch_db = None
-            ranked, patch_confidence = rank_patches(
-                buckets["patches"],
-                roi_tracker=self.roi_tracker,
-                patch_db=patch_db,
-                similarity_weight=self.ranking_weight,
-                roi_weight=self.roi_weight,
-                recency_weight=self.recency_weight,
-                exclude_tags=exclude,
-            )
-            buckets["patches"] = ranked
-
-        # Flatten scored entries and compute token estimates so we can trim
-        # globally across buckets.
-        bucket_order = list(buckets.keys())
-        candidates: List[Dict[str, Any]] = []
-        for key in bucket_order:
-            items = buckets[key]
-            if not items:
-                continue
-            items.sort(key=lambda e: e.score, reverse=True)
-            for e in items[:top_k]:
-                cand = self._merge_metadata(e, key)
-                candidates.append(cand)
-
-        def estimate_tokens(cands: List[Dict[str, Any]]) -> int:
-            ctx: Dict[str, List[Dict[str, Any]]] = {}
-            for c in cands:
-                ctx.setdefault(c["bucket"], []).append(c["summary"])
-            return self._count_tokens(json.dumps(ctx, separators=(",", ":")))
-        sum_tokens = sum(c["tokens"] for c in candidates)
-        total_tokens = estimate_tokens(candidates)
-        overhead = total_tokens - sum_tokens
-        total_tokens = sum_tokens + overhead
-
-        if total_tokens > self.max_tokens and candidates:
-            if prioritise == "newest":
-                candidates.sort(
-                    key=lambda c: (
-                        c["score"],
-                        c["raw"].get("timestamp")
-                        or c["raw"].get("ts")
-                        or c["raw"].get("created_at")
-                        or c["raw"].get("id", 0),
-                    )
+                hits = self.retriever.search(
+                    query,
+                    top_k=top_k * 5,
+                    session_id=session_id,
+                    max_alert_severity=self.max_alignment_severity,
                 )
-            elif prioritise == "roi":
-                candidates.sort(key=lambda c: (c["score"], c["raw"].get("roi", 0)))
-            else:
-                candidates.sort(key=lambda c: c["score"])
+            except RateLimitError:
+                raise
+            except VectorServiceError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive
+                raise VectorServiceError("retriever failure") from exc
+            patch_hits: List[Dict[str, Any]] = []
+            if self.patch_retriever is not None:
+                try:
+                    patch_hits = self.patch_retriever.search(query, top_k=top_k)
+                except Exception:
+                    patch_hits = []
+            if patch_hits:
+                try:
+                    hits.extend(patch_hits)
+                except Exception:
+                    pass
+            stack_stats: Dict[str, Any] = {
+                "enabled": bool(self.stack_config.enabled),
+                "hits": 0,
+                "ingestion_triggered": False,
+            }
+            stack_bundles: List[Dict[str, Any]] = []
+            if self.stack_config.enabled:
+                try:
+                    if self.stack_config.ensure_before_search:
+                        stack_stats["ingestion_triggered"] = self.ensure_stack_index_up_to_date()
+                except Exception:
+                    stack_stats["ingestion_triggered"] = False
+                stack_bundles = self._retrieve_stack_hits(query)
+                stack_stats["hits"] = len(stack_bundles)
+                if stack_bundles:
+                    hits.extend(stack_bundles)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
 
-            idx = 0
-            while total_tokens > self.max_tokens and candidates:
-                cand = candidates[idx]
-                desc = cand["summary"].get("desc", "")
-                if not cand["summarised"]:
-                    cand["summary"]["desc"] = self._summarise(desc)
-                    cand["meta"]["desc"] = cand["summary"]["desc"]
-                    cand["meta"]["truncated"] = True
-                    cand["summarised"] = True
-                    new_tokens = self._count_tokens(
-                        json.dumps(cand["summary"], separators=(",", ":"))
+            if isinstance(hits, ErrorResult):
+                return "{}"
+            if isinstance(hits, FallbackResult):
+                logger.debug(
+                    "retriever returned fallback for %s: %s",
+                    query,
+                    getattr(hits, "reason", ""),
+                )
+                hits = list(hits)
+            elif not isinstance(hits, list):
+                hits = list(hits)
+
+            hits = self._deduplicate_bundles(hits)
+
+            buckets: Dict[str, List[_ScoredEntry]] = {
+                "errors": [],
+                "bots": [],
+                "workflows": [],
+                "enhancements": [],
+                "actions": [],
+                "information": [],
+                "code": [],
+                "discrepancies": [],
+                "patches": [],
+                "stack": [],
+            }
+
+            for bundle in hits:
+                meta = bundle.get("metadata", {}) or {}
+                tags = ()
+                try:
+                    tags = meta.get("tags") or bundle.get("tags") or ()
+                except Exception:
+                    tags = ()
+                tag_set = (
+                    {str(t) for t in tags}
+                    if isinstance(tags, (list, tuple, set))
+                    else {str(tags)}
+                    if tags
+                    else set()
+                )
+                strat_hash = meta.get("strategy_hash")
+                if exclude and tag_set & exclude:
+                    continue
+                if exclude_strats and strat_hash and str(strat_hash) in exclude_strats:
+                    continue
+                bucket, scored = self._bundle_to_entry(bundle, query)
+                if bucket:
+                    buckets[bucket].append(scored)
+
+            patch_confidence = 0.0
+            if buckets["patches"]:
+                try:
+                    patch_db = PatchHistoryDB() if PatchHistoryDB is not None else None
+                except Exception:
+                    patch_db = None
+                ranked, patch_confidence = rank_patches(
+                    buckets["patches"],
+                    roi_tracker=self.roi_tracker,
+                    patch_db=patch_db,
+                    similarity_weight=self.ranking_weight,
+                    roi_weight=self.roi_weight,
+                    recency_weight=self.recency_weight,
+                    exclude_tags=exclude,
+                )
+                buckets["patches"] = ranked
+
+            # Flatten scored entries and compute token estimates so we can trim
+            # globally across buckets.
+            bucket_order = list(buckets.keys())
+            candidates: List[Dict[str, Any]] = []
+            for key in bucket_order:
+                items = buckets[key]
+                if not items:
+                    continue
+                items.sort(key=lambda e: e.score, reverse=True)
+                for e in items[:top_k]:
+                    cand = self._merge_metadata(e, key)
+                    candidates.append(cand)
+
+            def estimate_tokens(cands: List[Dict[str, Any]]) -> int:
+                ctx: Dict[str, List[Dict[str, Any]]] = {}
+                for c in cands:
+                    ctx.setdefault(c["bucket"], []).append(c["summary"])
+                return self._count_tokens(json.dumps(ctx, separators=(",", ":")))
+            sum_tokens = sum(c["tokens"] for c in candidates)
+            total_tokens = estimate_tokens(candidates)
+            overhead = total_tokens - sum_tokens
+            total_tokens = sum_tokens + overhead
+
+            if total_tokens > self.max_tokens and candidates:
+                if prioritise == "newest":
+                    candidates.sort(
+                        key=lambda c: (
+                            c["score"],
+                            c["raw"].get("timestamp")
+                            or c["raw"].get("ts")
+                            or c["raw"].get("created_at")
+                            or c["raw"].get("id", 0),
+                        )
                     )
-                    sum_tokens += new_tokens - cand["tokens"]
-                    cand["tokens"] = new_tokens
-                    total_tokens = sum_tokens + overhead
+                elif prioritise == "roi":
+                    candidates.sort(key=lambda c: (c["score"], c["raw"].get("roi", 0)))
                 else:
-                    truncated = desc.rsplit(" ", 1)[0] if " " in desc else ""
-                    if not truncated or truncated == desc:
-                        sum_tokens -= cand["tokens"]
-                        candidates.pop(idx)
-                        if candidates:
-                            sum_tokens = sum(c["tokens"] for c in candidates)
-                            overhead = estimate_tokens(candidates) - sum_tokens
-                            total_tokens = sum_tokens + overhead
-                        else:
-                            total_tokens = 0
-                            sum_tokens = 0
-                            overhead = 0
-                    else:
-                        cand["summary"]["desc"] = truncated + "..."
+                    candidates.sort(key=lambda c: c["score"])
+
+                idx = 0
+                while total_tokens > self.max_tokens and candidates:
+                    cand = candidates[idx]
+                    desc = cand["summary"].get("desc", "")
+                    if not cand["summarised"]:
+                        cand["summary"]["desc"] = self._summarise(desc)
                         cand["meta"]["desc"] = cand["summary"]["desc"]
                         cand["meta"]["truncated"] = True
+                        cand["summarised"] = True
                         new_tokens = self._count_tokens(
                             json.dumps(cand["summary"], separators=(",", ":"))
                         )
                         sum_tokens += new_tokens - cand["tokens"]
                         cand["tokens"] = new_tokens
                         total_tokens = sum_tokens + overhead
+                    else:
+                        truncated = desc.rsplit(" ", 1)[0] if " " in desc else ""
+                        if not truncated or truncated == desc:
+                            sum_tokens -= cand["tokens"]
+                            candidates.pop(idx)
+                            if candidates:
+                                sum_tokens = sum(c["tokens"] for c in candidates)
+                                overhead = estimate_tokens(candidates) - sum_tokens
+                                total_tokens = sum_tokens + overhead
+                            else:
+                                total_tokens = 0
+                                sum_tokens = 0
+                                overhead = 0
+                        else:
+                            cand["summary"]["desc"] = truncated + "..."
+                            cand["meta"]["desc"] = cand["summary"]["desc"]
+                            cand["meta"]["truncated"] = True
+                            new_tokens = self._count_tokens(
+                                json.dumps(cand["summary"], separators=(",", ":"))
+                            )
+                            sum_tokens += new_tokens - cand["tokens"]
+                            cand["tokens"] = new_tokens
+                            total_tokens = sum_tokens + overhead
 
-        result: Dict[str, List[Dict[str, Any]]] = {}
-        meta: Dict[str, List[Dict[str, Any]]] = {}
-        vectors: List[Tuple[str, str, float]] = []
-        for key in bucket_order:
-            for c in candidates:
-                if c["bucket"] == key:
-                    result.setdefault(key, []).append(c["summary"])
-                    if return_metadata:
-                        meta.setdefault(key, []).append(c["meta"])
-                    vectors.append((c["origin"], c["vector_id"], c["score"]))
+                result: Dict[str, List[Dict[str, Any]]] = {}
+                meta: Dict[str, List[Dict[str, Any]]] = {}
+                vectors: List[Tuple[str, str, float]] = []
+                for key in bucket_order:
+                    for c in candidates:
+                        if c["bucket"] == key:
+                            result.setdefault(key, []).append(c["summary"])
+                            if return_metadata:
+                                meta.setdefault(key, []).append(c["meta"])
+                            vectors.append((c["origin"], c["vector_id"], c["score"]))
 
-        context = json.dumps(result, separators=(",", ":"))
-        total_tokens = self._count_tokens(context)
-        if not include_vectors and not return_metadata:
-            self._cache[cache_key] = context
-        stats = {
-            "tokens": total_tokens,
-            "wall_time_ms": elapsed_ms,
-            "prompt_tokens": prompt_tokens,
-            "patch_confidence": patch_confidence,
-        }
-        if self.stack_config.enabled:
-            selected = [c for c in candidates if c["bucket"] == "stack"]
-            stack_stats["selected"] = len(selected)
-            stack_stats["tokens"] = sum(c["tokens"] for c in selected)
-            stats["stack"] = stack_stats
-        if include_vectors and return_metadata:
-            if return_stats:
-                return context, session_id, vectors, meta, stats
-            return context, session_id, vectors, meta
-        if include_vectors:
-            if return_stats:
-                return context, session_id, vectors, stats
-            return context, session_id, vectors
-        if return_metadata:
-            if return_stats:
-                return context, meta, stats
-            return context, meta
-        if return_stats:
-            return context, stats
-        return context
+                context = json.dumps(result, separators=(",", ":"))
+                total_tokens = self._count_tokens(context)
+                if not include_vectors and not return_metadata:
+                    self._cache[cache_key] = context
+                stats = {
+                    "tokens": total_tokens,
+                    "wall_time_ms": elapsed_ms,
+                    "prompt_tokens": prompt_tokens,
+                    "patch_confidence": patch_confidence,
+                }
+                if self.stack_config.enabled:
+                    selected = [c for c in candidates if c["bucket"] == "stack"]
+                    stack_stats["selected"] = len(selected)
+                    stack_stats["tokens"] = sum(c["tokens"] for c in selected)
+                    stats["stack"] = stack_stats
+                if include_vectors and return_metadata:
+                    if return_stats:
+                        return context, session_id, vectors, meta, stats
+                    return context, session_id, vectors, meta
+                if include_vectors:
+                    if return_stats:
+                        return context, session_id, vectors, stats
+                    return context, session_id, vectors
+                if return_metadata:
+                    if return_stats:
+                        return context, meta, stats
+                    return context, meta
+                if return_stats:
+                    return context, stats
+                return context
+        finally:
+            if restore_stack_config:
+                restore_stack_config()
 
     # ------------------------------------------------------------------
     @log_and_measure

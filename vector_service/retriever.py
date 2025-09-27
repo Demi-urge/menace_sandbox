@@ -975,6 +975,7 @@ class StackRetriever:
                 or metadata.get("text")
                 or ""
             )
+            snippet = pii_redact_text(str(snippet))
             result_meta = dict(metadata)
             if language:
                 result_meta.setdefault("language", language)
@@ -989,9 +990,22 @@ class StackRetriever:
                 "text": snippet,
                 "origin_db": hit.get("origin_db", "stack"),
             }
-            for key in ("identifier", "checksum", "repo", "path", "license"):
+            identifier = (
+                hit.get("record_id")
+                or hit.get("identifier")
+                or result_meta.get("identifier")
+                or result_meta.get("checksum")
+            )
+            if identifier is not None:
+                result.setdefault("identifier", identifier)
+                result.setdefault("record_id", identifier)
+            for key in ("checksum", "repo", "path", "license"):
                 if key in hit and key not in result:
                     result[key] = hit[key]
+                if key not in result and key in result_meta:
+                    result[key] = result_meta[key]
+            result["metadata"] = redact_dict(pii_redact_dict(result_meta))
+            result = redact_dict(pii_redact_dict(result))
             results.append(result)
         results.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
         return results
