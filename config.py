@@ -86,7 +86,17 @@ else:  # pragma: no cover - executed when running under pydantic v1
     def field_validator(*fields, **kwargs):  # type: ignore[override]
         """Compatibility shim for :func:`pydantic.field_validator` on v1."""
 
-        decorator = validator(*fields, allow_reuse=True, **kwargs)
+        mode = kwargs.pop("mode", None)
+        if mode is not None:
+            translated = {"before": True, "after": False, "plain": False}
+            if mode not in translated:
+                raise ValueError(
+                    f"Unsupported validation mode for pydantic<2: {mode!r}"
+                )
+            kwargs["pre"] = translated[mode]
+
+        kwargs.setdefault("allow_reuse", True)
+        decorator = validator(*fields, **kwargs)
 
         def wrapper(func):
             method = func.__func__ if isinstance(func, classmethod) else func
