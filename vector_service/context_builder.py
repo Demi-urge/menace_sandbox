@@ -391,6 +391,8 @@ class ContextBuilder:
         stack_retriever: Any | None = None,
         stack_ingestor: Any | None = None,
         stack_config: Any | None = None,
+        stack_score_weight: float | None = None,
+        stack_penalty_weight: float | None = None,
     ) -> None:
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -474,6 +476,16 @@ class ContextBuilder:
             if cfg_obj is None:
                 cfg_obj = getattr(cfg, "stack_dataset", None)
         self.stack_config = _StackContextConfig.from_any(cfg_obj)
+        if stack_score_weight is not None:
+            try:
+                self.stack_config.weight = float(stack_score_weight)
+            except Exception:
+                logger.exception("invalid stack_score_weight override")
+        if stack_penalty_weight is not None:
+            try:
+                self.stack_config.penalty = float(stack_penalty_weight)
+            except Exception:
+                logger.exception("invalid stack_penalty_weight override")
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
         # in configuration, while ``STACK_CONTEXT_DISABLED`` always forces the
@@ -945,6 +957,9 @@ class ContextBuilder:
                 entry["path"] = redact_text(str(meta.get("path")))
             if "language" in meta:
                 entry["language"] = str(meta.get("language"))
+            snippet_val = meta.get("snippet") or text
+            if snippet_val:
+                entry["snippet"] = redact_text(str(snippet_val))
             if meta.get("license"):
                 entry.setdefault("flags", {})
                 entry["flags"]["license"] = meta.get("license")
@@ -1165,6 +1180,7 @@ class ContextBuilder:
         full: Dict[str, Any] = dict(scored.entry)
         meta = scored.metadata or {}
         full.update(meta)
+        full.setdefault("origin_db", scored.origin)
 
         patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
         try:
@@ -1369,19 +1385,23 @@ class ContextBuilder:
         language = hit.get("language") or meta.get("language") or meta.get("lang")
         license_name = hit.get("license") or meta.get("license")
         license_fp = hit.get("license_fingerprint") or meta.get("license_fingerprint")
-        summary_source = (
-            hit.get("summary")
-            or meta.get("summary")
-            or hit.get("snippet")
+        snippet_source = (
+            hit.get("snippet")
             or meta.get("snippet")
             or hit.get("text")
             or meta.get("text")
             or meta.get("content")
             or ""
         )
+        snippet_source = redact_text(str(snippet_source))
+        if not snippet_source.strip():
+            snippet_source = ""
+        summary_source = (
+            hit.get("summary") or meta.get("summary") or snippet_source
+        )
         summary_source = redact_text(str(summary_source))
         if not summary_source.strip():
-            summary_source = ""
+            summary_source = snippet_source
         limit = max(int(self.stack_config.summary_tokens or 0), 0)
         desc = summary_source
         tokens = self._count_tokens(desc) if desc else 0
@@ -1397,6 +1417,13 @@ class ContextBuilder:
             tokens = self._count_tokens(desc)
         meta.setdefault("summary", desc)
         meta.setdefault("desc", desc)
+        if snippet_source and snippet_source != desc:
+            snippet_tokens = self._count_tokens(snippet_source)
+            if text_limit and snippet_tokens > text_limit:
+                snippet_source = self._trim_tokens(snippet_source, text_limit)
+            meta.setdefault("snippet", snippet_source)
+        else:
+            meta.setdefault("snippet", desc)
         if repo:
             meta.setdefault("repo", repo)
             meta.setdefault("repository", repo)
@@ -1466,6 +1493,65 @@ class ContextBuilder:
             except Exception:
                 logger.exception("failed to prepare stack bundle")
         return bundles
+
+    def _deduplicate_bundles(
+        self, bundles: Iterable[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        seen: set[str] = set()
+        deduped: List[Dict[str, Any]] = []
+        for bundle in bundles:
+            if not isinstance(bundle, dict):
+                continue
+            origin = str(bundle.get("origin_db") or bundle.get("origin") or "")
+            meta = bundle.get("metadata") or {}
+            meta_dict = meta if isinstance(meta, dict) else {}
+            key_candidates: List[str] = []
+            identifiers = [
+                bundle.get("record_id"),
+                meta_dict.get("record_id"),
+                meta_dict.get("id"),
+                meta_dict.get("uuid"),
+                meta_dict.get("identifier"),
+                meta_dict.get("checksum"),
+            ]
+            if origin == "stack":
+                repo = meta_dict.get("repo") or meta_dict.get("repository")
+                path = meta_dict.get("path") or meta_dict.get("file_path")
+                if repo or path:
+                    identifiers.append((repo or "", path or ""))
+            for candidate in identifiers:
+                if not candidate:
+                    continue
+                try:
+                    if isinstance(candidate, (dict, list, tuple, set)):
+                        normalised = json.dumps(candidate, sort_keys=True, default=str)
+                    else:
+                        normalised = str(candidate)
+                except Exception:
+                    normalised = str(candidate)
+                key_candidates.append(f"{origin}:{normalised}")
+            if not key_candidates:
+                fallback = (
+                    bundle.get("text")
+                    or meta_dict.get("summary")
+                    or meta_dict.get("desc")
+                    or meta_dict.get("snippet")
+                    or ""
+                )
+                try:
+                    if isinstance(fallback, (dict, list, tuple, set)):
+                        fallback_norm = json.dumps(fallback, sort_keys=True, default=str)
+                    else:
+                        fallback_norm = str(fallback)
+                except Exception:
+                    fallback_norm = str(fallback)
+                key_candidates.append(f"{origin}:{fallback_norm}")
+            if any(key in seen for key in key_candidates):
+                continue
+            for key in key_candidates:
+                seen.add(key)
+            deduped.append(bundle)
+        return deduped
 
     # ------------------------------------------------------------------
     def ensure_stack_index_up_to_date(self, *, force: bool = False) -> bool:
@@ -1651,6 +1737,10 @@ class ContextBuilder:
                 getattr(hits, "reason", ""),
             )
             hits = list(hits)
+        elif not isinstance(hits, list):
+            hits = list(hits)
+
+        hits = self._deduplicate_bundles(hits)
 
         buckets: Dict[str, List[_ScoredEntry]] = {
             "errors": [],
