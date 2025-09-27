@@ -589,6 +589,52 @@ class ContextBuilderConfig(_StrictBaseModel):
         self.stack = StackContextConfig.model_validate(combined_stack)
         return self
 
+    @property
+    def stack_top_k(self) -> int:
+        """Return the configured Stack retrieval depth.
+
+        Defaults to ``0`` when Stack integration is disabled or misconfigured.
+        """
+
+        if self.stack is not None:
+            try:
+                return int(self.stack.top_k)
+            except Exception:
+                pass
+        if self.stack_dataset is not None:
+            try:
+                return int(self.stack_dataset.retrieval.top_k)
+            except Exception:
+                pass
+        return 0
+
+    @property
+    def stack_weight(self) -> float:
+        """Return weighting multiplier applied to Stack results."""
+
+        if self.stack is not None:
+            try:
+                return float(self.stack.weight)
+            except Exception:
+                pass
+        if self.stack_dataset is not None:
+            try:
+                return float(self.stack_dataset.retrieval.weight)
+            except Exception:
+                pass
+        return 1.0
+
+    @property
+    def stack_penalty(self) -> float:
+        """Return penalty offset applied to Stack scores."""
+
+        if self.stack is not None:
+            try:
+                return float(self.stack.penalty)
+            except Exception:
+                pass
+        return 0.0
+
 
 class Config(_StrictBaseModel):
     """Top-level application configuration."""
