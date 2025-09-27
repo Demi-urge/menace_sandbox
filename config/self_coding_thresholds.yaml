@@ -1,3 +1,14 @@
+stack:
+  enabled: false
+  dataset_name: bigcode/the-stack-v2-dedup
+  split: train
+  languages: []
+  max_lines: 200
+  chunk_overlap: 20
+  top_k: 50
+  index_path: vector_service/stack_vectors
+  metadata_path: vector_service/stack_metadata.db
+  weight: 1.0
 default:
   roi_drop: -0.1
   error_increase: 1.0

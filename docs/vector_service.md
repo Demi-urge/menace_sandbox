@@ -193,6 +193,14 @@ The streamer consumes the following environment variables:
 | `STACK_CACHE_DIR` | Directory used for the datasets disk cache. |
 | `STACK_BATCH_SIZE` | When set, limits each background pass to at most this many chunks before sleeping. |
 
+Longer-lived defaults live in `config/self_coding_thresholds.yaml` under the
+`stack` section, which mirrors the fields in `ContextBuilderConfig.stack_dataset`.
+Environment overrides are merged ahead of validation, ensuring invalid values
+such as unsupported languages or negative chunk limits are rejected early.
+Sandbox profiles can refine allow-lists, retrieval weights and storage paths via
+the new `stack_*` settings on `SandboxSettings`, keeping ingestion and
+retrieval aligned without editing production YAML.
+
 Any Hugging Face token defined in `CONFIG.huggingface_token` (or exposed via
 `HUGGINGFACE_API_TOKEN`/`HF_TOKEN`) is forwarded to `datasets.load_dataset`.  The
 module keeps memory usage bounded by chunking files eagerly, avoiding in-memory

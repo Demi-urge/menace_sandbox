@@ -22,7 +22,7 @@ import argparse
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING, Set
+from typing import Any, Dict, TYPE_CHECKING, Set, List
 from types import SimpleNamespace
 import sys
 import site
@@ -30,6 +30,10 @@ import copy
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from dynamic_path_router import get_project_root
+from stack_dataset_defaults import (
+    STACK_LANGUAGE_ALLOWLIST,
+    normalise_stack_languages,
+)
 
 try:  # pragma: no cover - optional dependencies
     from .unified_config_store import UnifiedConfigStore
@@ -219,6 +223,50 @@ class BotConfig(_StrictBaseModel):
     epsilon: float = Field(ge=0.0, le=1.0)
 
 
+class StackDatasetConfig(_StrictBaseModel):
+    """Configuration for Stack dataset ingestion and retrieval."""
+
+    enabled: bool = False
+    dataset_name: str = "bigcode/the-stack-v2-dedup"
+    split: str = "train"
+    languages: List[str] = Field(default_factory=list)
+    max_lines: int = Field(default=200, gt=0)
+    chunk_overlap: int = Field(default=20, ge=0)
+    top_k: int = Field(default=50, gt=0)
+    index_path: str = Field(
+        default="vector_service/stack_vectors",
+        description="Path to the Stack vector index",
+    )
+    metadata_path: str = Field(
+        default="vector_service/stack_metadata.db",
+        description="Path to the Stack metadata catalogue",
+    )
+    weight: float = Field(default=1.0, ge=0.0)
+
+    @field_validator("languages", mode="before")
+    @classmethod
+    def _coerce_languages(cls, value: Any) -> List[str]:
+        return normalise_stack_languages(value)
+
+    @field_validator("languages")
+    @classmethod
+    def _validate_languages(cls, value: List[str]) -> List[str]:
+        unknown = [lang for lang in value if lang not in STACK_LANGUAGE_ALLOWLIST]
+        if unknown:
+            allowed = ", ".join(sorted(STACK_LANGUAGE_ALLOWLIST))
+            raise ValueError(
+                f"Unsupported Stack dataset languages: {', '.join(sorted(set(unknown)))}. "
+                f"Allowed values are: {allowed}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _check_chunk_sizes(self) -> "StackDatasetConfig":
+        if self.chunk_overlap >= self.max_lines:
+            raise ValueError("chunk_overlap must be smaller than max_lines")
+        return self
+
+
 class ContextBuilderConfig(_StrictBaseModel):
     """Context builder tuning parameters."""
 
@@ -300,6 +348,7 @@ class ContextBuilderConfig(_StrictBaseModel):
         1.0,
         description="Multiplier applied to similarity scores when ranking prompt examples",
     )
+    stack_dataset: StackDatasetConfig | None = None
 
 
 class Config(_StrictBaseModel):
@@ -433,6 +482,17 @@ def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any
     return diff
 
 
+def _parse_bool(value: str) -> bool:
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int(value: str, *, field: str) -> int:
+    try:
+        return int(value)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise ValueError(f"{field} must be an integer") from exc
+
+
 class _ConfigChangeHandler(FileSystemEventHandler):
     """Watchdog handler that reloads configuration on file changes."""
 
@@ -527,11 +587,52 @@ def load_config(
     openai_env = os.getenv("OPENAI_API_KEY")
     serp_env = os.getenv("SERP_API_KEY")
     if openai_env or serp_env:
-        env_overrides["api_keys"] = {}
+        env_overrides.setdefault("api_keys", {})
         if openai_env:
             env_overrides["api_keys"]["openai"] = openai_env
         if serp_env:
             env_overrides["api_keys"]["serp"] = serp_env
+
+    stack_override: Dict[str, Any] = {}
+    stack_enabled = os.getenv("STACK_DATA_ENABLED")
+    if stack_enabled is not None:
+        stack_override["enabled"] = _parse_bool(stack_enabled)
+    stack_dataset = os.getenv("STACK_DATASET")
+    if stack_dataset:
+        stack_override["dataset_name"] = stack_dataset
+    stack_split = os.getenv("STACK_SPLIT")
+    if stack_split:
+        stack_override["split"] = stack_split
+    stack_languages = os.getenv("STACK_LANGUAGES")
+    if stack_languages is not None:
+        stack_override["languages"] = normalise_stack_languages(stack_languages)
+    stack_max_lines = os.getenv("STACK_MAX_LINES")
+    if stack_max_lines is not None:
+        stack_override["max_lines"] = _parse_int(stack_max_lines, field="STACK_MAX_LINES")
+    stack_chunk_overlap = os.getenv("STACK_CHUNK_OVERLAP")
+    if stack_chunk_overlap is not None:
+        stack_override["chunk_overlap"] = _parse_int(
+            stack_chunk_overlap, field="STACK_CHUNK_OVERLAP"
+        )
+    stack_top_k = os.getenv("STACK_TOP_K")
+    if stack_top_k is not None:
+        stack_override["top_k"] = _parse_int(stack_top_k, field="STACK_TOP_K")
+    stack_index = os.getenv("STACK_DATA_INDEX")
+    if stack_index:
+        stack_override["index_path"] = stack_index
+    stack_metadata = os.getenv("STACK_METADATA_DB")
+    if stack_metadata:
+        stack_override["metadata_path"] = stack_metadata
+    stack_weight = os.getenv("STACK_WEIGHT")
+    if stack_weight is not None:
+        try:
+            stack_override["weight"] = float(stack_weight)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError("STACK_WEIGHT must be a float") from exc
+    if stack_override:
+        env_overrides.setdefault("context_builder", {})["stack_dataset"] = stack_override
+
+    if env_overrides:
         data = _merge_dict(data, env_overrides)
 
     cfg = Config.model_validate(data)
