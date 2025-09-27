@@ -20,6 +20,7 @@ import sys
 import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, TYPE_CHECKING
@@ -161,6 +162,18 @@ SuggestionRecord = _patch_suggestion_db.SuggestionRecord
 
 _patch_attempt_tracker = load_internal("patch_attempt_tracker")
 PatchAttemptTracker = _patch_attempt_tracker.PatchAttemptTracker
+
+_redaction_utils = load_internal("redaction_utils")
+redact_text = _redaction_utils.redact_text
+
+try:  # pragma: no cover - optional in minimal environments
+    _stack_thresholds = load_internal("self_coding_thresholds")
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    get_stack_dataset_config = None  # type: ignore[assignment]
+else:
+    get_stack_dataset_config = getattr(
+        _stack_thresholds, "get_stack_dataset_config", None
+    )
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from menace_sandbox.enhancement_classifier import (
@@ -428,6 +441,55 @@ _log_prompt_attempt_failures = 0
 # Load prompt configuration from settings instead of environment variables
 _settings = SandboxSettings()
 PROMPT_REPO_LAYOUT_LINES = getattr(_settings, "prompt_repo_layout_lines", 200)
+STACK_PROMPT_HEADER = "### Stack context"
+
+
+@dataclass
+class StackAssistSettings:
+    """Configuration controlling Stack prompt assistance."""
+
+    enabled: bool = False
+    top_k: int | None = None
+    prompt_limit: int | None = None
+    snippet_char_limit: int | None = None
+    total_char_limit: int | None = None
+
+    def effective_limit(self) -> int | None:
+        """Return the effective snippet cap to apply when formatting prompts."""
+
+        if self.prompt_limit is not None:
+            try:
+                limit = int(self.prompt_limit)
+            except (TypeError, ValueError):
+                return None
+            return max(limit, 0)
+        if self.top_k is not None:
+            try:
+                limit = int(self.top_k)
+            except (TypeError, ValueError):
+                return None
+            return max(limit, 0)
+        return None
+
+    def per_snippet_chars(self) -> int:
+        """Return the maximum characters allowed per snippet (0 for unlimited)."""
+
+        if self.snippet_char_limit is None:
+            return 0
+        try:
+            return max(int(self.snippet_char_limit), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def total_chars(self) -> int:
+        """Return the aggregate character budget for Stack snippets."""
+
+        if self.total_char_limit is None:
+            return 0
+        try:
+            return max(int(self.total_char_limit), 0)
+        except (TypeError, ValueError):
+            return 0
 
 # Reuse prompt encoder for token counting if available
 
@@ -550,6 +612,7 @@ class SelfCodingEngine:
         baseline_window: int | None = None,
         delta_tracker: BaselineTracker | None = None,
         prompt_simplifier: Callable[[Prompt], Prompt] | None = None,
+        stack_assist: Mapping[str, Any] | bool | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -669,6 +732,7 @@ class SelfCodingEngine:
                     extra={"context_builder": type(builder).__name__},
                 )
         self.context_builder = builder
+        self.stack_assist = self._resolve_stack_assist(builder, stack_assist)
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
@@ -766,6 +830,267 @@ class SelfCodingEngine:
         self._failure_cache = FailureCache()
         self._generation_params: Dict[str, Any] = {}
         self._load_state()
+        self._last_stack_context: Dict[str, Any] = {
+            "used": False,
+            "snippets": [],
+            "count": 0,
+            "total_chars": 0,
+            "reason": "initialised",
+        }
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _coerce_stack_override(
+        override: Mapping[str, Any] | bool | None,
+    ) -> Dict[str, Any]:
+        if override is None:
+            return {}
+        if isinstance(override, bool):
+            return {"enabled": override}
+        if isinstance(override, str):
+            value = override.strip().lower()
+            if value in {"on", "enable", "enabled", "true", "yes"}:
+                return {"enabled": True}
+            if value in {"off", "disable", "disabled", "false", "no"}:
+                return {"enabled": False}
+            return {}
+        if isinstance(override, Mapping):
+            return dict(override)
+        if hasattr(override, "__dict__"):
+            try:
+                return dict(vars(override))
+            except Exception:
+                return {}
+        return {}
+
+    def _resolve_stack_assist(
+        self,
+        builder: ContextBuilder,
+        override: Mapping[str, Any] | bool | None,
+    ) -> StackAssistSettings:
+        settings = StackAssistSettings()
+
+        cfg = getattr(builder, "stack_config", None)
+        if cfg is not None:
+            try:
+                settings.enabled = bool(getattr(cfg, "enabled", settings.enabled))
+            except Exception:
+                settings.enabled = settings.enabled
+            if getattr(cfg, "top_k", None) is not None:
+                try:
+                    settings.top_k = int(getattr(cfg, "top_k"))
+                except Exception:
+                    pass
+            summary_tokens = getattr(cfg, "summary_tokens", None)
+            if summary_tokens not in (None, 0):
+                try:
+                    settings.snippet_char_limit = int(summary_tokens) * 4
+                except Exception:
+                    pass
+            text_tokens = getattr(cfg, "text_max_tokens", None)
+            if text_tokens not in (None, 0):
+                try:
+                    settings.total_char_limit = int(text_tokens) * 4
+                except Exception:
+                    pass
+
+        sandbox_override = getattr(_settings, "stack_enabled", None)
+        if sandbox_override is not None:
+            settings.enabled = bool(sandbox_override)
+        sandbox_top_k = getattr(_settings, "stack_top_k", None)
+        if sandbox_top_k is not None:
+            try:
+                settings.top_k = int(sandbox_top_k)
+            except Exception:
+                pass
+
+        if callable(get_stack_dataset_config):
+            try:
+                dataset_cfg = dict(get_stack_dataset_config(_settings))  # type: ignore[misc]
+            except Exception:
+                dataset_cfg = {}
+            if dataset_cfg:
+                if "enabled" in dataset_cfg:
+                    settings.enabled = bool(dataset_cfg["enabled"])
+                if dataset_cfg.get("top_k") is not None:
+                    try:
+                        settings.top_k = int(dataset_cfg["top_k"])
+                    except Exception:
+                        pass
+
+        override_data = self._coerce_stack_override(override)
+        if override_data:
+            if "enabled" in override_data:
+                settings.enabled = bool(override_data["enabled"])
+            for key in ("prompt_limit", "max_entries", "max_snippets"):
+                if override_data.get(key) is not None:
+                    try:
+                        settings.prompt_limit = int(override_data[key])
+                    except Exception:
+                        pass
+                    break
+            if override_data.get("top_k") is not None:
+                try:
+                    settings.top_k = int(override_data["top_k"])
+                except Exception:
+                    pass
+            for key in ("snippet_char_limit", "snippet_chars", "max_chars"):
+                if override_data.get(key) is not None:
+                    try:
+                        settings.snippet_char_limit = int(override_data[key])
+                    except Exception:
+                        pass
+                    break
+            for key in ("total_char_limit", "total_chars", "budget_chars"):
+                if override_data.get(key) is not None:
+                    try:
+                        settings.total_char_limit = int(override_data[key])
+                    except Exception:
+                        pass
+                    break
+
+        if settings.prompt_limit is None and settings.top_k is not None:
+            settings.prompt_limit = settings.top_k
+
+        return settings
+
+    def _format_stack_snippet(
+        self, entry: Mapping[str, Any], *, char_limit: int
+    ) -> str:
+        repo = str(
+            entry.get("repo")
+            or entry.get("repository")
+            or entry.get("owner")
+            or ""
+        ).strip()
+        path = str(entry.get("path") or entry.get("file_path") or "").strip()
+        language = str(entry.get("language") or "").strip()
+        license_name = str(
+            entry.get("license")
+            or entry.get("license_name")
+            or entry.get("license_fingerprint")
+            or ""
+        ).strip()
+        summary = entry.get("desc") or entry.get("summary") or entry.get("text") or ""
+        summary_text = redact_text(str(summary).strip())
+        if char_limit and len(summary_text) > char_limit:
+            truncated = summary_text[:char_limit].rsplit(" ", 1)[0].strip()
+            if not truncated:
+                truncated = summary_text[:char_limit].strip()
+            summary_text = truncated.rstrip()
+            if summary_text and len(summary_text) < len(redact_text(str(summary).strip())):
+                summary_text = summary_text.rstrip(".") + "…"
+        header_parts: List[str] = []
+        if repo or path:
+            location = f"{repo}:{path}" if repo and path else repo or path
+            if location:
+                header_parts.append(redact_text(location))
+        if language:
+            header_parts.append(language)
+        if license_name:
+            header_parts.append(f"license={license_name}")
+        score = entry.get("score")
+        try:
+            if score is not None:
+                header_parts.append(f"score={float(score):.2f}")
+        except Exception:
+            pass
+        header = " | ".join(part for part in header_parts if part)
+        if summary_text and header:
+            return f"{header}\n{summary_text}"
+        if summary_text:
+            return summary_text
+        return header
+
+    def _extract_stack_snippets(
+        self, metadata: Mapping[str, Any] | None
+    ) -> Dict[str, Any]:
+        state: Dict[str, Any] = {
+            "used": False,
+            "snippets": [],
+            "count": 0,
+            "total_chars": 0,
+            "reason": "",
+            "raw": [],
+        }
+        if not self.stack_assist.enabled:
+            state["reason"] = "disabled"
+            return state
+        meta = metadata or {}
+        error_hint = meta.get("stack_context_error")
+        if error_hint:
+            state["reason"] = str(error_hint)
+            return state
+        raw_meta = meta.get("retrieval_metadata")
+        stack_entries: List[Any] = []
+        if isinstance(raw_meta, Mapping):
+            stack_entries = list(raw_meta.get("stack") or [])
+        if not stack_entries and isinstance(meta.get("stack"), list):
+            stack_entries = list(meta.get("stack") or [])
+        if not stack_entries:
+            state["reason"] = "no_results"
+            return state
+        deduped: List[Mapping[str, Any]] = []
+        seen: set[Tuple[str, str, str]] = set()
+        for entry in stack_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            repo = str(
+                entry.get("repo")
+                or entry.get("repository")
+                or entry.get("owner")
+                or ""
+            ).strip().lower()
+            path = str(entry.get("path") or entry.get("file_path") or "").strip().lower()
+            desc = str(
+                entry.get("desc")
+                or entry.get("summary")
+                or entry.get("text")
+                or ""
+            ).strip()
+            key = (repo, path, desc)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(entry)
+        if not deduped:
+            state["reason"] = "no_results"
+            return state
+        limit = self.stack_assist.effective_limit()
+        if limit is not None and limit <= 0:
+            state["reason"] = "limit"
+            state["raw"] = deduped
+            return state
+        per_chars = self.stack_assist.per_snippet_chars()
+        total_chars_cap = self.stack_assist.total_chars()
+        snippets: List[str] = []
+        total_chars = 0
+        for entry in deduped:
+            if limit is not None and len(snippets) >= limit:
+                break
+            snippet = self._format_stack_snippet(entry, char_limit=per_chars)
+            if not snippet:
+                continue
+            candidate_len = len(snippet)
+            if total_chars_cap and total_chars + candidate_len > total_chars_cap:
+                break
+            snippets.append(snippet)
+            total_chars += candidate_len
+        if not snippets:
+            state["reason"] = "trimmed"
+            state["raw"] = deduped
+            return state
+        state.update(
+            {
+                "used": True,
+                "snippets": snippets,
+                "count": len(snippets),
+                "total_chars": total_chars,
+                "raw": deduped,
+                "reason": "",
+            }
+        )
+        return state
 
     # ------------------------------------------------------------------
     def _load_state(self) -> None:
@@ -895,9 +1220,23 @@ class SelfCodingEngine:
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:
         bot = requesting_bot or "unknown"
         ts = datetime.utcnow().isoformat()
+        payload_details = dict(details or {})
+        stack_state = getattr(self, "_last_stack_context", None) or {}
+        if "stack_context_used" not in payload_details:
+            payload_details["stack_context_used"] = bool(stack_state.get("used"))
+        if "stack_snippet_count" not in payload_details:
+            payload_details["stack_snippet_count"] = int(stack_state.get("count", 0))
+        reason = stack_state.get("reason")
+        if reason and "stack_context_reason" not in payload_details:
+            payload_details["stack_context_reason"] = str(reason)
         try:
             payload = json.dumps(
-                {"timestamp": ts, "bot": bot, "action": action, "details": details},
+                {
+                    "timestamp": ts,
+                    "bot": bot,
+                    "action": action,
+                    "details": payload_details,
+                },
                 sort_keys=True,
             )
             self.audit_trail.record(payload)
@@ -1569,17 +1908,65 @@ class SelfCodingEngine:
             ]
             return "\n".join(skeleton)
 
+        stack_state: Dict[str, Any] = {
+            "used": False,
+            "snippets": [],
+            "count": 0,
+            "total_chars": 0,
+            "reason": "not_evaluated",
+            "raw": [],
+        }
+        self._last_stack_context = stack_state
         if not self.llm_client or not self.prompt_engine:
+            stack_state["reason"] = "fallback_no_llm"
+            self._last_stack_context = stack_state
             return _fallback()
-        if metadata is None:
+        metadata_dict: Dict[str, Any] = dict(metadata or {})
+        retrieval_meta: Dict[str, Any] = {}
+        if not metadata_dict.get("retrieval_context"):
             try:
-                metadata = {
-                    "retrieval_context": self.context_builder.build_context(
-                        description
-                    )
-                }
-            except Exception:
-                metadata = None
+                top_k_val = self.stack_assist.top_k
+                if top_k_val is None:
+                    top_k_val = 5
+                else:
+                    try:
+                        top_k_val = int(top_k_val)
+                    except Exception:
+                        top_k_val = 5
+                ctx_result = self.context_builder.build_context(
+                    description,
+                    top_k=max(int(top_k_val), 1),
+                    return_metadata=True,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "context builder failed during helper generation",
+                    exc_info=True,
+                    extra={"stack_context": "skipped"},
+                )
+                metadata_dict.setdefault("retrieval_context", "")
+                metadata_dict.setdefault("stack_context_error", str(exc))
+                retrieval_meta = {}
+                stack_state["reason"] = "context_builder_error"
+            else:
+                if isinstance(ctx_result, tuple):
+                    retrieval_context = ctx_result[0]
+                    meta_candidates = ctx_result[1:]
+                    for candidate in meta_candidates:
+                        if isinstance(candidate, Mapping):
+                            retrieval_meta = dict(candidate)
+                            break
+                    else:
+                        retrieval_meta = {}
+                else:
+                    retrieval_context = ctx_result
+                    retrieval_meta = {}
+                metadata_dict["retrieval_context"] = retrieval_context
+                if retrieval_meta:
+                    metadata_dict["retrieval_metadata"] = retrieval_meta
+        else:
+            retrieval_meta = dict(metadata_dict.get("retrieval_metadata") or {})
+        metadata = metadata_dict
         repo_layout = self._get_repo_layout(PROMPT_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
         module_name = path_for_prompt(path) if path else "generate_helper"
@@ -1588,6 +1975,23 @@ class SelfCodingEngine:
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
         retry_log = self._fetch_retry_trace(metadata)
+        stack_state = self._extract_stack_snippets(metadata)
+        metadata["stack_context"] = stack_state
+        metadata["stack_context_used"] = stack_state.get("used", False)
+        if stack_state.get("snippets"):
+            metadata["stack_snippets"] = list(stack_state["snippets"])
+        if retrieval_meta and "stack" not in retrieval_meta:
+            retrieval_meta.setdefault("stack", stack_state.get("raw", []))
+            metadata["retrieval_metadata"] = retrieval_meta
+        self._last_stack_context = stack_state
+        log_extra = {
+            "stack_snippet_count": stack_state.get("count", 0),
+            "stack_context_reason": stack_state.get("reason", ""),
+        }
+        if stack_state.get("used"):
+            self.logger.info("stack context included", extra=log_extra)
+        else:
+            self.logger.info("stack context not used", extra=log_extra)
         if strategy is None and metadata:
             strategy = (
                 metadata.get("strategy")
@@ -1606,6 +2010,12 @@ class SelfCodingEngine:
                 (getattr(s, "path", ""), s.code, getattr(s, "score", 0.0))
                 for s in snippets
             ]
+            intent["stack_context_used"] = stack_state.get("used", False)
+            intent["stack_snippet_count"] = stack_state.get("count", 0)
+            if stack_state.get("snippets"):
+                intent["stack_snippets"] = list(stack_state["snippets"])
+            if stack_state.get("reason"):
+                intent["stack_context_reason"] = stack_state.get("reason")
             prompt_obj = self.build_enriched_prompt(
                 intent,
                 context_builder=self.context_builder,
@@ -1628,6 +2038,12 @@ class SelfCodingEngine:
                 "examples": getattr(prompt_obj, "examples", []),
             }
         )
+        meta["stack_context_used"] = stack_state.get("used", False)
+        meta["stack_snippet_count"] = stack_state.get("count", 0)
+        if stack_state.get("snippets"):
+            meta["stack_snippets"] = list(stack_state["snippets"])
+        if stack_state.get("reason"):
+            meta["stack_context_reason"] = stack_state.get("reason")
         self._last_prompt_metadata = meta
         if metadata and metadata.get("retrieval_context"):
             rc = metadata["retrieval_context"]
@@ -1639,6 +2055,9 @@ class SelfCodingEngine:
             else:
                 rc_text = rc
             prompt_obj.user += "\n\n### Retrieval context\n" + rc_text
+        if stack_state.get("used") and stack_state.get("snippets"):
+            stack_text = "\n\n".join(stack_state["snippets"])
+            prompt_obj.user += f"\n\n{STACK_PROMPT_HEADER}\n" + stack_text
 
         billing_notes = (
             metadata.get("billing_instructions")
