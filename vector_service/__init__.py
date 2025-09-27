@@ -8,7 +8,17 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict
 
-from menace_sandbox import import_compat as _import_compat
+# ``vector_service`` can be imported in environments where ``menace_sandbox``
+# has not yet registered ``import_compat`` as a package attribute (for
+# example when running the CLI from a flat layout).  Prefer the relative
+# import to avoid relying on that side effect but keep the absolute variant as
+# a fallback for existing runtimes.
+try:
+    from .. import import_compat as _import_compat
+except ImportError:  # pragma: no cover - defensive fallback
+    import importlib
+
+    _import_compat = importlib.import_module("import_compat")
 
 _import_compat.bootstrap(__name__, __file__)
 load_internal = _import_compat.load_internal
