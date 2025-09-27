@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 import re
-import numpy as np
+
+try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - numpy missing
+    np = None  # type: ignore
 
 from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
@@ -99,8 +103,22 @@ class ErrorVectorizer:
             return [0.0] * _EMBED_DIM
 
         vecs = _embed_texts(chunks)
-        agg = np.mean(vecs, axis=0) if vecs else np.zeros(_EMBED_DIM)
-        return [float(x) for x in agg.tolist()]
+        if not vecs:
+            return [0.0] * _EMBED_DIM
+
+        if np is not None:
+            agg = np.mean(vecs, axis=0)
+            if hasattr(agg, "tolist"):
+                agg = agg.tolist()
+        else:
+            length = len(vecs[0])
+            totals = [0.0] * length
+            for vec in vecs:
+                for idx, value in enumerate(vec):
+                    totals[idx] += float(value)
+            agg = [total / len(vecs) for total in totals]
+
+        return [float(x) for x in (agg.tolist() if hasattr(agg, "tolist") else agg)]
 
 
 _DEFAULT_VECTORIZER = ErrorVectorizer()

@@ -160,7 +160,10 @@ def load_db_configs(path: str) -> None:
         if path.endswith((".yml", ".yaml")) and yaml is not None:
             data = yaml.safe_load(fh) or {}
         else:
-            data = json.load(fh)
+            try:
+                data = json.load(fh)
+            except ValueError:  # pragma: no cover - tolerate YAML without PyYAML
+                return
     if not isinstance(data, dict):
         return
     for key, cfg in data.items():

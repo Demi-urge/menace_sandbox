@@ -61,7 +61,10 @@ except Exception:  # pragma: no cover - fallback when module missing
 finally:  # ensure path restoration
     sys.path = _orig_sys_path
 
-import yaml  # noqa: E402
+try:  # noqa: E402 - optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - PyYAML missing
+    yaml = None  # type: ignore
 
 from pydantic import BaseModel, Field  # noqa: E402
 
@@ -771,6 +774,8 @@ _WATCHER: "Observer" | None = None
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
+    if yaml is None:
+        return {}
     with path.open("r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
@@ -1062,7 +1067,10 @@ def _build_overrides(pairs: list[str]) -> Dict[str, Any]:
         if "=" not in pair:
             raise ValueError(f"Invalid override '{pair}', expected key=value")
         key, value = pair.split("=", 1)
-        value_data = yaml.safe_load(value)
+        if yaml is not None:
+            value_data = yaml.safe_load(value)
+        else:
+            value_data = value
         current = result
         parts = key.split(".")
         for part in parts[:-1]:

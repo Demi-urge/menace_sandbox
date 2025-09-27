@@ -845,7 +845,10 @@ def main(argv: list[str] | None = None) -> int:
     p_workflow.set_defaults(func=handle_workflow)
 
     # allow plugins to register additional subcommands
-    from menace.plugins import load_plugins  # type: ignore
+    try:  # pragma: no cover - plugins optional in sandbox tests
+        from menace.plugins import load_plugins  # type: ignore
+    except Exception:
+        load_plugins = lambda _: None  # type: ignore
 
     load_plugins(sub)
 

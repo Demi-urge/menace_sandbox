@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Tuple
 
-import yaml
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - PyYAML missing
+    yaml = None  # type: ignore
 
 from vector_metrics_db import VectorMetricsDB
 from .roi_tags import RoiTag
@@ -34,7 +37,7 @@ def _load_tag_sentiment() -> Dict[RoiTag, float]:
     except FileNotFoundError:
         cfg_path = None
 
-    if cfg_path and cfg_path.exists():
+    if cfg_path and cfg_path.exists() and yaml is not None:
         try:  # pragma: no cover - configuration loading is best effort
             data = yaml.safe_load(cfg_path.read_text()) or {}
             if isinstance(data, dict):

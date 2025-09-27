@@ -25,7 +25,10 @@ from datetime import datetime, timedelta
 import os
 import sys
 
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+try:  # pragma: no cover - optional dependency
+    from pydantic.dataclasses import dataclass as pydantic_dataclass
+except Exception:  # pragma: no cover - fallback to stdlib
+    from dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
 
 import license_detector
