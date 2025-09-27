@@ -21,7 +21,19 @@ from vector_metrics_db import VectorMetricsDB
 
 
 class DummyContextBuilder:
-    def build_context(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
+    roi_tag_penalties: Dict[str, float] = {}
+
+    def build_context(
+        self,
+        prompt,
+        *,
+        top_k=5,
+        include_vectors=False,
+        session_id="",
+        return_stats=False,
+        return_metadata=False,
+        stack_preferences=None,
+    ):
         vectors = [
             ("db1", "v1", 0.5),
             ("db1", "v2", 0.3),

@@ -995,6 +995,30 @@ class SelfCodingEngine:
 
         return settings
 
+    def _stack_preferences_for_builder(self) -> Dict[str, Any]:
+        prefs: Dict[str, Any] = {"enabled": bool(self.stack_assist.enabled)}
+        top_k = self.stack_assist.top_k
+        if top_k is not None:
+            try:
+                prefs["top_k"] = max(int(top_k), 0)
+            except Exception:
+                pass
+        if self.stack_assist.languages:
+            prefs["languages"] = tuple(self.stack_assist.languages)
+        max_lines = self.stack_assist.max_lines
+        if max_lines is not None:
+            try:
+                prefs["max_lines"] = int(max_lines)
+            except Exception:
+                pass
+        per_snippet = self.stack_assist.per_snippet_chars()
+        if per_snippet > 0:
+            prefs["summary_tokens"] = max(per_snippet // 4, 1)
+        total_chars = self.stack_assist.total_chars()
+        if total_chars > 0:
+            prefs["text_max_tokens"] = max(total_chars // 4, 1)
+        return prefs
+
     def _format_stack_snippet(
         self, entry: Mapping[str, Any], *, char_limit: int
     ) -> str:
@@ -1978,6 +2002,7 @@ class SelfCodingEngine:
                     description,
                     top_k=max(int(top_k_val), 1),
                     return_metadata=True,
+                    stack_preferences=self._stack_preferences_for_builder(),
                 )
             except Exception as exc:
                 self.logger.warning(
