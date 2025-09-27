@@ -22,8 +22,10 @@ from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
 
 try:  # pragma: no cover - optional dependency during import
+    from .stack_snippet_cache import StackSnippetCache
     from .vector_store import VectorStore, create_vector_store
 except Exception:  # pragma: no cover - fallback when relative import fails
+    from vector_service.stack_snippet_cache import StackSnippetCache  # type: ignore
     from vector_service.vector_store import VectorStore, create_vector_store  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - typing aid only
@@ -61,6 +63,9 @@ class StackRetrieverConfig:
     metadata_path: Path = field(
         default_factory=lambda: resolve_path("vector_service") / "stack_metadata.db"
     )
+    document_cache: Path = field(
+        default_factory=lambda: resolve_path("chunk_summary_cache") / "stack_documents"
+    )
     backend: str = "annoy"
     metric: str = "angular"
     vector_dim: int = 768
@@ -71,6 +76,7 @@ class StackRetrieverConfig:
     def from_environment(cls, **overrides: Any) -> "StackRetrieverConfig":
         vector_path_override = overrides.pop("vector_path", None)
         metadata_path_override = overrides.pop("metadata_path", None)
+        document_cache_override = overrides.pop("document_cache", None)
         backend_override = overrides.pop("backend", None)
         metric_override = overrides.pop("metric", None)
         similarity_metric_override = overrides.pop("similarity_metric", None)
@@ -79,6 +85,7 @@ class StackRetrieverConfig:
 
         env_vector_path = os.environ.get("STACK_VECTOR_PATH")
         env_metadata_path = os.environ.get("STACK_METADATA_PATH")
+        env_document_cache = os.environ.get("STACK_DOCUMENT_CACHE")
         env_backend = os.environ.get("STACK_VECTOR_BACKEND")
         env_metric = os.environ.get("STACK_VECTOR_METRIC")
         env_dim = os.environ.get("STACK_VECTOR_DIM")
@@ -96,6 +103,15 @@ class StackRetrieverConfig:
             metadata_path = Path(env_metadata_path)
         else:
             metadata_path = resolve_path("vector_service") / "stack_metadata.db"
+
+        if document_cache_override is not None:
+            document_cache = Path(document_cache_override)
+        elif env_document_cache:
+            document_cache = Path(env_document_cache)
+        else:
+            document_cache = (
+                resolve_path("chunk_summary_cache") / "stack_documents"
+            )
 
         backend = backend_override or env_backend or "annoy"
         metric = metric_override or env_metric or "angular"
@@ -115,6 +131,7 @@ class StackRetrieverConfig:
         return cls(
             vector_path=vector_path,
             metadata_path=metadata_path,
+            document_cache=document_cache,
             backend=str(backend),
             metric=str(metric),
             vector_dim=int(vector_dim),
@@ -131,6 +148,7 @@ class StackRetriever:
     vector_service: SharedVectorServiceType | None = None
     metadata_path: str | Path | None = None
     config: StackRetrieverConfig | None = None
+    document_cache: str | Path | None = None
     top_k: int = 5
     similarity_metric: str = "cosine"
     similarity_threshold: float = 0.0
@@ -160,6 +178,16 @@ class StackRetriever:
         self.patch_safety.license_denylist = set(self.license_denylist)
         self._store_error_logged = False
         self._metadata_error_logged = False
+        cache_path = self.document_cache or getattr(self._settings, "document_cache", None)
+        if cache_path:
+            self.document_cache = Path(cache_path)
+            self.document_cache.mkdir(parents=True, exist_ok=True)
+            self._snippet_cache: StackSnippetCache | None = StackSnippetCache(
+                self.document_cache
+            )
+        else:
+            self.document_cache = None
+            self._snippet_cache = None
         if self._vector_store is not None:
             self._index_store_metadata()
 
@@ -175,6 +203,7 @@ class StackRetriever:
                 for attr in (
                     "vector_path",
                     "metadata_path",
+                    "document_cache",
                     "backend",
                     "metric",
                     "vector_dim",
@@ -305,7 +334,10 @@ class StackRetriever:
             return {}
         try:
             cur = conn.execute(
-                "SELECT repo, path, language, start_line, end_line FROM chunks WHERE checksum=?",
+                """
+                SELECT repo, path, language, start_line, end_line, summary_hash, snippet_path
+                FROM chunks WHERE checksum=?
+                """,
                 (checksum,),
             )
             row = cur.fetchone()
@@ -474,6 +506,10 @@ class StackRetriever:
             merged_meta.setdefault("language", lookup_meta.get("language"))
             merged_meta.setdefault("start_line", lookup_meta.get("start_line"))
             merged_meta.setdefault("end_line", lookup_meta.get("end_line"))
+            if lookup_meta.get("summary_hash") and "summary_hash" not in merged_meta:
+                merged_meta["summary_hash"] = lookup_meta.get("summary_hash")
+            if lookup_meta.get("snippet_path") and "snippet_path" not in merged_meta:
+                merged_meta["snippet_path"] = lookup_meta.get("snippet_path")
             if "size" not in merged_meta and "start_line" in merged_meta and "end_line" in merged_meta:
                 try:
                     start = int(merged_meta["start_line"])
@@ -487,7 +523,25 @@ class StackRetriever:
             merged_meta.setdefault("origin", origin)
             merged_meta.setdefault("license", merged_meta.get("license_name"))
             merged_meta.setdefault("redacted", True)
-            snippet = merged_meta.get("summary") or text
+            snippet = str(merged_meta.get("summary") or merged_meta.get("snippet") or text or "")
+            snippet_pointer = merged_meta.get("snippet_path") or merged_meta.get("snippet_pointer")
+            summary_hash = merged_meta.get("summary_hash")
+            cached_snippet: str | None = None
+            if self._snippet_cache is not None and not snippet.strip():
+                if snippet_pointer:
+                    cached_snippet = self._snippet_cache.load_by_pointer(
+                        str(snippet_pointer)
+                    )
+                if (
+                    (not cached_snippet or not cached_snippet.strip())
+                    and summary_hash
+                ):
+                    cached_snippet = self._snippet_cache.load(str(summary_hash))
+            if cached_snippet and cached_snippet.strip():
+                snippet = cached_snippet
+                merged_meta.setdefault("snippet", cached_snippet)
+            elif snippet.strip():
+                merged_meta.setdefault("snippet", snippet)
             snippet = pii_redact_text(str(snippet or ""))
             governed = govern_retrieval(
                 snippet,

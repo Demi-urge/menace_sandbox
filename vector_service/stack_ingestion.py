@@ -31,6 +31,7 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - fallback when datasets unavailable
     load_dataset = None  # type: ignore
 
+from .stack_snippet_cache import StackSnippetCache
 from .vector_store import VectorStore, create_vector_store
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -151,6 +152,8 @@ def _stack_config_defaults() -> Dict[str, Any]:
         overrides["vector_store_path"] = cache_cfg.get("index_path")
     if cache_cfg.get("metadata_path"):
         overrides["metadata_path"] = cache_cfg.get("metadata_path")
+    if cache_cfg.get("document_cache"):
+        overrides["document_cache"] = cache_cfg.get("document_cache")
 
     return {key: value for key, value in overrides.items() if value is not None}
 
@@ -182,6 +185,10 @@ class StackIngestionConfig:
     )
     cache_dir: Path = field(
         default_factory=lambda: resolve_path("vector_service") / "stack_cache"
+    )
+    document_cache: Path = field(
+        default_factory=lambda: resolve_path("chunk_summary_cache")
+        / "stack_documents"
     )
     batch_size: int | None = None
     retry_attempts: int = 3
@@ -234,10 +241,12 @@ class StackIngestionConfig:
         vector_path_env = os.environ.get("STACK_VECTOR_PATH")
         metadata_path_env = os.environ.get("STACK_METADATA_PATH")
         cache_dir_env = os.environ.get("STACK_CACHE_DIR") or os.environ.get("STACK_DATA_DIR")
+        document_cache_env = os.environ.get("STACK_DOCUMENT_CACHE")
 
         vector_override = merged.pop("vector_store_path", None)
         metadata_override = merged.pop("metadata_path", None)
         cache_override = merged.pop("cache_dir", None)
+        document_override = merged.pop("document_cache", None)
 
         cfg = cls(
             dataset_name=dataset_name,
@@ -272,6 +281,10 @@ class StackIngestionConfig:
             cfg.cache_dir = Path(cache_dir_env)
         elif cache_override:
             cfg.cache_dir = Path(cache_override)
+        if document_cache_env:
+            cfg.document_cache = Path(document_cache_env)
+        elif document_override:
+            cfg.document_cache = Path(document_override)
 
         for field_name, value in merged.items():
             if hasattr(cfg, field_name):
@@ -279,9 +292,11 @@ class StackIngestionConfig:
         cfg.vector_store_path = Path(cfg.vector_store_path)
         cfg.metadata_path = Path(cfg.metadata_path)
         cfg.cache_dir = Path(cfg.cache_dir)
+        cfg.document_cache = Path(cfg.document_cache)
         cfg.vector_store_path.parent.mkdir(parents=True, exist_ok=True)
         cfg.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         cfg.cache_dir.mkdir(parents=True, exist_ok=True)
+        cfg.document_cache.mkdir(parents=True, exist_ok=True)
         return cfg
 
 
@@ -306,6 +321,7 @@ class StackChunk:
     vector_id: str
     summary_hash: str
     text: str
+    snippet_pointer: str | None = None
 
     def release(self) -> None:
         self.text = ""
@@ -353,6 +369,7 @@ class StackMetadataStore:
                     start_line INTEGER NOT NULL,
                     end_line INTEGER NOT NULL,
                     summary_hash TEXT NOT NULL,
+                    snippet_path TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -371,6 +388,7 @@ class StackMetadataStore:
             )
         self._ensure_column("license", "TEXT DEFAULT 'unknown'")
         self._ensure_column("summary_hash", "TEXT DEFAULT '' NOT NULL")
+        self._ensure_column("snippet_path", "TEXT DEFAULT ''")
 
     def _ensure_column(self, column: str, definition: str) -> None:
         cur = self._conn.execute("PRAGMA table_info(chunks)")
@@ -400,9 +418,10 @@ class StackMetadataStore:
                     license,
                     start_line,
                     end_line,
-                    summary_hash
+                    summary_hash,
+                    snippet_path
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chunk.vector_id,
@@ -413,8 +432,14 @@ class StackMetadataStore:
                     chunk.start_line,
                     chunk.end_line,
                     chunk.summary_hash,
+                    chunk.snippet_pointer or "",
                 ),
             )
+            if chunk.snippet_pointer:
+                self._conn.execute(
+                    "UPDATE chunks SET snippet_path = ? WHERE checksum = ?",
+                    (chunk.snippet_pointer, chunk.vector_id),
+                )
 
     def update_cursor(self, split: str, cursor: str) -> None:
         with self._lock, self._conn:
@@ -480,6 +505,7 @@ class StackDatasetStreamer:
             self.vector_service = _SharedVectorService(vector_store=self._vector_store)
         else:
             self.vector_service = vector_service
+        self._snippet_cache = StackSnippetCache(self.config.document_cache)
         self.metrics = StackIngestionMetrics()
         self._sleep = sleep or time.sleep
         self._stop_event = threading.Event()
@@ -667,7 +693,9 @@ class StackDatasetStreamer:
             if self.metadata_store.has_chunk(chunk.vector_id):
                 self.metrics.chunks_skipped += 1
                 continue
-            self._embed_chunk(chunk)
+            pointer = self._embed_chunk(chunk)
+            if pointer:
+                chunk.snippet_pointer = pointer
             self.metadata_store.record_chunk(chunk)
             chunk.release()
             embedded += 1
@@ -707,7 +735,7 @@ class StackDatasetStreamer:
                 text=text,
             )
 
-    def _embed_chunk(self, chunk: StackChunk) -> None:
+    def _embed_chunk(self, chunk: StackChunk) -> str | None:
         metadata = {
             "path": chunk.path,
             "repo": chunk.repo,
@@ -725,6 +753,16 @@ class StackDatasetStreamer:
             origin_db="stack",
             metadata=metadata,
         )
+        pointer: str | None = None
+        if hasattr(self, "_snippet_cache") and self._snippet_cache is not None:
+            try:
+                snippet, pointer = self._snippet_cache.store(
+                    chunk.summary_hash, chunk.text
+                )
+            except Exception:
+                logger.exception("failed to persist stack snippet for %s", chunk.vector_id)
+                pointer = None
+        return pointer
 
 
 # ---------------------------------------------------------------------------

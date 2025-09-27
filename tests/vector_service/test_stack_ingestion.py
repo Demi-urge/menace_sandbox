@@ -78,6 +78,7 @@ def _build_streamer(tmp_path: Path, records: List[Dict[str, Any]]):
     cache_dir = tmp_path / "cache"
     vector_path = tmp_path / "embeddings.faiss"
     metadata_path = tmp_path / "stack_metadata.db"
+    document_cache = tmp_path / "documents"
     config = StackIngestionConfig(
         dataset_name="dummy/stack",
         split="train",
@@ -87,6 +88,7 @@ def _build_streamer(tmp_path: Path, records: List[Dict[str, Any]]):
         vector_store_path=vector_path,
         metadata_path=metadata_path,
         cache_dir=cache_dir,
+        document_cache=document_cache,
     )
     metadata_store = StackMetadataStore(config.metadata_path)
     vector_store = _StubVectorStore()
@@ -98,7 +100,7 @@ def _build_streamer(tmp_path: Path, records: List[Dict[str, Any]]):
         dataset_loader=_dataset(records),
         vector_store_factory=lambda cfg: vector_store,
     )
-    return streamer, vector_store
+    return streamer, vector_store, document_cache
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +127,7 @@ def test_stack_streamer_filters_languages_and_chunks(tmp_path: Path) -> None:
             "id": "1",
         },
     ]
-    streamer, store = _build_streamer(tmp_path, records)
+    streamer, store, document_cache = _build_streamer(tmp_path, records)
     count = streamer.process()
     assert count == 2
 
@@ -143,16 +145,22 @@ def test_stack_streamer_filters_languages_and_chunks(tmp_path: Path) -> None:
     conn = sqlite3.connect(streamer.config.metadata_path)
     try:
         rows = conn.execute(
-            "SELECT repo, path, language, summary_hash FROM chunks"
+            "SELECT repo, path, language, summary_hash, snippet_path FROM chunks"
         ).fetchall()
     finally:
         conn.close()
     assert len(rows) == 2
-    for repo, path, language, summary_hash in rows:
+    for repo, path, language, summary_hash, snippet_path in rows:
         assert repo == "example/repo"
         assert language == "python"
         assert path.endswith("app.py")
         assert len(summary_hash) == 40
+        assert snippet_path
+        snippet_file = document_cache / snippet_path
+        assert snippet_file.exists()
+        cached_text = snippet_file.read_text(encoding="utf-8")
+        assert any(token in cached_text for token in ("print('hi')", "print('bye')", "print('done')"))
+        assert len(cached_text) <= 1200
 
     streamer.metadata_store.close()
 
@@ -165,13 +173,13 @@ def test_stack_streamer_resumes_from_high_water_mark(tmp_path: Path) -> None:
         "repo_name": "example/repo",
         "id": "0",
     }
-    streamer, store = _build_streamer(tmp_path, [record])
+    streamer, store, _ = _build_streamer(tmp_path, [record])
     first = streamer.process()
     assert first == 1
 
     streamer.metadata_store.close()
 
-    streamer2, store2 = _build_streamer(tmp_path, [record])
+    streamer2, store2, _ = _build_streamer(tmp_path, [record])
     resumed = streamer2.process()
     assert resumed == 0
     assert len(store2.records) == 0
@@ -185,7 +193,7 @@ def test_stack_streamer_drops_raw_payloads(tmp_path: Path) -> None:
         "repo_name": "example/repo",
         "id": "0",
     }
-    streamer, store = _build_streamer(tmp_path, [record])
+    streamer, store, _ = _build_streamer(tmp_path, [record])
     count = streamer.process()
     assert count == 1
 
@@ -214,7 +222,7 @@ def test_stack_streamer_drops_raw_payloads(tmp_path: Path) -> None:
         "repo_name": "example/repo",
         "id": "1",
     }
-    streamer_async, _ = _build_streamer(tmp_path, [new_record])
+    streamer_async, _, _ = _build_streamer(tmp_path, [new_record])
     result = asyncio.run(streamer_async.process_async(limit=1))
     assert result == 1
 

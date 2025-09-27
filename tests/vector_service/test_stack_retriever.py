@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from vector_service.stack_retriever import StackRetriever
+from vector_service.stack_snippet_cache import StackSnippetCache
 
 
 class FakeVectorStore:
@@ -33,7 +34,10 @@ class RecordingVectorService:
         return list(self.vector)
 
 
-def _metadata_path(tmp_path: Path, rows: list[tuple[str, str, str, str, int, int]]) -> Path:
+def _metadata_path(
+    tmp_path: Path,
+    rows: list[tuple[str, str, str, str, int, int, str, str]],
+) -> Path:
     db_path = tmp_path / "stack_metadata.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -45,13 +49,18 @@ def _metadata_path(tmp_path: Path, rows: list[tuple[str, str, str, str, int, int
             language TEXT NOT NULL,
             start_line INTEGER NOT NULL,
             end_line INTEGER NOT NULL,
+            summary_hash TEXT DEFAULT '' NOT NULL,
+            snippet_path TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.executemany(
-        "INSERT OR REPLACE INTO chunks (checksum, repo, path, language, start_line, end_line)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "INSERT OR REPLACE INTO chunks ("
+            "checksum, repo, path, language, start_line, end_line, summary_hash, snippet_path"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
         rows,
     )
     conn.commit()
@@ -76,8 +85,26 @@ def test_retrieve_orders_and_normalises_metadata(tmp_path):
     db_path = _metadata_path(
         tmp_path,
         [
-            ("chunk-a", "owner/repo", "./src/foo.py", "Python", 10, 20),
-            ("chunk-b", "owner/repo", "tests/bar.py", "Python", 1, 5),
+            (
+                "chunk-a",
+                "owner/repo",
+                "./src/foo.py",
+                "Python",
+                10,
+                20,
+                "hash-a",
+                "",
+            ),
+            (
+                "chunk-b",
+                "owner/repo",
+                "tests/bar.py",
+                "Python",
+                1,
+                5,
+                "hash-b",
+                "",
+            ),
         ],
     )
     store = FakeVectorStore(
@@ -111,7 +138,7 @@ def test_retrieve_orders_and_normalises_metadata(tmp_path):
 def test_retrieve_blocks_denylisted_licenses(tmp_path):
     db_path = _metadata_path(
         tmp_path,
-        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3)],
+        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3, "hash-a", "")],
     )
     store = FakeVectorStore(
         ["chunk-a"],
@@ -130,7 +157,7 @@ def test_retrieve_blocks_denylisted_licenses(tmp_path):
 def test_retrieve_handles_store_errors(tmp_path):
     db_path = _metadata_path(
         tmp_path,
-        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3)],
+        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3, "hash-a", "")],
     )
     retriever = StackRetriever(
         vector_store=ErrorVectorStore(),
@@ -141,10 +168,47 @@ def test_retrieve_handles_store_errors(tmp_path):
     assert retriever.retrieve([1.0, 0.0], k=1) == []
 
 
+def test_retrieve_populates_snippet_from_cache(tmp_path):
+    document_cache = tmp_path / "docs"
+    snippet_cache = StackSnippetCache(document_cache)
+    snippet, pointer = snippet_cache.store("hash-a", "print('cached')\n")
+    assert snippet
+
+    db_path = _metadata_path(
+        tmp_path,
+        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3, "hash-a", pointer)],
+    )
+    store = FakeVectorStore(
+        ["chunk-a"],
+        [[1.0, 0.0]],
+        [
+            {
+                "metadata": {
+                    "repo": "owner/repo",
+                    "path": "file.py",
+                    "language": "Python",
+                    "license": "MIT",
+                }
+            }
+        ],
+    )
+    retriever = StackRetriever(
+        vector_store=store,
+        metadata_path=db_path,
+        similarity_threshold=0.0,
+        document_cache=document_cache,
+    )
+
+    results = retriever.retrieve([1.0, 0.0], k=1)
+
+    assert results and results[0]["text"] == snippet
+    assert results[0]["metadata"].get("snippet") == snippet
+
+
 def test_embed_query_uses_shared_vector_service(tmp_path):
     db_path = _metadata_path(
         tmp_path,
-        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3)],
+        [("chunk-a", "owner/repo", "file.py", "Python", 1, 3, "hash-a", "")],
     )
     store = FakeVectorStore(["chunk-a"], [[1.0, 0.0]], [_stack_meta("owner/repo", "file.py", "Python", "MIT", "text")])
     service = RecordingVectorService([0.1, 0.2])
