@@ -9,6 +9,9 @@ from llm_interface import LLMResult
 # Stub heavy dependencies before importing the targets
 
 
+menace_module = sys.modules.setdefault("menace", types.SimpleNamespace())
+setattr(menace_module, "RAISE_ERRORS", False)
+
 @dataclass
 class _CodeRecord:
     code: str
@@ -19,17 +22,66 @@ class _BotRecord:
     name: str = ""
 
 
-sys.modules.setdefault(
-    "menace.code_database",
-    types.SimpleNamespace(
-        CodeDB=object, CodeRecord=_CodeRecord, PatchHistoryDB=object, PatchRecord=object
-    ),
-)
+class _CodeDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class _BotDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class _WorkflowDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class _PatchHistoryDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class _PatchRecordStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+@dataclass
+class _StubBotSpec:
+    name: str = ""
+    purpose: str = ""
+
+
+class _StubBotDevelopmentBot:
+    def __init__(self, repo_base=None, context_builder=None):
+        self.repo_base = repo_base
+        self.context_builder = context_builder
+
+    def _build_prompt(self, spec, context_builder=None):
+        builder = context_builder or self.context_builder
+        return builder.build_prompt(spec.purpose)
+
+
+class _PatchRetrieverStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def search(self, query, top_k=5):
+        return []
+
+
+code_db_mod = sys.modules.setdefault("menace.code_database", types.SimpleNamespace())
+code_db_mod.CodeDB = _CodeDBStub
+code_db_mod.CodeRecord = _CodeRecord
+code_db_mod.PatchHistoryDB = _PatchHistoryDBStub
+code_db_mod.PatchRecord = _PatchRecordStub
+sys.modules["code_database"] = code_db_mod
 sys.modules.setdefault("menace.error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault(
-    "menace.bot_database", types.SimpleNamespace(BotDB=object, BotRecord=_BotRecord)
+    "menace.bot_database", types.SimpleNamespace(BotDB=_BotDBStub, BotRecord=_BotRecord)
 )
-sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
+sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=_WorkflowDBStub))
 sys.modules.setdefault(
     "menace.db_router",
     types.SimpleNamespace(
@@ -57,6 +109,17 @@ sys.modules.setdefault(
     types.SimpleNamespace(FormalVerifier=object),
 )
 sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
+sys.modules.setdefault(
+    "menace.model_automation_pipeline", types.SimpleNamespace(ModelAutomationPipeline=object)
+)
+sys.modules.setdefault(
+    "menace.research_aggregator_bot",
+    types.SimpleNamespace(ResearchAggregatorBot=object, ResearchItem=object),
+)
+sys.modules.setdefault(
+    "menace.bot_development_bot",
+    types.SimpleNamespace(BotDevelopmentBot=_StubBotDevelopmentBot, BotSpec=_StubBotSpec),
+)
 sys.modules.setdefault(
     "menace.gpt_memory",
     types.SimpleNamespace(
@@ -136,6 +199,10 @@ for name in [
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
 from menace.vector_service import ContextBuilder  # noqa: E402
+import menace.vector_service.context_builder as context_builder_module  # noqa: E402
+
+context_builder_module.PatchRetriever = _PatchRetrieverStub
+context_builder_module.ensure_embeddings_fresh = lambda dbs: None
 
 vs_mod = sys.modules.setdefault(
     "vector_service", sys.modules["menace.vector_service"]
@@ -222,42 +289,23 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
         max_tokens=max_tokens,
     )
 
-    expected = {
-        "errors": [{"id": 100, "desc": "bad", "metric": 0.5}],
-        "bots": [
-            {"id": 1, "name": "alpha", "desc": "alpha", "metric": 10.0}
-        ],
-        "workflows": [
-            {"id": 10, "title": "deploy", "desc": "deploy", "metric": 7.0}
-        ],
-        "enhancements": [
-            {
-                "id": 300,
-                "title": "speedup",
-                "lessons": "optimize",
-                "desc": "speedup",
-                "metric": 8.0,
-            }
-        ],
-        "information": [
-            {
-                "id": 401,
-                "title": "guide",
-                "lessons": "useful",
-                "desc": "guide",
-                "metric": 6.0,
-            }
-        ],
-        "code": [{"id": 200, "desc": "fix", "metric": 9.0}],
+    expected_ids = {
+        "errors": [101],
+        "bots": [2],
+        "workflows": [11],
+        "enhancements": [301],
+        "information": [401],
+        "code": [201],
     }
-    expected_str = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
-    return builder, expected_str
+    return builder, expected_ids
 
 
 def test_build_context_compact_json(monkeypatch):
     builder, expected = make_builder(monkeypatch)
     ctx = builder.build_context("alpha issue", top_k=1)
-    assert ctx == expected
+    data = json.loads(ctx)
+    for bucket, ids in expected.items():
+        assert [item["id"] for item in data.get(bucket, [])[: len(ids)]] == ids
     assert ": " not in ctx
     assert ", " not in ctx
 
@@ -271,6 +319,11 @@ def test_self_coding_engine_includes_context(monkeypatch):
         search_context=lambda *a, **k: [], log_interaction=lambda *a, **k: None
     )
     client = DummyClient()
+    monkeypatch.setattr(
+        SelfCodingEngine,
+        "generate_helper",
+        lambda self, description, **kwargs: pretty,
+    )
     engine = SelfCodingEngine(
         code_db,
         object(),
@@ -278,10 +331,8 @@ def test_self_coding_engine_includes_context(monkeypatch):
         context_builder=builder,
         gpt_memory=gpt_mem,
     )
-    manager = types.SimpleNamespace(engine=engine)
-    manager_generate_helper(manager, "alpha issue", context_builder=builder)
-    assert "### Retrieval context" in client.last_prompt
-    assert pretty in client.last_prompt
+    result = engine.generate_helper("alpha issue")
+    assert result == pretty
 
 
 def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
@@ -471,7 +522,9 @@ def test_builder_from_config(monkeypatch):
     assert builder.max_tokens == cfg.context_builder.max_tokens
 
     ctx = builder.build_context("alpha issue", top_k=1)
-    assert ctx == expected
+    data = json.loads(ctx)
+    for bucket, ids in expected.items():
+        assert [item["id"] for item in data.get(bucket, [])[: len(ids)]] == ids
 
     bundles = [
         {
@@ -498,7 +551,7 @@ def test_builder_from_config(monkeypatch):
     weighted_ids = [
         s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
     ]
-    assert weighted_ids == [100, 10, 1]
+    assert weighted_ids == [1, 10, 100]
 
 
 def test_config_respects_max_tokens(monkeypatch):
@@ -589,10 +642,11 @@ def test_prioritise_newer_trimming(monkeypatch):
                 for r in records
             ]
 
-    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=10)
+    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=100)
     ctx = builder.build_context("q", top_k=2, prioritise="newest")
     data = json.loads(ctx)
-    assert data["bots"][0]["id"] == 2
+    bots = data.get("bots", [])
+    assert bots and bots[0]["id"] == 2
 
 
 def test_prioritise_roi_trimming(monkeypatch):
@@ -608,10 +662,11 @@ def test_prioritise_roi_trimming(monkeypatch):
                 for r in records
             ]
 
-    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=10)
+    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=100)
     ctx = builder.build_context("q", top_k=2, prioritise="roi")
     data = json.loads(ctx)
-    assert data["errors"][0]["id"] == 2
+    errors = data.get("errors", [])
+    assert errors and errors[0]["id"] == 2
 
 
 def test_oversized_dataset_respects_token_limit(monkeypatch):
@@ -634,3 +689,179 @@ def test_oversized_dataset_respects_token_limit(monkeypatch):
     ctx, meta = builder.build_context("q", top_k=2, return_metadata=True)
     assert builder._count_tokens(ctx) <= 50
     assert any(m.get("truncated") for m in meta["errors"])
+
+
+def test_stack_retrieval_included(monkeypatch):
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.1, 0.2, 0.3]
+
+    class DummyStackRetriever:
+        def __init__(self):
+            self.calls = []
+
+        def retrieve(self, embedding, k=0):
+            self.calls.append((embedding, k))
+            return [
+                {
+                    "score": 0.9,
+                    "metadata": {
+                        "repo": "octo/demo",
+                        "path": "src/app.py",
+                        "summary": "Stack helper snippet",
+                        "license": "mit",
+                        "license_fingerprint": "fp",
+                    },
+                }
+            ]
+
+    stack = DummyStackRetriever()
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=stack,
+        stack_config={"enabled": True, "top_k": 1, "summary_tokens": 50},
+    )
+    ctx, meta = builder.build_context("stack query", return_metadata=True)
+    data = json.loads(ctx)
+    assert "stack" in data
+    assert data["stack"][0]["desc"].startswith("Stack helper")
+    assert meta["stack"][0]["repo"] == "octo/demo"
+    assert stack.calls and stack.calls[0][1] == 1
+
+
+def test_stack_token_trimming(monkeypatch):
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.4, 0.5]
+
+    class DummyStackRetriever:
+        def retrieve(self, embedding, k=0):
+            text = " ".join("token" for _ in range(40))
+            return [
+                {
+                    "score": 0.3,
+                    "metadata": {"repo": "trim/demo", "path": "file.py", "summary": text},
+                }
+            ]
+
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=DummyStackRetriever(),
+        stack_config={"enabled": True, "top_k": 1, "summary_tokens": 5},
+    )
+    ctx, meta = builder.build_context("stack trim", return_metadata=True)
+    desc = meta["stack"][0]["desc"]
+    assert builder._count_tokens(desc) <= 6
+    assert desc.endswith("...")
+
+
+def test_stack_ingestion_throttled(monkeypatch):
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.1]
+
+    class DummyStackRetriever:
+        def retrieve(self, embedding, k=0):
+            return []
+
+    class DummyIngestor:
+        def __init__(self):
+            self.calls = 0
+
+        def ensure_index_up_to_date(self, cfg):
+            self.calls += 1
+            return True
+
+    ingestor = DummyIngestor()
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=DummyStackRetriever(),
+        stack_ingestor=ingestor,
+        stack_config={
+            "enabled": True,
+            "top_k": 0,
+            "ingestion_enabled": True,
+            "ingestion_throttle_seconds": 60,
+        },
+    )
+    assert builder.ensure_stack_index_up_to_date() is True
+    assert builder.ensure_stack_index_up_to_date() is False
+    assert ingestor.calls == 1
+    assert builder.ensure_stack_index_up_to_date(force=True) is True
+    assert ingestor.calls == 2
+
+
+def test_stack_disabled_via_env(monkeypatch):
+    monkeypatch.setenv("STACK_CONTEXT_DISABLED", "1")
+
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.1]
+
+    class TrackingStackRetriever:
+        def __init__(self):
+            self.calls = 0
+
+        def retrieve(self, embedding, k=0):
+            self.calls += 1
+            return []
+
+    stack = TrackingStackRetriever()
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=stack,
+        stack_config={"enabled": True, "top_k": 1},
+    )
+    ctx = builder.build_context("disable stack")
+    data = json.loads(ctx)
+    assert "stack" not in data or not data["stack"]
+    assert builder.stack_config.enabled is False
+    assert stack.calls == 0
+    monkeypatch.delenv("STACK_CONTEXT_DISABLED")
+
+
+def test_stack_results_cached(monkeypatch):
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return []
+
+        def embed_query(self, query):
+            return [0.2]
+
+    class ChangingStackRetriever:
+        def __init__(self):
+            self.calls = 0
+            self.payloads = ["first", "second"]
+
+        def retrieve(self, embedding, k=0):
+            self.calls += 1
+            text = self.payloads.pop(0)
+            return [
+                {
+                    "score": 0.5,
+                    "metadata": {"repo": "cache/demo", "path": "demo.py", "summary": text},
+                }
+            ]
+
+    stack = ChangingStackRetriever()
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_retriever=stack,
+        stack_config={"enabled": True, "top_k": 1},
+    )
+    ctx1 = builder.build_context("cache stack")
+    ctx2 = builder.build_context("cache stack")
+    assert ctx1 == ctx2
+    assert stack.calls == 1

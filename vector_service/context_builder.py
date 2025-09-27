@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 # ``ParsedFailure`` previously provided structured failure info.  The new parser
 # returns dictionaries so we reference the type indirectly to avoid tight
@@ -65,6 +65,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - stack ingestion optional
     _ensure_stack_background = None  # type: ignore
     _StackDatasetStreamer = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from .stack_retriever import StackRetriever as _StackRetriever  # type: ignore
+except Exception:  # pragma: no cover - stack retriever optional
+    _StackRetriever = None  # type: ignore
 
 # Alias retained for backward compatibility with tests expecting
 # ``UniversalRetriever`` to be injectable.
@@ -137,6 +142,13 @@ def _get_failed_tags() -> set[str]:
     """
 
     return set(_FAILED_TAG_CACHE)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 try:  # pragma: no cover - best effort
@@ -269,6 +281,52 @@ class _ScoredEntry:
     metadata: Dict[str, Any]
 
 
+@dataclass
+class _StackContextConfig:
+    """Configuration controlling Stack dataset retrieval within prompts."""
+
+    enabled: bool = False
+    top_k: int = 3
+    summary_tokens: int = 160
+    text_max_tokens: int = 320
+    weight: float = 1.0
+    penalty: float = 0.0
+    ingestion_enabled: bool = True
+    ingestion_throttle_seconds: float = 600.0
+    ingestion_batch_limit: int | None = None
+    ensure_before_search: bool = True
+
+    @classmethod
+    def from_any(cls, value: Any) -> "_StackContextConfig":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls()
+        if hasattr(value, "model_dump"):
+            try:
+                value = value.model_dump()
+            except Exception:
+                value = dict(getattr(value, "__dict__", {}))
+        elif not isinstance(value, dict):
+            value = dict(getattr(value, "__dict__", {}))
+        data: Dict[str, Any] = {}
+        if isinstance(value, dict):
+            for field in fields(cls):
+                if field.name in value and value[field.name] is not None:
+                    data[field.name] = value[field.name]
+        return cls(**data)
+
+    def cache_marker(self) -> Tuple[Any, ...]:
+        return (
+            self.enabled,
+            self.top_k,
+            self.summary_tokens,
+            self.text_max_tokens,
+            self.weight,
+            self.penalty,
+        )
+
+
 class ContextBuilder:
     """Build compact JSON context blocks from multiple databases."""
 
@@ -315,6 +373,9 @@ class ContextBuilder:
         prompt_max_tokens: int = getattr(
             ContextBuilderConfig(), "prompt_max_tokens", 800
         ),
+        stack_retriever: Any | None = None,
+        stack_ingestor: Any | None = None,
+        stack_config: Any | None = None,
     ) -> None:
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -391,6 +452,39 @@ class ContextBuilder:
         self.patch_safety.license_denylist = self.license_denylist
         self.prompt_score_weight = prompt_score_weight
         self.prompt_max_tokens = prompt_max_tokens
+        cfg_obj = stack_config
+        if cfg_obj is None:
+            cfg_obj = getattr(ContextBuilderConfig(), "stack", None)
+        self.stack_config = _StackContextConfig.from_any(cfg_obj)
+        # Environment overrides allow runtime experimentation without config
+        # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
+        # in configuration, while ``STACK_CONTEXT_DISABLED`` always forces the
+        # integration off.
+        if "STACK_CONTEXT_ENABLED" in os.environ:
+            self.stack_config.enabled = _env_flag(
+                "STACK_CONTEXT_ENABLED", self.stack_config.enabled
+            )
+        if _env_flag("STACK_CONTEXT_DISABLED", False):
+            self.stack_config.enabled = False
+        if "STACK_CONTEXT_INGESTION" in os.environ:
+            self.stack_config.ingestion_enabled = _env_flag(
+                "STACK_CONTEXT_INGESTION", self.stack_config.ingestion_enabled
+            )
+        if _env_flag("STACK_CONTEXT_INGESTION_DISABLED", False):
+            self.stack_config.ingestion_enabled = False
+        self._stack_retriever: Any | None = stack_retriever
+        self._stack_ingestor: Any | None = stack_ingestor
+        self._stack_retriever_factory: Callable[[], Any] | None = None
+        self._stack_ingestor_factory: Callable[[], Any] | None = None
+        if self.stack_config.enabled and self._stack_retriever is None:
+            if _StackRetriever is not None:
+                self._stack_retriever_factory = lambda: _StackRetriever()  # type: ignore[call-arg]
+        if self.stack_config.enabled and self._stack_ingestor is None:
+            if _StackDatasetStreamer is not None:
+                self._stack_ingestor_factory = (
+                    lambda: _StackDatasetStreamer.from_environment()
+                )
+        self._last_stack_ingest: float = 0.0
 
         # Attempt to use tokenizer from retriever or embedder if provided.
         tok = getattr(self.retriever, "tokenizer", None)
@@ -510,6 +604,22 @@ class ContextBuilder:
                 return "\n".join(lines[: self.max_diff_lines])
         return diff
 
+    def _trim_tokens(self, text: str, limit: int) -> str:
+        if limit <= 0:
+            return ""
+        original_tokens = text.split()
+        if not original_tokens:
+            return text
+        tokens = list(original_tokens)
+        while tokens and self._count_tokens(" ".join(tokens)) > limit:
+            tokens.pop()
+        if not tokens:
+            return ""
+        truncated = " ".join(tokens)
+        if len(tokens) < len(original_tokens):
+            truncated = truncated.rstrip() + "..."
+        return truncated
+
     # ------------------------------------------------------------------
     def _count_tokens(self, text: str) -> int:
         """Return an estimate of tokens for ``text``.
@@ -583,6 +693,13 @@ class ContextBuilder:
                     if key in meta and meta[key] is not None:
                         metric = float(meta[key])
                         break
+            elif origin == "stack":
+                score = meta.get("score")
+                if score is not None:
+                    try:
+                        metric = float(score) * getattr(self.stack_config, "weight", 1.0)
+                    except Exception:
+                        metric = float(score)
             elif origin == "discrepancy":
                 for key in ("roi", "severity", "impact"):
                     if key in meta and meta[key] is not None:
@@ -794,6 +911,20 @@ class ContextBuilder:
             )
         elif origin == "code":
             text = text or meta.get("summary") or meta.get("code") or ""
+        elif origin == "stack":
+            text = text or meta.get("summary") or meta.get("desc") or meta.get("snippet") or ""
+            if "repo" in meta:
+                entry["repository"] = redact_text(str(meta.get("repo")))
+            if "path" in meta:
+                entry["path"] = redact_text(str(meta.get("path")))
+            if "language" in meta:
+                entry["language"] = str(meta.get("language"))
+            if meta.get("license"):
+                entry.setdefault("flags", {})
+                entry["flags"]["license"] = meta.get("license")
+            if meta.get("license_fingerprint"):
+                entry.setdefault("flags", {})
+                entry["flags"]["license_fingerprint"] = meta.get("license_fingerprint")
 
         text = redact_text(str(text))
         entry["desc"] = text
@@ -958,6 +1089,10 @@ class ContextBuilder:
             pass
         score = base - penalty
         score *= self.db_weights.get(origin, 1.0)
+        if origin == "stack":
+            weight = getattr(self.stack_config, "weight", 1.0)
+            penalty_bias = getattr(self.stack_config, "penalty", 0.0)
+            score = float(bundle.get("score", score)) * weight - penalty_bias
 
         if self.roi_tracker is not None and roi_score is not None:
             try:
@@ -982,6 +1117,7 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
             "patch": "patches",
+            "stack": "stack",
         }
         return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
@@ -1119,6 +1255,203 @@ class ContextBuilder:
         return cand
 
     # ------------------------------------------------------------------
+    def _get_stack_retriever(self) -> Any | None:
+        if not self.stack_config.enabled:
+            return None
+        if self._stack_retriever is None and self._stack_retriever_factory is not None:
+            try:
+                self._stack_retriever = self._stack_retriever_factory()
+            except Exception:
+                logger.exception("failed to initialise stack retriever")
+                self._stack_retriever = None
+        return self._stack_retriever
+
+    def _get_stack_ingestor(self) -> Any | None:
+        if self._stack_ingestor is None and self._stack_ingestor_factory is not None:
+            try:
+                self._stack_ingestor = self._stack_ingestor_factory()
+            except Exception:
+                logger.exception("failed to initialise stack ingestor")
+                self._stack_ingestor = None
+        return self._stack_ingestor
+
+    def _get_query_embedding(self, query: str) -> List[float] | None:
+        embedder = getattr(self.retriever, "embed_query", None)
+        if callable(embedder):
+            try:
+                vec = embedder(query)
+                if hasattr(vec, "tolist"):
+                    vec = vec.tolist()
+                if isinstance(vec, (list, tuple)):
+                    return [float(x) for x in vec]
+            except Exception:
+                logger.exception("stack embed_query failed")
+        base = getattr(self.retriever, "_get_retriever", None)
+        if callable(base):
+            try:
+                inner = base()
+            except Exception:
+                inner = None
+            if inner is not None:
+                for attr in ("embed_query", "embed_text", "embed"):
+                    fn = getattr(inner, attr, None)
+                    if not callable(fn):
+                        continue
+                    try:
+                        vec = fn(query)
+                        if isinstance(vec, tuple):
+                            vec = vec[0]
+                        if hasattr(vec, "tolist"):
+                            vec = vec.tolist()
+                        if isinstance(vec, (list, tuple)):
+                            return [float(x) for x in vec]
+                    except Exception:
+                        logger.exception("stack embedding via %s failed", attr)
+        return None
+
+    def _prepare_stack_bundle(self, hit: Dict[str, Any], *, index: int) -> Dict[str, Any]:
+        meta = dict(hit.get("metadata", {}) or {})
+        repo = (
+            hit.get("repo")
+            or meta.get("repo")
+            or meta.get("repository")
+            or meta.get("owner")
+        )
+        path = hit.get("path") or meta.get("path") or meta.get("file_path")
+        language = hit.get("language") or meta.get("language") or meta.get("lang")
+        license_name = hit.get("license") or meta.get("license")
+        license_fp = hit.get("license_fingerprint") or meta.get("license_fingerprint")
+        summary_source = (
+            hit.get("summary")
+            or meta.get("summary")
+            or hit.get("snippet")
+            or meta.get("snippet")
+            or hit.get("text")
+            or meta.get("text")
+            or meta.get("content")
+            or ""
+        )
+        summary_source = redact_text(str(summary_source))
+        if not summary_source.strip():
+            summary_source = ""
+        limit = max(int(self.stack_config.summary_tokens or 0), 0)
+        desc = summary_source
+        tokens = self._count_tokens(desc) if desc else 0
+        if limit and tokens > limit:
+            desc = self._summarise(desc)
+            tokens = self._count_tokens(desc)
+        if limit and tokens > limit:
+            desc = self._trim_tokens(desc, limit)
+            tokens = self._count_tokens(desc)
+        text_limit = max(int(self.stack_config.text_max_tokens or 0), 0)
+        if text_limit and tokens > text_limit:
+            desc = self._trim_tokens(desc, text_limit)
+            tokens = self._count_tokens(desc)
+        meta.setdefault("summary", desc)
+        meta.setdefault("desc", desc)
+        if repo:
+            meta.setdefault("repo", repo)
+            meta.setdefault("repository", repo)
+        if path:
+            meta.setdefault("path", path)
+            meta.setdefault("file_path", path)
+        if language:
+            meta.setdefault("language", language)
+        score = hit.get("score")
+        if score is None:
+            score = meta.get("score")
+        try:
+            score_val = float(score or 0.0)
+        except Exception:
+            score_val = 0.0
+        meta["score"] = score_val
+        meta.setdefault("source", "stack")
+        meta["stack_tokens"] = tokens
+        flags = dict(meta.get("flags") or {})
+        if license_name:
+            meta["license"] = license_name
+            flags.setdefault("license", license_name)
+        if license_fp:
+            meta["license_fingerprint"] = license_fp
+            flags.setdefault("license_fingerprint", license_fp)
+        if flags:
+            meta["flags"] = flags
+        identifier = (
+            hit.get("identifier")
+            or meta.get("identifier")
+            or meta.get("checksum")
+            or hit.get("checksum")
+            or f"stack-{index}"
+        )
+        bundle = {
+            "origin_db": "stack",
+            "record_id": identifier,
+            "score": score_val,
+            "text": desc,
+            "metadata": meta,
+        }
+        return bundle
+
+    def _retrieve_stack_hits(self, query: str) -> List[Dict[str, Any]]:
+        retriever = self._get_stack_retriever()
+        if retriever is None:
+            return []
+        embedding = self._get_query_embedding(query)
+        if embedding is None:
+            return []
+        try:
+            hits = retriever.retrieve(embedding, k=self.stack_config.top_k)
+        except Exception:
+            logger.exception("stack retriever failure")
+            return []
+        bundles: List[Dict[str, Any]] = []
+        for idx, hit in enumerate(hits):
+            if not isinstance(hit, dict):
+                continue
+            try:
+                bundles.append(self._prepare_stack_bundle(hit, index=idx))
+            except Exception:
+                logger.exception("failed to prepare stack bundle")
+        return bundles
+
+    # ------------------------------------------------------------------
+    def ensure_stack_index_up_to_date(self, *, force: bool = False) -> bool:
+        """Kick opportunistic Stack dataset ingestion when throttle permits.
+
+        The ingestion helpers can run either in-process via the lazily
+        instantiated ingestor or by delegating to the shared background task.
+        The ``force`` flag is primarily used by tests but also provides a
+        manual override for administrative tooling so operators can bypass the
+        throttle window when recovering from outages.
+        """
+        if not self.stack_config.enabled or not self.stack_config.ingestion_enabled:
+            return False
+        now = time.monotonic()
+        if not force and now - self._last_stack_ingest < self.stack_config.ingestion_throttle_seconds:
+            return False
+        ingestor = self._get_stack_ingestor()
+        triggered = False
+        if ingestor is not None:
+            ensure_fn = getattr(ingestor, "ensure_index_up_to_date", None)
+            process_fn = getattr(ingestor, "process", None)
+            try:
+                if callable(ensure_fn):
+                    triggered = bool(ensure_fn(self.stack_config))
+                elif callable(process_fn):
+                    process_fn(limit=self.stack_config.ingestion_batch_limit)
+                    triggered = True
+            except Exception:
+                logger.exception("stack ingestion failed")
+        elif _ensure_stack_background is not None:
+            try:
+                triggered = bool(_ensure_stack_background())
+            except Exception:
+                logger.exception("stack background ensure failed")
+        if triggered:
+            self._last_stack_ingest = now
+        return triggered
+
+    # ------------------------------------------------------------------
     @log_and_measure
     def build_context(
         self,
@@ -1202,7 +1535,13 @@ class ContextBuilder:
         exclude.update(_get_failed_tags())
         exclude_strats = set(exclude_strategies or [])
         exclude_strats.update(getattr(self, "_excluded_failed_strategies", set()))
-        cache_key = (query, top_k, tuple(sorted(exclude)), tuple(sorted(exclude_strats)))
+        cache_key = (
+            query,
+            top_k,
+            tuple(sorted(exclude)),
+            tuple(sorted(exclude_strats)),
+            self.stack_config.cache_marker(),
+        )
         if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -1232,6 +1571,22 @@ class ContextBuilder:
                 hits.extend(patch_hits)
             except Exception:
                 pass
+        stack_stats: Dict[str, Any] = {
+            "enabled": bool(self.stack_config.enabled),
+            "hits": 0,
+            "ingestion_triggered": False,
+        }
+        stack_bundles: List[Dict[str, Any]] = []
+        if self.stack_config.enabled:
+            try:
+                if self.stack_config.ensure_before_search:
+                    stack_stats["ingestion_triggered"] = self.ensure_stack_index_up_to_date()
+            except Exception:
+                stack_stats["ingestion_triggered"] = False
+            stack_bundles = self._retrieve_stack_hits(query)
+            stack_stats["hits"] = len(stack_bundles)
+            if stack_bundles:
+                hits.extend(stack_bundles)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         if isinstance(hits, ErrorResult):
@@ -1254,6 +1609,7 @@ class ContextBuilder:
             "code": [],
             "discrepancies": [],
             "patches": [],
+            "stack": [],
         }
 
         for bundle in hits:
@@ -1395,6 +1751,11 @@ class ContextBuilder:
             "prompt_tokens": prompt_tokens,
             "patch_confidence": patch_confidence,
         }
+        if self.stack_config.enabled:
+            selected = [c for c in candidates if c["bucket"] == "stack"]
+            stack_stats["selected"] = len(selected)
+            stack_stats["tokens"] = sum(c["tokens"] for c in selected)
+            stats["stack"] = stack_stats
         if include_vectors and return_metadata:
             if return_stats:
                 return context, session_id, vectors, meta, stats
