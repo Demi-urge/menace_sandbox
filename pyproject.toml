@@ -71,6 +71,7 @@ dependencies = [
     ,"tiktoken"
     ,"vaderSentiment"
     ,"stripe>=12.5.0"
+    ,"datasets"
 ]
 
 [project.scripts]
@@ -83,6 +84,7 @@ retrieval-ranker = "retrieval_ranker:main"
 knowledge-cli = "knowledge_cli:main"
 workflow-synth = "workflow_synthesizer:main"
 audit-bots = "scripts.audit_self_coding_registration:main"
+ingest-stack = "scripts.ingest_stack:main"
 
 [project.entry-points."menace.plugins"]
 sample = "menace.plugins.sample:register"

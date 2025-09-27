@@ -217,6 +217,21 @@ the following format where each key is the canonical name for a database
 category and the value specifies the import path and class name of the
 `EmbeddableDBMixin` implementation:
 
+### Running Stack ingestion manually
+
+Run the dedicated CLI when a manual backfill is required:
+
+```bash
+ingest-stack --limit 1000  # stream up to 1,000 new code chunks
+```
+
+The command honours all `STACK_*` flags, including the `STACK_STREAMING`
+toggle.  Progress output includes the most recent high-water mark (the Hugging
+Face record identifier tracked in `stack_metadata.db`) so operators can confirm
+resumes are incremental.  The metadata catalogue only stores chunk digests,
+paths and languages, ensuring raw code is dropped once the embeddings are
+persisted to FAISS/Annoy storage.
+
 `ConfigDiscovery` will automatically load `.stack_env` (if present) and export
 any `STACK_*` variables defined within.  When the file is absent, it derives
 defaults based on `STACK_DATA_DIR`, falling back to `~/.cache/menace/stack` for

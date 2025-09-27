@@ -62,6 +62,8 @@ cryptography==45.0.5
     # via menace (pyproject.toml)
 cycler==0.12.1
     # via matplotlib
+datasets==3.2.0
+    # via menace (pyproject.toml)
 deap==1.4.3
     # via menace (pyproject.toml)
 decorator==5.2.1
