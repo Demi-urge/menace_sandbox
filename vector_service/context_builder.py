@@ -300,6 +300,8 @@ class _StackContextConfig:
     """Configuration controlling Stack dataset retrieval within prompts."""
 
     enabled: bool = False
+    dataset_name: str | None = None
+    split: str | None = None
     top_k: int = 3
     summary_tokens: int = 160
     text_max_tokens: int = 320
@@ -313,6 +315,7 @@ class _StackContextConfig:
     max_lines: int | None = None
     chunk_overlap: int | None = None
     streaming: bool | None = None
+    batch_size: int | None = None
     cache_dir: str | None = None
     index_path: str | None = None
     metadata_path: str | None = None
@@ -342,6 +345,8 @@ class _StackContextConfig:
             data["chunk_overlap"] = ingestion.get("chunk_overlap")
         if "streaming" not in data and ingestion.get("streaming") is not None:
             data["streaming"] = ingestion.get("streaming")
+        if "batch_size" not in data and ingestion.get("batch_size") is not None:
+            data["batch_size"] = ingestion.get("batch_size")
 
         for key in ("top_k", "weight"):
             if key not in data and retrieval.get(key) is not None:
@@ -377,6 +382,11 @@ class _StackContextConfig:
                 data["chunk_overlap"] = int(data["chunk_overlap"])
             except Exception:
                 data["chunk_overlap"] = None
+        if "batch_size" in data and data["batch_size"] is not None:
+            try:
+                data["batch_size"] = int(data["batch_size"])
+            except Exception:
+                data["batch_size"] = None
         if "streaming" in data and data["streaming"] is not None:
             data["streaming"] = bool(data["streaming"])
         for key in ("cache_dir", "index_path", "metadata_path", "document_cache"):
@@ -384,9 +394,35 @@ class _StackContextConfig:
                 data[key] = str(data[key])
         return cls(**data)
 
+    def streamer_overrides(self) -> Dict[str, Any]:
+        overrides: Dict[str, Any] = {}
+        if self.dataset_name:
+            overrides["dataset_name"] = self.dataset_name
+        if self.split:
+            overrides["split"] = self.split
+        if self.languages:
+            overrides["allowed_languages"] = list(self.languages)
+        if self.max_lines is not None:
+            overrides["max_lines"] = self.max_lines
+        if self.chunk_overlap is not None:
+            overrides["chunk_overlap"] = self.chunk_overlap
+        if self.streaming is not None:
+            overrides["streaming_enabled"] = self.streaming
+        if self.batch_size is not None:
+            overrides["batch_size"] = self.batch_size
+        if self.cache_dir:
+            overrides["cache_dir"] = self.cache_dir
+        if self.index_path:
+            overrides["vector_store_path"] = self.index_path
+        if self.metadata_path:
+            overrides["metadata_path"] = self.metadata_path
+        return overrides
+
     def cache_marker(self) -> Tuple[Any, ...]:
         return (
             self.enabled,
+            self.dataset_name,
+            self.split,
             self.top_k,
             self.summary_tokens,
             self.text_max_tokens,
@@ -396,6 +432,7 @@ class _StackContextConfig:
             self.max_lines,
             self.chunk_overlap,
             self.streaming,
+            self.batch_size,
             self.cache_dir,
             self.index_path,
             self.metadata_path,
@@ -581,7 +618,9 @@ class ContextBuilder:
         if self.stack_config.enabled and self._stack_ingestor is None:
             if _StackDatasetStreamer is not None:
                 self._stack_ingestor_factory = (
-                    lambda: _StackDatasetStreamer.from_environment()
+                    lambda: _StackDatasetStreamer.from_environment(
+                        **self.stack_config.streamer_overrides()
+                    )
                 )
         self._last_stack_ingest: float = 0.0
 
@@ -617,6 +656,75 @@ class ContextBuilder:
                 _ensure_stack_background()
             except Exception:
                 logger.exception("failed to start stack ingestion background task")
+
+    # ------------------------------------------------------------------
+    # Stack configuration helpers
+    # ------------------------------------------------------------------
+    @property
+    def stack_languages(self) -> Tuple[str, ...]:
+        return self.stack_config.languages
+
+    @property
+    def stack_max_lines(self) -> int | None:
+        return self.stack_config.max_lines
+
+    @property
+    def stack_chunk_overlap(self) -> int | None:
+        return self.stack_config.chunk_overlap
+
+    @property
+    def stack_streaming_enabled(self) -> bool | None:
+        return self.stack_config.streaming
+
+    @property
+    def stack_ingestion_batch_size(self) -> int | None:
+        return self.stack_config.batch_size
+
+    @property
+    def stack_index_path(self) -> str | None:
+        return self.stack_config.index_path
+
+    @property
+    def stack_metadata_path(self) -> str | None:
+        return self.stack_config.metadata_path
+
+    @property
+    def stack_retrieval_limit(self) -> int:
+        return max(int(self.stack_config.top_k or 0), 0)
+
+    def ingest_stack_documents(
+        self,
+        *,
+        limit: int | None = None,
+        continuous: bool = False,
+        ensure_fresh: bool = True,
+    ) -> int:
+        """Trigger Stack dataset ingestion using the configured streamer."""
+
+        if not self.stack_config.enabled or not self.stack_config.ingestion_enabled:
+            return 0
+        if _StackDatasetStreamer is None:
+            raise RuntimeError("stack ingestion unavailable")
+
+        overrides = self.stack_config.streamer_overrides()
+        streamer = _StackDatasetStreamer.from_environment(**overrides)
+        batch_limit = limit if limit is not None else self.stack_config.ingestion_batch_limit
+
+        try:
+            embedded = streamer.process(limit=batch_limit, continuous=continuous)
+        finally:
+            with contextlib.suppress(Exception):
+                streamer.stop()
+
+        if embedded:
+            self._last_stack_ingest = time.monotonic()
+            if ensure_fresh:
+                ensure_embeddings_fresh(["stack"])
+        elif ensure_fresh:
+            # Even when no new chunks were embedded we allow the caller to
+            # surface stale metadata if present.
+            ensure_embeddings_fresh(["stack"])
+        return embedded
 
     # ------------------------------------------------------------------
     def _embedding_checker(self) -> None:

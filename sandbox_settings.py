@@ -891,6 +891,11 @@ class SandboxSettings(BaseSettings):
         env="STACK_CHUNK_OVERLAP",
         description="Line overlap between Stack chunks for sandbox overrides.",
     )
+    stack_streaming: bool | None = Field(
+        None,
+        env="STACK_STREAMING",
+        description="Toggle Stack streaming ingestion during sandbox runs.",
+    )
     stack_top_k: int | None = Field(
         None,
         env="STACK_TOP_K",
@@ -910,6 +915,26 @@ class SandboxSettings(BaseSettings):
         None,
         env="STACK_METADATA_DB",
         description="Path to the Stack metadata database for sandbox runs.",
+    )
+    stack_cache_dir: str | None = Field(
+        None,
+        env="STACK_CACHE_DIR",
+        description="Base cache directory for Stack dataset artefacts.",
+    )
+    stack_document_cache: str | None = Field(
+        None,
+        env="STACK_DOCUMENT_CACHE",
+        description="Directory used to cache Stack source documents.",
+    )
+    stack_batch_size: int | None = Field(
+        None,
+        env="STACK_BATCH_SIZE",
+        description="Number of Stack chunks processed per ingestion batch.",
+    )
+    huggingface_token: str | None = Field(
+        None,
+        env="HUGGINGFACE_TOKEN",
+        description="Explicit Hugging Face access token for Stack ingestion.",
     )
 
     @field_validator("baseline_window")
@@ -954,7 +979,7 @@ class SandboxSettings(BaseSettings):
         ) -> list[str]:
             return _validate_stack_languages(value)
 
-        @field_validator("stack_top_k", "stack_max_lines")
+        @field_validator("stack_top_k", "stack_max_lines", "stack_batch_size")
         def _positive_stack_int(
             cls, value: int | None, info: FieldValidationInfo
         ) -> int | None:
@@ -1055,7 +1080,7 @@ class SandboxSettings(BaseSettings):
         ) -> list[str]:
             return _validate_stack_languages(value)
 
-        @field_validator("stack_top_k", "stack_max_lines")
+        @field_validator("stack_top_k", "stack_max_lines", "stack_batch_size")
         def _positive_stack_int(
             cls,
             value: int | None,
