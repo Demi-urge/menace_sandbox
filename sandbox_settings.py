@@ -23,6 +23,10 @@ except Exception:  # pragma: no cover - fallback for pydantic<2
     PYDANTIC_V2 = False
     SettingsConfigDict = dict  # type: ignore[misc]
 from pydantic import BaseModel, Field
+from stack_dataset_defaults import (
+    STACK_LANGUAGE_ALLOWLIST,
+    normalise_stack_languages,
+)
 
 try:  # pragma: no cover - compatibility shim
     from pydantic import FieldValidationInfo, field_validator
@@ -98,6 +102,17 @@ DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = {
     "low": 25.0,
     "info": 0.0,
 }
+
+
+def _validate_stack_languages(languages: list[str]) -> list[str]:
+    unknown = [lang for lang in languages if lang not in STACK_LANGUAGE_ALLOWLIST]
+    if unknown:
+        allowed = ", ".join(sorted(STACK_LANGUAGE_ALLOWLIST))
+        raise ValueError(
+            f"Unsupported Stack dataset languages: {', '.join(sorted(set(unknown)))}. "
+            f"Allowed values are: {allowed}"
+        )
+    return languages
 
 
 def normalize_workflow_tests(value: Any) -> list[str]:
@@ -846,6 +861,56 @@ class SandboxSettings(BaseSettings):
             f"{DEFAULT_SEVERITY_SCORE_MAP}."
         ),
     )
+    stack_enabled: bool | None = Field(
+        None,
+        env="STACK_DATA_ENABLED",
+        description="Override Stack ingestion enablement for sandbox runs.",
+    )
+    stack_dataset_name: str | None = Field(
+        None,
+        env="STACK_DATASET",
+        description="Dataset identifier used for Stack ingestion overrides.",
+    )
+    stack_split: str | None = Field(
+        None,
+        env="STACK_SPLIT",
+        description="Dataset split consumed when overriding Stack ingestion.",
+    )
+    stack_languages: list[str] = Field(
+        default_factory=list,
+        env="STACK_LANGUAGES",
+        description="Language allow-list applied to Stack ingestion and retrieval.",
+    )
+    stack_max_lines: int | None = Field(
+        None,
+        env="STACK_MAX_LINES",
+        description="Maximum lines per Stack chunk when overriding ingestion.",
+    )
+    stack_chunk_overlap: int | None = Field(
+        None,
+        env="STACK_CHUNK_OVERLAP",
+        description="Line overlap between Stack chunks for sandbox overrides.",
+    )
+    stack_top_k: int | None = Field(
+        None,
+        env="STACK_TOP_K",
+        description="Override for Stack retrieval depth during sandbox runs.",
+    )
+    stack_weight: float | None = Field(
+        None,
+        env="STACK_WEIGHT",
+        description="Relative retrieval weight applied to Stack results.",
+    )
+    stack_index_path: str | None = Field(
+        None,
+        env="STACK_DATA_INDEX",
+        description="Path to the Stack vector index used in sandbox runs.",
+    )
+    stack_metadata_path: str | None = Field(
+        None,
+        env="STACK_METADATA_DB",
+        description="Path to the Stack metadata database for sandbox runs.",
+    )
 
     @field_validator("baseline_window")
     def _baseline_window_range(cls, v: int) -> int:
@@ -878,6 +943,46 @@ class SandboxSettings(BaseSettings):
         return v
 
     if PYDANTIC_V2:
+
+        @field_validator("stack_languages", mode="before")
+        def _normalise_stack_languages(cls, value: Any) -> list[str]:
+            return normalise_stack_languages(value)
+
+        @field_validator("stack_languages")
+        def _validate_stack_languages_v2(
+            cls, value: list[str], info: FieldValidationInfo
+        ) -> list[str]:
+            return _validate_stack_languages(value)
+
+        @field_validator("stack_top_k", "stack_max_lines")
+        def _positive_stack_int(
+            cls, value: int | None, info: FieldValidationInfo
+        ) -> int | None:
+            if value is not None and value <= 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be a positive integer"
+                )
+            return value
+
+        @field_validator("stack_chunk_overlap")
+        def _non_negative_stack_int(
+            cls, value: int | None, info: FieldValidationInfo
+        ) -> int | None:
+            if value is not None and value < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return value
+
+        @field_validator("stack_weight")
+        def _non_negative_stack_weight(
+            cls, value: float | None, info: FieldValidationInfo
+        ) -> float | None:
+            if value is not None and value < 0:
+                raise ValueError(
+                    f"{_field_name(info=info)} must be non-negative"
+                )
+            return value
 
         @field_validator(
             "roi_deviation_tolerance",
@@ -929,6 +1034,68 @@ class SandboxSettings(BaseSettings):
             return v
 
     else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("stack_languages", pre=True)
+        def _normalise_stack_languages(
+            cls,
+            value: Any,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> list[str]:
+            return normalise_stack_languages(value)
+
+        @field_validator("stack_languages")
+        def _validate_stack_languages_v1(
+            cls,
+            value: list[str],
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> list[str]:
+            return _validate_stack_languages(value)
+
+        @field_validator("stack_top_k", "stack_max_lines")
+        def _positive_stack_int(
+            cls,
+            value: int | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int | None:
+            if value is not None and value <= 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be a positive integer"
+                )
+            return value
+
+        @field_validator("stack_chunk_overlap")
+        def _non_negative_stack_int(
+            cls,
+            value: int | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> int | None:
+            if value is not None and value < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return value
+
+        @field_validator("stack_weight")
+        def _non_negative_stack_weight(
+            cls,
+            value: float | None,
+            values: dict[str, Any],
+            config: Any,
+            field: ModelField,
+        ) -> float | None:
+            if value is not None and value < 0:
+                raise ValueError(
+                    f"{_field_name(field=field)} must be non-negative"
+                )
+            return value
 
         @field_validator(
             "roi_deviation_tolerance",

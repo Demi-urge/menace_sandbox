@@ -60,6 +60,8 @@ import os
 import shlex
 import yaml
 
+from stack_dataset_defaults import normalise_stack_languages
+
 from .sandbox_settings import SandboxSettings, normalize_workflow_tests
 from .dynamic_path_router import resolve_path
 from .roi_thresholds import ROIThresholds
@@ -226,6 +228,43 @@ def get_thresholds(
     )
 
 
+def get_stack_dataset_config(
+    settings: SandboxSettings | None = None,
+    *,
+    path: Path | None = None,
+) -> Dict[str, Any]:
+    """Return Stack dataset configuration merged with sandbox overrides."""
+
+    data = _load_config(path)
+    stack_defaults: Dict[str, Any] = dict(data.get("stack", {}) or {})
+    s = settings or SandboxSettings()
+    overrides: Dict[str, Any] = {}
+
+    if getattr(s, "stack_enabled", None) is not None:
+        overrides["enabled"] = bool(s.stack_enabled)
+    if getattr(s, "stack_dataset_name", None):
+        overrides["dataset_name"] = s.stack_dataset_name
+    if getattr(s, "stack_split", None):
+        overrides["split"] = s.stack_split
+    if getattr(s, "stack_languages", None):
+        overrides["languages"] = normalise_stack_languages(s.stack_languages)
+    if getattr(s, "stack_max_lines", None) is not None:
+        overrides["max_lines"] = int(s.stack_max_lines)  # type: ignore[arg-type]
+    if getattr(s, "stack_chunk_overlap", None) is not None:
+        overrides["chunk_overlap"] = int(s.stack_chunk_overlap)  # type: ignore[arg-type]
+    if getattr(s, "stack_top_k", None) is not None:
+        overrides["top_k"] = int(s.stack_top_k)  # type: ignore[arg-type]
+    if getattr(s, "stack_weight", None) is not None:
+        overrides["weight"] = float(s.stack_weight)  # type: ignore[arg-type]
+    if getattr(s, "stack_index_path", None):
+        overrides["index_path"] = s.stack_index_path
+    if getattr(s, "stack_metadata_path", None):
+        overrides["metadata_path"] = s.stack_metadata_path
+
+    stack_defaults.update(overrides)
+    return stack_defaults
+
+
 def update_thresholds(
     bot: str,
     *,
@@ -343,6 +382,7 @@ def adaptive_thresholds(
 __all__ = [
     "SelfCodingThresholds",
     "get_thresholds",
+    "get_stack_dataset_config",
     "update_thresholds",
     "adaptive_thresholds",
 ]

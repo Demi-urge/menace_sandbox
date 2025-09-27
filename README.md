@@ -111,6 +111,25 @@ Avoid inline ``Prompt(...)`` strings; run
 ``python scripts/check_context_builder_usage.py`` to statically flag missing
 ``context_builder`` wiring.
 
+### Stack dataset retrieval
+
+`ContextBuilderConfig` now exposes an optional `stack_dataset` section for
+configuring retrieval from embeddings produced by
+`vector_service.stack_ingestion`. Defaults live alongside the self-coding
+thresholds in `config/self_coding_thresholds.yaml` under the `stack` key and can
+be overridden per profile via `config/<mode>.yaml` or environment variables such
+as `STACK_DATA_ENABLED`, `STACK_LANGUAGES`, `STACK_TOP_K`, `STACK_DATA_INDEX`
+and `STACK_METADATA_DB`.  Sandbox profiles can further refine allow-lists or
+weights with the corresponding fields in `SandboxSettings`, ensuring ingestion
+and retrieval share the same language filters, chunk sizing and index
+locations.
+
+Environment overrides are merged before Pydantic validation, so invalid values
+(for example an unknown language or negative chunk size) fail fast at startup.
+When adding new embeddings, keep ingestion (`StackDatasetStreamer`) and
+retrieval (`ContextBuilder`) aligned by updating both the YAML defaults and the
+sandbox settings to reference the same vector and metadata paths.
+
 ### BotDevelopmentBot
 
 ```python
