@@ -184,6 +184,7 @@ The streamer consumes the following environment variables:
 | Variable | Description |
 | --- | --- |
 | `STACK_STREAMING` | Set to `1`/`true` to enable continuous background ingestion.  Any other value pauses the loop. |
+| `STACK_DATA_DIR` | Base directory used for metadata, cache and vector store defaults (`~/.cache/menace/stack` when unspecified). |
 | `STACK_LANGUAGES` | Comma-separated allow-list of languages to embed (empty = all). |
 | `STACK_MAX_LINES` | Maximum number of lines per chunk (default `200`). |
 | `STACK_VECTOR_DIM` | Expected embedding dimensionality when creating the vector store. |
@@ -214,6 +215,15 @@ simply by editing the file—no code changes are required.  The JSON object uses
 the following format where each key is the canonical name for a database
 category and the value specifies the import path and class name of the
 `EmbeddableDBMixin` implementation:
+
+`ConfigDiscovery` will automatically load `.stack_env` (if present) and export
+any `STACK_*` variables defined within.  When the file is absent, it derives
+defaults based on `STACK_DATA_DIR`, falling back to `~/.cache/menace/stack` for
+local development.  The helper also scans the standard Hugging Face cache
+locations (`~/.huggingface/token`, `~/.cache/huggingface/token`, honouring
+`HF_HOME`) and exports the token as `HUGGINGFACE_TOKEN`.  Continuous reloads are
+supported so long-running ingestion services can pick up credential updates
+without restarting.
 
 ```json
 {
