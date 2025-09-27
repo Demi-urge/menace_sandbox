@@ -1,0 +1,26 @@
+context_builder:
+  stack_dataset:
+    enabled: false
+    dataset_name: bigcode/the-stack-v2-dedup
+    split: train
+    ingestion:
+      streaming: false
+      languages: []
+      max_document_lines: 200
+      chunk_overlap: 20
+    retrieval:
+      top_k: 50
+      weight: 1.0
+      max_context_documents: 8
+      max_context_lines: 400
+    cache:
+      data_dir: ~/.cache/menace/stack
+      index_path: vector_service/stack_vectors
+      metadata_path: vector_service/stack_metadata.db
+      document_cache: chunk_summary_cache/stack_documents
+    tokens:
+      env_vars:
+        - HUGGINGFACE_TOKEN
+        - HF_TOKEN
+        - HUGGINGFACEHUB_API_TOKEN
+      required: false

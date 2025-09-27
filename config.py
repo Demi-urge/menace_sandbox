@@ -223,16 +223,42 @@ class BotConfig(_StrictBaseModel):
     epsilon: float = Field(ge=0.0, le=1.0)
 
 
-class StackDatasetConfig(_StrictBaseModel):
-    """Configuration for Stack dataset ingestion and retrieval."""
+class StackTokenConfig(_StrictBaseModel):
+    """Hugging Face authentication references for Stack ingestion."""
 
-    enabled: bool = False
-    dataset_name: str = "bigcode/the-stack-v2-dedup"
-    split: str = "train"
-    languages: List[str] = Field(default_factory=list)
-    max_lines: int = Field(default=200, gt=0)
-    chunk_overlap: int = Field(default=20, ge=0)
-    top_k: int = Field(default=50, gt=0)
+    env_vars: List[str] = Field(
+        default_factory=lambda: [
+            "HUGGINGFACE_TOKEN",
+            "HF_TOKEN",
+            "HUGGINGFACEHUB_API_TOKEN",
+        ]
+    )
+    required: bool = Field(
+        default=False,
+        description="Whether ingestion should fail when no token is exported",
+    )
+
+    @field_validator("env_vars", mode="before")
+    @classmethod
+    def _coerce_env_vars(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return [str(part).strip() for part in value if str(part).strip()]
+
+    @field_validator("env_vars")
+    @classmethod
+    def _validate_env_vars(cls, value: List[str]) -> List[str]:
+        if not value:
+            raise ValueError("env_vars must include at least one environment variable")
+        return value
+
+
+class StackCacheConfig(_StrictBaseModel):
+    """Cache and index locations used by Stack ingestion and retrieval."""
+
+    data_dir: str = Field(default="~/.cache/menace/stack")
     index_path: str = Field(
         default="vector_service/stack_vectors",
         description="Path to the Stack vector index",
@@ -241,7 +267,26 @@ class StackDatasetConfig(_StrictBaseModel):
         default="vector_service/stack_metadata.db",
         description="Path to the Stack metadata catalogue",
     )
-    weight: float = Field(default=1.0, ge=0.0)
+    document_cache: str = Field(
+        default="chunk_summary_cache/stack_documents",
+        description="Local cache for fetched Stack documents",
+    )
+
+    @field_validator("data_dir", "index_path", "metadata_path", "document_cache")
+    @classmethod
+    def _not_blank(cls, value: str, info) -> str:  # type: ignore[override]
+        if not value:
+            raise ValueError(f"{info.field_name} must not be empty")
+        return value
+
+
+class StackIngestionConfig(_StrictBaseModel):
+    """Filters and limits applied when ingesting Stack documents."""
+
+    streaming: bool = False
+    languages: List[str] = Field(default_factory=list)
+    max_document_lines: int = Field(default=200, gt=0)
+    chunk_overlap: int = Field(default=20, ge=0)
 
     @field_validator("languages", mode="before")
     @classmethod
@@ -260,10 +305,95 @@ class StackDatasetConfig(_StrictBaseModel):
             )
         return value
 
+
+class StackRetrievalConfig(_StrictBaseModel):
+    """Retrieval parameters and context budgets for Stack results."""
+
+    top_k: int = Field(default=50, gt=0)
+    weight: float = Field(default=1.0, ge=0.0)
+    max_context_documents: int = Field(
+        default=8,
+        gt=0,
+        description="Maximum Stack documents merged into a single context window",
+    )
+    max_context_lines: int = Field(
+        default=400,
+        gt=0,
+        description="Total line budget for Stack snippets included in prompts",
+    )
+
+
+class StackDatasetConfig(_StrictBaseModel):
+    """Configuration for Stack dataset ingestion and retrieval."""
+
+    enabled: bool = False
+    dataset_name: str = "bigcode/the-stack-v2-dedup"
+    split: str = "train"
+    ingestion: StackIngestionConfig = Field(default_factory=StackIngestionConfig)
+    retrieval: StackRetrievalConfig = Field(default_factory=StackRetrievalConfig)
+    cache: StackCacheConfig = Field(default_factory=StackCacheConfig)
+    tokens: StackTokenConfig = Field(default_factory=StackTokenConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        data = dict(values)
+        ingestion = dict(data.get("ingestion") or {})
+        retrieval = dict(data.get("retrieval") or {})
+        cache = dict(data.get("cache") or {})
+        tokens = dict(data.get("tokens") or {})
+
+        if "languages" in data and "languages" not in ingestion:
+            ingestion["languages"] = data.pop("languages")
+        if "max_lines" in data and "max_document_lines" not in ingestion:
+            ingestion["max_document_lines"] = data.pop("max_lines")
+        if "chunk_overlap" in data and "chunk_overlap" not in ingestion:
+            ingestion["chunk_overlap"] = data.pop("chunk_overlap")
+        if "streaming" in data and "streaming" not in ingestion:
+            ingestion["streaming"] = data.pop("streaming")
+
+        if "top_k" in data and "top_k" not in retrieval:
+            retrieval["top_k"] = data.pop("top_k")
+        if "weight" in data and "weight" not in retrieval:
+            retrieval["weight"] = data.pop("weight")
+        if "max_context_documents" in data and "max_context_documents" not in retrieval:
+            retrieval["max_context_documents"] = data.pop("max_context_documents")
+        if "max_context_lines" in data and "max_context_lines" not in retrieval:
+            retrieval["max_context_lines"] = data.pop("max_context_lines")
+
+        if "data_dir" in data and "data_dir" not in cache:
+            cache["data_dir"] = data.pop("data_dir")
+        if "cache_dir" in data and "data_dir" not in cache:
+            cache["data_dir"] = data.pop("cache_dir")
+        if "index_path" in data and "index_path" not in cache:
+            cache["index_path"] = data.pop("index_path")
+        if "metadata_path" in data and "metadata_path" not in cache:
+            cache["metadata_path"] = data.pop("metadata_path")
+        if "document_cache" in data and "document_cache" not in cache:
+            cache["document_cache"] = data.pop("document_cache")
+
+        token_keys = []
+        if "token_env" in data:
+            token_keys.append(data.pop("token_env"))
+        if "token_env_vars" in data:
+            token_keys.extend(data.pop("token_env_vars"))
+        if "huggingface_token" in data:
+            token_keys.append(data.pop("huggingface_token"))
+        if token_keys and "env_vars" not in tokens:
+            tokens["env_vars"] = token_keys
+
+        data["ingestion"] = ingestion
+        data["retrieval"] = retrieval
+        data["cache"] = cache
+        data["tokens"] = tokens
+        return data
+
     @model_validator(mode="after")
     def _check_chunk_sizes(self) -> "StackDatasetConfig":
-        if self.chunk_overlap >= self.max_lines:
-            raise ValueError("chunk_overlap must be smaller than max_lines")
+        if self.ingestion.chunk_overlap >= self.ingestion.max_document_lines:
+            raise ValueError("chunk_overlap must be smaller than max_document_lines")
         return self
 
 
@@ -571,6 +701,10 @@ def load_config(
 
     data = _load_yaml(DEFAULT_SETTINGS_FILE)
 
+    stack_defaults = CONFIG_DIR / "stack_retrieval.yaml"
+    if stack_defaults.exists():
+        data = _merge_dict(data, _load_yaml(stack_defaults))
+
     profile_file = CONFIG_DIR / f"{active_mode}.yaml"
     if profile_file.exists():
         data = _merge_dict(data, _load_yaml(profile_file))
@@ -594,41 +728,77 @@ def load_config(
             env_overrides["api_keys"]["serp"] = serp_env
 
     stack_override: Dict[str, Any] = {}
+
+    def _stack_set(path: list[str], value: Any) -> None:
+        current = stack_override
+        for key in path[:-1]:
+            current = current.setdefault(key, {})
+        current[path[-1]] = value
+
     stack_enabled = os.getenv("STACK_DATA_ENABLED")
     if stack_enabled is not None:
-        stack_override["enabled"] = _parse_bool(stack_enabled)
+        _stack_set(["enabled"], _parse_bool(stack_enabled))
     stack_dataset = os.getenv("STACK_DATASET")
     if stack_dataset:
-        stack_override["dataset_name"] = stack_dataset
+        _stack_set(["dataset_name"], stack_dataset)
     stack_split = os.getenv("STACK_SPLIT")
     if stack_split:
-        stack_override["split"] = stack_split
+        _stack_set(["split"], stack_split)
     stack_languages = os.getenv("STACK_LANGUAGES")
     if stack_languages is not None:
-        stack_override["languages"] = normalise_stack_languages(stack_languages)
+        _stack_set(["ingestion", "languages"], normalise_stack_languages(stack_languages))
+    stack_streaming = os.getenv("STACK_STREAMING")
+    if stack_streaming is not None:
+        _stack_set(["ingestion", "streaming"], _parse_bool(stack_streaming))
     stack_max_lines = os.getenv("STACK_MAX_LINES")
     if stack_max_lines is not None:
-        stack_override["max_lines"] = _parse_int(stack_max_lines, field="STACK_MAX_LINES")
+        _stack_set(
+            ["ingestion", "max_document_lines"],
+            _parse_int(stack_max_lines, field="STACK_MAX_LINES"),
+        )
     stack_chunk_overlap = os.getenv("STACK_CHUNK_OVERLAP")
     if stack_chunk_overlap is not None:
-        stack_override["chunk_overlap"] = _parse_int(
-            stack_chunk_overlap, field="STACK_CHUNK_OVERLAP"
+        _stack_set(
+            ["ingestion", "chunk_overlap"],
+            _parse_int(stack_chunk_overlap, field="STACK_CHUNK_OVERLAP"),
         )
     stack_top_k = os.getenv("STACK_TOP_K")
     if stack_top_k is not None:
-        stack_override["top_k"] = _parse_int(stack_top_k, field="STACK_TOP_K")
-    stack_index = os.getenv("STACK_DATA_INDEX")
-    if stack_index:
-        stack_override["index_path"] = stack_index
-    stack_metadata = os.getenv("STACK_METADATA_DB")
-    if stack_metadata:
-        stack_override["metadata_path"] = stack_metadata
+        _stack_set(["retrieval", "top_k"], _parse_int(stack_top_k, field="STACK_TOP_K"))
     stack_weight = os.getenv("STACK_WEIGHT")
     if stack_weight is not None:
         try:
-            stack_override["weight"] = float(stack_weight)
+            _stack_set(["retrieval", "weight"], float(stack_weight))
         except ValueError as exc:  # pragma: no cover - defensive
             raise ValueError("STACK_WEIGHT must be a float") from exc
+    stack_context_docs = os.getenv("STACK_CONTEXT_DOCS")
+    if stack_context_docs is not None:
+        _stack_set(
+            ["retrieval", "max_context_documents"],
+            _parse_int(stack_context_docs, field="STACK_CONTEXT_DOCS"),
+        )
+    stack_context_lines = os.getenv("STACK_CONTEXT_LINES")
+    if stack_context_lines is not None:
+        _stack_set(
+            ["retrieval", "max_context_lines"],
+            _parse_int(stack_context_lines, field="STACK_CONTEXT_LINES"),
+        )
+    stack_data_dir = os.getenv("STACK_DATA_DIR") or os.getenv("STACK_CACHE_DIR")
+    if stack_data_dir:
+        _stack_set(["cache", "data_dir"], stack_data_dir)
+    stack_index = (
+        os.getenv("STACK_DATA_INDEX")
+        or os.getenv("STACK_VECTOR_PATH")
+        or os.getenv("STACK_INDEX_PATH")
+    )
+    if stack_index:
+        _stack_set(["cache", "index_path"], stack_index)
+    stack_metadata = os.getenv("STACK_METADATA_PATH") or os.getenv("STACK_METADATA_DB")
+    if stack_metadata:
+        _stack_set(["cache", "metadata_path"], stack_metadata)
+    stack_doc_cache = os.getenv("STACK_DOCUMENT_CACHE")
+    if stack_doc_cache:
+        _stack_set(["cache", "document_cache"], stack_doc_cache)
     if stack_override:
         env_overrides.setdefault("context_builder", {})["stack_dataset"] = stack_override
 

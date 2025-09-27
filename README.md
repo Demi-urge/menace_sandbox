@@ -115,31 +115,34 @@ Avoid inline ``Prompt(...)`` strings; run
 
 `ContextBuilderConfig` now exposes an optional `stack_dataset` section for
 configuring retrieval from embeddings produced by
-`vector_service.stack_ingestion`. Defaults live alongside the self-coding
-thresholds in `config/self_coding_thresholds.yaml` under the `stack` key and can
-be overridden per profile via `config/<mode>.yaml` or environment variables such
-as `STACK_DATA_ENABLED`, `STACK_LANGUAGES`, `STACK_TOP_K`, `STACK_DATA_INDEX`
-and `STACK_METADATA_DB`.  Sandbox profiles can further refine allow-lists or
-weights with the corresponding fields in `SandboxSettings`, ensuring ingestion
-and retrieval share the same language filters, chunk sizing and index
+`vector_service.stack_ingestion`. Baseline defaults ship in
+`config/stack_retrieval.yaml` and cover ingestion filters, retrieval weights and
+context budgets. These values are merged after `config/settings.yaml`, so
+profile-specific overrides in `config/<mode>.yaml` or environment variables such
+as `STACK_DATA_ENABLED`, `STACK_LANGUAGES`, `STACK_TOP_K`, `STACK_CONTEXT_LINES`,
+`STACK_DATA_INDEX` and `STACK_METADATA_DB` win automatically. Sandbox profiles
+can further refine allow-lists or weights via `SandboxSettings`, keeping
+ingestion and retrieval aligned across language filters, chunk sizing and cache
 locations.
 
 Environment overrides are merged before Pydantic validation, so invalid values
 (for example an unknown language or negative chunk size) fail fast at startup.
 When adding new embeddings, keep ingestion (`StackDatasetStreamer`) and
 retrieval (`ContextBuilder`) aligned by updating both the YAML defaults and the
-sandbox settings to reference the same vector and metadata paths.
+sandbox settings to reference the same vector, metadata and document-cache
+paths.
 
 `ConfigDiscovery` now looks for a `.stack_env` file in the project directory or
 home folder and exports any `STACK_*` variables it contains.  When the file is
 absent, sensible defaults are derived automatically: `STACK_DATA_DIR` defaults
 to `~/.cache/menace/stack`, `STACK_METADATA_DB`/`STACK_METADATA_PATH` point to a
 `stack_metadata.db` file under that directory, `STACK_CACHE_DIR` is set to a
-`cache` subfolder and `STACK_VECTOR_PATH` points at `stack_vectors`.  The
-discovery step also disables streaming by default (`STACK_STREAMING=0`) so
-ingestion only runs when explicitly enabled.  These values are persisted to
-`.env.auto` via `ensure_config`, keeping local development environments in sync
-with the detected defaults.
+`cache` subfolder, `STACK_DOCUMENT_CACHE` targets a `documents` folder for
+snippet caching and `STACK_VECTOR_PATH` points at `stack_vectors`.  The discovery
+step also disables streaming by default (`STACK_STREAMING=0`) so ingestion only
+runs when explicitly enabled.  These values are persisted to `.env.auto` via
+`ensure_config`, keeping local development environments in sync with the detected
+defaults.
 
 Hugging Face credentials are surfaced in the same pass: if
 `HUGGINGFACE_TOKEN`/`HUGGINGFACE_API_TOKEN`/`HF_TOKEN` are not set, the
