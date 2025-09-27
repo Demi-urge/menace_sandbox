@@ -93,6 +93,7 @@ RateLimitError = MalformedPromptError = VectorServiceError
 Retriever = PatchLogger = CognitionLayer = EmbeddingBackfill = ContextBuilder = _Stub  # type: ignore
 SharedVectorService: type[_SimpleSharedVectorService] | type[_Stub] = _SimpleSharedVectorService
 StackDatasetStreamer = _Stub  # type: ignore
+StackRetriever = _Stub  # type: ignore
 ensure_stack_background = _noop
 run_stack_ingestion_async = _Stub  # type: ignore
 
@@ -163,6 +164,13 @@ else:
     run_stack_ingestion_async = _run_stack_ingestion_async
 
 try:  # pragma: no cover - optional heavy dependency
+    from .stack_retriever import StackRetriever as _StackRetriever
+except Exception:
+    pass
+else:
+    StackRetriever = _StackRetriever
+
+try:  # pragma: no cover - optional heavy dependency
     from .context_builder import ContextBuilder as _ContextBuilder
 except Exception:
     pass
@@ -201,6 +209,7 @@ __all__ = [
     "SharedVectorService",
     "ContextBuilder",
     "StackDatasetStreamer",
+    "StackRetriever",
     "ensure_stack_background",
     "run_stack_ingestion_async",
     "EmbeddableDBMixin",
