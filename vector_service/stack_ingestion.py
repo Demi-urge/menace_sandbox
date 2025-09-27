@@ -6,14 +6,15 @@ This module exposes :class:`StackDatasetStreamer` which streams records from the
 ``bigcode/the-stack-v2-dedup`` dataset, chunks source files into line-limited
 segments and persists only their embeddings plus structured metadata. State is
 tracked in a lightweight SQLite catalogue so ingestion can resume after
-interruption without re-embedding previously processed chunks.
+interruption without re-embedding previously processed chunks. Embeddings are
+persisted through :class:`~vector_service.vectorizer.SharedVectorService` into a
+dedicated FAISS/Annoy index so only vectors and metadata ever hit disk.
 """
 
 import argparse
 import asyncio
 import contextlib
 import hashlib
-import json
 import logging
 import os
 import sqlite3
@@ -30,7 +31,7 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - fallback when datasets unavailable
     load_dataset = None  # type: ignore
 
-from .vector_store import VectorStore
+from .vector_store import VectorStore, create_vector_store
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .vectorizer import SharedVectorService as SharedVectorServiceType
@@ -93,13 +94,13 @@ class StackIngestionConfig:
     allowed_languages: set[str] = field(default_factory=set)
     max_lines: int = 200
     vector_dim: int = 768
-    vector_backend: str = "annoy"
+    vector_backend: str = "faiss"
     vector_metric: str = "angular"
     vector_store_path: Path = field(
-        default_factory=lambda: resolve_path("vector_service") / "stack_vectors.db"
+        default_factory=lambda: resolve_path("vector_service") / "stack.faiss"
     )
     metadata_path: Path = field(
-        default_factory=lambda: resolve_path("vector_service") / "stack_metadata.db"
+        default_factory=lambda: resolve_path("vector_service") / "stack_embeddings.db"
     )
     cache_dir: Path = field(
         default_factory=lambda: resolve_path("vector_service") / "stack_cache"
@@ -121,7 +122,7 @@ class StackIngestionConfig:
             allowed = _coerce_languages(os.environ.get("STACK_LANGUAGES"))
         max_lines = int(os.environ.get("STACK_MAX_LINES", overrides.pop("max_lines", 200)))
         vector_dim = int(os.environ.get("STACK_VECTOR_DIM", overrides.pop("vector_dim", 768)))
-        backend = os.environ.get("STACK_VECTOR_BACKEND", overrides.pop("vector_backend", "annoy"))
+        backend = os.environ.get("STACK_VECTOR_BACKEND", overrides.pop("vector_backend", "faiss"))
         metric = os.environ.get("STACK_VECTOR_METRIC", overrides.pop("vector_metric", "angular"))
         dataset_name = os.environ.get(
             "STACK_DATASET", overrides.pop("dataset_name", "bigcode/the-stack-v2-dedup")
@@ -174,6 +175,7 @@ class StackRecord:
     repo: str
     path: str
     language: str
+    license: str
     content: str
     identifier: str
 
@@ -183,6 +185,7 @@ class StackChunk:
     repo: str
     path: str
     language: str
+    license: str
     start_line: int
     end_line: int
     checksum: str
@@ -210,74 +213,6 @@ class StackIngestionMetrics:
         }
 
 
-class SQLiteVectorStore:
-    """Minimal SQLite-backed :class:`VectorStore` implementation."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._lock = threading.Lock()
-        self._initialise()
-
-    def _initialise(self) -> None:
-        with self._conn:
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS embeddings (
-                    id TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    origin_db TEXT,
-                    repo TEXT,
-                    path TEXT,
-                    language TEXT,
-                    vector TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-
-    # ``VectorStore`` protocol compliance ---------------------------------
-    def add(
-        self,
-        kind: str,
-        record_id: str,
-        vector: Iterable[float],
-        *,
-        origin_db: str | None = None,
-        metadata: Dict[str, Any] | None = None,
-    ) -> None:
-        meta = dict(metadata or {})
-        payload = {
-            "kind": kind,
-            "id": record_id,
-            "origin_db": origin_db,
-            "repo": str(meta.get("repo", "")),
-            "path": str(meta.get("path", "")),
-            "language": str(meta.get("language", "")),
-            "vector": json.dumps([float(x) for x in vector]),
-        }
-        with self._lock, self._conn:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO embeddings (id, kind, origin_db, repo, path, language, vector)
-                VALUES (:id, :kind, :origin_db, :repo, :path, :language, :vector)
-                """,
-                payload,
-            )
-
-    def query(self, vector: Iterable[float], top_k: int = 5) -> list[tuple[str, float]]:
-        # Nearest neighbour search is out-of-scope for ingestion tests; return empty results.
-        return []
-
-    def load(self) -> None:  # pragma: no cover - trivial method for protocol compatibility
-        self._initialise()
-
-    def close(self) -> None:
-        with contextlib.suppress(Exception):
-            self._conn.close()
-
-
 class StackMetadataStore:
     """Lightweight SQLite catalogue for chunk metadata and dataset cursors."""
 
@@ -298,6 +233,7 @@ class StackMetadataStore:
                     repo TEXT NOT NULL,
                     path TEXT NOT NULL,
                     language TEXT NOT NULL,
+                    license TEXT DEFAULT 'unknown',
                     start_line INTEGER NOT NULL,
                     end_line INTEGER NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -316,6 +252,15 @@ class StackMetadataStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunks_repo_path ON chunks(repo, path)"
             )
+        self._ensure_column("license", "TEXT DEFAULT 'unknown'")
+
+    def _ensure_column(self, column: str, definition: str) -> None:
+        cur = self._conn.execute("PRAGMA table_info(chunks)")
+        existing = {row[1] for row in cur.fetchall()}
+        cur.close()
+        if column not in existing:
+            with self._lock, self._conn:
+                self._conn.execute(f"ALTER TABLE chunks ADD COLUMN {column} {definition}")
 
     def has_chunk(self, checksum: str) -> bool:
         cur = self._conn.execute(
@@ -329,14 +274,23 @@ class StackMetadataStore:
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT OR IGNORE INTO chunks (checksum, repo, path, language, start_line, end_line)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO chunks (
+                    checksum,
+                    repo,
+                    path,
+                    language,
+                    license,
+                    start_line,
+                    end_line
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chunk.checksum,
                     chunk.repo,
                     chunk.path,
                     chunk.language,
+                    chunk.license,
                     chunk.start_line,
                     chunk.end_line,
                 ),
@@ -422,13 +376,16 @@ class StackDatasetStreamer:
             embedded = self._process_once(limit=limit)
             total_embedded += embedded
             elapsed = time.time() - start
+            throughput = (embedded / elapsed) if elapsed > 0 else 0.0
             logger.info(
-                "stack ingestion iteration processed %s chunks (skipped=%s, files=%s) in %.2fs",
+                "stack ingestion iteration processed %s chunks (skipped=%s, files=%s) in %.2fs (%.2f chunks/s)",
                 embedded,
                 self.metrics.chunks_skipped,
                 self.metrics.files_seen,
                 elapsed,
+                throughput,
             )
+            self._log_throughput_warning(throughput)
             if not continuous or (limit is not None and embedded >= limit):
                 break
             if embedded == 0 and self.config.batch_size is not None:
@@ -449,12 +406,33 @@ class StackDatasetStreamer:
 
     # ------------------------------------------------------------------
     def _build_vector_store(self, config: StackIngestionConfig) -> VectorStore:
-        return SQLiteVectorStore(config.vector_store_path)
+        return create_vector_store(
+            dim=config.vector_dim,
+            path=config.vector_store_path,
+            backend=config.vector_backend,
+            metric=config.vector_metric,
+        )
 
     def _is_streaming_enabled(self) -> bool:
         if not self.config.streaming_enabled:
             return False
         return _env_flag("STACK_STREAMING", True)
+
+    def _log_throughput_warning(self, throughput: float) -> None:
+        threshold_raw = os.environ.get("STACK_THROUGHPUT_WARN")
+        if not threshold_raw:
+            return
+        try:
+            threshold = float(threshold_raw)
+        except ValueError:
+            logger.debug("invalid STACK_THROUGHPUT_WARN value; ignoring")
+            return
+        if throughput < threshold:
+            logger.warning(
+                "stack ingestion throughput %.2f chunks/s below threshold %.2f",
+                throughput,
+                threshold,
+            )
 
     def _process_once(self, *, limit: int | None = None) -> int:
         dataset_iter = self._load_dataset_with_retry()
@@ -505,6 +483,7 @@ class StackDatasetStreamer:
     def _coerce_record(self, record: Dict[str, Any], *, position: int) -> StackRecord | None:
         content = record.get("content")
         language = str(record.get("language", "")).strip()
+        license_name = str(record.get("license", "unknown")).strip() or "unknown"
         if not content or not isinstance(content, str):
             return None
         if self.config.allowed_languages and language not in self.config.allowed_languages:
@@ -513,7 +492,14 @@ class StackDatasetStreamer:
         repo = str(record.get("repo_name", record.get("repo", "unknown")))
         identifier = str(record.get("id", f"{repo}:{path_raw}:{position}"))
         path = self._normalise_path(path_raw)
-        return StackRecord(repo=repo, path=path, language=language or "unknown", content=content, identifier=identifier)
+        return StackRecord(
+            repo=repo,
+            path=path,
+            language=language or "unknown",
+            license=license_name,
+            content=content,
+            identifier=identifier,
+        )
 
     def _normalise_path(self, raw: str) -> str:
         if not raw:
@@ -541,6 +527,7 @@ class StackDatasetStreamer:
             self.metrics.chunks_embedded += 1
             if limit is not None and so_far + embedded >= limit:
                 break
+        record.content = ""
         return embedded
 
     def _chunk_record(self, record: StackRecord) -> Iterator[StackChunk]:
@@ -562,6 +549,7 @@ class StackDatasetStreamer:
                 repo=record.repo,
                 path=record.path,
                 language=record.language,
+                license=record.license,
                 start_line=start_line,
                 end_line=end_line,
                 checksum=checksum,
@@ -569,7 +557,12 @@ class StackDatasetStreamer:
             )
 
     def _embed_chunk(self, chunk: StackChunk) -> None:
-        metadata = {"path": chunk.path, "repo": chunk.repo, "language": chunk.language}
+        metadata = {
+            "path": chunk.path,
+            "repo": chunk.repo,
+            "language": chunk.language,
+            "license": chunk.license,
+        }
         record = {"text": chunk.text, "language": chunk.language, "path": chunk.path}
         self.vector_service.vectorise_and_store(
             "stack", chunk.checksum, record, origin_db="stack", metadata=metadata
@@ -640,7 +633,6 @@ __all__ = [
     "StackIngestionConfig",
     "StackMetadataStore",
     "StackIngestionMetrics",
-    "SQLiteVectorStore",
     "ensure_background_task",
     "run_stack_ingestion_async",
     "main",
