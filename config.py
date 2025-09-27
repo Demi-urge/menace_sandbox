@@ -115,24 +115,53 @@ else:  # pragma: no cover - executed when running under pydantic v1
     def model_validator(*, mode):  # type: ignore[override]
         """Compatibility shim for :func:`pydantic.model_validator` on v1."""
 
-        if mode != "after":  # pragma: no cover - other modes unused
-            raise ValueError("pydantic v1 fallback only supports mode='after'")
+        if mode not in {"after", "before"}:  # pragma: no cover - other modes unused
+            raise ValueError(
+                "pydantic v1 fallback only supports mode in {'after', 'before'}"
+            )
 
         def decorator(func):
-            method = func.__func__ if isinstance(func, classmethod) else func
+            is_classmethod = isinstance(func, classmethod)
+            method = func.__func__ if is_classmethod else func
+
+            if mode == "after":
+
+                def _validator(cls, values):
+                    instance = cls.construct(**values)  # type: ignore[attr-defined]
+                    if is_classmethod:
+                        result = method(cls, instance)
+                    else:
+                        result = method(instance)
+                    if isinstance(result, cls):
+                        return result.dict()
+                    return values if result is None else result
+
+                _validator.__name__ = getattr(method, "__name__", "validator")
+                _validator.__qualname__ = getattr(
+                    method, "__qualname__", _validator.__qualname__
+                )
+                _validator.__doc__ = getattr(method, "__doc__", None)
+
+                return root_validator(
+                    skip_on_failure=True, allow_reuse=True
+                )(_validator)
 
             def _validator(cls, values):
-                instance = cls.construct(**values)  # type: ignore[attr-defined]
-                result = method(instance)
+                if is_classmethod:
+                    result = method(cls, values)
+                else:
+                    result = method(values)
                 if isinstance(result, cls):
                     return result.dict()
                 return values if result is None else result
 
             _validator.__name__ = getattr(method, "__name__", "validator")
-            _validator.__qualname__ = getattr(method, "__qualname__", _validator.__qualname__)
+            _validator.__qualname__ = getattr(
+                method, "__qualname__", _validator.__qualname__
+            )
             _validator.__doc__ = getattr(method, "__doc__", None)
 
-            return root_validator(skip_on_failure=True, allow_reuse=True)(_validator)
+            return root_validator(pre=True, allow_reuse=True)(_validator)
 
         return decorator
 
