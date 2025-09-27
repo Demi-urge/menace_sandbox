@@ -72,6 +72,24 @@ UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
 
+
+def _to_dict(value: Any) -> Dict[str, Any]:
+    """Best-effort conversion to a dictionary for config-like objects."""
+
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    for attr in ("model_dump", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                data = method()  # type: ignore[misc]
+            except TypeError:
+                data = method(exclude_none=False)  # type: ignore[misc]
+            return dict(data)
+    return dict(getattr(value, "__dict__", {}))
+
 # ---------------------------------------------------------------------------
 # Failed tag tracking
 # ---------------------------------------------------------------------------
@@ -292,6 +310,12 @@ class _StackContextConfig:
     ensure_before_search: bool = True
     languages: Tuple[str, ...] = field(default_factory=tuple)
     max_lines: int | None = None
+    chunk_overlap: int | None = None
+    streaming: bool | None = None
+    cache_dir: str | None = None
+    index_path: str | None = None
+    metadata_path: str | None = None
+    document_cache: str | None = None
 
     @classmethod
     def from_any(cls, value: Any) -> "_StackContextConfig":
@@ -299,18 +323,38 @@ class _StackContextConfig:
             return value
         if value is None:
             return cls()
-        if hasattr(value, "model_dump"):
-            try:
-                value = value.model_dump()
-            except Exception:
-                value = dict(getattr(value, "__dict__", {}))
-        elif not isinstance(value, dict):
-            value = dict(getattr(value, "__dict__", {}))
+        value_dict = _to_dict(value)
         data: Dict[str, Any] = {}
-        if isinstance(value, dict):
-            for field in fields(cls):
-                if field.name in value and value[field.name] is not None:
-                    data[field.name] = value[field.name]
+        for field_def in fields(cls):
+            if field_def.name in value_dict and value_dict[field_def.name] is not None:
+                data[field_def.name] = value_dict[field_def.name]
+
+        ingestion = _to_dict(value_dict.get("ingestion"))
+        retrieval = _to_dict(value_dict.get("retrieval"))
+        cache_cfg = _to_dict(value_dict.get("cache"))
+
+        if "languages" not in data and ingestion.get("languages") is not None:
+            data["languages"] = ingestion.get("languages")
+        if "max_lines" not in data and ingestion.get("max_document_lines") is not None:
+            data["max_lines"] = ingestion.get("max_document_lines")
+        if "chunk_overlap" not in data and ingestion.get("chunk_overlap") is not None:
+            data["chunk_overlap"] = ingestion.get("chunk_overlap")
+        if "streaming" not in data and ingestion.get("streaming") is not None:
+            data["streaming"] = ingestion.get("streaming")
+
+        for key in ("top_k", "weight"):
+            if key not in data and retrieval.get(key) is not None:
+                data[key] = retrieval.get(key)
+
+        if "cache_dir" not in data and cache_cfg.get("data_dir"):
+            data["cache_dir"] = cache_cfg.get("data_dir")
+        if "index_path" not in data and cache_cfg.get("index_path"):
+            data["index_path"] = cache_cfg.get("index_path")
+        if "metadata_path" not in data and cache_cfg.get("metadata_path"):
+            data["metadata_path"] = cache_cfg.get("metadata_path")
+        if "document_cache" not in data and cache_cfg.get("document_cache"):
+            data["document_cache"] = cache_cfg.get("document_cache")
+
         langs = data.get("languages")
         if langs is not None:
             if isinstance(langs, (list, tuple, set)):
@@ -327,6 +371,16 @@ class _StackContextConfig:
                 data["max_lines"] = int(data["max_lines"])
             except Exception:
                 data["max_lines"] = None
+        if "chunk_overlap" in data and data["chunk_overlap"] is not None:
+            try:
+                data["chunk_overlap"] = int(data["chunk_overlap"])
+            except Exception:
+                data["chunk_overlap"] = None
+        if "streaming" in data and data["streaming"] is not None:
+            data["streaming"] = bool(data["streaming"])
+        for key in ("cache_dir", "index_path", "metadata_path", "document_cache"):
+            if key in data and data[key] is not None:
+                data[key] = str(data[key])
         return cls(**data)
 
     def cache_marker(self) -> Tuple[Any, ...]:
@@ -339,6 +393,12 @@ class _StackContextConfig:
             self.penalty,
             tuple(self.languages),
             self.max_lines,
+            self.chunk_overlap,
+            self.streaming,
+            self.cache_dir,
+            self.index_path,
+            self.metadata_path,
+            self.document_cache,
         )
 
 
