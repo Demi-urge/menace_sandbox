@@ -116,12 +116,13 @@ Avoid inline ``Prompt(...)`` strings; run
 `ContextBuilderConfig` now exposes an optional `stack_dataset` section for
 configuring retrieval from embeddings produced by
 `vector_service.stack_ingestion`. Baseline defaults ship in
-`config/stack_retrieval.yaml` and cover ingestion filters, retrieval weights and
-context budgets. These values are merged after `config/settings.yaml`, so
+`config/stack_context.yaml` and cover ingestion filters, retrieval weights and
+context budgets, including batch sizing for ingestion runs and the on-disk
+vector/metadata locations. These values are merged after `config/settings.yaml`, so
 profile-specific overrides in `config/<mode>.yaml` or environment variables such
 as `STACK_DATA_ENABLED`, `STACK_LANGUAGES`, `STACK_TOP_K`, `STACK_CONTEXT_LINES`,
-`STACK_DATA_INDEX` and `STACK_METADATA_DB` win automatically. Sandbox profiles
-can further refine allow-lists or weights via `SandboxSettings`, keeping
+`STACK_INDEX_PATH`, `STACK_BATCH_SIZE`, `STACK_DATA_INDEX` and `STACK_METADATA_DB`
+win automatically. Sandbox profiles can further refine allow-lists or weights via `SandboxSettings`, keeping
 ingestion and retrieval aligned across language filters, chunk sizing and cache
 locations.
 
@@ -138,11 +139,12 @@ absent, sensible defaults are derived automatically: `STACK_DATA_DIR` defaults
 to `~/.cache/menace/stack`, `STACK_METADATA_DB`/`STACK_METADATA_PATH` point to a
 `stack_metadata.db` file under that directory, `STACK_CACHE_DIR` is set to a
 `cache` subfolder, `STACK_DOCUMENT_CACHE` targets a `documents` folder for
-snippet caching and `STACK_VECTOR_PATH` points at `stack_vectors`.  The discovery
-step also disables streaming by default (`STACK_STREAMING=0`) so ingestion only
-runs when explicitly enabled.  These values are persisted to `.env.auto` via
-`ensure_config`, keeping local development environments in sync with the detected
-defaults.
+snippet caching, `STACK_INDEX_PATH`/`STACK_VECTOR_PATH` point at the shared
+vector index and `STACK_BATCH_SIZE` defaults to batch processing being disabled
+(`null`). The discovery step also disables streaming by default
+(`STACK_STREAMING=0`) so ingestion only runs when explicitly enabled.  These
+values are persisted to `.env.auto` via `ensure_config`, keeping local
+development environments in sync with the detected defaults.
 
 Hugging Face credentials are surfaced in the same pass: if
 `HUGGINGFACE_TOKEN`/`HUGGINGFACE_API_TOKEN`/`HF_TOKEN` are not set, the

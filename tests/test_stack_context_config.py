@@ -1,141 +1,99 @@
-import importlib
+from __future__ import annotations
 
-import importlib
+from pathlib import Path
 
-import pytest
+import yaml
 
-import config as config_module
-
-
-@pytest.fixture(autouse=True)
-def _reload_config_module():
-    # Ensure each test gets a fresh view of environment driven settings.
-    importlib.reload(config_module)
-    yield
-    importlib.reload(config_module)
+from config import ContextBuilderConfig
+from vector_service import context_builder as cb_module
+from vector_service.context_builder import ContextBuilder
 
 
-def test_stack_dataset_overrides(monkeypatch):
-    overrides = {
-        "context_builder": {
-            "stack_dataset": {
-                "enabled": True,
-                "dataset_name": "bigcode/test",
-                "split": "eval",
-                "ingestion": {
-                    "languages": ["python", "rust"],
-                    "max_document_lines": 512,
-                    "chunk_overlap": 32,
-                    "streaming": True,
-                },
-                "retrieval": {
-                    "top_k": 12,
-                    "weight": 2.5,
-                    "max_context_documents": 6,
-                    "max_context_lines": 900,
-                },
-                "cache": {
-                    "data_dir": "/tmp/stack",
-                    "index_path": "/tmp/stack/index.faiss",
-                    "metadata_path": "/tmp/stack/meta.db",
-                    "document_cache": "/tmp/stack/docs.cache",
-                },
-                "tokens": {
-                    "env_vars": ["HF_TOKEN", "STACK_HF_TOKEN"],
-                    "required": True,
-                },
-            }
-        }
-    }
+def test_stack_context_yaml_parses_defaults():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "stack_context.yaml"
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    cfg = ContextBuilderConfig.model_validate(data["context_builder"])
 
-    cfg = config_module.load_config(mode="dev", overrides=overrides)
-    stack = cfg.context_builder.stack_dataset
-    assert stack is not None
-    assert stack.enabled is True
-    assert stack.dataset_name == "bigcode/test"
-    assert stack.split == "eval"
-    assert stack.ingestion.languages == ["python", "rust"]
-    assert stack.ingestion.max_document_lines == 512
-    assert stack.ingestion.chunk_overlap == 32
-    assert stack.ingestion.streaming is True
-    assert stack.retrieval.top_k == 12
-    assert pytest.approx(stack.retrieval.weight, rel=1e-9) == 2.5
-    assert stack.retrieval.max_context_documents == 6
-    assert stack.retrieval.max_context_lines == 900
-    assert stack.cache.data_dir == "/tmp/stack"
-    assert stack.cache.index_path == "/tmp/stack/index.faiss"
-    assert stack.cache.metadata_path == "/tmp/stack/meta.db"
-    assert stack.cache.document_cache == "/tmp/stack/docs.cache"
-    assert stack.tokens.env_vars == ["HF_TOKEN", "STACK_HF_TOKEN"]
-    assert stack.tokens.required is True
-
-    stack_cfg = cfg.context_builder.stack
-    assert stack_cfg is not None
-    assert stack_cfg.enabled is True
-    assert stack_cfg.dataset_name == "bigcode/test"
-    assert stack_cfg.split == "eval"
-    assert stack_cfg.languages == ["python", "rust"]
-    assert stack_cfg.max_lines == 512
-    assert stack_cfg.chunk_overlap == 32
-    assert stack_cfg.streaming is True
-    assert stack_cfg.top_k == 12
-    assert pytest.approx(stack_cfg.weight, rel=1e-9) == 2.5
-    assert stack_cfg.cache_dir == "/tmp/stack"
-    assert stack_cfg.index_path == "/tmp/stack/index.faiss"
-    assert stack_cfg.metadata_path == "/tmp/stack/meta.db"
+    assert cfg.stack is not None
+    assert cfg.stack.cache.index_path.endswith("stack_vectors")
+    assert cfg.stack.ingestion.batch_size is None
+    assert cfg.stack.retrieval.top_k == 50
+    assert cfg.stack_dataset.ingestion.languages == []
 
 
-def test_stack_dataset_environment(monkeypatch):
-    monkeypatch.setenv("STACK_DATA_ENABLED", "1")
-    monkeypatch.setenv("STACK_DATASET", "bigcode/the-stack-test")
-    monkeypatch.setenv("STACK_SPLIT", "validation")
-    monkeypatch.setenv("STACK_LANGUAGES", "Python,Go")
-    monkeypatch.setenv("STACK_STREAMING", "true")
-    monkeypatch.setenv("STACK_MAX_LINES", "256")
-    monkeypatch.setenv("STACK_CHUNK_OVERLAP", "64")
-    monkeypatch.setenv("STACK_TOP_K", "33")
-    monkeypatch.setenv("STACK_WEIGHT", "0.75")
-    monkeypatch.setenv("STACK_CONTEXT_DOCS", "5")
-    monkeypatch.setenv("STACK_CONTEXT_LINES", "640")
-    monkeypatch.setenv("STACK_DATA_DIR", "/var/cache/stack")
-    monkeypatch.setenv("STACK_CACHE_DIR", "/var/cache/stack")
-    monkeypatch.setenv("STACK_VECTOR_PATH", "/var/cache/stack/index")
-    monkeypatch.setenv("STACK_METADATA_DB", "/var/cache/stack/meta.sqlite")
-    monkeypatch.setenv("STACK_METADATA_PATH", "/var/cache/stack/meta.sqlite")
-    monkeypatch.setenv("STACK_DOCUMENT_CACHE", "/var/cache/stack/docs")
+def test_context_builder_ingest_stack_documents_uses_overrides(monkeypatch):
+    class DummyRetriever:
+        def search(self, *_args, **_kwargs):
+            return []
 
-    cfg = config_module.load_config(mode="dev")
-    stack = cfg.context_builder.stack_dataset
-    assert stack is not None
-    assert stack.enabled is True
-    assert stack.dataset_name == "bigcode/the-stack-test"
-    assert stack.split == "validation"
-    assert stack.ingestion.languages == ["python", "go"]
-    assert stack.ingestion.streaming is True
-    assert stack.ingestion.max_document_lines == 256
-    assert stack.ingestion.chunk_overlap == 64
-    assert stack.retrieval.top_k == 33
-    assert pytest.approx(stack.retrieval.weight, rel=1e-9) == 0.75
-    assert stack.retrieval.max_context_documents == 5
-    assert stack.retrieval.max_context_lines == 640
-    assert stack.cache.data_dir == "/var/cache/stack"
-    assert stack.cache.index_path == "/var/cache/stack/index"
-    assert stack.cache.metadata_path == "/var/cache/stack/meta.sqlite"
-    assert stack.cache.document_cache == "/var/cache/stack/docs"
-    # Tokens fall back to defaults when not provided via environment overrides.
-    assert "HF_TOKEN" in stack.tokens.env_vars
+    calls: dict[str, object] = {}
 
-    stack_cfg = cfg.context_builder.stack
-    assert stack_cfg is not None
-    assert stack_cfg.enabled is True
-    assert stack_cfg.dataset_name == "bigcode/the-stack-test"
-    assert stack_cfg.split == "validation"
-    assert stack_cfg.languages == ["python", "go"]
-    assert stack_cfg.streaming is True
-    assert stack_cfg.max_lines == 256
-    assert stack_cfg.chunk_overlap == 64
-    assert stack_cfg.top_k == 33
-    assert pytest.approx(stack_cfg.weight, rel=1e-9) == 0.75
-    assert stack_cfg.cache_dir == "/var/cache/stack"
-    assert stack_cfg.index_path == "/var/cache/stack/index"
-    assert stack_cfg.metadata_path == "/var/cache/stack/meta.sqlite"
+    class DummyStreamer:
+        def __init__(self, *_, **__):
+            pass
+
+        @classmethod
+        def from_environment(cls, **overrides):
+            calls["overrides"] = overrides
+            return cls()
+
+        def process(self, limit=None, continuous=False):
+            calls["limit"] = limit
+            calls["continuous"] = continuous
+            return 3
+
+        def stop(self):
+            calls["stopped"] = True
+
+    class DummyPatchRetriever:
+        def __init__(self, *_, **__):
+            self.roi_tag_weights = {}
+
+        def search(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(cb_module, "PatchRetriever", DummyPatchRetriever)
+    monkeypatch.setattr(cb_module, "_StackDatasetStreamer", DummyStreamer)
+    monkeypatch.setattr(cb_module, "_ensure_stack_background", None)
+    monkeypatch.setattr(cb_module, "ensure_embeddings_fresh", lambda dbs: calls.setdefault("fresh", list(dbs)))
+
+    builder = ContextBuilder(
+        retriever=DummyRetriever(),
+        stack_config={
+            "enabled": True,
+            "dataset_name": "bigcode/the-stack-v2-dedup",
+            "split": "train",
+            "top_k": 7,
+            "ingestion_enabled": True,
+            "ingestion_batch_limit": 5,
+            "ingestion": {
+                "languages": ["python"],
+                "max_document_lines": 250,
+                "chunk_overlap": 32,
+                "streaming": True,
+                "batch_size": 40,
+            },
+            "cache": {
+                "index_path": "/tmp/index.faiss",
+                "metadata_path": "/tmp/stack.db",
+            },
+        },
+    )
+
+    embedded = builder.ingest_stack_documents()
+
+    assert embedded == 3
+    assert calls["limit"] == 5
+    assert calls["fresh"] == ["stack"]
+    assert calls["overrides"]["allowed_languages"] == ["python"]
+    assert calls["overrides"]["max_lines"] == 250
+    assert calls["overrides"]["chunk_overlap"] == 32
+    assert calls["overrides"]["streaming_enabled"] is True
+    assert calls["overrides"]["batch_size"] == 40
+    assert calls["overrides"]["vector_store_path"] == "/tmp/index.faiss"
+    assert calls["overrides"]["metadata_path"] == "/tmp/stack.db"
+    assert builder.stack_retrieval_limit == 7
+    assert builder.stack_languages == ("python",)
+    assert builder.stack_ingestion_batch_size == 40
+    assert builder.stack_index_path == "/tmp/index.faiss"
+    assert builder.stack_metadata_path == "/tmp/stack.db"

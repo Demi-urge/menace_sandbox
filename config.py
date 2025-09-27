@@ -317,6 +317,7 @@ class StackIngestionConfig(_StrictBaseModel):
     languages: List[str] = Field(default_factory=list)
     max_document_lines: int = Field(default=200, gt=0)
     chunk_overlap: int = Field(default=20, ge=0)
+    batch_size: int | None = Field(default=None, gt=0)
 
     @field_validator("languages", mode="before")
     @classmethod
@@ -383,6 +384,8 @@ class StackDatasetConfig(_StrictBaseModel):
             ingestion["chunk_overlap"] = data.pop("chunk_overlap")
         if "streaming" in data and "streaming" not in ingestion:
             ingestion["streaming"] = data.pop("streaming")
+        if "batch_size" in data and "batch_size" not in ingestion:
+            ingestion["batch_size"] = data.pop("batch_size")
 
         if "top_k" in data and "top_k" not in retrieval:
             retrieval["top_k"] = data.pop("top_k")
@@ -453,6 +456,10 @@ class StackContextConfig(StackDatasetConfig):
     @property
     def streaming(self) -> bool:
         return self.ingestion.streaming
+
+    @property
+    def batch_size(self) -> int | None:
+        return self.ingestion.batch_size
 
     @property
     def top_k(self) -> int:
@@ -803,9 +810,13 @@ def load_config(
 
     data = _load_yaml(DEFAULT_SETTINGS_FILE)
 
-    stack_defaults = CONFIG_DIR / "stack_retrieval.yaml"
+    stack_defaults = CONFIG_DIR / "stack_context.yaml"
     if stack_defaults.exists():
         data = _merge_dict(data, _load_yaml(stack_defaults))
+    else:
+        legacy_stack = CONFIG_DIR / "stack_retrieval.yaml"
+        if legacy_stack.exists():
+            data = _merge_dict(data, _load_yaml(legacy_stack))
 
     profile_file = CONFIG_DIR / f"{active_mode}.yaml"
     if profile_file.exists():
@@ -863,6 +874,12 @@ def load_config(
         _stack_set(
             ["ingestion", "chunk_overlap"],
             _parse_int(stack_chunk_overlap, field="STACK_CHUNK_OVERLAP"),
+        )
+    stack_batch_size = os.getenv("STACK_BATCH_SIZE")
+    if stack_batch_size is not None:
+        _stack_set(
+            ["ingestion", "batch_size"],
+            _parse_int(stack_batch_size, field="STACK_BATCH_SIZE"),
         )
     stack_top_k = os.getenv("STACK_TOP_K")
     if stack_top_k is not None:
