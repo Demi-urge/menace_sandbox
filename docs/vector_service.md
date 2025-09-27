@@ -192,6 +192,7 @@ The streamer consumes the following environment variables:
 | `STACK_VECTOR_PATH` | Filesystem location for the dedicated vector store. |
 | `STACK_METADATA_PATH` | Location of the SQLite metadata catalogue. |
 | `STACK_CACHE_DIR` | Directory used for the datasets disk cache. |
+| `STACK_DATA_CACHE` | Overrides the Hugging Face streaming cache directory (defaults to `<STACK_DATA_DIR>/data_cache`). |
 | `STACK_BATCH_SIZE` | When set, limits each background pass to at most this many chunks before sleeping. |
 
 Longer-lived defaults live in `config/self_coding_thresholds.yaml` under the
@@ -203,10 +204,10 @@ the new `stack_*` settings on `SandboxSettings`, keeping ingestion and
 retrieval aligned without editing production YAML.
 
 Any Hugging Face token defined in `CONFIG.huggingface_token` (or exposed via
-`HUGGINGFACE_API_TOKEN`/`HF_TOKEN`) is forwarded to `datasets.load_dataset`.  The
-module keeps memory usage bounded by chunking files eagerly, avoiding in-memory
-storage of processed content and leaning on the datasets cache directory for
-intermediate artifacts.  `StackDatasetStreamer.process_async` and the
+`HUGGINGFACEHUB_API_TOKEN`/`HUGGINGFACE_API_TOKEN`/`HF_TOKEN`) is forwarded to
+`datasets.load_dataset`.  The module keeps memory usage bounded by chunking
+files eagerly, avoiding in-memory storage of processed content and leaning on
+the datasets cache directory for intermediate artifacts.  `StackDatasetStreamer.process_async` and the
 `ensure_background_task` helper can be used to integrate ingestion with
 `ContextBuilder` or other background schedulers.
 
@@ -221,9 +222,23 @@ any `STACK_*` variables defined within.  When the file is absent, it derives
 defaults based on `STACK_DATA_DIR`, falling back to `~/.cache/menace/stack` for
 local development.  The helper also scans the standard Hugging Face cache
 locations (`~/.huggingface/token`, `~/.cache/huggingface/token`, honouring
-`HF_HOME`) and exports the token as `HUGGINGFACE_TOKEN`.  Continuous reloads are
-supported so long-running ingestion services can pick up credential updates
+`HF_HOME`) and normalises the credentials across
+`HUGGINGFACE_TOKEN`/`HF_TOKEN`/`HUGGINGFACEHUB_API_TOKEN`/`HUGGINGFACE_API_TOKEN`.  Continuous reloads
+are supported so long-running ingestion services can pick up credential updates
 without restarting.
+
+### Operational guidance
+
+- Set `STACK_STREAMING=0` (the default) to pause ingestion and avoid vector
+  storage churn when Stack coverage is not required.  Switching the flag to `1`
+  resumes background streaming without further configuration.
+- Point `STACK_DATA_CACHE` (and optionally `STACK_CACHE_DIR`) to ephemeral or
+  low-cost storage when running short-lived backfills; `ConfigDiscovery` will
+  create sensible defaults under `STACK_DATA_DIR` if unset.
+- Ensure one of `HUGGINGFACEHUB_API_TOKEN`, `HUGGINGFACE_API_TOKEN`,
+  `HF_TOKEN` or `HUGGINGFACE_TOKEN` is exported so the ingestion pipeline can
+  authenticate against Hugging Face mirrors without manual edits to the
+  service units.
 
 ```json
 {
