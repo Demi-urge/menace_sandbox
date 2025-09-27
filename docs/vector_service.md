@@ -177,6 +177,23 @@ stored in a dedicated vector store constructed via `create_vector_store`.  Both
 the vector store and metadata database paths may be overridden to place them on
 larger disks.
 
+### Stack retrieval in prompts
+
+Once embedded, Stack snippets are surfaced by `ContextBuilder` alongside the
+traditional internal databases.  Queries are embedded via
+`SharedVectorService`, looked up against the Stack vector store and enriched
+with metadata from `stack_metadata.db`.  The resulting entries are governed by
+the same license deny-list, semantic risk checks and ROI penalties as internal
+results, ensuring unsafe or excluded strategies never leak into prompts.
+
+Stack hits participate in ranking with their own configurable weight and
+penalty offsets (`ContextBuilderConfig.stack_weight` / `stack_penalty`).  When a
+Stack snippet is selected it appears in the dedicated `"stack"` bucket within
+`build_context` results and is merged into the prompt example list.  Prompt
+metadata retains repository, path, language and license details so downstream
+consumers (such as `SelfCodingEngine`) can render attribution or apply
+additional filtering.
+
 ### Configuration
 
 The streamer consumes the following environment variables:

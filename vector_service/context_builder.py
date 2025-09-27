@@ -1703,7 +1703,20 @@ class ContextBuilder:
         retriever = self._get_stack_retriever()
         if retriever is None:
             return []
-        embedding = self._get_query_embedding(query)
+        embedding: List[float] | None = None
+        embed_fn = getattr(retriever, "embed_query", None)
+        if callable(embed_fn):
+            try:
+                candidate = embed_fn(query)
+            except Exception:
+                logger.exception("stack retriever embedding failed")
+                candidate = None
+            if hasattr(candidate, "tolist"):
+                candidate = candidate.tolist()  # type: ignore[assignment]
+            if isinstance(candidate, (list, tuple)):
+                embedding = [float(x) for x in candidate]
+        if embedding is None:
+            embedding = self._get_query_embedding(query)
         if embedding is None:
             return []
         try:
