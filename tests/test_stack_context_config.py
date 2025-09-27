@@ -1,5 +1,7 @@
 import importlib
 
+import importlib
+
 import pytest
 
 import config as config_module
@@ -67,6 +69,21 @@ def test_stack_dataset_overrides(monkeypatch):
     assert stack.tokens.env_vars == ["HF_TOKEN", "STACK_HF_TOKEN"]
     assert stack.tokens.required is True
 
+    stack_cfg = cfg.context_builder.stack
+    assert stack_cfg is not None
+    assert stack_cfg.enabled is True
+    assert stack_cfg.dataset_name == "bigcode/test"
+    assert stack_cfg.split == "eval"
+    assert stack_cfg.languages == ["python", "rust"]
+    assert stack_cfg.max_lines == 512
+    assert stack_cfg.chunk_overlap == 32
+    assert stack_cfg.streaming is True
+    assert stack_cfg.top_k == 12
+    assert pytest.approx(stack_cfg.weight, rel=1e-9) == 2.5
+    assert stack_cfg.cache_dir == "/tmp/stack"
+    assert stack_cfg.index_path == "/tmp/stack/index.faiss"
+    assert stack_cfg.metadata_path == "/tmp/stack/meta.db"
+
 
 def test_stack_dataset_environment(monkeypatch):
     monkeypatch.setenv("STACK_DATA_ENABLED", "1")
@@ -83,6 +100,7 @@ def test_stack_dataset_environment(monkeypatch):
     monkeypatch.setenv("STACK_DATA_DIR", "/var/cache/stack")
     monkeypatch.setenv("STACK_CACHE_DIR", "/var/cache/stack")
     monkeypatch.setenv("STACK_VECTOR_PATH", "/var/cache/stack/index")
+    monkeypatch.setenv("STACK_METADATA_DB", "/var/cache/stack/meta.sqlite")
     monkeypatch.setenv("STACK_METADATA_PATH", "/var/cache/stack/meta.sqlite")
     monkeypatch.setenv("STACK_DOCUMENT_CACHE", "/var/cache/stack/docs")
 
@@ -106,3 +124,18 @@ def test_stack_dataset_environment(monkeypatch):
     assert stack.cache.document_cache == "/var/cache/stack/docs"
     # Tokens fall back to defaults when not provided via environment overrides.
     assert "HF_TOKEN" in stack.tokens.env_vars
+
+    stack_cfg = cfg.context_builder.stack
+    assert stack_cfg is not None
+    assert stack_cfg.enabled is True
+    assert stack_cfg.dataset_name == "bigcode/the-stack-test"
+    assert stack_cfg.split == "validation"
+    assert stack_cfg.languages == ["python", "go"]
+    assert stack_cfg.streaming is True
+    assert stack_cfg.max_lines == 256
+    assert stack_cfg.chunk_overlap == 64
+    assert stack_cfg.top_k == 33
+    assert pytest.approx(stack_cfg.weight, rel=1e-9) == 0.75
+    assert stack_cfg.cache_dir == "/var/cache/stack"
+    assert stack_cfg.index_path == "/var/cache/stack/index"
+    assert stack_cfg.metadata_path == "/var/cache/stack/meta.sqlite"

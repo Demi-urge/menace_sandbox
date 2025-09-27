@@ -78,6 +78,75 @@ def _coerce_languages(value: Iterable[str] | str | None) -> set[str]:
     return {item for item in items if item}
 
 
+def _to_dict(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    for attr in ("model_dump", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                data = method()  # type: ignore[misc]
+            except TypeError:
+                data = method(exclude_none=False)  # type: ignore[misc]
+            return dict(data)
+    return dict(getattr(value, "__dict__", {}))
+
+
+def _stack_config_defaults() -> Dict[str, Any]:
+    try:  # pragma: no cover - optional configuration dependency
+        from config import ContextBuilderConfig  # type: ignore
+    except Exception:
+        return {}
+
+    try:
+        cfg = ContextBuilderConfig()
+    except Exception:
+        return {}
+
+    stack_cfg = getattr(cfg, "stack", None) or getattr(cfg, "stack_dataset", None)
+    if stack_cfg is None:
+        return {}
+
+    stack_dict = _to_dict(stack_cfg)
+    overrides: Dict[str, Any] = {}
+
+    dataset_name = stack_dict.get("dataset_name")
+    if dataset_name:
+        overrides["dataset_name"] = dataset_name
+    split = stack_dict.get("split")
+    if split:
+        overrides["split"] = split
+
+    ingestion = _to_dict(stack_dict.get("ingestion"))
+    cache_cfg = _to_dict(stack_dict.get("cache"))
+
+    languages = stack_dict.get("languages") or ingestion.get("languages")
+    if languages:
+        overrides["allowed_languages"] = languages
+    max_lines = stack_dict.get("max_lines") or ingestion.get("max_document_lines")
+    if max_lines is not None:
+        overrides["max_lines"] = max_lines
+    chunk_overlap = stack_dict.get("chunk_overlap") or ingestion.get("chunk_overlap")
+    if chunk_overlap is not None:
+        overrides["chunk_overlap"] = chunk_overlap
+    streaming = stack_dict.get("streaming")
+    if streaming is None:
+        streaming = ingestion.get("streaming")
+    if streaming is not None:
+        overrides["streaming_enabled"] = streaming
+
+    if cache_cfg.get("data_dir"):
+        overrides["cache_dir"] = cache_cfg.get("data_dir")
+    if cache_cfg.get("index_path"):
+        overrides["vector_store_path"] = cache_cfg.get("index_path")
+    if cache_cfg.get("metadata_path"):
+        overrides["metadata_path"] = cache_cfg.get("metadata_path")
+
+    return {key: value for key, value in overrides.items() if value is not None}
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -93,6 +162,7 @@ class StackIngestionConfig:
     split: str = "train"
     allowed_languages: set[str] = field(default_factory=set)
     max_lines: int = 200
+    chunk_overlap: int = 20
     vector_dim: int = 768
     vector_backend: str = "faiss"
     vector_metric: str = "angular"
@@ -117,48 +187,85 @@ class StackIngestionConfig:
     def from_environment(cls, **overrides: Any) -> "StackIngestionConfig":
         """Build configuration using environment hints and overrides."""
 
-        allowed = overrides.pop("allowed_languages", None)
-        if allowed is None:
-            allowed = _coerce_languages(os.environ.get("STACK_LANGUAGES"))
-        max_lines = int(os.environ.get("STACK_MAX_LINES", overrides.pop("max_lines", 200)))
-        vector_dim = int(os.environ.get("STACK_VECTOR_DIM", overrides.pop("vector_dim", 768)))
-        backend = os.environ.get("STACK_VECTOR_BACKEND", overrides.pop("vector_backend", "faiss"))
-        metric = os.environ.get("STACK_VECTOR_METRIC", overrides.pop("vector_metric", "angular"))
-        dataset_name = os.environ.get(
-            "STACK_DATASET", overrides.pop("dataset_name", "bigcode/the-stack-v2-dedup")
+        defaults = _stack_config_defaults()
+        merged: Dict[str, Any] = dict(defaults)
+        merged.update(overrides)
+
+        allowed_cfg = merged.pop("allowed_languages", None)
+        allowed_env = os.environ.get("STACK_LANGUAGES")
+        allowed = _coerce_languages(allowed_env if allowed_env is not None else allowed_cfg)
+
+        max_lines_default = merged.pop("max_lines", 200)
+        max_lines_env = os.environ.get("STACK_MAX_LINES")
+        max_lines = int(max_lines_env) if max_lines_env is not None else int(max_lines_default)
+
+        chunk_default = merged.pop("chunk_overlap", 20)
+        chunk_env = os.environ.get("STACK_CHUNK_OVERLAP")
+        chunk_overlap = (
+            int(chunk_env)
+            if chunk_env is not None
+            else int(chunk_default)
         )
-        split = os.environ.get("STACK_SPLIT", overrides.pop("split", "train"))
+
+        vector_dim = int(os.environ.get("STACK_VECTOR_DIM", merged.pop("vector_dim", 768)))
+        backend = os.environ.get("STACK_VECTOR_BACKEND", merged.pop("vector_backend", "faiss"))
+        metric = os.environ.get("STACK_VECTOR_METRIC", merged.pop("vector_metric", "angular"))
+        dataset_name = os.environ.get(
+            "STACK_DATASET", merged.pop("dataset_name", "bigcode/the-stack-v2-dedup")
+        )
+        split = os.environ.get("STACK_SPLIT", merged.pop("split", "train"))
         batch_size_env = os.environ.get("STACK_BATCH_SIZE")
         batch_size = (
             int(batch_size_env)
             if batch_size_env is not None
-            else overrides.pop("batch_size", None)
+            else merged.pop("batch_size", None)
         )
-        streaming_enabled = _env_flag("STACK_STREAMING", overrides.pop("streaming_enabled", True))
+        streaming_default = bool(merged.pop("streaming_enabled", True))
+        streaming_enabled = _env_flag("STACK_STREAMING", streaming_default)
 
         vector_path_env = os.environ.get("STACK_VECTOR_PATH")
         metadata_path_env = os.environ.get("STACK_METADATA_PATH")
-        cache_dir_env = os.environ.get("STACK_CACHE_DIR")
+        cache_dir_env = os.environ.get("STACK_CACHE_DIR") or os.environ.get("STACK_DATA_DIR")
+
+        vector_override = merged.pop("vector_store_path", None)
+        metadata_override = merged.pop("metadata_path", None)
+        cache_override = merged.pop("cache_dir", None)
 
         cfg = cls(
             dataset_name=dataset_name,
             split=split,
-            allowed_languages=_coerce_languages(allowed),
+            allowed_languages=allowed,
             max_lines=max_lines,
+            chunk_overlap=chunk_overlap,
             vector_dim=vector_dim,
             vector_backend=backend,
             vector_metric=metric,
             batch_size=batch_size,
             streaming_enabled=streaming_enabled,
-            token=overrides.pop("token", None) or _lookup_hf_token(),
+            token=merged.pop("token", None) or _lookup_hf_token(),
         )
+
+        if cfg.max_lines < 1:
+            cfg.max_lines = 1
+        if cfg.chunk_overlap < 0:
+            cfg.chunk_overlap = 0
+        if cfg.chunk_overlap >= cfg.max_lines:
+            cfg.chunk_overlap = max(cfg.max_lines - 1, 0)
+
         if vector_path_env:
             cfg.vector_store_path = Path(vector_path_env)
+        elif vector_override:
+            cfg.vector_store_path = Path(vector_override)
         if metadata_path_env:
             cfg.metadata_path = Path(metadata_path_env)
+        elif metadata_override:
+            cfg.metadata_path = Path(metadata_override)
         if cache_dir_env:
             cfg.cache_dir = Path(cache_dir_env)
-        for field_name, value in overrides.items():
+        elif cache_override:
+            cfg.cache_dir = Path(cache_override)
+
+        for field_name, value in merged.items():
             if hasattr(cfg, field_name):
                 setattr(cfg, field_name, value)
         cfg.vector_store_path = Path(cfg.vector_store_path)
@@ -535,7 +642,9 @@ class StackDatasetStreamer:
         if not lines:
             return
         max_lines = max(self.config.max_lines, 1)
-        for start in range(0, len(lines), max_lines):
+        overlap = max(min(self.config.chunk_overlap, max_lines - 1), 0)
+        step = max(max_lines - overlap, 1)
+        for start in range(0, len(lines), step):
             chunk_lines = lines[start : start + max_lines]
             text = "\n".join(chunk_lines).strip()
             if not text:

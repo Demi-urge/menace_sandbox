@@ -150,6 +150,36 @@ class _StrictBaseModel(BaseModel):
             extra = "forbid"
 
 
+def _model_dump_any(value: Any) -> Dict[str, Any]:
+    """Return a dictionary representation for Pydantic models and dataclasses."""
+
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    for attr in ("model_dump", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                data = method()  # type: ignore[misc]
+            except TypeError:
+                data = method(exclude_none=False)  # type: ignore[misc]
+            return dict(data)
+    return dict(getattr(value, "__dict__", {}))
+
+
+def _model_field_names(model: Any) -> Set[str]:
+    """Return the declared field names for a Pydantic model class."""
+
+    fields = getattr(model, "model_fields", None)
+    if fields is not None:
+        return set(fields.keys())
+    legacy = getattr(model, "__fields__", None)
+    if legacy is not None:
+        return set(legacy.keys())
+    return set()
+
+
 # ---------------------------------------------------------------------------
 # Pydantic models defining the configuration schema
 # ---------------------------------------------------------------------------
@@ -397,6 +427,54 @@ class StackDatasetConfig(_StrictBaseModel):
         return self
 
 
+class StackContextConfig(StackDatasetConfig):
+    """Extended Stack configuration exposed directly to context builders."""
+
+    summary_tokens: int = Field(default=160, ge=0)
+    text_max_tokens: int = Field(default=320, ge=0)
+    penalty: float = Field(default=0.0)
+    ingestion_enabled: bool = Field(default=True)
+    ingestion_throttle_seconds: float = Field(default=600.0, ge=0.0)
+    ingestion_batch_limit: int | None = Field(default=None, ge=1)
+    ensure_before_search: bool = True
+
+    @property
+    def languages(self) -> List[str]:
+        return list(self.ingestion.languages)
+
+    @property
+    def max_lines(self) -> int:
+        return self.ingestion.max_document_lines
+
+    @property
+    def chunk_overlap(self) -> int:
+        return self.ingestion.chunk_overlap
+
+    @property
+    def streaming(self) -> bool:
+        return self.ingestion.streaming
+
+    @property
+    def top_k(self) -> int:
+        return self.retrieval.top_k
+
+    @property
+    def weight(self) -> float:
+        return self.retrieval.weight
+
+    @property
+    def cache_dir(self) -> str:
+        return self.cache.data_dir
+
+    @property
+    def index_path(self) -> str:
+        return self.cache.index_path
+
+    @property
+    def metadata_path(self) -> str:
+        return self.cache.metadata_path
+
+
 class ContextBuilderConfig(_StrictBaseModel):
     """Context builder tuning parameters."""
 
@@ -478,7 +556,31 @@ class ContextBuilderConfig(_StrictBaseModel):
         1.0,
         description="Multiplier applied to similarity scores when ranking prompt examples",
     )
+    stack: StackContextConfig | None = None
     stack_dataset: StackDatasetConfig | None = None
+
+    @model_validator(mode="after")
+    def _sync_stack_configs(self) -> "ContextBuilderConfig":
+        stack_data = _model_dump_any(self.stack)
+        dataset_data = _model_dump_any(self.stack_dataset)
+        if not stack_data and not dataset_data:
+            return self
+
+        dataset_fields = _model_field_names(StackDatasetConfig)
+        merged_dataset = dict(dataset_data)
+        for key in dataset_fields:
+            if key not in merged_dataset or merged_dataset[key] is None:
+                if key in stack_data:
+                    merged_dataset[key] = stack_data[key]
+
+        combined_stack = dict(stack_data)
+        for key in dataset_fields:
+            if key in merged_dataset:
+                combined_stack[key] = merged_dataset[key]
+
+        self.stack_dataset = StackDatasetConfig.model_validate(merged_dataset)
+        self.stack = StackContextConfig.model_validate(combined_stack)
+        return self
 
 
 class Config(_StrictBaseModel):
@@ -800,7 +902,9 @@ def load_config(
     if stack_doc_cache:
         _stack_set(["cache", "document_cache"], stack_doc_cache)
     if stack_override:
-        env_overrides.setdefault("context_builder", {})["stack_dataset"] = stack_override
+        context_section = env_overrides.setdefault("context_builder", {})
+        context_section["stack_dataset"] = copy.deepcopy(stack_override)
+        context_section["stack"] = copy.deepcopy(stack_override)
 
     if env_overrides:
         data = _merge_dict(data, env_overrides)

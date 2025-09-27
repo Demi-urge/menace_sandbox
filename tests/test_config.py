@@ -2,6 +2,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import textwrap
+
+import pytest
 
 import config as config_module
 from config import Config
@@ -22,6 +25,7 @@ BASE_CONFIG = {
 def test_context_builder_without_stack_section():
     config = Config.model_validate(BASE_CONFIG)
     assert config.context_builder.stack_dataset is None
+    assert config.context_builder.stack is None
 
 
 def test_context_builder_with_stack_section():
@@ -40,12 +44,21 @@ def test_context_builder_with_stack_section():
         },
     }
     config = Config.model_validate(data)
-    stack = config.context_builder.stack_dataset
-    assert stack is not None
-    assert stack.enabled is True
-    assert stack.languages == ["python", "rust"]
-    assert stack.top_k == 25
-    assert stack.weight == pytest.approx(1.5)
+    stack_dataset = config.context_builder.stack_dataset
+    assert stack_dataset is not None
+    assert stack_dataset.enabled is True
+    assert stack_dataset.ingestion.languages == ["python", "rust"]
+    assert stack_dataset.retrieval.top_k == 25
+    assert stack_dataset.retrieval.weight == pytest.approx(1.5)
+
+    stack_cfg = config.context_builder.stack
+    assert stack_cfg is not None
+    assert stack_cfg.enabled is True
+    assert stack_cfg.languages == ["python", "rust"]
+    assert stack_cfg.max_lines == 400
+    assert stack_cfg.chunk_overlap == 20
+    assert stack_cfg.top_k == 25
+    assert stack_cfg.weight == pytest.approx(1.5)
 
 
 @pytest.mark.parametrize(
@@ -111,6 +124,7 @@ def test_environment_overrides_merge_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("STACK_DATA_ENABLED", "1")
     monkeypatch.setenv("STACK_DATA_INDEX", "/var/stack/index")
     monkeypatch.setenv("STACK_METADATA_DB", "/var/stack/meta.db")
+    monkeypatch.setenv("STACK_METADATA_PATH", "/var/stack/meta.db")
 
     monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(config_module, "DEFAULT_SETTINGS_FILE", settings_path)
@@ -123,10 +137,18 @@ def test_environment_overrides_merge_stack(tmp_path, monkeypatch):
     stack = cfg.context_builder.stack_dataset
     assert stack is not None
     assert stack.enabled is True
-    assert stack.languages == ["python", "rust"]
-    assert stack.top_k == 7
-    assert stack.index_path == "/var/stack/index"
-    assert stack.metadata_path == "/var/stack/meta.db"
+    assert stack.ingestion.languages == ["python", "rust"]
+    assert stack.retrieval.top_k == 7
+    assert stack.cache.index_path == "/var/stack/index"
+    assert stack.cache.metadata_path == "/var/stack/meta.db"
+
+    stack_cfg = cfg.context_builder.stack
+    assert stack_cfg is not None
+    assert stack_cfg.enabled is True
+    assert stack_cfg.languages == ["python", "rust"]
+    assert stack_cfg.top_k == 7
+    assert stack_cfg.index_path == "/var/stack/index"
+    assert stack_cfg.metadata_path == "/var/stack/meta.db"
 
     # Reset module state so subsequent tests are unaffected
     config_module.CONFIG = None

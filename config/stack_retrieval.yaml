@@ -1,5 +1,5 @@
 context_builder:
-  stack_dataset:
+  stack_dataset: &stack_dataset_defaults
     enabled: false
     dataset_name: bigcode/the-stack-v2-dedup
     split: train
@@ -24,3 +24,12 @@ context_builder:
         - HF_TOKEN
         - HUGGINGFACEHUB_API_TOKEN
       required: false
+  stack:
+    <<: *stack_dataset_defaults
+    summary_tokens: 160
+    text_max_tokens: 320
+    penalty: 0.0
+    ingestion_enabled: true
+    ingestion_throttle_seconds: 600
+    ingestion_batch_limit: null
+    ensure_before_search: true
