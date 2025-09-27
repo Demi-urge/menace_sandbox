@@ -1,40 +1,22 @@
-from __future__ import annotations
-
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from vector_service.stack_ingestion import (
+    SQLiteVectorStore,
     StackDatasetStreamer,
     StackIngestionConfig,
     StackMetadataStore,
 )
-class _FakeEmbedder:
-    def encode(self, texts):  # pragma: no cover - trivial helper
-        return [[float(len(text)), 1.0, 0.0, -1.0] for text in texts]
-
-
-class _FakeVectorStore:
-    def __init__(self) -> None:
-        self.records: list[dict] = []
-
-    def add(self, kind, record_id, vector, *, origin_db=None, metadata=None):
-        self.records.append(
-            {
-                "kind": kind,
-                "id": record_id,
-                "vector": list(vector),
-                "origin_db": origin_db,
-                "metadata": dict(metadata or {}),
-            }
-        )
 
 
 class _StubVectorService:
-    def __init__(self, embedder: _FakeEmbedder, store: _FakeVectorStore) -> None:
-        self.embedder = embedder
+    """Lightweight stand-in for :class:`SharedVectorService`."""
+
+    def __init__(self, store: SQLiteVectorStore) -> None:
         self.store = store
 
     def vectorise_and_store(
@@ -45,49 +27,65 @@ class _StubVectorService:
         *,
         origin_db: str | None = None,
         metadata: dict | None = None,
-    ):
-        vec = self.embedder.encode([record.get("text", "")])[0]
-        self.store.add(kind, record_id, vec, origin_db=origin_db, metadata=metadata)
-        return vec
+    ) -> list[float]:
+        text = str(record.get("text", ""))
+        vector = [float(len(text))]
+        self.store.add(kind, record_id, vector, origin_db=origin_db, metadata=metadata)
+        return vector
 
 
-def _dataset(records):
+def _dataset(records: list[dict]):
     def _loader(*args, **kwargs):
         return list(records)
 
     return _loader
 
 
-def _streamer(tmp_path: Path, records: list[dict]) -> tuple[StackDatasetStreamer, _FakeVectorStore]:
+def _streamer(tmp_path: Path, records: list[dict]) -> tuple[StackDatasetStreamer, SQLiteVectorStore]:
     cache_dir = tmp_path / "cache"
-    vector_path = tmp_path / "vectors.ann"
+    vector_path = tmp_path / "embeddings.db"
     metadata_path = tmp_path / "meta.db"
     config = StackIngestionConfig(
         dataset_name="dummy",
         split="train",
         allowed_languages={"python"},
         max_lines=2,
-        vector_dim=4,
-        vector_backend="annoy",
-        vector_metric="angular",
         vector_store_path=vector_path,
         metadata_path=metadata_path,
         cache_dir=cache_dir,
     )
-    store = StackMetadataStore(config.metadata_path)
-    fake_store = _FakeVectorStore()
-    service = _StubVectorService(_FakeEmbedder(), fake_store)
+    metadata_store = StackMetadataStore(config.metadata_path)
+    vector_store = SQLiteVectorStore(config.vector_store_path)
+    service = _StubVectorService(vector_store)
     streamer = StackDatasetStreamer(
         config=config,
-        metadata_store=store,
+        metadata_store=metadata_store,
         vector_service=service,
         dataset_loader=_dataset(records),
-        vector_store_factory=lambda cfg: fake_store,
+        vector_store_factory=lambda cfg: vector_store,
     )
-    return streamer, fake_store
+    return streamer, vector_store
 
 
-def test_stack_streamer_filters_languages_and_chunks(tmp_path):
+def _fetch_embeddings(db_path: Path) -> list[tuple[str, str, str, str, str, str]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, kind, origin_db, repo, path, language, vector FROM embeddings"
+        ).fetchall()
+    finally:
+        conn.close()
+    return rows
+
+
+@pytest.fixture(autouse=True)
+def _enable_streaming(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STACK_STREAMING", "1")
+    yield
+    monkeypatch.delenv("STACK_STREAMING", raising=False)
+
+
+def test_stack_streamer_filters_languages_and_chunks(tmp_path: Path) -> None:
     records = [
         {
             "content": "print('hi')\nprint('bye')\nprint('done')",
@@ -105,25 +103,38 @@ def test_stack_streamer_filters_languages_and_chunks(tmp_path):
         },
     ]
     streamer, store = _streamer(tmp_path, records)
-    count = streamer.process()
+    try:
+        count = streamer.process()
+    finally:
+        store.close()
     assert count == 2
-    assert len(store.records) == 2
-    for rec in store.records:
-        assert rec["kind"] == "stack"
-        assert "text" not in rec["metadata"]
-        assert rec["metadata"]["language"] == "python"
-        assert rec["metadata"]["start_line"] <= rec["metadata"]["end_line"]
+
+    rows = _fetch_embeddings(streamer.config.vector_store_path)
+    assert len(rows) == 2
+    for row in rows:
+        _, kind, origin_db, repo, path, language, vector_json = row
+        assert kind == "stack"
+        assert origin_db == "stack"
+        assert repo == "example/repo"
+        assert language == "python"
+        assert path.endswith("app.py")
+        vector = json.loads(vector_json)
+        assert isinstance(vector, list)
+        assert all(isinstance(value, float) for value in vector)
+        assert "print" not in vector_json
 
     conn = sqlite3.connect(streamer.config.metadata_path)
     try:
-        rows = conn.execute("SELECT repo, path, language FROM chunks").fetchall()
+        chunk_rows = conn.execute(
+            "SELECT repo, path, language FROM chunks"
+        ).fetchall()
     finally:
         conn.close()
-    assert len(rows) == 2
-    assert all("print" not in str(row) for row in rows)
+    assert len(chunk_rows) == 2
+    assert all("print" not in str(row) for row in chunk_rows)
 
 
-def test_stack_streamer_resumes_from_metadata(tmp_path):
+def test_stack_streamer_resumes_from_metadata(tmp_path: Path) -> None:
     records = [
         {
             "content": "print('hi')\nprint('bye')",
@@ -134,18 +145,26 @@ def test_stack_streamer_resumes_from_metadata(tmp_path):
         }
     ]
     streamer, store = _streamer(tmp_path, records)
-    first = streamer.process()
+    try:
+        first = streamer.process()
+    finally:
+        store.close()
     assert first == 1
-    assert len(store.records) == 1
 
-    # Recreate streamer sharing the same metadata store to simulate restart
+    rows_first = _fetch_embeddings(streamer.config.vector_store_path)
+    assert len(rows_first) == 1
+
     streamer2, store2 = _streamer(tmp_path, records)
-    resumed = streamer2.process()
+    try:
+        resumed = streamer2.process()
+    finally:
+        store2.close()
     assert resumed == 0
-    assert store2.records == []
+    rows_second = _fetch_embeddings(streamer2.config.vector_store_path)
+    assert rows_second == rows_first
 
 
-def test_stack_streamer_async_entrypoint(tmp_path):
+def test_stack_streamer_async_entrypoint(tmp_path: Path) -> None:
     records = [
         {
             "content": "print('hi')\nprint('bye')",
@@ -156,6 +175,11 @@ def test_stack_streamer_async_entrypoint(tmp_path):
         }
     ]
     streamer, store = _streamer(tmp_path, records)
-    result = asyncio.run(streamer.process_async(limit=1))
+    try:
+        result = asyncio.run(streamer.process_async(limit=1))
+    finally:
+        store.close()
     assert result == 1
-    assert len(store.records) == 1
+
+    rows = _fetch_embeddings(streamer.config.vector_store_path)
+    assert len(rows) == 1
