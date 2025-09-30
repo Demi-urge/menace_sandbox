@@ -73,6 +73,25 @@ try:  # noqa: E402 - prefer attribute detection over import side effects
 except Exception as exc:  # pragma: no cover - pydantic should always be present
     raise ImportError("pydantic is required for configuration models") from exc
 
+if not hasattr(BaseModel, "model_validate"):
+
+    @classmethod
+    def _model_validate(cls, data):  # type: ignore[override]
+        """Compatibility shim for :meth:`BaseModel.model_validate` on Pydantic v1."""
+
+        return cls.parse_obj(data)  # type: ignore[attr-defined]
+
+    BaseModel.model_validate = classmethod(_model_validate)  # type: ignore[attr-defined]
+
+if not hasattr(BaseModel, "model_dump"):
+
+    def _model_dump(self, *args, **kwargs):  # type: ignore[override]
+        """Compatibility shim for :meth:`BaseModel.model_dump` on Pydantic v1."""
+
+        return self.dict(*args, **kwargs)  # type: ignore[attr-defined]
+
+    BaseModel.model_dump = _model_dump  # type: ignore[attr-defined]
+
 if all(
     hasattr(_pydantic, attr)
     for attr in ("ConfigDict", "field_validator", "model_validator")
