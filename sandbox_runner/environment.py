@@ -1582,7 +1582,7 @@ _LAST_AUTOPURGE_TS = 0.0
 
 # file tracking persistent cleanup statistics
 _CLEANUP_STATS_FILE = _env_path(
-    "SANDBOX_CLEANUP_STATS", "sandbox_data/cleanup_stats.json"
+    "SANDBOX_CLEANUP_STATS", "sandbox_data/cleanup_stats.json", create=True
 )
 
 # duration after which stray overlay directories are purged
