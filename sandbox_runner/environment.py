@@ -81,7 +81,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager, contextmanager, suppress
-from lock_utils import SandboxLock as FileLock
+from lock_utils import SandboxLock as FileLock, Timeout
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
 from collections import deque
@@ -2429,157 +2429,172 @@ def purge_leftovers() -> None:
     repository layout changes.
     """
     global _STALE_CONTAINERS_REMOVED
-    with _PURGE_FILE_LOCK:
-        try:
-            reconcile_active_containers()
-        except FileNotFoundError:
-            logger.debug("docker not available; skipping purge")
-            return
-        removed_containers = 0
-        try:
-            ids = _read_active_containers()
-            remaining_ids = []
-            for cid in ids:
-                try:
-                    logger.info("removing recorded sandbox container %s", cid)
-                except Exception as exc:
-                    logger.debug("failed to log container removal %s: %s", cid, exc)
-                subprocess.run(
-                    ["docker", "rm", "-f", cid],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-                exists = False
-                try:
-                    proc = subprocess.run(
-                        ["docker", "ps", "-aq", "--filter", f"id={cid}"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
+    lock_file = getattr(_PURGE_FILE_LOCK, "lock_file", "<unknown>")
+    try:
+        with _PURGE_FILE_LOCK:
+            try:
+                reconcile_active_containers()
+            except FileNotFoundError:
+                logger.debug("docker not available; skipping purge")
+                return
+            removed_containers = 0
+            try:
+                ids = _read_active_containers()
+                remaining_ids = []
+                for cid in ids:
+                    try:
+                        logger.info("removing recorded sandbox container %s", cid)
+                    except Exception as exc:
+                        logger.debug("failed to log container removal %s: %s", cid, exc)
+                    subprocess.run(
+                        ["docker", "rm", "-f", cid],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                         check=False,
                     )
-                    if proc.returncode == 0 and proc.stdout.strip():
+                    exists = False
+                    try:
+                        proc = subprocess.run(
+                            ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                        )
+                        if proc.returncode == 0 and proc.stdout.strip():
+                            exists = True
+                    except Exception as exc:
+                        logger.debug(
+                            "container existence check failed for %s: %s", cid, exc
+                        )
                         exists = True
-                except Exception as exc:
-                    logger.debug(
-                        "container existence check failed for %s: %s", cid, exc
-                    )
-                    exists = True
 
-                if exists:
-                    _record_failed_cleanup(cid)
-                    remaining_ids.append(cid)
-                else:
-                    _remove_failed_cleanup(cid)
-                    removed_containers += 1
-            if ids:
-                _write_active_containers(remaining_ids)
-        except Exception as exc:
-            logger.debug("active container cleanup failed: %s", exc)
+                    if exists:
+                        _record_failed_cleanup(cid)
+                        remaining_ids.append(cid)
+                    else:
+                        _remove_failed_cleanup(cid)
+                        removed_containers += 1
+                if ids:
+                    _write_active_containers(remaining_ids)
+            except Exception as exc:
+                logger.debug("active container cleanup failed: %s", exc)
 
-        # remove any recorded overlay directories first
-        try:
-            overlays = _read_active_overlays()
-            for d in overlays:
-                try:
-                    logger.info("removing recorded overlay dir %s", d)
-                except Exception as exc:
-                    logger.debug("failed to log overlay dir removal %s: %s", d, exc)
-                try:
-                    shutil.rmtree(d)
-                    _remove_failed_overlay(d)
-                    _remove_failed_cleanup(d)
-                except Exception:
-                    if os.name == "nt" and _rmtree_windows(d):
+            # remove any recorded overlay directories first
+            try:
+                overlays = _read_active_overlays()
+                for d in overlays:
+                    try:
+                        logger.info("removing recorded overlay dir %s", d)
+                    except Exception as exc:
+                        logger.debug("failed to log overlay dir removal %s: %s", d, exc)
+                    try:
+                        shutil.rmtree(d)
                         _remove_failed_overlay(d)
                         _remove_failed_cleanup(d)
-                    else:
-                        logger.exception("temporary directory removal failed for %s", d)
-                        _record_failed_overlay(d)
-            if overlays:
-                _write_active_overlays([])
-        except Exception as exc:
-            logger.debug("overlay cleanup failed: %s", exc)
-
-        try:
-            proc = subprocess.run(
-                ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            if proc.returncode == 0:
-                for cid in proc.stdout.splitlines():
-                    cid = cid.strip()
-                    if cid:
-                        try:
-                            logger.info("removing stale sandbox container %s", cid)
-                        except Exception as exc:
-                            logger.debug("failed to log stale container %s: %s", cid, exc)
-                        proc_rm = subprocess.run(
-                            ["docker", "rm", "-f", cid],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            check=False,
-                        )
-                        _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
-                        _remove_failed_cleanup(cid)
-                        removed_containers += 1
-        except Exception as exc:
-            logger.debug("leftover container cleanup failed: %s", exc)
-
-        try:
-            threshold = time.time() - _CONTAINER_MAX_LIFETIME
-            proc = subprocess.run(
-                [
-                    "docker",
-                    "ps",
-                    "-a",
-                    "--no-trunc",
-                    "--format",
-                    "{{.ID}}\t{{.CreatedAt}}\t{{.Command}}",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            if proc.returncode == 0:
-                for line in proc.stdout.splitlines():
-                    parts = line.split("\t", 2)
-                    if len(parts) < 3:
-                        continue
-                    cid, created_at, cmd = parts
-                    ts_str = " ".join(created_at.split()[:3])
-                    try:
-                        created_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S %z").timestamp()
                     except Exception:
-                        continue
-                    if created_ts <= threshold and resolve_path("sandbox_runner.py").name in cmd:
+                        if os.name == "nt" and _rmtree_windows(d):
+                            _remove_failed_overlay(d)
+                            _remove_failed_cleanup(d)
+                        else:
+                            logger.exception("temporary directory removal failed for %s", d)
+                            _record_failed_overlay(d)
+                if overlays:
+                    _write_active_overlays([])
+            except Exception as exc:
+                logger.debug("overlay cleanup failed: %s", exc)
+
+            try:
+                proc = subprocess.run(
+                    ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    for cid in proc.stdout.splitlines():
+                        cid = cid.strip()
+                        if cid:
+                            try:
+                                logger.info("removing stale sandbox container %s", cid)
+                            except Exception as exc:
+                                logger.debug("failed to log stale container %s: %s", cid, exc)
+                            proc_rm = subprocess.run(
+                                ["docker", "rm", "-f", cid],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                check=False,
+                            )
+                            _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
+                            _remove_failed_cleanup(cid)
+                            removed_containers += 1
+            except Exception as exc:
+                logger.debug("leftover container cleanup failed: %s", exc)
+
+            try:
+                threshold = time.time() - _CONTAINER_MAX_LIFETIME
+                proc = subprocess.run(
+                    [
+                        "docker",
+                        "ps",
+                        "-a",
+                        "--no-trunc",
+                        "--format",
+                        "{{.ID}}\t{{.CreatedAt}}\t{{.Command}}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    for line in proc.stdout.splitlines():
+                        parts = line.split("\t", 2)
+                        if len(parts) < 3:
+                            continue
+                        cid, created_at, cmd = parts
+                        ts_str = " ".join(created_at.split()[:3])
                         try:
-                            logger.info("removing stale sandbox container %s", cid)
-                        except Exception as exc:
-                            logger.debug("failed to log stale container %s: %s", cid, exc)
-                        proc_rm = subprocess.run(
-                            ["docker", "rm", "-f", cid],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            check=False,
-                        )
-                        _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
-                        _remove_failed_cleanup(cid)
-                        removed_containers += 1
-        except Exception as exc:
-            logger.debug("unlabeled container cleanup failed: %s", exc)
+                            created_ts = datetime.strptime(
+                                ts_str, "%Y-%m-%d %H:%M:%S %z"
+                            ).timestamp()
+                        except Exception:
+                            continue
+                        if (
+                            created_ts <= threshold
+                            and resolve_path("sandbox_runner.py").name in cmd
+                        ):
+                            try:
+                                logger.info("removing stale sandbox container %s", cid)
+                            except Exception as exc:
+                                logger.debug(
+                                    "failed to log stale container %s: %s", cid, exc
+                                )
+                            proc_rm = subprocess.run(
+                                ["docker", "rm", "-f", cid],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                check=False,
+                            )
+                            _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
+                            _remove_failed_cleanup(cid)
+                            removed_containers += 1
+            except Exception as exc:
+                logger.debug("unlabeled container cleanup failed: %s", exc)
 
-        removed_vms = _purge_stale_vms()
+            removed_vms = _purge_stale_vms()
 
-        _prune_volumes()
-        _prune_networks()
+            _prune_volumes()
+            _prune_networks()
 
-        _STALE_CONTAINERS_REMOVED += removed_containers
+            _STALE_CONTAINERS_REMOVED += removed_containers
+    except Timeout:
+        logger.warning(
+            "skipping purge leftovers; lock %s is held by another process",
+            lock_file,
+        )
+        return
 
     global _LAST_AUTOPURGE_TS
     _LAST_AUTOPURGE_TS = time.time()
