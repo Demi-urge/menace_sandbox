@@ -331,7 +331,9 @@ class StackTokenConfig(_StrictBaseModel):
 
     @field_validator("env_vars", mode="before")
     @classmethod
-    def _coerce_env_vars(cls, value: Any) -> List[str]:
+    def _coerce_env_vars(
+        cls, value: Any, info: Any | None = None
+    ) -> List[str]:
         if value is None:
             return []
         if isinstance(value, str):
@@ -382,7 +384,9 @@ class StackIngestionConfig(_StrictBaseModel):
 
     @field_validator("languages", mode="before")
     @classmethod
-    def _coerce_languages(cls, value: Any) -> List[str]:
+    def _coerce_languages(
+        cls, value: Any, info: Any | None = None
+    ) -> List[str]:
         return normalise_stack_languages(value)
 
     @field_validator("languages")
