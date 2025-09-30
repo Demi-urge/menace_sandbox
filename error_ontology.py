@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """Centralised error taxonomy for Menace."""
 
+try:  # pragma: no cover - ensure script execution resolves package imports
+    from import_compat import bootstrap as _bootstrap
+except Exception:  # pragma: no cover - helper unavailable
+    _bootstrap = None  # type: ignore
+else:  # pragma: no cover - executed only when run as a script
+    _bootstrap(__name__, __file__)
+
 from enum import Enum
 from typing import Dict, Mapping, Type
 
