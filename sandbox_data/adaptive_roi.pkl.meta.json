@@ -1,9 +1,0 @@
-{
-  "best_params": null,
-  "best_score": null,
-  "validation_scores": {},
-  "slope_threshold": null,
-  "curvature_threshold": null,
-  "selected_features": null,
-  "drift_metrics": {}
-}
