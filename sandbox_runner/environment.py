@@ -1546,19 +1546,27 @@ _PRUNE_NETWORKS = str(os.getenv("SANDBOX_PRUNE_NETWORKS", "0")).lower() not in {
 }
 
 _ACTIVE_CONTAINERS_FILE = _env_path(
-    "SANDBOX_ACTIVE_CONTAINERS", "sandbox_data/active_containers.json"
+    "SANDBOX_ACTIVE_CONTAINERS",
+    "sandbox_data/active_containers.json",
+    create=True,
 )
 
 _ACTIVE_OVERLAYS_FILE = _env_path(
-    "SANDBOX_ACTIVE_OVERLAYS", "sandbox_data/active_overlays.json"
+    "SANDBOX_ACTIVE_OVERLAYS",
+    "sandbox_data/active_overlays.json",
+    create=True,
 )
 
 _FAILED_OVERLAYS_FILE = _env_path(
-    "SANDBOX_FAILED_OVERLAYS", "sandbox_data/failed_overlays.json"
+    "SANDBOX_FAILED_OVERLAYS",
+    "sandbox_data/failed_overlays.json",
+    create=True,
 )
 
 FAILED_CLEANUP_FILE = _env_path(
-    "SANDBOX_FAILED_CLEANUP", "sandbox_data/failed_cleanup.json"
+    "SANDBOX_FAILED_CLEANUP",
+    "sandbox_data/failed_cleanup.json",
+    create=True,
 )
 
 # timestamp of last automatic purge
