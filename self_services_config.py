@@ -23,6 +23,10 @@ try:  # pragma: no cover - compatibility shim
 except Exception:  # pragma: no cover
     from pydantic import validator as field_validator  # type: ignore
 
+FIELD_VALIDATOR_KWARGS: dict[str, Any] = {}
+if not PYDANTIC_V2:
+    FIELD_VALIDATOR_KWARGS["allow_reuse"] = True
+
 
 class SelfLearningConfig(BaseSettings):
     """Configuration for the self-learning service.
@@ -48,14 +52,14 @@ class SelfLearningConfig(BaseSettings):
         description="Number of new interactions before pruning GPT memory.",
     )
 
-    @field_validator("prune_interval")
+    @field_validator("prune_interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
     def _validate_prune_interval(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("prune_interval must be positive")
         return v
 
-    @field_validator("persist_events", "persist_progress")
+    @field_validator("persist_events", "persist_progress", **FIELD_VALIDATOR_KWARGS)
     @classmethod
     def _validate_parent_exists(cls, v: Path | None, info: Any) -> Path | None:
         if v is not None and not v.parent.exists():
@@ -85,14 +89,14 @@ class SelfTestConfig(BaseSettings):
         description="Directory used to store self-test reports.",
     )
 
-    @field_validator("lock_file")
+    @field_validator("lock_file", **FIELD_VALIDATOR_KWARGS)
     @classmethod
     def _validate_lock_parent(cls, v: Path) -> Path:
         if not v.parent.exists():
             raise ValueError(f"lock file directory does not exist: {v.parent}")
         return v
 
-    @field_validator("report_dir")
+    @field_validator("report_dir", **FIELD_VALIDATOR_KWARGS)
     @classmethod
     def _validate_report_dir(cls, v: Path) -> Path:
         if not v.exists():
@@ -119,7 +123,7 @@ class RepoScanConfig(BaseSettings):
         description="Seconds between repository scans.",
     )
 
-    @field_validator("interval")
+    @field_validator("interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
     def _validate_interval(cls, v: int) -> int:
         if v <= 0:
