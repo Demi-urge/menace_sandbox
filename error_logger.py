@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+try:  # pragma: no cover - allow running module directly as a script
+    from import_compat import bootstrap as _bootstrap
+except Exception:  # pragma: no cover - compatibility helper unavailable
+    _bootstrap = None  # type: ignore
+else:  # pragma: no cover - executed only when script usage requires bootstrapping
+    _bootstrap(__name__, __file__)
+
 import logging
 import os
 import re

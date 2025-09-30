@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """Restart sandbox runs when unexpected failures occur."""
 
+try:  # pragma: no cover - lightweight bootstrap when run as a script
+    from import_compat import bootstrap as _bootstrap
+except Exception:  # pragma: no cover - import compatibility helper unavailable
+    _bootstrap = None  # type: ignore
+else:  # pragma: no cover - executed only for script usage
+    _bootstrap(__name__, __file__)
+
 from typing import Any, Callable, Dict, List
 import argparse
 import json
