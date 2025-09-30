@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
@@ -273,13 +274,140 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when unavailable
 except Exception:  # pragma: no cover - fallback when unavailable
     PromptOptimizer = object  # type: ignore[misc,assignment]
 
-_error_parser = load_internal("error_parser")
-ErrorParser = _error_parser.ErrorParser
-ErrorReport = _error_parser.ErrorReport
-parse_failure = _error_parser.parse_failure
-FailureCache = _error_parser.FailureCache
+try:
+    _error_parser = load_internal("error_parser")
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    _error_parser = None
+else:
+    try:
+        ErrorParser = _error_parser.ErrorParser
+        ErrorReport = _error_parser.ErrorReport
+        parse_failure = _error_parser.parse_failure
+        FailureCache = _error_parser.FailureCache
+    except AttributeError:  # pragma: no cover - handle circular import edge cases
+        _error_parser = None
 
-TargetRegion = load_internal("target_region").TargetRegion
+if _error_parser is None:  # pragma: no cover - lightweight fallback definitions
+    _CANON_RE = re.compile(r"(?<!^)(?=[A-Z])")
+    _ERROR_RE = re.compile(r"(\w+(?:Error|Exception))")
+
+    def _canonical(name: str) -> str:
+        return _CANON_RE.sub("_", name).lower()
+
+    def _signature(trace: str) -> str:
+        return hashlib.sha1(trace.encode("utf-8")).hexdigest()
+
+    try:
+        _target_region_module = load_internal("target_region")
+    except Exception:  # pragma: no cover - best effort
+        TargetRegion = Any  # type: ignore[misc,assignment]
+
+        def _extract_target_region(_trace: str) -> Any:
+            return None
+
+    else:
+        TargetRegion = getattr(_target_region_module, "TargetRegion", Any)  # type: ignore[misc,assignment]
+        _extract_target_region = getattr(
+            _target_region_module, "extract_target_region", lambda _t: None
+        )
+
+    @dataclass
+    class ErrorReport:  # type: ignore[redeclaration]
+        trace: str
+        tags: list[str]
+
+    def parse_failure(output: str) -> ErrorReport:  # type: ignore[redeclaration]
+        match = re.search(r"(Traceback.*)", output, re.DOTALL)
+        trace = match.group(1) if match else output
+        tags: list[str] = []
+        seen: set[str] = set()
+        for exc in _ERROR_RE.findall(output):
+            tag = _canonical(exc)
+            if tag not in seen:
+                tags.append(tag)
+                seen.add(tag)
+        return ErrorReport(trace=trace, tags=tags)
+
+    class FailureCache:  # type: ignore[redeclaration]
+        def __init__(self) -> None:
+            self._seen: set[str] = set()
+
+        def seen(self, report: ErrorReport | str) -> bool:
+            trace = report.trace if isinstance(report, ErrorReport) else report
+            return _signature(trace) in self._seen
+
+        def add(self, report: ErrorReport) -> None:
+            self._seen.add(_signature(report.trace))
+
+    class ErrorParser:  # type: ignore[redeclaration]
+        _cache = FailureCache()
+
+        @staticmethod
+        def parse_failure(output: str) -> dict[str, Optional[str]]:
+            report = parse_failure(output)
+            first_tag = report.tags[0] if report.tags else ""
+
+            file: Optional[str] = None
+            line_no: Optional[str] = None
+            function: Optional[str] = None
+
+            for frame_line in reversed(report.trace.splitlines()):
+                frame_line = frame_line.strip()
+                m = re.match(r'File "([^"]+)", line (\d+), in (.+)', frame_line)
+                if m:
+                    file, line_no, function = m.group(1), m.group(2), m.group(3)
+                    break
+                m = re.match(r'([^:\s]+\.py):(\d+): in (.+)', frame_line)
+                if m:
+                    file, line_no, function = m.group(1), m.group(2), m.group(3)
+                    break
+
+            return {
+                "exception": first_tag,
+                "file": file,
+                "line": line_no,
+                "function": function,
+                "context": "",
+                "strategy_tag": first_tag,
+                "signature": _signature(report.trace),
+                "timestamp": datetime.utcnow().isoformat(),
+                "stack": report.trace,
+            }
+
+        @staticmethod
+        def parse(trace: str) -> dict[str, Any]:
+            report = parse_failure(trace)
+            if ErrorParser._cache.seen(report):
+                return {}
+            ErrorParser._cache.add(report)
+
+            files: list[str] = []
+            for line in report.trace.splitlines():
+                m = re.match(r'File "([^"]+)", line \d+', line)
+                if m:
+                    files.append(m.group(1))
+                    continue
+                m = re.match(r'([^:\s]+\.py):\d+:', line)
+                if m:
+                    files.append(m.group(1))
+            seen_files: dict[str, None] = {}
+            for f in files:
+                seen_files.setdefault(f, None)
+
+            region = _extract_target_region(report.trace)
+            first_tag = report.tags[0] if report.tags else ""
+            return {
+                "error_type": first_tag,
+                "files": list(seen_files.keys()),
+                "tags": report.tags,
+                "signature": _signature(report.trace),
+                "trace": report.trace,
+                "target_region": region,
+            }
+
+
+if _error_parser is not None:  # pragma: no cover - reuse canonical target region when available
+    TargetRegion = load_internal("target_region").TargetRegion
 
 try:
     log_prompt_attempt = load_internal(
