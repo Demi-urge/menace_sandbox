@@ -15,7 +15,7 @@ try:  # pragma: no cover - platform specific
 except Exception:  # pragma: no cover - posix
     msvcrt = None  # type: ignore
 
-LOCK_TIMEOUT = float(os.getenv("LOCK_TIMEOUT", "3600"))
+LOCK_TIMEOUT = float(os.getenv("LOCK_TIMEOUT", "60"))
 logger = logging.getLogger(__name__)
 
 
