@@ -18,7 +18,7 @@ import numpy as np
 import json
 import sqlite3
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 
 try:  # pragma: no cover - optional dependency
     import pandas as pd  # type: ignore
@@ -149,6 +149,21 @@ class ARIMARegressor:
     def get_params(self) -> Dict[str, Any]:  # pragma: no cover - thin wrapper
         return {"order": self.order}
 
+def _ensure_model_path(path: Path | str) -> Path:
+    """Return an absolute path for the persisted model, creating parents."""
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        try:
+            resolved = resolve_path(candidate.as_posix())
+        except FileNotFoundError:
+            resolved = (get_project_root() / candidate).resolve()
+    else:
+        resolved = candidate
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
 class AdaptiveROIPredictor:
     """Train a lightweight model to forecast ROI and growth patterns.
 
@@ -160,17 +175,14 @@ class AdaptiveROIPredictor:
 
     def __init__(
         self,
-        model_path: Path | str = resolve_path("sandbox_data/adaptive_roi.pkl"),
+        model_path: Path | str | None = None,
         cv: int = 3,
         param_grid: Dict[str, Dict[str, Any]] | None = None,
         slope_threshold: float | None = None,
         curvature_threshold: float | None = None,
     ) -> None:
-        model_path = Path(model_path)
-        try:
-            self.model_path = resolve_path(model_path.as_posix())
-        except FileNotFoundError:
-            self.model_path = resolve_path(model_path.parent.as_posix()) / model_path.name
+        target_path = model_path or "sandbox_data/adaptive_roi.pkl"
+        self.model_path = _ensure_model_path(target_path)
         self.cv = cv
         param_grid_provided = param_grid is not None
         default_grid = {

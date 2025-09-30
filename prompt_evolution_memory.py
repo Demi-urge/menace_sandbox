@@ -2,14 +2,34 @@ from __future__ import annotations
 
 """Lightweight persistence layer for prompt evolution experiments."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import time
 from pathlib import Path
 from typing import Any, Dict
 
 from filelock import FileLock
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
+
+
+def _resolve_or_prepare(relative_path: str) -> Path:
+    """Return an absolute path for ``relative_path`` creating parents if needed.
+
+    The production environment ships ``sandbox_data`` files alongside the
+    repository, however our test harnesses (and fresh checkouts on Windows)
+    often lack these artefacts.  Import time should therefore not fail simply
+    because the log files have not been created yet.  We attempt to resolve the
+    path via :func:`dynamic_path_router.resolve_path` and, when that fails,
+    fall back to constructing the path relative to the repository root.
+    """
+
+    try:
+        return resolve_path(relative_path)
+    except FileNotFoundError:
+        base = get_project_root()
+        path = base / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
 try:  # pragma: no cover - optional dependency
     from llm_interface import Prompt  # type: ignore
@@ -34,8 +54,16 @@ class PromptEvolutionMemory:
     execution results and ROI metrics.
     """
 
-    success_path: Path = resolve_path("sandbox_data/prompt_success_log.jsonl")
-    failure_path: Path = resolve_path("sandbox_data/prompt_failure_log.jsonl")
+    success_path: Path = field(
+        default_factory=lambda: _resolve_or_prepare(
+            "sandbox_data/prompt_success_log.jsonl"
+        )
+    )
+    failure_path: Path = field(
+        default_factory=lambda: _resolve_or_prepare(
+            "sandbox_data/prompt_failure_log.jsonl"
+        )
+    )
 
     def __post_init__(self) -> None:  # pragma: no cover - trivial
         for path in (self.success_path, self.failure_path):
