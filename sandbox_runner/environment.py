@@ -599,7 +599,11 @@ def _env_path(name: str, default: str, *, create: bool = False) -> Path:
         raise
 
 # Persistent module usage tracking -------------------------------------------
-MODULE_USAGE_PATH = _env_path("SANDBOX_MODULE_USAGE_PATH", "sandbox_data/module_usage.json")
+MODULE_USAGE_PATH = _env_path(
+    "SANDBOX_MODULE_USAGE_PATH",
+    "sandbox_data/module_usage.json",
+    create=True,
+)
 _MODULE_USAGE_LOCK = FileLock(str(MODULE_USAGE_PATH) + ".lock")
 
 
