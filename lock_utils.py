@@ -88,7 +88,9 @@ class _ContextFileLock(FileLock):
             with suppress(Exception):
                 os.remove(lock_path)
 
-        if not hasattr(self, "_context"):
+        context = getattr(self, "_context", None)
+
+        if context is None:
             super().acquire(timeout=resolved_timeout)
             if lock_path:
                 with suppress(Exception):
@@ -98,13 +100,27 @@ class _ContextFileLock(FileLock):
                     os.replace(tmp, lock_path)
             return self._Guard(self)
 
-        if msvcrt or os.name != "nt":
+        if not (msvcrt or os.name != "nt"):
+            result = super().acquire(timeout=resolved_timeout, poll_interval=poll_interval)
+            if lock_path:
+                with suppress(Exception):
+                    tmp = lock_path + ".tmp"
+                    with open(tmp, "w") as fh:
+                        fh.write(f"{os.getpid()},{time.time()}")
+                    os.replace(tmp, lock_path)
+            return result
+
+        context.lock_counter += 1
+        try:
+            if self.is_locked:
+                return self._Guard(self)
+
             start = time.perf_counter()
             while True:
-                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, getattr(self._context, "mode", 0o644))
+                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, getattr(context, "mode", 0o644))
                 with suppress(PermissionError):
                     if hasattr(os, "fchmod"):
-                        os.fchmod(fd, getattr(self._context, "mode", 0o644))
+                        os.fchmod(fd, getattr(context, "mode", 0o644))
                 try:
                     if os.name == "nt":
                         file_end = os.lseek(fd, 0, os.SEEK_END)
@@ -114,7 +130,7 @@ class _ContextFileLock(FileLock):
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                     else:
                         flock(fd, LOCK_EX | LOCK_NB)
-                    self._context.lock_file_fd = fd
+                    context.lock_file_fd = fd
                     break
                 except OSError as exc:  # pragma: no cover - race conditions
                     os.close(fd)
@@ -123,6 +139,7 @@ class _ContextFileLock(FileLock):
                     if resolved_timeout >= 0 and time.perf_counter() - start >= resolved_timeout:
                         raise Timeout(lock_path)
                     time.sleep(poll_interval)
+
             if lock_path:
                 with suppress(Exception):
                     tmp = lock_path + ".tmp"
@@ -130,15 +147,9 @@ class _ContextFileLock(FileLock):
                         fh.write(f"{os.getpid()},{time.time()}")
                     os.replace(tmp, lock_path)
             return self._Guard(self)
-        else:  # pragma: no cover - fallback
-            result = super().acquire(timeout=resolved_timeout, poll_interval=poll_interval)
-            if lock_path:
-                with suppress(Exception):
-                    tmp = lock_path + ".tmp"
-                    with open(tmp, "w") as fh:
-                        fh.write(f"{os.getpid()},{time.time()}")
-                    os.replace(tmp, lock_path)
-            return result
+        except BaseException:
+            context.lock_counter = max(0, context.lock_counter - 1)
+            raise
 
     def release(self, *args, **kwargs) -> None:  # type: ignore[override]
         try:

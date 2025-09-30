@@ -105,6 +105,21 @@ def test_sandbox_lock_context_timeout(monkeypatch, tmp_path: Path) -> None:
     assert elapsed < lock_utils.LOCK_TIMEOUT + 0.5
 
 
+def test_sandbox_lock_reacquire(tmp_path: Path) -> None:
+    lock_path = tmp_path / "reacquire.lock"
+    lock = SandboxLock(str(lock_path))
+
+    with lock:
+        assert lock.is_locked
+
+    assert not lock.is_locked
+
+    with lock.acquire(timeout=0.1):
+        assert lock.is_locked
+
+    assert not lock.is_locked
+
+
 def test_windows_zero_length_file_lock(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(lock_utils.os, "name", "nt", raising=False)
 
