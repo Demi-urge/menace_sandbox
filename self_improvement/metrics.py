@@ -23,10 +23,25 @@ try:  # pragma: no cover - radon is an optional dependency
 except ImportError:  # pragma: no cover - fall back to AST-based metrics
     cc_visit = mi_visit = None
 
-from ..sandbox_settings import SandboxSettings
-from ..dynamic_path_router import resolve_path
-from ..logging_utils import setup_logging
-from ..module_graph_analyzer import build_import_graph
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from sandbox_settings import SandboxSettings
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..sandbox_settings import SandboxSettings
+
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from dynamic_path_router import resolve_path
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..dynamic_path_router import resolve_path
+
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from logging_utils import setup_logging
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..logging_utils import setup_logging
+
+try:  # pragma: no cover - prefer absolute imports when running from repo root
+    from module_graph_analyzer import build_import_graph
+except ImportError:  # pragma: no cover - fallback for package-relative layout
+    from ..module_graph_analyzer import build_import_graph
 
 logger = logging.getLogger(__name__)
 
