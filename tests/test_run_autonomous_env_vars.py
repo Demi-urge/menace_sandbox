@@ -85,6 +85,32 @@ def _load_module(monkeypatch):
         fl.FileLock = DummyLock
         fl.Timeout = RuntimeError
         monkeypatch.setitem(sys.modules, "filelock", fl)
+    else:
+        DummyLock = sys.modules["filelock"].FileLock  # type: ignore[attr-defined]
+
+    env_mod = types.ModuleType("sandbox_runner.environment")
+    env_mod.FileLock = DummyLock
+
+    def _env_path(name, default, *, create=False):
+        return Path(os.getenv(name, default))
+
+    env_mod._env_path = _env_path  # type: ignore[attr-defined]
+
+    def _refresh_env():
+        base = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        env_mod._ACTIVE_OVERLAYS_FILE = _env_path(
+            "SANDBOX_ACTIVE_OVERLAYS", str(base / "active_overlays.json")
+        )
+        env_mod._FAILED_OVERLAYS_FILE = _env_path(
+            "SANDBOX_FAILED_OVERLAYS", str(base / "failed_overlays.json")
+        )
+        env_mod._ACTIVE_OVERLAYS_LOCK = env_mod.FileLock(
+            str(env_mod._ACTIVE_OVERLAYS_FILE) + ".lock"
+        )
+
+    env_mod.refresh = _refresh_env  # type: ignore[attr-defined]
+    env_mod.refresh()
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     if "dotenv" not in sys.modules:
         dmod = types.ModuleType("dotenv")
         dmod.dotenv_values = lambda *a, **k: {}
@@ -204,6 +230,18 @@ def test_recursion_defaults_enabled(monkeypatch, tmp_path):
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
     assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
+
+
+def test_sandbox_data_dir_override_updates_environment(monkeypatch, tmp_path):
+    mod = _load_module(monkeypatch)
+    env_mod = sys.modules["sandbox_runner.environment"]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.delenv("SANDBOX_DATA_DIR", raising=False)
+    env_mod.refresh()
+    mod.main(["--runs", "0", "--sandbox-data-dir", str(tmp_path)])
+    active_path = Path(env_mod._ACTIVE_OVERLAYS_FILE).resolve()
+    assert active_path.is_relative_to(tmp_path.resolve())
 
 
 def test_no_recursive_flags_disable_recursion(monkeypatch, tmp_path):

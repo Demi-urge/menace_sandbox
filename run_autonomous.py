@@ -34,6 +34,90 @@ from scipy.stats import t
 from db_router import init_db_router
 from dynamic_path_router import resolve_path, get_project_root, path_for_prompt
 from sandbox_settings import SandboxSettings
+
+
+def _extract_flag_value(argv: List[str], flag: str) -> str | None:
+    """Return the value provided for ``flag`` in ``argv`` if present."""
+
+    flag_eq = f"{flag}="
+    for index, item in enumerate(argv):
+        if item == flag:
+            if index + 1 < len(argv):
+                return argv[index + 1]
+            return None
+        if item.startswith(flag_eq):
+            return item[len(flag_eq) :]
+    return None
+
+
+def _sync_sandbox_environment(base_path: Path) -> None:
+    """Update ``sandbox_runner.environment`` paths to point under ``base_path``."""
+
+    env_mod = sys.modules.get("sandbox_runner.environment")
+    if env_mod is None:
+        return
+
+    default_active = str(base_path / "active_overlays.json")
+    default_failed = str(base_path / "failed_overlays.json")
+
+    env_path_func = getattr(env_mod, "_env_path", None)
+    if callable(env_path_func):
+        active_path = env_path_func("SANDBOX_ACTIVE_OVERLAYS", default_active)
+        failed_path = env_path_func("SANDBOX_FAILED_OVERLAYS", default_failed)
+    else:
+        active_path = Path(os.getenv("SANDBOX_ACTIVE_OVERLAYS", default_active))
+        failed_path = Path(os.getenv("SANDBOX_FAILED_OVERLAYS", default_failed))
+
+    try:
+        env_mod._ACTIVE_OVERLAYS_FILE = Path(active_path)
+        env_mod._FAILED_OVERLAYS_FILE = Path(failed_path)
+    except TypeError:
+        env_mod._ACTIVE_OVERLAYS_FILE = Path(str(active_path))
+        env_mod._FAILED_OVERLAYS_FILE = Path(str(failed_path))
+
+    filelock_cls = getattr(env_mod, "FileLock", None)
+    if filelock_cls is not None:
+        lock_path = str(env_mod._ACTIVE_OVERLAYS_FILE) + ".lock"
+        try:
+            env_mod._ACTIVE_OVERLAYS_LOCK = filelock_cls(lock_path)
+        except Exception:
+            env_mod._ACTIVE_OVERLAYS_LOCK = None
+
+
+def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
+    """Populate sandbox data directory environment variables early."""
+
+    if argv is None:
+        argv = sys.argv[1:]
+
+    override_raw = _extract_flag_value(argv, "--sandbox-data-dir")
+    override_path = Path(override_raw).expanduser() if override_raw else None
+    if override_path is not None:
+        os.environ["SANDBOX_DATA_DIR"] = str(override_path)
+
+    data_dir_value = os.environ.get("SANDBOX_DATA_DIR")
+    if not data_dir_value:
+        return
+
+    base_path = Path(data_dir_value).expanduser()
+    os.environ["SANDBOX_DATA_DIR"] = str(base_path)
+
+    if override_path is not None:
+        os.environ["SANDBOX_ACTIVE_OVERLAYS"] = str(base_path / "active_overlays.json")
+        os.environ["SANDBOX_FAILED_OVERLAYS"] = str(base_path / "failed_overlays.json")
+    else:
+        os.environ.setdefault(
+            "SANDBOX_ACTIVE_OVERLAYS", str(base_path / "active_overlays.json")
+        )
+        os.environ.setdefault(
+            "SANDBOX_FAILED_OVERLAYS", str(base_path / "failed_overlays.json")
+        )
+
+    _sync_sandbox_environment(base_path)
+
+
+_prepare_sandbox_data_dir_environment()
+
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
     _verify_required_dependencies,
@@ -833,6 +917,7 @@ def update_metrics(
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
+    _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
     parser = argparse.ArgumentParser(
         description="Run full autonomous sandbox with environment presets",
