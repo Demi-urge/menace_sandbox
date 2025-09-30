@@ -109,13 +109,19 @@ class DiscrepancyDB(EmbeddableDBMixin):
             else Path(path).with_suffix(".index")
         )
         meta_path = Path(index_path).with_suffix(".json")
-        EmbeddableDBMixin.__init__(
-            self,
-            index_path=index_path,
-            metadata_path=meta_path,
-            embedding_version=embedding_version,
-            backend=vector_backend,
-        )
+        mixin_init = getattr(EmbeddableDBMixin, "__init__", None)
+        if mixin_init is not None and mixin_init is not object.__init__:
+            mixin_init(
+                self,
+                index_path=index_path,
+                metadata_path=meta_path,
+                embedding_version=embedding_version,
+                backend=vector_backend,
+            )
+        else:  # pragma: no cover - executed when embedding mixin unavailable
+            logger.debug(
+                "EmbeddableDBMixin has no usable __init__; skipping embedding setup"
+            )
 
     # ------------------------------------------------------------------
     def _embed_text(self, message: str, meta: Dict[str, Any]) -> str:
