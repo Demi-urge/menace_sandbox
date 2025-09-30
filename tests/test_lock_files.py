@@ -1,4 +1,6 @@
 import os
+import os
+import errno
 import sys
 import subprocess
 import time
@@ -7,6 +9,7 @@ import json
 from contextlib import suppress
 
 import pytest
+import lock_utils
 from lock_utils import SandboxLock, Timeout
 
 
@@ -73,6 +76,33 @@ def test_lock_exclusive(tmp_path: Path, lock_type: str) -> None:
             assert ident in active
             active.remove(ident)
     assert not active
+
+
+def test_sandbox_lock_context_timeout(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("LOCK_TIMEOUT", "0.2")
+    monkeypatch.setattr(lock_utils, "LOCK_TIMEOUT", 0.2)
+    monkeypatch.setattr(lock_utils, "is_lock_stale", lambda *a, **k: False)
+
+    attempts: list[int] = [0]
+
+    def _busy_flock(fd: int, flags: int) -> None:
+        attempts[0] += 1
+        raise BlockingIOError(errno.EAGAIN, "busy")
+
+    monkeypatch.setattr(lock_utils, "flock", _busy_flock)
+
+    lock_path = tmp_path / "context.lock"
+    contender = SandboxLock(str(lock_path))
+
+    start = time.perf_counter()
+    with pytest.raises(Timeout):
+        with contender:
+            pass
+    elapsed = time.perf_counter() - start
+
+    assert attempts[0] > 1
+    assert elapsed >= lock_utils.LOCK_TIMEOUT
+    assert elapsed < lock_utils.LOCK_TIMEOUT + 0.5
 
 
 
