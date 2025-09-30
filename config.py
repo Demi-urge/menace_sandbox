@@ -342,7 +342,9 @@ class StackTokenConfig(_StrictBaseModel):
 
     @field_validator("env_vars")
     @classmethod
-    def _validate_env_vars(cls, value: List[str]) -> List[str]:
+    def _validate_env_vars(
+        cls, value: List[str], info: Any | None = None
+    ) -> List[str]:
         if not value:
             raise ValueError("env_vars must include at least one environment variable")
         return value
@@ -391,7 +393,9 @@ class StackIngestionConfig(_StrictBaseModel):
 
     @field_validator("languages")
     @classmethod
-    def _validate_languages(cls, value: List[str]) -> List[str]:
+    def _validate_languages(
+        cls, value: List[str], info: Any | None = None
+    ) -> List[str]:
         unknown = [lang for lang in value if lang not in STACK_LANGUAGE_ALLOWLIST]
         if unknown:
             allowed = ", ".join(sorted(STACK_LANGUAGE_ALLOWLIST))
