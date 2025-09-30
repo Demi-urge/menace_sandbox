@@ -5,8 +5,24 @@ from __future__ import annotations
 try:  # pragma: no cover - allow running module directly as a script
     from import_compat import bootstrap as _bootstrap
 except Exception:  # pragma: no cover - compatibility helper unavailable
+    from pathlib import Path
+    import sys
+
     _bootstrap = None  # type: ignore
-else:  # pragma: no cover - executed only when script usage requires bootstrapping
+    _here = Path(__file__).resolve()
+    for _candidate in (_here.parent, *_here.parents):
+        compat_path = _candidate / "import_compat.py"
+        if compat_path.exists():
+            candidate_str = str(_candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            try:
+                from import_compat import bootstrap as _bootstrap  # type: ignore
+            except Exception:
+                _bootstrap = None  # type: ignore
+            else:
+                break
+if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - script usage
     _bootstrap(__name__, __file__)
 
 import logging

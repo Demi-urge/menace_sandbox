@@ -20,6 +20,16 @@ import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
+if __package__ in {None, ""}:  # pragma: no cover - script execution compatibility
+    _here = Path(__file__).resolve()
+    for _candidate in (_here.parent, *_here.parents):
+        marker = _candidate / "import_compat.py"
+        if marker.exists() or (_candidate / "pyproject.toml").exists():
+            candidate_str = str(_candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            break
+
 try:  # pragma: no cover - optional dependency location
     from .. import dynamic_path_router as _dynamic_path_router
 except Exception:  # pragma: no cover
