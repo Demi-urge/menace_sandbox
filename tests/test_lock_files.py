@@ -105,6 +105,38 @@ def test_sandbox_lock_context_timeout(monkeypatch, tmp_path: Path) -> None:
     assert elapsed < lock_utils.LOCK_TIMEOUT + 0.5
 
 
+def test_windows_zero_length_file_lock(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(lock_utils.os, "name", "nt", raising=False)
+
+    class DummyMSVCRT:
+        LK_NBLCK = 0x1
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int, int]] = []
+
+        def locking(self, fd: int, mode: int, length: int) -> None:
+            size = os.fstat(fd).st_size
+            if size == 0:
+                raise PermissionError("cannot lock empty file")
+            position = os.lseek(fd, 0, os.SEEK_CUR)
+            self.calls.append((fd, mode, length, position))
+
+    dummy = DummyMSVCRT()
+    monkeypatch.setattr(lock_utils, "msvcrt", dummy)
+
+    lock_path = tmp_path / "windows.lock"
+    lock = SandboxLock(str(lock_path))
+
+    with lock.acquire():
+        pass
+
+    assert dummy.calls, "msvcrt.locking should have been invoked"
+    _, _, _, position = dummy.calls[0]
+    assert position == 0
+    assert lock_path.exists()
+    assert lock_path.stat().st_size >= 1
+
+
 
 STALE_SCRIPT = r"""
 import os, time
