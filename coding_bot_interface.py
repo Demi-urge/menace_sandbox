@@ -18,6 +18,7 @@ Example:
     ...     ...
 """
 
+import contextvars
 import importlib.util
 import sys
 from pathlib import Path
@@ -64,12 +65,30 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when absent
 except Exception:  # pragma: no cover - degrade gracefully when unavailable
     SelfCodingManager = Any  # type: ignore
 
+_ENGINE_AVAILABLE = True
+_ENGINE_IMPORT_ERROR: Exception | None = None
+
 try:  # pragma: no cover - allow tests to stub engine
-    MANAGER_CONTEXT = load_internal("self_coding_engine").MANAGER_CONTEXT
+    _self_coding_engine = load_internal("self_coding_engine")
 except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
-    raise ImportError("Self-coding engine is required for operation") from exc
+    _ENGINE_AVAILABLE = False
+    _ENGINE_IMPORT_ERROR = exc
+    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
 except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
-    raise ImportError("Self-coding engine is required for operation") from exc
+    _ENGINE_AVAILABLE = False
+    _ENGINE_IMPORT_ERROR = exc
+    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+else:
+    MANAGER_CONTEXT = getattr(
+        _self_coding_engine,
+        "MANAGER_CONTEXT",
+        contextvars.ContextVar("MANAGER_CONTEXT", default=None),
+    )
+    if not hasattr(_self_coding_engine, "MANAGER_CONTEXT"):
+        _ENGINE_AVAILABLE = False
+        _ENGINE_IMPORT_ERROR = AttributeError(
+            "self_coding_engine.MANAGER_CONTEXT is not available"
+        )
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from menace_sandbox.bot_registry import BotRegistry
@@ -82,6 +101,12 @@ else:  # pragma: no cover - runtime placeholders
 
 
 logger = logging.getLogger(__name__)
+
+if not _ENGINE_AVAILABLE and _ENGINE_IMPORT_ERROR is not None:
+    logger.warning(
+        "self_coding_engine could not be imported; coding bot helpers are in limited mode",
+        exc_info=_ENGINE_IMPORT_ERROR,
+    )
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -100,6 +125,12 @@ def manager_generate_helper(
     **kwargs: Any,
 ) -> str:
     """Invoke :meth:`SelfCodingEngine.generate_helper` under a manager token."""
+
+    if not _ENGINE_AVAILABLE:
+        message = "Self-coding engine is unavailable"
+        if _ENGINE_IMPORT_ERROR is not None:
+            message = f"{message}: {_ENGINE_IMPORT_ERROR}"
+        raise RuntimeError(message)
 
     if context_builder is None:  # pragma: no cover - defensive
         raise TypeError("context_builder is required")
