@@ -98,12 +98,8 @@ environment_failure_severity_total = Gauge(
 # Name of the sandbox snippet file.  Configurable to avoid hard-coded paths.
 SNIPPET_NAME = os.getenv("SANDBOX_SNIPPET_NAME", "snippet" + ".py")
 
-try:
-    from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
-except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).debug("diagnostic manager unavailable", exc_info=exc)
-    DiagnosticManager = None  # type: ignore
-    ResolutionRecord = None  # type: ignore
+DiagnosticManager = None  # type: ignore[assignment]
+ResolutionRecord = None  # type: ignore[assignment]
 
 try:  # optional dependency
     from .meta_logger import _SandboxMetaLogger
@@ -1178,6 +1174,27 @@ def _get_history_db() -> InputHistoryDB:
     return _INPUT_HISTORY_DB
 
 
+def _load_diagnostic_manager() -> bool:
+    """Attempt to import the optional diagnostic manager lazily."""
+
+    global DiagnosticManager, ResolutionRecord
+    if DiagnosticManager is not None and ResolutionRecord is not None:
+        return True
+    try:  # pragma: no cover - optional dependency
+        from menace.diagnostic_manager import (
+            DiagnosticManager as _DiagnosticManager,
+            ResolutionRecord as _ResolutionRecord,
+        )
+    except ImportError as exc:
+        get_logger(__name__).debug("diagnostic manager unavailable", exc_info=exc)
+        DiagnosticManager = None  # type: ignore[assignment]
+        ResolutionRecord = None  # type: ignore[assignment]
+        return False
+    DiagnosticManager = _DiagnosticManager  # type: ignore[assignment]
+    ResolutionRecord = _ResolutionRecord  # type: ignore[assignment]
+    return True
+
+
 _DIAGNOSTIC: DiagnosticManager | None = None
 
 
@@ -1193,7 +1210,9 @@ def init_diagnostic_manager(
         raise ValueError("context_builder must not be None")
 
     global _DIAGNOSTIC
-    if DiagnosticManager is None or _DIAGNOSTIC is not None:
+    if _DIAGNOSTIC is not None:
+        return
+    if not _load_diagnostic_manager():
         return
     try:
         _DIAGNOSTIC = DiagnosticManager(context_builder=context_builder)
@@ -1208,7 +1227,7 @@ def init_diagnostic_manager(
 
 def _log_diagnostic(issue: str, success: bool) -> None:
     """Record a resolution attempt with ``DiagnosticManager`` if available."""
-    if _DIAGNOSTIC is None:
+    if _DIAGNOSTIC is None or ResolutionRecord is None:
         return
     try:
         _DIAGNOSTIC.log.add(ResolutionRecord(issue, "retry", success))
