@@ -1509,7 +1509,7 @@ _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 _CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
 _POOL_METRICS_FILE = _env_path(
-    "SANDBOX_POOL_METRICS_FILE", "sandbox_data/pool_failures.json"
+    "SANDBOX_POOL_METRICS_FILE", "sandbox_data/pool_failures.json", create=True
 )
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
