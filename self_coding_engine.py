@@ -495,66 +495,83 @@ _PATCH_ESCALATIONS = _me.Gauge(
 _baseline_tracker = load_internal("self_improvement.baseline_tracker")
 BaselineTracker = _baseline_tracker.BaselineTracker  # noqa: E402
 METRIC_BASELINES = _baseline_tracker.TRACKER
+class _FallbackFileLock:  # pragma: no cover - simple stub
+    """Minimal FileLock replacement for environments without self-improvement."""
+
+    def __init__(self, *_a: Any, **_k: Any) -> None:
+        self._path = _a[0] if _a else ""
+        self._locked = False
+
+    def acquire(self, *_a: Any, **_k: Any) -> bool:
+        self._locked = True
+        return True
+
+    def release(self) -> None:
+        self._locked = False
+
+    def __enter__(self) -> "_FallbackFileLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.release()
+
+    @property
+    def is_locked(self) -> bool:
+        return self._locked
+
+
+_filelock_impl: type[_FallbackFileLock] = _FallbackFileLock
+_atomic_write_impl: Callable[..., Any] | None = None
+
 try:  # pragma: no cover - optional dependency
     _self_improvement_init = load_internal("self_improvement.init")
 except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when missing
-
-    class FileLock:  # type: ignore[assignment]
-        def __init__(self, *_a: Any, **_k: Any) -> None:
-            self._path = _a[0] if _a else ""
-            self._locked = False
-
-        def acquire(self, *_a: Any, **_k: Any) -> bool:
-            self._locked = True
-            return True
-
-        def release(self) -> None:
-            self._locked = False
-
-        def __enter__(self) -> "FileLock":
-            self.acquire()
-            return self
-
-        def __exit__(self, *_exc: Any) -> None:
-            self.release()
-
-        @property
-        def is_locked(self) -> bool:
-            return self._locked
-
-    def _atomic_write(*_a: Any, **_k: Any) -> None:  # type: ignore[assignment]
-        raise RuntimeError("atomic write is unavailable in this environment")
-
+    _self_improvement_init = None
 except Exception:  # pragma: no cover - degrade gracefully when unavailable
-
-    class FileLock:  # type: ignore[assignment]
-        def __init__(self, *_a: Any, **_k: Any) -> None:
-            self._path = _a[0] if _a else ""
-            self._locked = False
-
-        def acquire(self, *_a: Any, **_k: Any) -> bool:
-            self._locked = True
-            return True
-
-        def release(self) -> None:
-            self._locked = False
-
-        def __enter__(self) -> "FileLock":
-            self.acquire()
-            return self
-
-        def __exit__(self, *_exc: Any) -> None:
-            self.release()
-
-        @property
-        def is_locked(self) -> bool:
-            return self._locked
-
-    def _atomic_write(*_a: Any, **_k: Any) -> None:  # type: ignore[assignment]
-        raise RuntimeError("atomic write is unavailable in this environment")
+    _self_improvement_init = None
 else:
-    FileLock = _self_improvement_init.FileLock
-    _atomic_write = _self_improvement_init._atomic_write
+    candidate_lock = getattr(_self_improvement_init, "FileLock", None)
+    if isinstance(candidate_lock, type):
+        _filelock_impl = candidate_lock  # type: ignore[assignment]
+    _atomic_write_impl = getattr(_self_improvement_init, "_atomic_write", None)
+
+FileLock = _filelock_impl  # type: ignore[assignment]
+
+
+def _resolve_atomic_write() -> Callable[..., Any]:
+    """Return the atomic write helper, loading it lazily if necessary."""
+
+    global _atomic_write_impl, FileLock
+
+    if _atomic_write_impl is not None:
+        return _atomic_write_impl
+
+    module = sys.modules.get(f"{_PACKAGE_NAME}.self_improvement.init")
+    if module is None:
+        try:  # pragma: no cover - retry loading after deferred imports
+            module = load_internal("self_improvement.init")
+        except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError("atomic write is unavailable in this environment") from exc
+    impl = getattr(module, "_atomic_write", None)
+    if impl is None:  # pragma: no cover - circular import guard
+        raise RuntimeError(
+            "self_improvement.init._atomic_write is unavailable; this usually "
+            "indicates a circular import during startup."
+        )
+    _atomic_write_impl = impl  # cache for future calls
+
+    lock_cls = getattr(module, "FileLock", None)
+    if isinstance(lock_cls, type):
+        FileLock = lock_cls  # type: ignore[assignment]
+
+    return impl
+
+
+def _atomic_write(*args: Any, **kwargs: Any) -> Any:  # type: ignore[assignment]
+    """Proxy to ``self_improvement.init._atomic_write`` with lazy resolution."""
+
+    return _resolve_atomic_write()(*args, **kwargs)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
