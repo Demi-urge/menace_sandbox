@@ -107,6 +107,10 @@ class _ContextFileLock(FileLock):
                         os.fchmod(fd, getattr(self._context, "mode", 0o644))
                 try:
                     if os.name == "nt":
+                        file_end = os.lseek(fd, 0, os.SEEK_END)
+                        if file_end == 0:
+                            os.write(fd, b"\0")
+                        os.lseek(fd, 0, os.SEEK_SET)
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                     else:
                         flock(fd, LOCK_EX | LOCK_NB)
