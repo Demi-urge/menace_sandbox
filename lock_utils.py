@@ -69,13 +69,27 @@ class _ContextFileLock(FileLock):
         return is_lock_stale(lock_path, timeout=timeout)
 
     def acquire(self, timeout: float | None = None, poll_interval: float = 0.05):  # type: ignore[override]
+        resolved_timeout: float
+        if timeout is None or timeout < 0:
+            context_timeout = None
+            if hasattr(self, "_context"):
+                context_timeout = getattr(self._context, "timeout", None)
+            if context_timeout is None or context_timeout < 0:
+                context_timeout = getattr(self, "timeout", None)
+            if context_timeout is None or context_timeout < 0:
+                resolved_timeout = LOCK_TIMEOUT
+            else:
+                resolved_timeout = context_timeout
+        else:
+            resolved_timeout = timeout
+
         lock_path = getattr(self, "lock_file", None)
-        if lock_path and os.path.exists(lock_path) and self.is_lock_stale(timeout=timeout or LOCK_TIMEOUT):
+        if lock_path and os.path.exists(lock_path) and self.is_lock_stale(timeout=resolved_timeout):
             with suppress(Exception):
                 os.remove(lock_path)
 
         if not hasattr(self, "_context"):
-            super().acquire(timeout=timeout)
+            super().acquire(timeout=resolved_timeout)
             if lock_path:
                 with suppress(Exception):
                     tmp = lock_path + ".tmp"
@@ -85,8 +99,6 @@ class _ContextFileLock(FileLock):
             return self._Guard(self)
 
         if msvcrt or os.name != "nt":
-            if timeout is None:
-                timeout = self._context.timeout
             start = time.perf_counter()
             while True:
                 fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, getattr(self._context, "mode", 0o644))
@@ -104,7 +116,7 @@ class _ContextFileLock(FileLock):
                     os.close(fd)
                     if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
                         raise
-                    if timeout >= 0 and time.perf_counter() - start >= timeout:
+                    if resolved_timeout >= 0 and time.perf_counter() - start >= resolved_timeout:
                         raise Timeout(lock_path)
                     time.sleep(poll_interval)
             if lock_path:
@@ -115,7 +127,7 @@ class _ContextFileLock(FileLock):
                     os.replace(tmp, lock_path)
             return self._Guard(self)
         else:  # pragma: no cover - fallback
-            result = super().acquire(timeout=timeout, poll_interval=poll_interval)
+            result = super().acquire(timeout=resolved_timeout, poll_interval=poll_interval)
             if lock_path:
                 with suppress(Exception):
                     tmp = lock_path + ".tmp"
@@ -177,7 +189,10 @@ class SandboxLock(_ContextFileLock):
     def __enter__(self) -> "SandboxLock":
         # ``_ContextFileLock.acquire`` returns a guard object that releases the
         # lock on exit.  Store it so ``__exit__`` can delegate correctly.
-        self._guard = super().acquire()
+        timeout = getattr(self, "timeout", None)
+        if timeout is None or timeout < 0:
+            timeout = LOCK_TIMEOUT
+        self._guard = super().acquire(timeout=timeout)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
