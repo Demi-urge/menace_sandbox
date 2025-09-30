@@ -971,7 +971,7 @@ def load_training_data(
     tracker: ROITracker,
     evolution_path: str | Path = "evolution_history.db",
     roi_events_path: str | Path = "roi_events.db",
-    output_path: Path | str = resolve_path("sandbox_data/adaptive_roi.csv"),
+    output_path: Path | str | None = None,
     *,
     router: DBRouter | None = None,
 ) -> "pd.DataFrame":
@@ -1002,7 +1002,10 @@ def load_training_data(
 
     evolution_path = Path(evolution_path)
     roi_events_path = Path(roi_events_path)
-    output_path = Path(output_path)
+    if output_path is None:
+        output_path = Path("sandbox_data/adaptive_roi.csv")
+    else:
+        output_path = Path(output_path)
 
     try:
         evolution_path = resolve_path(evolution_path.as_posix())
@@ -1015,7 +1018,9 @@ def load_training_data(
     try:
         output_path = resolve_path(output_path.as_posix())
     except FileNotFoundError:
-        output_path = resolve_path(output_path.parent.as_posix()) / output_path.name
+        project_root = get_project_root()
+        output_path = (project_root / output_path).resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
     router = router or DB_ROUTER
 
