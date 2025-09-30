@@ -1571,7 +1571,9 @@ FAILED_CLEANUP_FILE = _env_path(
 
 # timestamp of last automatic purge
 _LAST_AUTOPURGE_FILE = _env_path(
-    "SANDBOX_LAST_AUTOPURGE", "sandbox_data/last_autopurge"
+    "SANDBOX_LAST_AUTOPURGE",
+    "sandbox_data/last_autopurge",
+    create=True,
 )
 
 # age threshold for automatic purge invocation
