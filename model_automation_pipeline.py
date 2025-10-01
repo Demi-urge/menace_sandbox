@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Iterable, Dict, Optional, Any
+from typing import List, Iterable, Dict, Optional, Any, TYPE_CHECKING, Callable
 import logging
 
 try:
@@ -28,7 +28,6 @@ except Exception:  # pragma: no cover - optional dependency
         ValidationError,
     )
 
-from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
 from .information_synthesis_bot import InformationSynthesisBot, SynthesisTask
 from .task_validation_bot import TaskValidationBot
 from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
@@ -76,6 +75,42 @@ from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_planner import ActionPlanner
 from vector_service.context_builder import ContextBuilder
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
+else:  # pragma: no cover - runtime fallback
+    ResearchAggregatorBot = Any  # type: ignore
+    ResearchItem = Any  # type: ignore
+
+
+class _LazyAggregator:
+    """Deferred loader for :class:`ResearchAggregatorBot` instances."""
+
+    def __init__(self, factory: Callable[[], "ResearchAggregatorBot"]) -> None:
+        self._factory = factory
+        self._instance: "ResearchAggregatorBot | None" = None
+
+    def _ensure(self) -> "ResearchAggregatorBot":
+        if self._instance is None:
+            self._instance = self._factory()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ensure(), name)
+
+
+def _load_research_aggregator(
+    context_builder: ContextBuilder,
+) -> "ResearchAggregatorBot":
+    from .research_aggregator_bot import ResearchAggregatorBot
+
+    return ResearchAggregatorBot([], context_builder=context_builder)
+
+
+def _make_research_item(**kwargs: Any) -> "ResearchItem":
+    from .research_aggregator_bot import ResearchItem
+
+    return ResearchItem(**kwargs)
 
 MENACE_ID = "model_automation_pipeline"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -152,9 +187,11 @@ class ModelAutomationPipeline:
         except Exception as exc:
             self.logger.exception("context builder refresh failed: %s", exc)
         self.db_router = db_router or DB_ROUTER
-        self.aggregator = aggregator or ResearchAggregatorBot(
-            [], context_builder=self.context_builder
-        )
+        if aggregator is None:
+            aggregator = _LazyAggregator(
+                lambda: _load_research_aggregator(self.context_builder)
+            )
+        self.aggregator = aggregator
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         self.synthesis_bot = synthesis_bot or InformationSynthesisBot(
             aggregator=self.aggregator,
@@ -520,7 +557,7 @@ class ModelAutomationPipeline:
                 ts = 0.0
             try:
                 self.aggregator.memory.add(
-                    ResearchItem(
+                    _make_research_item(
                         topic=model,
                         content=text,
                         timestamp=ts,
