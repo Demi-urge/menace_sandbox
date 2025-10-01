@@ -72,6 +72,26 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 _REGISTERED_BOTS = {}
 
+
+def _is_transient_internalization_error(exc: Exception) -> bool:
+    """Return ``True`` for import errors that are likely transient.
+
+    ``@self_coding_managed`` decorators execute during module import which means
+    dependencies may not yet be fully initialised.  When
+    :func:`register_bot` attempts to internalise a bot in that window the eager
+    imports can fail with ``ModuleNotFoundError`` or the more generic
+    ``ImportError`` that reports a "partially initialized" module.  Those
+    situations typically resolve once the module graph finishes loading, so we
+    treat them as transient and defer the internalisation retry to the
+    background scan instead of hard failing the import.
+    """
+
+    if isinstance(exc, ModuleNotFoundError):
+        return True
+    if isinstance(exc, ImportError) and "partially initialized" in str(exc):
+        return True
+    return False
+
 def _extend_workflow_tests(target: list[str], seen: set[str], value: Any) -> None:
     for item in normalize_workflow_tests(value):
         if item and item not in seen:
@@ -256,6 +276,13 @@ class BotRegistry:
                                     "Failed to publish bot:internalization_failed event: %s",
                                     exc2,
                                 )
+                        if _is_transient_internalization_error(exc):
+                            node.setdefault("internalization_errors", []).append(str(exc))
+                            node["pending_internalization"] = True
+                            logger.debug(
+                                "deferring internalization for %s due to import error", name
+                            )
+                            return
                         raise RuntimeError(
                             "coding bot could not be internalized"
                         ) from exc
