@@ -32,7 +32,34 @@ import math
 import uuid
 from scipy.stats import t
 from db_router import init_db_router
-from dynamic_path_router import resolve_path, get_project_root, path_for_prompt
+
+try:  # pragma: no cover - exercised indirectly in tests
+    import dynamic_path_router as _dynamic_path_router
+except Exception as exc:  # pragma: no cover - fail fast when routing unavailable
+    raise ImportError("dynamic_path_router is required to locate repository paths") from exc
+
+
+def _callable(attr, default):
+    if callable(attr):
+        return attr
+    if attr is None:
+        return default
+    return lambda *_, **__: attr
+
+
+resolve_path = getattr(_dynamic_path_router, "resolve_path")
+_fallback_root = lambda: Path(__file__).resolve().parent  # noqa: E731
+get_project_root = _callable(
+    getattr(_dynamic_path_router, "get_project_root", None), _fallback_root
+)
+repo_root = _callable(getattr(_dynamic_path_router, "repo_root", None), _fallback_root)
+if repo_root is _fallback_root and get_project_root is not _fallback_root:
+    repo_root = get_project_root
+path_for_prompt = getattr(
+    _dynamic_path_router,
+    "path_for_prompt",
+    lambda name: resolve_path(name).as_posix(),
+)
 from sandbox_settings import SandboxSettings
 
 
