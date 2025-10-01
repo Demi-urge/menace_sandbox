@@ -14,7 +14,13 @@ import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from dynamic_path_router import resolve_path, path_for_prompt
-from context_builder_util import create_context_builder
+
+try:
+    from context_builder_util import create_context_builder
+except ModuleNotFoundError:  # pragma: no cover - package-relative import fallback
+    from import_compat import load_internal
+
+    create_context_builder = load_internal("context_builder_util").create_context_builder
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
