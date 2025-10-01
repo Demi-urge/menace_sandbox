@@ -44,7 +44,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from menace.information_synthesis_bot import SynthesisTask
+from menace.synthesis_models import SynthesisTask
 
 
 
