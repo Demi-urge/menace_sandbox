@@ -3,7 +3,7 @@ from __future__ import annotations
 """Pydantic models for self-learning and self-test service configuration."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -54,18 +54,37 @@ class SelfLearningConfig(BaseSettings):
 
     @field_validator("prune_interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_prune_interval(cls, v: int) -> int:
+    def _validate_prune_interval(
+        cls,
+        v: int,
+        values: Mapping[str, Any] | None = None,
+        config: Any | None = None,
+        field: Any | None = None,
+        info: Any | None = None,
+    ) -> int:
         if v <= 0:
             raise ValueError("prune_interval must be positive")
         return v
 
     @field_validator("persist_events", "persist_progress", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_parent_exists(cls, v: Path | None, info: Any) -> Path | None:
+    def _validate_parent_exists(
+        cls,
+        v: Path | None,
+        values: Mapping[str, Any] | None = None,
+        config: Any | None = None,
+        field: Any | None = None,
+        info: Any | None = None,
+    ) -> Path | None:
         if v is not None and not v.parent.exists():
-            raise ValueError(
-                f"{info.field_name} directory does not exist: {v.parent}"
-            )
+            field_name = None
+            if info is not None:
+                field_name = getattr(info, "field_name", None)
+            if field_name is None and field is not None:
+                field_name = getattr(field, "alias", None) or getattr(field, "name", None)
+            if field_name is None:
+                field_name = "value"
+            raise ValueError(f"{field_name} directory does not exist: {v.parent}")
         return v
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
@@ -91,14 +110,28 @@ class SelfTestConfig(BaseSettings):
 
     @field_validator("lock_file", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_lock_parent(cls, v: Path) -> Path:
+    def _validate_lock_parent(
+        cls,
+        v: Path,
+        values: Mapping[str, Any] | None = None,
+        config: Any | None = None,
+        field: Any | None = None,
+        info: Any | None = None,
+    ) -> Path:
         if not v.parent.exists():
             raise ValueError(f"lock file directory does not exist: {v.parent}")
         return v
 
     @field_validator("report_dir", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_report_dir(cls, v: Path) -> Path:
+    def _validate_report_dir(
+        cls,
+        v: Path,
+        values: Mapping[str, Any] | None = None,
+        config: Any | None = None,
+        field: Any | None = None,
+        info: Any | None = None,
+    ) -> Path:
         if not v.exists():
             raise ValueError(f"report_dir does not exist: {v}")
         return v
@@ -125,7 +158,14 @@ class RepoScanConfig(BaseSettings):
 
     @field_validator("interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_interval(cls, v: int) -> int:
+    def _validate_interval(
+        cls,
+        v: int,
+        values: Mapping[str, Any] | None = None,
+        config: Any | None = None,
+        field: Any | None = None,
+        info: Any | None = None,
+    ) -> int:
         if v <= 0:
             raise ValueError("interval must be positive")
         return v
