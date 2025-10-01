@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-
 from .coding_bot_interface import self_coding_managed
+from .data_bot import DataBot, MetricsDB
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from .data_bot import DataBot, MetricsDB
 from .future_prediction_bots import (
     FutureLucrativityBot,
     FutureProfitabilityBot,
