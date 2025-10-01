@@ -22,18 +22,32 @@ from pathlib import Path
 import json
 import yaml
 
-from .roi_tracker import ROITracker
-from .roi_calculator import ROICalculator
-from .roi_results_db import ROIResultsDB
-from . import sandbox_runner
-from .dynamic_path_router import resolve_path
-from .workflow_scorer_core import (
-    ROIScorer as BaseROIScorer,
-    EvaluationResult,
-    compute_workflow_synergy,
-    compute_bottleneck_index,
-    compute_patchability,
-)
+try:  # pragma: no cover - allow execution without package context
+    from .roi_tracker import ROITracker
+    from .roi_calculator import ROICalculator
+    from .roi_results_db import ROIResultsDB
+    from . import sandbox_runner
+    from .dynamic_path_router import resolve_path
+    from .workflow_scorer_core import (
+        ROIScorer as BaseROIScorer,
+        EvaluationResult,
+        compute_workflow_synergy,
+        compute_bottleneck_index,
+        compute_patchability,
+    )
+except ImportError:  # pragma: no cover - fallback when imported flat
+    from roi_tracker import ROITracker  # type: ignore
+    from roi_calculator import ROICalculator  # type: ignore
+    from roi_results_db import ROIResultsDB  # type: ignore
+    import sandbox_runner  # type: ignore
+    from dynamic_path_router import resolve_path  # type: ignore
+    from workflow_scorer_core import (  # type: ignore
+        ROIScorer as BaseROIScorer,
+        EvaluationResult,
+        compute_workflow_synergy,
+        compute_bottleneck_index,
+        compute_patchability,
+    )
 from vector_service.context_builder import ContextBuilder
 
 try:  # pragma: no cover - optional dependency
