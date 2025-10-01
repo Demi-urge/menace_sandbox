@@ -162,23 +162,47 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     except Exception as exc:  # pragma: no cover - git failure
         raise RuntimeError(f"git ls-files failed: {exc}") from exc
 
-    checks = [
-        [
-            sys.executable,
-            str(resolve_path("scripts/check_stripe_imports.py")),
-            *files,
-        ],
-        [
-            sys.executable,
-            str(resolve_path("scripts/check_raw_stripe_usage.py")),
-        ],
-    ]
-    for cmd in checks:
+    def _run(cmd: list[str]) -> None:
         result = subprocess.run(
             cmd, cwd=repo_root, capture_output=True, text=True, check=False
         )
         if result.returncode != 0:
             raise RuntimeError(result.stdout + result.stderr)
+
+    imports_cmd = [
+        sys.executable,
+        str(resolve_path("scripts/check_stripe_imports.py")),
+    ]
+    if os.name == "nt" and files:
+        limit = 8000  # Windows command line length safety margin
+        chunk: list[str] = []
+        for filename in files:
+            tentative = chunk + [filename]
+            if len(subprocess.list2cmdline(imports_cmd + tentative)) > limit:
+                if chunk:
+                    _run(imports_cmd + chunk)
+                    chunk = [filename]
+                    if len(subprocess.list2cmdline(imports_cmd + chunk)) > limit:
+                        raise RuntimeError(
+                            f"Single path '{filename}' exceeds Windows command length limit"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Single path '{filename}' exceeds Windows command length limit"
+                    )
+            else:
+                chunk = tentative
+        if chunk:
+            _run(imports_cmd + chunk)
+    else:
+        _run(imports_cmd + files)
+
+    _run(
+        [
+            sys.executable,
+            str(resolve_path("scripts/check_raw_stripe_usage.py")),
+        ]
+    )
 
     import importlib
 
