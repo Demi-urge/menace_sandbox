@@ -60,16 +60,75 @@ try:  # pragma: no cover - best effort import
     from .error_parser import ErrorParser
 except Exception:  # pragma: no cover - gracefully degrade in tests
     ErrorParser = None  # type: ignore
-from .truth_adapter import TruthAdapter
-from .foresight_tracker import ForesightTracker
-from .upgrade_forecaster import UpgradeForecaster
+_logger = logging.getLogger(__name__)
+
+
+def _make_missing_class(name: str, message: str, exc: Exception, error_type: type[Exception]):
+    """Create a stub class raising ``error_type`` with *message* when used."""
+
+    class _Missing:
+        __module__ = __name__
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise error_type(message) from exc
+
+    _Missing.__name__ = name
+    _Missing.__qualname__ = name
+    return _Missing
+
+
+def _optional_attrs(module: str, *names: str):
+    """Return attributes from ``module`` substituting stubs if import fails."""
+
+    try:
+        mod = importlib.import_module(f".{module}", __name__)
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
+        missing = getattr(exc, "name", module)
+        message = (
+            f"optional dependency '{missing}' is required for module '{module}'"
+        )
+        return tuple(
+            _make_missing_class(
+                name,
+                f"{name} is unavailable because {message}. Install menace_sandbox[full] or add the missing package.",
+                exc,
+                ModuleNotFoundError,
+            )
+            for name in names
+        )
+    except Exception as exc:  # pragma: no cover - defensive best effort
+        _logger.warning("failed to import %s: %s", module, exc)
+        return tuple(
+            _make_missing_class(
+                name,
+                f"{name} is unavailable because '{module}' could not be initialised",
+                exc,
+                RuntimeError,
+            )
+            for name in names
+        )
+
+    attrs = []
+    for name in names:
+        try:
+            attrs.append(getattr(mod, name))
+        except AttributeError as exc:  # pragma: no cover - unexpected module layout
+            raise AttributeError(f"{module!r} does not define {name!r}") from exc
+    return tuple(attrs)
+
+
+(TruthAdapter,) = _optional_attrs("truth_adapter", "TruthAdapter")
+(ForesightTracker,) = _optional_attrs("foresight_tracker", "ForesightTracker")
+(UpgradeForecaster,) = _optional_attrs("upgrade_forecaster", "UpgradeForecaster")
 try:  # pragma: no cover - optional heavy dependency
     from .workflow_synthesizer import WorkflowSynthesizer
     from .workflow_synergy_comparator import WorkflowSynergyComparator
 except Exception:  # pragma: no cover - degrade gracefully for tests
     WorkflowSynthesizer = None  # type: ignore
     WorkflowSynergyComparator = None  # type: ignore
-from .llm_interface import LLMClient, LLMResult, Prompt
+LLMClient, LLMResult, Prompt = _optional_attrs(
+    "llm_interface", "LLMClient", "LLMResult", "Prompt"
+)
 
 from . import metrics_exporter
 

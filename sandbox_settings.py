@@ -7,7 +7,13 @@ import os
 from typing import Any
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    yaml = None  # type: ignore
+    _MISSING_YAML = exc
+else:
+    _MISSING_YAML = None
 try:
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover
@@ -3393,6 +3399,11 @@ def load_sandbox_settings(path: str | None = None) -> SandboxSettings:
         path = resolve_path(path)
         with open(path, "r", encoding="utf-8") as fh:
             if path.suffix in (".yml", ".yaml"):
+                if yaml is None:
+                    missing = getattr(_MISSING_YAML, "name", "PyYAML") if _MISSING_YAML else "PyYAML"
+                    raise ModuleNotFoundError(
+                        f"{missing} is required to load YAML sandbox settings"
+                    ) from _MISSING_YAML
                 data = yaml.safe_load(fh) or {}
             elif path.suffix == ".json":
                 data = json.load(fh)
