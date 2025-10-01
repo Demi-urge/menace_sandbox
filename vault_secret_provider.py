@@ -11,7 +11,10 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from .secrets_manager import SecretsManager
+try:  # pragma: no cover - support execution without package context
+    from .secrets_manager import SecretsManager
+except ImportError:  # pragma: no cover - bootstrap scripts import as top-level modules
+    from secrets_manager import SecretsManager  # type: ignore
 
 
 class VaultSecretProvider:
