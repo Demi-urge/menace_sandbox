@@ -34,6 +34,7 @@ from .safety_monitor import SafetyMonitor
 from .prediction_manager_bot import PredictionManager
 from .learning_engine import LearningEngine
 from .evolution_analysis_bot import EvolutionAnalysisBot
+from . import stripe_billing_router  # noqa: F401
 from .workflow_evolution_bot import WorkflowEvolutionBot
 from .trending_scraper import TrendingScraper
 from .admin_bot_base import AdminBotBase

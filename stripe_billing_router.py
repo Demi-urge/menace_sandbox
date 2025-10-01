@@ -17,7 +17,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 import hashlib
 
 import yaml
@@ -574,6 +574,32 @@ def _client(api_key: str):
     if hasattr(stripe, "StripeClient"):
         return stripe.StripeClient(api_key)
     return None
+
+
+def iter_master_events(
+    *,
+    event_types: Iterable[str] | None = None,
+    created: Mapping[str, Any] | None = None,
+    **params: Any,
+):
+    """Yield Stripe events for the master account via ``auto_paging_iter``."""
+
+    kwargs: dict[str, Any] = dict(params)
+    if event_types is not None:
+        kwargs["types"] = list(event_types)
+    if created is not None:
+        kwargs["created"] = dict(created)
+    api_key = STRIPE_SECRET_KEY
+    client = _client(api_key)
+    try:
+        if client:
+            events = client.Event.list(**kwargs)
+        else:
+            events = stripe.Event.list(api_key=api_key, **kwargs)
+        return events.auto_paging_iter()
+    except Exception as exc:  # pragma: no cover - network/API issues
+        logger.exception("Stripe event listing failed: %s", exc)
+        raise RuntimeError("Stripe event listing failed") from exc
 
 
 ALLOWED_SECRET_KEYS = _load_allowed_keys()
@@ -1405,6 +1431,7 @@ __all__ = [
     "create_subscription",
     "refund",
     "create_checkout_session",
+    "iter_master_events",
     "register_route",
     "register_override",
     "register_strategy",

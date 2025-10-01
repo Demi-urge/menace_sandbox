@@ -14,6 +14,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+try:  # pragma: no cover - optional dependency during bootstrap
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort import
+    stripe_billing_router = None  # type: ignore
+
 try:  # resolve path dynamically when available
     from dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - optional dependency
