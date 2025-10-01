@@ -69,13 +69,13 @@ from .revenue_amplifier import (
 from .bot_db_utils import wrap_bot_methods
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .unified_event_bus import UnifiedEventBus
-from .bot_registry import BotRegistry
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_planner import ActionPlanner
 from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_registry import BotRegistry
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
@@ -184,7 +184,7 @@ class ModelAutomationPipeline:
         action_planner: "ActionPlanner" | None = None,
         *,
         event_bus: UnifiedEventBus | None = None,
-        bot_registry: BotRegistry | None = None,
+        bot_registry: "BotRegistry | None" = None,
         context_builder: ContextBuilder,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -275,7 +275,11 @@ class ModelAutomationPipeline:
         self.reinvestment_bot = reinvestment_bot or AutoReinvestmentBot()
         self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
         self.allocation_bot = allocation_bot or CapitalAllocationBot()
-        self.bot_registry = bot_registry or BotRegistry()
+        if bot_registry is None:
+            from .bot_registry import BotRegistry as _BotRegistry
+
+            bot_registry = _BotRegistry()
+        self.bot_registry = bot_registry
         self.event_bus = event_bus
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
