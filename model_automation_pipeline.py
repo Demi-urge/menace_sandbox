@@ -77,7 +77,8 @@ from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
-    from .information_synthesis_bot import InformationSynthesisBot, SynthesisTask
+    from .information_synthesis_bot import InformationSynthesisBot
+    from .synthesis_models import SynthesisTask
 else:  # pragma: no cover - runtime fallback
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
@@ -86,7 +87,7 @@ else:  # pragma: no cover - runtime fallback
 def _create_synthesis_task(**kwargs: Any) -> "SynthesisTask":
     """Construct :class:`SynthesisTask` without importing at module import time."""
 
-    from .information_synthesis_bot import SynthesisTask
+    from .synthesis_models import SynthesisTask
 
     return SynthesisTask(**kwargs)
 

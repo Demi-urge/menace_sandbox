@@ -11,7 +11,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from typing import List, Iterable
 import os
 import logging
@@ -71,24 +71,7 @@ except Exception:  # pragma: no cover - optional dependency
     ValidationError = SimpleValidationError
 
 
-@dataclass
-class DataRequest:
-    """Request for additional data from Stage 2 bots."""
-
-    table: str
-    field: str
-    reason: str
-    priority: int = 1
-
-
-@dataclass
-class SynthesisTask:
-    """Actionable task for Stage 4 planning."""
-
-    description: str
-    urgency: int
-    complexity: int
-    category: str
+from .synthesis_models import DataRequest, SynthesisTask
 
 
 def send_to_task_manager(task: SynthesisTask) -> None:
