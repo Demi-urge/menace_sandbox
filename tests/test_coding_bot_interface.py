@@ -85,6 +85,19 @@ class DummyRegistry:
         self.updated.append((name, module_path))
 
 
+class ProvenanceRegistry(DummyRegistry):
+    def __init__(self):
+        super().__init__()
+        self.provenance_updates = []
+        self.attempts = 0
+
+    def update_bot(self, name, module_path, *, patch_id=None, commit=None):
+        self.attempts += 1
+        if patch_id is None or commit is None:
+            raise RuntimeError("patch provenance required")
+        self.provenance_updates.append((name, module_path, patch_id, commit))
+
+
 class DummyDB:
     def __init__(self):
         self.logged = []
@@ -193,4 +206,40 @@ def test_thresholds_loaded_on_init():
 
     Bot()
     assert "loader" in data_bot._thresholds
+
+
+def test_skips_provenance_update_when_metadata_missing():
+    registry = ProvenanceRegistry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "provless"
+
+        def __init__(self):
+            pass
+
+    Bot()
+    assert registry.registered == ["provless"]
+    assert registry.provenance_updates == []
+    assert registry.attempts == 0
+
+
+def test_uses_manager_provenance_for_update():
+    registry = ProvenanceRegistry()
+    data_bot = DummyDataBot()
+    manager = DummyManager(bot_registry=registry, data_bot=data_bot)
+    manager._last_patch_id = 123
+    manager._last_commit_hash = "deadbeef"
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+    class Bot:
+        name = "provbot"
+
+        def __init__(self):
+            pass
+
+    Bot()
+    assert [update[0] for update in registry.provenance_updates] == ["provbot"]
+    assert registry.provenance_updates[0][2:] == (123, "deadbeef")
 

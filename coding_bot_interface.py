@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 from functools import wraps
 import inspect
+import json
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
@@ -274,10 +275,71 @@ def self_coding_managed(
                 )
             except TypeError:
                 bot_registry.register_bot(name, is_coding_bot=True)
+        update_kwargs: dict[str, Any] = {}
+        should_update = True
         try:
-            bot_registry.update_bot(name, module_path)
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("bot update failed for %s", name)
+            update_sig = inspect.signature(bot_registry.update_bot)
+        except (AttributeError, TypeError, ValueError):  # pragma: no cover - best effort
+            update_sig = None
+
+        if update_sig is not None:
+            params = update_sig.parameters
+            expects_provenance = "patch_id" in params and "commit" in params
+        else:  # pragma: no cover - defensive default
+            expects_provenance = False
+
+        if expects_provenance:
+            patch_id = None
+            commit = None
+            manager_sources = []
+            if manager is not None:
+                manager_sources.append(manager)
+            try:
+                ctx_manager = MANAGER_CONTEXT.get(None)
+            except LookupError:  # pragma: no cover - defensive
+                ctx_manager = None
+            if ctx_manager is not None and ctx_manager not in manager_sources:
+                manager_sources.append(ctx_manager)
+
+            for candidate in manager_sources:
+                patch_id = patch_id or getattr(candidate, "_last_patch_id", None)
+                commit = commit or getattr(candidate, "_last_commit_hash", None)
+                if patch_id is not None and commit is not None:
+                    break
+
+            if patch_id is not None and commit is None:
+                try:  # pragma: no cover - best effort metadata recovery
+                    from .patch_provenance import PatchProvenanceService
+
+                    service = PatchProvenanceService()
+                    record = service.db.get(patch_id)
+                    summary = getattr(record, "summary", None)
+                    if summary:
+                        try:
+                            commit = json.loads(summary).get("commit")
+                        except Exception:
+                            commit = None
+                except Exception:
+                    logger.debug(
+                        "failed to backfill provenance for %s", name,
+                        exc_info=True,
+                    )
+
+            if patch_id is not None and commit is not None:
+                update_kwargs["patch_id"] = patch_id
+                update_kwargs["commit"] = commit
+            else:
+                should_update = False
+                logger.info(
+                    "skipping bot update for %s due to missing provenance metadata",
+                    name,
+                )
+
+        if should_update:
+            try:
+                bot_registry.update_bot(name, module_path, **update_kwargs)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("bot update failed for %s", name)
 
         cls.bot_registry = bot_registry  # type: ignore[attr-defined]
         cls.data_bot = data_bot  # type: ignore[attr-defined]
