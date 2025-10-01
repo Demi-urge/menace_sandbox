@@ -28,7 +28,6 @@ except Exception:  # pragma: no cover - optional dependency
         ValidationError,
     )
 
-from .information_synthesis_bot import InformationSynthesisBot, SynthesisTask
 from .task_validation_bot import TaskValidationBot
 from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
 from .hierarchy_assessment_bot import HierarchyAssessmentBot
@@ -78,9 +77,18 @@ from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
+    from .information_synthesis_bot import InformationSynthesisBot, SynthesisTask
 else:  # pragma: no cover - runtime fallback
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
+
+
+def _create_synthesis_task(**kwargs: Any) -> "SynthesisTask":
+    """Construct :class:`SynthesisTask` without importing at module import time."""
+
+    from .information_synthesis_bot import SynthesisTask
+
+    return SynthesisTask(**kwargs)
 
 
 class _LazyAggregator:
@@ -131,7 +139,7 @@ class ModelAutomationPipeline:
     def __init__(
         self,
         aggregator: ResearchAggregatorBot | None = None,
-        synthesis_bot: InformationSynthesisBot | None = None,
+        synthesis_bot: "InformationSynthesisBot" | None = None,
         validator: TaskValidationBot | None = None,
         planner: BotPlanningBot | None = None,
         hierarchy: HierarchyAssessmentBot | None = None,
@@ -193,12 +201,16 @@ class ModelAutomationPipeline:
             )
         self.aggregator = aggregator
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
-        self.synthesis_bot = synthesis_bot or InformationSynthesisBot(
-            aggregator=self.aggregator,
-            workflow_db=self.workflow_db,
-            event_bus=event_bus,
-            context_builder=self.context_builder,
-        )
+        if synthesis_bot is None:
+            from .information_synthesis_bot import InformationSynthesisBot
+
+            synthesis_bot = InformationSynthesisBot(
+                aggregator=self.aggregator,
+                workflow_db=self.workflow_db,
+                event_bus=event_bus,
+                context_builder=self.context_builder,
+            )
+        self.synthesis_bot = synthesis_bot
         self.validator = validator or TaskValidationBot([])
         self.planner = planner or BotPlanningBot()
         self.hierarchy = hierarchy or HierarchyAssessmentBot()
@@ -359,7 +371,7 @@ class ModelAutomationPipeline:
                         steps.append(step)
         return steps
 
-    def _items_to_tasks(self, items: Iterable[ResearchItem]) -> List[SynthesisTask]:
+    def _items_to_tasks(self, items: Iterable[ResearchItem]) -> List["SynthesisTask"]:
         data = [
             {"id": it.item_id or 0, "name": it.title or it.topic, "content": it.content}
             for it in items
@@ -378,12 +390,14 @@ class ModelAutomationPipeline:
 
     # ------------------------------------------------------------------
 
-    def _validate_tasks(self, tasks: Iterable[SynthesisTask]) -> List[SynthesisTask]:
+    def _validate_tasks(
+        self, tasks: Iterable["SynthesisTask"]
+    ) -> List["SynthesisTask"]:
         return self.validator.validate_tasks(list(tasks))
 
     def _plan_bots(
         self,
-        tasks: Iterable[SynthesisTask],
+        tasks: Iterable["SynthesisTask"],
         *,
         trust_weight: float = 1.0,
     ) -> List[BotPlan]:
@@ -406,9 +420,9 @@ class ModelAutomationPipeline:
                 self.logger.exception("action planner failed: %s", exc)
         return self.planner.plan_bots(planning, trust_weight=trust_weight)
 
-    def _validate_plan(self, plans: Iterable[BotPlan]) -> List[SynthesisTask]:
+    def _validate_plan(self, plans: Iterable[BotPlan]) -> List["SynthesisTask"]:
         tasks = [
-            SynthesisTask(
+            _create_synthesis_task(
                 description=p.name,
                 urgency=1,
                 complexity=1,
@@ -589,7 +603,7 @@ class ModelAutomationPipeline:
         tasks = self._items_to_tasks(items)
         for wf in reuse_workflows:
             tasks.append(
-                SynthesisTask(
+                _create_synthesis_task(
                     description=f"Reuse workflow {wf}",
                     urgency=1,
                     complexity=1,
@@ -597,7 +611,7 @@ class ModelAutomationPipeline:
                 )
             )
         tasks.append(
-            SynthesisTask(
+            _create_synthesis_task(
                 description=f"Complete {model}",
                 urgency=1,
                 complexity=1,
