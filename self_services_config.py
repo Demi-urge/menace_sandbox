@@ -54,38 +54,47 @@ class SelfLearningConfig(BaseSettings):
 
     @field_validator("prune_interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_prune_interval(
-        cls,
-        v: int,
-        values: Mapping[str, Any] | None = None,
-        config: Any | None = None,
-        field: Any | None = None,
-        info: Any | None = None,
-    ) -> int:
+    def _validate_prune_interval(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("prune_interval must be positive")
         return v
 
-    @field_validator("persist_events", "persist_progress", **FIELD_VALIDATOR_KWARGS)
-    @classmethod
-    def _validate_parent_exists(
-        cls,
-        v: Path | None,
-        values: Mapping[str, Any] | None = None,
-        config: Any | None = None,
-        field: Any | None = None,
-        info: Any | None = None,
-    ) -> Path | None:
-        if v is not None and not v.parent.exists():
-            field_name = None
-            if info is not None:
-                field_name = getattr(info, "field_name", None)
-            if field_name is None and field is not None:
-                field_name = getattr(field, "alias", None) or getattr(field, "name", None)
-            if field_name is None:
-                field_name = "value"
-            raise ValueError(f"{field_name} directory does not exist: {v.parent}")
-        return v
+    @staticmethod
+    def _get_field_name(field: Any | None = None, info: Any | None = None) -> str:
+        field_name = None
+        if info is not None:
+            field_name = getattr(info, "field_name", None)
+        if field_name is None and field is not None:
+            field_name = getattr(field, "alias", None) or getattr(field, "name", None)
+        if field_name is None:
+            field_name = "value"
+        return field_name
+
+    if PYDANTIC_V2:
+
+        @field_validator("persist_events", "persist_progress", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_parent_exists(cls, v: Path | None, info: Any) -> Path | None:  # pragma: no cover - runtime sig differs per version
+            if v is not None and not v.parent.exists():
+                field_name = cls._get_field_name(info=info)
+                raise ValueError(f"{field_name} directory does not exist: {v.parent}")
+            return v
+
+    else:  # pragma: no cover - pydantic v1 fallback
+
+        @field_validator("persist_events", "persist_progress", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_parent_exists(
+            cls,
+            v: Path | None,
+            values: Mapping[str, Any] | None = None,
+            config: Any | None = None,
+            field: Any | None = None,
+        ) -> Path | None:
+            if v is not None and not v.parent.exists():
+                field_name = cls._get_field_name(field=field)
+                raise ValueError(f"{field_name} directory does not exist: {v.parent}")
+            return v
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
     if not PYDANTIC_V2:  # pragma: no cover - pydantic v1 fallback
@@ -108,33 +117,49 @@ class SelfTestConfig(BaseSettings):
         description="Directory used to store self-test reports.",
     )
 
-    @field_validator("lock_file", **FIELD_VALIDATOR_KWARGS)
-    @classmethod
-    def _validate_lock_parent(
-        cls,
-        v: Path,
-        values: Mapping[str, Any] | None = None,
-        config: Any | None = None,
-        field: Any | None = None,
-        info: Any | None = None,
-    ) -> Path:
-        if not v.parent.exists():
-            raise ValueError(f"lock file directory does not exist: {v.parent}")
-        return v
+    if PYDANTIC_V2:
 
-    @field_validator("report_dir", **FIELD_VALIDATOR_KWARGS)
-    @classmethod
-    def _validate_report_dir(
-        cls,
-        v: Path,
-        values: Mapping[str, Any] | None = None,
-        config: Any | None = None,
-        field: Any | None = None,
-        info: Any | None = None,
-    ) -> Path:
-        if not v.exists():
-            raise ValueError(f"report_dir does not exist: {v}")
-        return v
+        @field_validator("lock_file", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_lock_parent(cls, v: Path, info: Any) -> Path:  # pragma: no cover - runtime sig differs per version
+            if not v.parent.exists():
+                raise ValueError(f"lock file directory does not exist: {v.parent}")
+            return v
+
+        @field_validator("report_dir", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_report_dir(cls, v: Path, info: Any) -> Path:  # pragma: no cover - runtime sig differs per version
+            if not v.exists():
+                raise ValueError(f"report_dir does not exist: {v}")
+            return v
+
+    else:  # pragma: no cover - pydantic v1 fallback
+
+        @field_validator("lock_file", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_lock_parent(
+            cls,
+            v: Path,
+            values: Mapping[str, Any] | None = None,
+            config: Any | None = None,
+            field: Any | None = None,
+        ) -> Path:
+            if not v.parent.exists():
+                raise ValueError(f"lock file directory does not exist: {v.parent}")
+            return v
+
+        @field_validator("report_dir", **FIELD_VALIDATOR_KWARGS)
+        @classmethod
+        def _validate_report_dir(
+            cls,
+            v: Path,
+            values: Mapping[str, Any] | None = None,
+            config: Any | None = None,
+            field: Any | None = None,
+        ) -> Path:
+            if not v.exists():
+                raise ValueError(f"report_dir does not exist: {v}")
+            return v
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
     if not PYDANTIC_V2:  # pragma: no cover - pydantic v1 fallback
         class Config:  # type: ignore[no-redef]
@@ -158,14 +183,7 @@ class RepoScanConfig(BaseSettings):
 
     @field_validator("interval", **FIELD_VALIDATOR_KWARGS)
     @classmethod
-    def _validate_interval(
-        cls,
-        v: int,
-        values: Mapping[str, Any] | None = None,
-        config: Any | None = None,
-        field: Any | None = None,
-        info: Any | None = None,
-    ) -> int:
+    def _validate_interval(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("interval must be positive")
         return v
