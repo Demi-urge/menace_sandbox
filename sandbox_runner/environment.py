@@ -1600,6 +1600,10 @@ _FAILED_CLEANUP_ALERT_AGE = 0.0
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
 _PURGE_FILE_LOCK = FileLock(str(POOL_LOCK_FILE) + ".purge")
 
+# timeout used when acquiring the pool file lock during cleanup to avoid
+# crashing when another process already holds it.
+_POOL_LOCK_ACQUIRE_TIMEOUT = 30.0
+
 # locks protecting active container and overlay records
 _ACTIVE_CONTAINERS_LOCK = FileLock(str(_ACTIVE_CONTAINERS_FILE) + ".lock")
 _ACTIVE_OVERLAYS_LOCK = FileLock(str(_ACTIVE_OVERLAYS_FILE) + ".lock")
@@ -3689,7 +3693,13 @@ async def _reaper_worker() -> None:
 def _cleanup_pools() -> None:
     """Stop and remove pooled containers and stale ones."""
     global _CLEANUP_TASK, _REAPER_TASK
-    _POOL_FILE_LOCK.acquire()
+    try:
+        _POOL_FILE_LOCK.acquire(timeout=_POOL_LOCK_ACQUIRE_TIMEOUT)
+    except Timeout:
+        logger.warning(
+            "skipping pool cleanup because the pool lock is held by another process"
+        )
+        return
     try:
         stop_container_event_listener()
         if _CLEANUP_TASK:

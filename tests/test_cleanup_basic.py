@@ -82,3 +82,19 @@ def test_stale_containers_removed(monkeypatch):
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     env._cleanup_pools()
     assert removed == ["abc"]
+
+
+def test_cleanup_pool_lock_timeout(monkeypatch):
+    class DummyLock:
+        def acquire(self, timeout=None):
+            raise env.Timeout("locked")
+
+    releases: list[bool] = []
+    monkeypatch.setattr(env, "_release_pool_lock", lambda: releases.append(True))
+    monkeypatch.setattr(env, "_POOL_FILE_LOCK", DummyLock())
+
+    # should not raise even though the lock cannot be acquired
+    env._cleanup_pools()
+
+    # lock was never acquired, so release should not be attempted
+    assert not releases
