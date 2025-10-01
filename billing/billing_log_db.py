@@ -6,6 +6,11 @@ from dataclasses import dataclass
 import sqlite3
 from pathlib import Path
 
+try:  # pragma: no cover - optional dependency during bootstrap
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort import
+    stripe_billing_router = None  # type: ignore
+
 try:  # pragma: no cover - resolve_path is optional
     from dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - if dynamic_path_router missing

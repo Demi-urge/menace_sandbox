@@ -20,6 +20,7 @@ from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
 from typing import TYPE_CHECKING, Any, Dict
+from . import stripe_billing_router  # noqa: F401
 from context_builder_util import create_context_builder, ensure_fresh_weights
 from retry_utils import with_retry
 try:  # pragma: no cover - optional dependency

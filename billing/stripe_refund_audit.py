@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Iterable, Tuple
 
-import stripe
+import stripe_billing_router
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from billing.billing_logger import _get_connection as _ledger_connection, log_event
@@ -53,16 +52,16 @@ def _extract_bot_id(obj: dict) -> str:
     return str(meta.get("bot_id") or meta.get("bot") or "")
 
 
-def _iter_recent_events(hours: int) -> Iterable[stripe.Event]:
-    api_key = os.getenv("STRIPE_API_KEY")
-    if not api_key:
-        raise RuntimeError("STRIPE_API_KEY not set")
-    stripe.api_key = api_key
+def _iter_recent_events(hours: int) -> Iterable[object]:
     since = int((datetime.utcnow() - timedelta(hours=hours)).timestamp())
-    return stripe.Event.list(
-        types=["charge.refunded", "charge.failed", "payment_intent.payment_failed"],
+    return stripe_billing_router.iter_master_events(
+        event_types=[
+            "charge.refunded",
+            "charge.failed",
+            "payment_intent.payment_failed",
+        ],
         created={"gte": since},
-    ).auto_paging_iter()
+    )
 
 
 def audit_recent_events(hours: int = 24) -> None:
@@ -72,7 +71,7 @@ def audit_recent_events(hours: int = 24) -> None:
     ``stripe_ledger`` or ``billing_logs`` are logged with ``error=1``.
     """
     approved = _approved_bot_names()
-    missing: list[Tuple[stripe.Event, str, str]] = []
+    missing: list[Tuple[object, str, str]] = []
     for event in _iter_recent_events(hours):
         obj = event.data.object.to_dict() if hasattr(event.data.object, "to_dict") else dict(event.data.object)
         bot_id = _extract_bot_id(obj)
