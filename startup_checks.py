@@ -11,12 +11,40 @@ from pathlib import Path
 from typing import Iterable, Dict, Sequence
 import logging
 
-from .audit_trail import AuditTrail
+try:  # pragma: no cover - prefer package relative imports
+    from .audit_trail import AuditTrail
+except ImportError as exc:  # pragma: no cover - fallback for script execution
+    try:
+        from audit_trail import AuditTrail  # type: ignore
+    except ImportError as inner_exc:
+        class _MissingAuditTrail:  # pragma: no cover - informative stub
+            """Placeholder surfaced when optional crypto dependency is absent."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                raise ModuleNotFoundError(
+                    "cryptography is required for audit log verification; "
+                    "install menace_sandbox[security] to enable this feature"
+                ) from inner_exc
+
+        AuditTrail = _MissingAuditTrail  # type: ignore
 
 import tomllib
 
-from .dependency_verifier import verify_dependencies, verify_modules
-from .dynamic_path_router import resolve_path
+try:  # pragma: no cover - prefer package relative imports
+    from .dependency_verifier import verify_dependencies, verify_modules
+except ImportError as exc:  # pragma: no cover - fallback for script execution
+    try:
+        from dependency_verifier import verify_dependencies, verify_modules  # type: ignore
+    except ImportError:
+        raise exc
+
+try:  # pragma: no cover - prefer package relative imports
+    from .dynamic_path_router import resolve_path
+except ImportError as exc:  # pragma: no cover - fallback for script execution
+    try:
+        from dynamic_path_router import resolve_path  # type: ignore
+    except ImportError:
+        raise exc
 
 logger = logging.getLogger(__name__)
 
