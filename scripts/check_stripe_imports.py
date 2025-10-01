@@ -27,8 +27,19 @@ import re
 import sys
 from pathlib import Path
 
-from dynamic_path_router import get_project_root, resolve_path
-from stripe_detection import HTTP_LIBRARIES, contains_payment_keyword
+try:  # pragma: no cover - prefer package relative imports
+    from menace_sandbox.dynamic_path_router import get_project_root, resolve_path
+    from menace_sandbox.stripe_detection import (
+        HTTP_LIBRARIES,
+        contains_payment_keyword,
+    )
+except ImportError:  # pragma: no cover - fallback for script execution
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from dynamic_path_router import get_project_root, resolve_path  # type: ignore
+    from stripe_detection import (  # type: ignore
+        HTTP_LIBRARIES,
+        contains_payment_keyword,
+    )
 
 REPO_ROOT = get_project_root()
 
