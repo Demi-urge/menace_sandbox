@@ -5,9 +5,34 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from importlib import import_module
 from pathlib import Path
+from typing import Callable, Tuple
 
-from dynamic_path_router import get_project_root, resolve_path
+PathLoader = Callable[[], Path]
+PathResolver = Callable[..., Path]
+
+
+def _load_path_router() -> Tuple[PathLoader, PathResolver]:
+    """Load ``dynamic_path_router`` regardless of how the script is invoked."""
+
+    try:  # Prefer the globally available module if the path is already set up.
+        from dynamic_path_router import get_project_root, resolve_path  # type: ignore
+        return get_project_root, resolve_path
+    except ModuleNotFoundError:
+        pass
+
+    # When executed via ``python scripts/check_raw_stripe_usage.py`` the project
+    # root is not automatically added to ``sys.path``. Import the package module
+    # explicitly so the script works in both scenarios.
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    module = import_module("menace_sandbox.dynamic_path_router")
+    return module.get_project_root, module.resolve_path
+
+
+get_project_root, resolve_path = _load_path_router()
 from stripe_detection import PAYMENT_KEYWORDS
 
 REPO_ROOT = get_project_root()
