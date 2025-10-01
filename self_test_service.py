@@ -167,16 +167,42 @@ except Exception:  # pragma: no cover - fallback when metrics unavailable
     def compute_entropy_delta(code_diversity, token_complexity):  # type: ignore
         return 0.0, 0.0
 
-try:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from .data_bot import DataBot
     from .error_bot import ErrorDB
     from .error_logger import ErrorLogger
     from .knowledge_graph import KnowledgeGraph
-except Exception:  # pragma: no cover - fallback when imported directly
-    from data_bot import DataBot  # type: ignore
-    from error_bot import ErrorDB  # type: ignore
-    from error_logger import ErrorLogger  # type: ignore
-    from knowledge_graph import KnowledgeGraph  # type: ignore
+
+_ERROR_LOGGER_CLS: type | None = None
+_KNOWLEDGE_GRAPH_CLS: type | None = None
+
+
+def _load_error_logger_cls() -> type:
+    """Return the :class:`ErrorLogger` implementation, importing lazily."""
+
+    global _ERROR_LOGGER_CLS
+    if _ERROR_LOGGER_CLS is None:
+        try:  # pragma: no cover - prefer package import when available
+            from .error_logger import ErrorLogger as _ErrorLogger
+        except Exception:  # pragma: no cover - fallback for flat layout
+            from error_logger import ErrorLogger as _ErrorLogger  # type: ignore
+        _ERROR_LOGGER_CLS = _ErrorLogger
+    return _ERROR_LOGGER_CLS
+
+
+def _load_knowledge_graph_cls() -> type:
+    """Return the :class:`KnowledgeGraph` implementation, importing lazily."""
+
+    global _KNOWLEDGE_GRAPH_CLS
+    if _KNOWLEDGE_GRAPH_CLS is None:
+        try:  # pragma: no cover - prefer package import when available
+            from .knowledge_graph import KnowledgeGraph as _KnowledgeGraph
+        except Exception:  # pragma: no cover - fallback for flat layout
+            from knowledge_graph import KnowledgeGraph as _KnowledgeGraph  # type: ignore
+        _KNOWLEDGE_GRAPH_CLS = _KnowledgeGraph
+    return _KNOWLEDGE_GRAPH_CLS
 
 try:
     from .auto_env_setup import get_recursive_isolated, set_recursive_isolated
@@ -610,7 +636,9 @@ class SelfTestService:
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.graph = graph or KnowledgeGraph()
+        KnowledgeGraphCls = _load_knowledge_graph_cls()
+        ErrorLoggerCls = _load_error_logger_cls()
+        self.graph = graph or KnowledgeGraphCls()
         if not isinstance(context_builder, ContextBuilder):
             raise TypeError("context_builder must be a ContextBuilder instance")
         try:
@@ -620,7 +648,7 @@ class SelfTestService:
                 "provided ContextBuilder cannot query local databases"
             ) from exc
         self.context_builder = context_builder
-        self.error_logger = ErrorLogger(
+        self.error_logger = ErrorLoggerCls(
             db, knowledge_graph=self.graph, context_builder=self.context_builder
         )
         self.data_bot = data_bot
