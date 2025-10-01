@@ -69,8 +69,6 @@ try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - provide stub when unavailable
     RollbackManager = None  # type: ignore
-from .self_improvement.baseline_tracker import BaselineTracker
-from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings, normalize_workflow_tests
 from .patch_attempt_tracker import PatchAttemptTracker
 from .threshold_service import (
@@ -178,6 +176,37 @@ except Exception:  # pragma: no cover - fallback for flat layout
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .enhancement_classifier import EnhancementClassifier
     from .evolution_orchestrator import EvolutionOrchestrator
+    from .self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
+    from .self_improvement.target_region import TargetRegion as _TargetRegion
+else:  # pragma: no cover - runtime stubs avoid circular imports
+    _BaselineTracker = Any  # type: ignore[misc, assignment]
+    _TargetRegion = Any  # type: ignore[misc, assignment]
+
+
+_BASELINE_TRACKER_CLS: type[_BaselineTracker] | None = None
+_TARGET_REGION_CLS: type[_TargetRegion] | None = None
+
+
+def _get_baseline_tracker_cls() -> type[_BaselineTracker]:
+    """Import ``BaselineTracker`` lazily to avoid circular imports."""
+
+    global _BASELINE_TRACKER_CLS
+    if _BASELINE_TRACKER_CLS is None:
+        from .self_improvement.baseline_tracker import BaselineTracker as _LoadedBaselineTracker
+
+        _BASELINE_TRACKER_CLS = _LoadedBaselineTracker
+    return _BASELINE_TRACKER_CLS
+
+
+def _get_target_region_cls() -> type[_TargetRegion]:
+    """Import ``TargetRegion`` lazily to avoid circular imports."""
+
+    global _TARGET_REGION_CLS
+    if _TARGET_REGION_CLS is None:
+        from .self_improvement.target_region import TargetRegion as _LoadedTargetRegion
+
+        _TARGET_REGION_CLS = _LoadedTargetRegion
+    return _TARGET_REGION_CLS
 
 
 class PatchApprovalPolicy:
@@ -322,7 +351,8 @@ class SelfCodingManager:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
             except Exception:
                 baseline_window = 5
-        self.baseline_tracker = BaselineTracker(
+        baseline_tracker_cls = _get_baseline_tracker_cls()
+        self.baseline_tracker = baseline_tracker_cls(
             window=int(baseline_window), metrics=["confidence"]
         )
         try:
@@ -2245,7 +2275,8 @@ class SelfCodingManager:
                                 self.logger.exception("failed to record retry status")
                         raise RuntimeError("similar failure detected")
                 if target_region is not None:
-                    func_region = func_region or TargetRegion(
+                    target_region_cls = _get_target_region_cls()
+                    func_region = func_region or target_region_cls(
                         file=target_region.file,
                         start_line=0,
                         end_line=0,
@@ -2425,7 +2456,8 @@ class SelfCodingManager:
                 region_obj = parsed.get("target_region")
                 if target_region is None and region_obj is not None:
                     try:
-                        target_region = TargetRegion(
+                        target_region_cls = _get_target_region_cls()
+                        target_region = target_region_cls(
                             file=getattr(
                                 region_obj,
                                 "file",
@@ -2460,7 +2492,8 @@ class SelfCodingManager:
                 record_failure(fingerprint, self.failure_store)
 
                 if target_region is not None and func_region is None:
-                    func_region = TargetRegion(
+                    target_region_cls = _get_target_region_cls()
+                    func_region = target_region_cls(
                         file=target_region.file,
                         start_line=0,
                         end_line=0,
