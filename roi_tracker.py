@@ -97,12 +97,36 @@ except Exception:  # pragma: no cover - allow operation without DB
     ROIResultsDB = None  # type: ignore
 LOCAL_TABLES.add("workflow_module_deltas")
 
-try:  # pragma: no cover - optional dependency
-    from . import self_test_service as _sts
-except ImportError:  # pragma: no cover - fallback when executed directly
-    import self_test_service as _sts  # type: ignore
-except Exception:  # pragma: no cover - self-test service may be absent
-    _sts = None
+from importlib import import_module
+from types import ModuleType
+
+_SELF_TEST_SERVICE: ModuleType | None = None
+_SELF_TEST_SERVICE_FAILED = False
+
+
+def _get_self_test_service() -> ModuleType | None:
+    """Return the lazily imported :mod:`self_test_service` module."""
+
+    global _SELF_TEST_SERVICE, _SELF_TEST_SERVICE_FAILED
+
+    if _SELF_TEST_SERVICE is not None or _SELF_TEST_SERVICE_FAILED:
+        return _SELF_TEST_SERVICE
+
+    candidates = []
+    if __package__:
+        candidates.append(f"{__package__}.self_test_service")
+    candidates.append("self_test_service")
+
+    for name in candidates:
+        try:
+            module = import_module(name)
+        except Exception:
+            continue
+        _SELF_TEST_SERVICE = module
+        return module
+
+    _SELF_TEST_SERVICE_FAILED = True
+    return None
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
 except ImportError:  # pragma: no cover - fallback when executed directly
@@ -1967,9 +1991,10 @@ class ROITracker:
                         tests[key] = val
             failing = [name for name, passed in tests.items() if not passed]
             self._last_test_failures = failing
-            if _sts is not None:
+            sts_module = _get_self_test_service()
+            if sts_module is not None:
                 try:
-                    _sts.set_failed_critical_tests(failing)
+                    sts_module.set_failed_critical_tests(failing)
                 except Exception:
                     pass
 
@@ -4026,13 +4051,17 @@ class ROITracker:
                 ]
             else:
                 failures = [str(f).lower() for f in failing_tests]
-        elif _sts is not None:
-            try:
-                failures = [str(f).lower() for f in _sts.get_failed_critical_tests()]
-            except Exception:
-                failures = []
         else:
-            failures = []
+            sts_module = _get_self_test_service()
+            if sts_module is not None:
+                try:
+                    failures = [
+                        str(f).lower() for f in sts_module.get_failed_critical_tests()
+                    ]
+                except Exception:
+                    failures = []
+            else:
+                failures = []
         for name in failures:
             key = f"{name}_failures"
             safety_metrics[key] = safety_metrics.get(key, 0.0) + 1.0
