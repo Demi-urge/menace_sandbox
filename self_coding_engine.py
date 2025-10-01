@@ -224,22 +224,36 @@ except Exception as exc:  # pragma: no cover - fail fast when dependency missing
         " install the vector_service package to enable self-coding"
     ) from exc
 
-try:  # pragma: no cover - required for payment integration checks
-    _stripe_billing_router = load_internal("stripe_billing_router")
-except ModuleNotFoundError:  # pragma: no cover - optional
-    stripe_billing_router = None  # type: ignore[assignment]
-    stripe = None  # type: ignore[assignment]
-except Exception:  # pragma: no cover - optional
+try:  # pragma: no cover - prefer module import for payment integrations
+    import stripe_billing_router  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
     stripe_billing_router = None  # type: ignore[assignment]
     stripe = None  # type: ignore[assignment]
 else:
-    stripe_billing_router = _stripe_billing_router
     try:  # pragma: no cover - prefer router-managed Stripe import
         from stripe_billing_router import stripe as _stripe  # type: ignore
     except Exception:  # pragma: no cover - degrade gracefully when unavailable
         stripe = getattr(stripe_billing_router, "stripe", None)  # type: ignore[assignment]
     else:
         stripe = _stripe
+
+if stripe_billing_router is None:
+    try:  # pragma: no cover - required for payment integration checks
+        _stripe_billing_router = load_internal("stripe_billing_router")
+    except ModuleNotFoundError:  # pragma: no cover - optional
+        stripe_billing_router = None  # type: ignore[assignment]
+        stripe = None  # type: ignore[assignment]
+    except Exception:  # pragma: no cover - optional
+        stripe_billing_router = None  # type: ignore[assignment]
+        stripe = None  # type: ignore[assignment]
+    else:
+        stripe_billing_router = _stripe_billing_router
+        try:  # pragma: no cover - prefer router-managed Stripe import
+            from stripe_billing_router import stripe as _stripe  # type: ignore
+        except Exception:  # pragma: no cover - degrade gracefully when unavailable
+            stripe = getattr(stripe_billing_router, "stripe", None)  # type: ignore[assignment]
+        else:
+            stripe = _stripe
 
 try:  # pragma: no cover - optional ROI tracking
     ROITracker = load_internal("roi_tracker").ROITracker
