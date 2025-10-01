@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-
 from .coding_bot_interface import self_coding_managed
+from .data_bot import DataBot
 import random
 import logging
 
@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple, Iterable as TIterable
-
 from typing import TYPE_CHECKING
-
-from .data_bot import DataBot
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
