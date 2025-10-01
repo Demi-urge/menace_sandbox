@@ -15,7 +15,31 @@ from typing import Any, Callable, Iterable
 from logging_utils import get_logger, set_correlation_id, log_record
 
 from packaging.version import Version
-from dynamic_path_router import resolve_path, repo_root, path_for_prompt
+try:  # pragma: no cover - exercised implicitly in tests
+    import dynamic_path_router as _dynamic_path_router
+except Exception as exc:  # pragma: no cover - critical dependency
+    raise ImportError("dynamic_path_router is required for sandbox bootstrap") from exc
+
+
+def _callable(attr, default):
+    if callable(attr):
+        return attr
+    if attr is None:
+        return default
+    return lambda *_, **__: attr
+
+
+resolve_path = getattr(_dynamic_path_router, "resolve_path")
+_fallback_root = lambda: Path(__file__).resolve().parents[1]  # noqa: E731
+repo_root = _callable(getattr(_dynamic_path_router, "repo_root", None), _fallback_root)
+get_project_root = _callable(
+    getattr(_dynamic_path_router, "get_project_root", None), repo_root
+)
+path_for_prompt = getattr(
+    _dynamic_path_router,
+    "path_for_prompt",
+    lambda name: resolve_path(name).as_posix(),
+)
 
 from menace.auto_env_setup import ensure_env
 from menace.default_config_manager import DefaultConfigManager
