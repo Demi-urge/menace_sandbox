@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Iterable, TYPE_CHECKING
 import threading
 import json
+import sys
+import urllib.error
+import urllib.request
 
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
@@ -149,13 +152,31 @@ class EnvironmentBootstrapper:
             u = url.strip()
             if not u:
                 continue
+            if shutil.which("curl"):
+                try:
+                    subprocess.run(
+                        ["curl", "-I", "--max-time", "5", u],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=True,
+                    )
+                    continue
+                except Exception as exc:
+                    self.logger.debug(
+                        "curl probe failed for %s: %s; falling back to urllib", u, exc
+                    )
             try:
-                subprocess.run(
-                    ["curl", "-I", "--max-time", "2", u],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=True,
-                )
+                request = urllib.request.Request(u, method="HEAD")
+                with urllib.request.urlopen(request, timeout=5):
+                    pass
+            except urllib.error.HTTPError as exc:
+                status = getattr(exc, "code", 0)
+                message = f"remote dependency {u} responded with HTTP {status}"
+                if status >= 500:
+                    self.logger.error(message)
+                    missing = True
+                else:
+                    self.logger.warning(message)
             except Exception as exc:
                 self.logger.error(
                     "remote dependency unreachable: %s - %s", u, exc
@@ -363,7 +384,7 @@ class EnvironmentBootstrapper:
             return
         for req in pkgs:
             try:
-                self._run(["pip", "install", req])
+                self._run([sys.executable, "-m", "pip", "install", req])
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.error("failed installing %s: %s", req, exc)
 

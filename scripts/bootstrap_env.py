@@ -28,6 +28,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "credentials are unavailable during local bootstraps."
         ),
     )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to the environment file that should receive generated "
+            "defaults.  When omitted the bootstrap process falls back to the "
+            "standard discovery rules in bootstrap_defaults."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -47,6 +57,8 @@ def main(argv: list[str] | None = None) -> None:
     os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
     if args.skip_stripe_router:
         os.environ["MENACE_SKIP_STRIPE_ROUTER"] = "1"
+    if args.env_file:
+        os.environ["MENACE_ENV_FILE"] = str(args.env_file.resolve())
 
     from menace.bootstrap_policy import PolicyLoader
     from menace.environment_bootstrap import EnvironmentBootstrapper
@@ -55,7 +67,9 @@ def main(argv: list[str] | None = None) -> None:
     from menace.bootstrap_defaults import ensure_bootstrap_defaults
 
     created, env_file = ensure_bootstrap_defaults(
-        startup_checks.REQUIRED_VARS, repo_root=_REPO_ROOT
+        startup_checks.REQUIRED_VARS,
+        repo_root=_REPO_ROOT,
+        env_file=args.env_file,
     )
     if created:
         logging.getLogger(__name__).info(
