@@ -10,18 +10,34 @@ which reads ``SANDBOX_REPO_URL`` and ``SANDBOX_REPO_PATH`` from environment
 variables or a ``SandboxSettings`` instance.
 """
 
+import signal
+import sys
+import threading
+
 import importlib.util
 import logging
 import os
 import shutil
-import sys
-import signal
 import uuid
 from typing import TYPE_CHECKING
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
+
+
+shutdown_event = threading.Event()
+
+
+def kill_handler(sig, frame):
+    print("\n🔴 Caught interrupt — shutting down Menace cleanly...")
+    shutdown_event.set()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, kill_handler)   # Handles Ctrl+C
+if hasattr(signal, "SIGBREAK"):
+    signal.signal(signal.SIGBREAK, kill_handler) # Handles Ctrl+Break (Windows only)
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
