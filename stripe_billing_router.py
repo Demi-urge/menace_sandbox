@@ -53,6 +53,11 @@ except Exception as exc:  # pragma: no cover - optional dependency
     stripe = None  # type: ignore
     logging.getLogger(__name__).warning("stripe library unavailable: %s", exc)
 
+try:  # optional dependency
+    from dotenv import dotenv_values
+except Exception:  # pragma: no cover - optional dependency
+    dotenv_values = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 _STRIPE_LEDGER = StripeLedger()
@@ -298,6 +303,30 @@ def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
         raise ValueError("Stripe API keys cannot be overridden")
 
 
+def _load_env_file_for_stripe_keys() -> None:
+    """Populate Stripe key environment variables from a ``.env`` file."""
+
+    if dotenv_values is None:
+        return
+
+    env_path = os.getenv("MENACE_ENV_FILE") or ".env"
+    try:
+        values = dotenv_values(env_path)
+    except Exception:  # pragma: no cover - defensive fallback
+        logger.exception("failed to load dotenv file: %s", env_path)
+        return
+
+    if not values:
+        return
+
+    for key in ("STRIPE_SECRET_KEY", "STRIPE_PUBLIC_KEY"):
+        if key in os.environ:
+            continue
+        value = values.get(key)
+        if value:
+            os.environ[key] = value
+
+
 def _load_key(name: str, prefix: str) -> str:
     """Fetch a Stripe key from env or the secret vault and validate it."""
 
@@ -317,6 +346,8 @@ def _load_key(name: str, prefix: str) -> str:
         raise RuntimeError("Test mode Stripe API keys are not permitted")
     return key
 
+
+_load_env_file_for_stripe_keys()
 
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
