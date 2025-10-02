@@ -103,6 +103,24 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     return sbr
 
 
+def test_env_file_provides_stripe_keys(monkeypatch, tmp_path):
+    pytest.importorskip("dotenv")
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("STRIPE_SECRET_KEY=sk_live_env\nSTRIPE_PUBLIC_KEY=pk_live_env\n")
+    monkeypatch.setenv("MENACE_ENV_FILE", str(env_file))
+
+    class RaisingSecrets(dict):
+        def __bool__(self) -> bool:  # pragma: no cover - simple helper
+            return True
+
+        def get(self, key, default=None):  # pragma: no cover - simple helper
+            raise AssertionError(f"vault lookup attempted for {key}")
+
+    sbr = _import_module(monkeypatch, tmp_path, secrets=RaisingSecrets())
+    assert sbr.STRIPE_SECRET_KEY == "sk_live_env"
+    assert sbr.STRIPE_PUBLIC_KEY == "pk_live_env"
+
+
 @pytest.fixture
 def sbr_module(monkeypatch, tmp_path):
     """Return a fresh ``stripe_billing_router`` module for each test."""
