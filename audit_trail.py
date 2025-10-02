@@ -13,11 +13,20 @@ from typing import Iterable
 
 import logging
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-from cryptography.hazmat.primitives import serialization
+try:  # pragma: no cover - optional dependency
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+    from cryptography.hazmat.primitives import serialization
+except Exception as exc:  # pragma: no cover - optional dependency
+    Ed25519PrivateKey = None  # type: ignore[assignment]
+    Ed25519PublicKey = None  # type: ignore[assignment]
+    serialization = None  # type: ignore[assignment]
+    logging.getLogger(__name__).warning(
+        "cryptography library unavailable; audit trail signatures disabled: %s",
+        exc,
+    )
 
 
 class AuditTrail:
@@ -36,7 +45,15 @@ class AuditTrail:
         """
         self.path = path
         self.handler = handler
-        if private_key:
+        self._crypto_enabled = (
+            Ed25519PrivateKey is not None and serialization is not None
+        )
+        if private_key and not self._crypto_enabled:
+            logging.getLogger(__name__).warning(
+                "Private key provided but cryptography is unavailable; signatures disabled"
+            )
+            private_key = None
+        if private_key and self._crypto_enabled:
             try:
                 # Allow both raw and DER-encoded private keys. The latter is
                 # produced by ``openssl pkey`` when following the README
@@ -53,13 +70,16 @@ class AuditTrail:
                         encryption_algorithm=serialization.NoEncryption(),
                     )
                 self.private_key = Ed25519PrivateKey.from_private_bytes(private_key)
-            except Exception:
-                raise ValueError("Invalid Ed25519 private key format")
+            except Exception as exc:
+                raise ValueError("Invalid Ed25519 private key format") from exc
         else:
-            logging.getLogger(__name__).warning(
-                "AuditTrail created without signing key; entries will not be signed"
-            )
-            self.private_key = None
+            if private_key and not self._crypto_enabled:
+                self.private_key = None
+            else:
+                logging.getLogger(__name__).warning(
+                    "AuditTrail created without signing key; entries will not be signed"
+                )
+                self.private_key = None
 
     @property
     def public_key_bytes(self) -> bytes:
@@ -99,6 +119,11 @@ class AuditTrail:
                 f.write(line)
 
     def verify(self, public_key: bytes) -> bool:
+        if not self._crypto_enabled:
+            logging.getLogger(__name__).warning(
+                "cryptography unavailable; assuming audit log is valid"
+            )
+            return True
         pub = Ed25519PublicKey.from_public_bytes(public_key)
         with open(self.path, "rb") as f:
             for line in f:

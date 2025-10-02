@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from .roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN
-from .models import BotRole
+try:  # pragma: no cover - support execution without package context
+    from .roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN
+    from .models import BotRole
+except ImportError:  # pragma: no cover - fallback when imported as script
+    from roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN  # type: ignore
+    from models import BotRole  # type: ignore
 
 logger = logging.getLogger(__name__)
 

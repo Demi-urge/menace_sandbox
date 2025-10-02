@@ -9,7 +9,14 @@ import json
 import base64
 import logging
 
-from .db_router import GLOBAL_ROUTER, init_db_router
+# ``rollback_manager`` needs to function whether it is imported as part of the
+# ``menace_sandbox`` package or executed from a plain source checkout.  Relative
+# imports break in the latter scenario (common during environment bootstrap on
+# Windows) so we provide explicit fallbacks to absolute imports.
+try:  # pragma: no cover - import path handling
+    from .db_router import GLOBAL_ROUTER, init_db_router
+except ImportError:  # pragma: no cover - script execution fallback
+    from db_router import GLOBAL_ROUTER, init_db_router  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("rollback_manager")
 
@@ -18,10 +25,16 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from .audit_trail import AuditTrail
-from .access_control import READ, WRITE, check_permission
-from .unified_event_bus import UnifiedEventBus
-from .governance import evaluate_rules
+try:  # pragma: no cover - import path handling
+    from .audit_trail import AuditTrail
+    from .access_control import READ, WRITE, check_permission
+    from .unified_event_bus import UnifiedEventBus
+    from .governance import evaluate_rules
+except ImportError:  # pragma: no cover - script execution fallback
+    from audit_trail import AuditTrail  # type: ignore
+    from access_control import READ, WRITE, check_permission  # type: ignore
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+    from governance import evaluate_rules  # type: ignore
 
 
 

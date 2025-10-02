@@ -18,9 +18,35 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping
 
 import json
+import logging
 
 from dynamic_path_router import resolve_path
-from .roi_tracker import ROITracker
+
+try:  # pragma: no cover - support execution without package context
+    from .roi_tracker import ROITracker
+except ImportError:
+    try:  # pragma: no cover - fallback when imported as script
+        from roi_tracker import ROITracker  # type: ignore
+    except ImportError as exc:  # pragma: no cover - provide stub
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "ROITracker unavailable; governance rules will use a simplified fallback: %s",
+            exc,
+        )
+
+        class ROITracker:  # type: ignore[override]
+            """Minimal fallback tracker used when heavy dependencies are missing."""
+
+            def calculate_raroi(
+                self,
+                roi: float,
+                *,
+                rollback_prob: float = 0.0,
+                metrics: Mapping[str, Any] | None = None,
+            ) -> tuple[float, float, dict[str, Any]]:
+                base = float(roi)
+                adjusted = base * max(0.0, 1.0 - float(rollback_prob))
+                return base, adjusted, {}
 
 try:  # pragma: no cover - optional dependency in minimal envs
     import yaml
