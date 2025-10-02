@@ -273,6 +273,35 @@ def test_skip_stripe_router_suppresses_optional_stripe_import(monkeypatch, tmp_p
     assert captured["modules"] == []
 
 
+def test_skip_stripe_router_env_prevents_stripe_lookup(monkeypatch):
+    monkeypatch.setenv("MENACE_SKIP_STRIPE_ROUTER", "1")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_live_dummy")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_live_dummy")
+    monkeypatch.setenv("STRIPE_ALLOWED_SECRET_KEYS", "sk_live_dummy")
+    calls = {"count": 0}
+
+    def _record(*args, **kwargs):
+        calls["count"] += 1
+        return {"id": "acct_1H123456789ABCDEF"}
+
+    fake_stripe = types.SimpleNamespace(
+        StripeClient=lambda api_key: types.SimpleNamespace(
+            Account=types.SimpleNamespace(retrieve=_record)
+        ),
+        Account=types.SimpleNamespace(retrieve=_record),
+    )
+    monkeypatch.setitem(sys.modules, "stripe", fake_stripe)
+    monkeypatch.setitem(sys.modules, "scpkg.stripe", fake_stripe)
+    sys.modules.pop("stripe_billing_router", None)
+    sys.modules.pop("scpkg.stripe_billing_router", None)
+
+    module = _load("stripe_billing_router")
+
+    assert calls["count"] == 0
+    assert module._skip_stripe_verification()
+    assert module._allowed_secret_keys() == set()
+
+
 def test_verify_stripe_router_checks(monkeypatch):
     class FakeRegistry:
         def __init__(self, *a, **k):

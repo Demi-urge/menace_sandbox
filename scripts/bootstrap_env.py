@@ -17,11 +17,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from menace.startup_checks import run_startup_checks
-from menace.environment_bootstrap import EnvironmentBootstrapper
-from menace.bootstrap_policy import PolicyLoader
-from menace import startup_checks
-
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -50,6 +45,14 @@ def main(argv: list[str] | None = None) -> None:
     # when optional environment variables are missing.  ``startup_checks``
     # honours ``MENACE_NON_INTERACTIVE`` so set it proactively.
     os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
+    if args.skip_stripe_router:
+        os.environ["MENACE_SKIP_STRIPE_ROUTER"] = "1"
+
+    from menace.bootstrap_policy import PolicyLoader
+    from menace.environment_bootstrap import EnvironmentBootstrapper
+    from menace import startup_checks
+    from menace.startup_checks import run_startup_checks
+
     loader = PolicyLoader()
     auto_install = startup_checks.auto_install_enabled()
     env_requested = os.getenv("MENACE_BOOTSTRAP_PROFILE")
