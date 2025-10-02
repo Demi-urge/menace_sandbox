@@ -558,10 +558,24 @@ def _get_account_id(api_key: str) -> str | None:
                 # module level API to maintain compatibility with both styles.
                 accounts = getattr(client, "accounts", None)
                 if accounts and hasattr(accounts, "retrieve"):
-                    acct = accounts.retrieve()
+                    retrieve = accounts.retrieve
+                    try:
+                        acct = retrieve()
+                    except TypeError:
+                        # Newer client bindings require an explicit account
+                        # identifier.  Fetch the default account via the
+                        # module-level API instead so we maintain compatibility
+                        # with both call styles.
+                        if stripe is None:
+                            raise
+                        acct = stripe.Account.retrieve(api_key=api_key)
                 else:
+                    if stripe is None:
+                        raise
                     acct = stripe.Account.retrieve(api_key=api_key)
         else:
+            if stripe is None:
+                raise RuntimeError("stripe library unavailable")
             acct = stripe.Account.retrieve(api_key=api_key)
         if isinstance(acct, Mapping):
             return str(acct.get("id"))
