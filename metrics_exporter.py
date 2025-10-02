@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Iterable, Dict, Sequence, Tuple
 
+import os
 import sys
 
 import logging
@@ -61,7 +62,9 @@ try:
     start_http_server = _start_http_server  # type: ignore
     _USING_STUB = False
 except Exception as exc:  # pragma: no cover - optional dependency missing
-    logger.info(
+    suppress_notice = os.getenv("MENACE_SUPPRESS_PROMETHEUS_FALLBACK_NOTICE") == "1"
+    log_func = logger.debug if suppress_notice else logger.info
+    log_func(
         "prometheus_client not installed; using lightweight metrics server. "
         "Install the optional dependency to expose native Prometheus metrics (%s)",
         exc,
