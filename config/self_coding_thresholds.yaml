@@ -29,6 +29,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   AutomatedDebugger:
     roi_drop: -0.1
     error_increase: 1.0
@@ -41,14 +45,26 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   AverageSynergyMetricBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   AverageSynergyROIBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   BotCreationBot:
     roi_drop: -0.1
     error_increase: 0.2
@@ -153,106 +169,210 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureAntifragilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureLucrativityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureProfitabilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureShannonEntropyBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyAdaptabilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyAntifragilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyCPUUsageBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyCodeQualityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyDiscrepancyCountBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyEfficiencyBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyEnergyConsumptionBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyFlexibilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyGPUUsageBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyLongTermLucrativityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyMaintainabilityBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyMemoryUsageBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyNetworkLatencyBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyProfitBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyRecoveryTimeBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyResilienceBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyRiskIndexBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergySafetyRatingBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergySecurityScoreBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyShannonEntropyBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   FutureSynergyThroughputBot:
     roi_drop: -0.25
     error_increase: 2.0
     test_failure_increase: 0.1
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   GAPredictionBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -361,6 +481,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   QueryBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -413,6 +537,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   StrategyPredictionBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -429,6 +557,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   TelemetryFeedback:
     roi_drop: -0.1
     error_increase: 1.0
