@@ -61,9 +61,9 @@ try:
     start_http_server = _start_http_server  # type: ignore
     _USING_STUB = False
 except Exception as exc:  # pragma: no cover - optional dependency missing
-    logger.warning(
-        "prometheus_client missing; using lightweight metrics server. "
-        "Advanced features disabled: %s",
+    logger.info(
+        "prometheus_client not installed; using lightweight metrics server. "
+        "Install the optional dependency to expose native Prometheus metrics (%s)",
         exc,
     )
     _USING_STUB = True

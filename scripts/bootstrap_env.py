@@ -39,6 +39,9 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     # Explicitly disable safe mode regardless of existing variables
     os.environ["MENACE_SAFE"] = "0"
+    # Menace sandbox environments often lack Hugging Face credentials; suppress
+    # the warning during bootstraps so local runs remain noise free.
+    os.environ.setdefault("MENACE_ALLOW_MISSING_HF_TOKEN", "1")
     # Ensure bootstrap runs without interactive prompts when stdin is a TTY.
     # CI environments as well as our automated tests execute this script in
     # non-interactive shells and would otherwise hang waiting for user input

@@ -306,6 +306,59 @@ def test_bootstrap_installs_apscheduler(monkeypatch):
     assert "apscheduler" in installs
 
 
+def test_vector_assets_skipped_when_huggingface_missing(monkeypatch, caplog):
+    original_find_spec = eb.importlib.util.find_spec
+
+    def fake_find_spec(name):
+        if name == "huggingface_hub":
+            return None
+        return original_find_spec(name)
+
+    monkeypatch.setattr(eb.importlib.util, "find_spec", fake_find_spec)
+    caplog.set_level("INFO")
+    boot = eb.EnvironmentBootstrapper(tf_dir=".")
+    caplog.clear()
+    boot.bootstrap_vector_assets()
+    assert "Skipping embedding model download" in caplog.text
+
+
+def test_bootstrap_logs_info_when_systemd_unavailable(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_commands", lambda s, c: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_remote_dependencies", lambda s, u: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_os_packages", lambda s, p: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "run_migrations", lambda s: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "install_dependencies", lambda s, r: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda s: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_nvidia_driver", lambda s: None)
+    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
+    monkeypatch.setattr(eb.SystemProvisioner, "ensure_packages", lambda self: None)
+    monkeypatch.setattr(eb.ensure_config, lambda: None)
+
+    original_which = eb.shutil.which
+
+    def fake_which(cmd):
+        if cmd == "systemctl":
+            return "/bin/systemctl"
+        return original_which(cmd)
+
+    monkeypatch.setattr(eb.shutil, "which", fake_which)
+
+    class FakeResult:
+        returncode = 1
+        stdout = ""
+        stderr = "System has not been booted with systemd"
+
+    monkeypatch.setattr(eb.subprocess, "run", lambda *a, **k: FakeResult())
+
+    boot = eb.EnvironmentBootstrapper(tf_dir=".")
+    boot.bootstrap()
+
+    assert "systemd unavailable" in caplog.text
+    assert "failed enabling sandbox_autopurge.timer" not in caplog.text
+
+
 def test_security_audit_removed(monkeypatch, tmp_path, caplog):
     caplog.set_level("ERROR")
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_commands", lambda s, c: None)

@@ -170,6 +170,26 @@ def test_missing_huggingface_token_increments_failure(tmp_path, monkeypatch):
     assert disc.failure_count == 1
 
 
+def test_missing_huggingface_token_can_be_suppressed(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for key in [
+        "HUGGINGFACE_TOKEN",
+        "HUGGINGFACE_API_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MENACE_ALLOW_MISSING_HF_TOKEN", "1")
+
+    disc = cd.ConfigDiscovery()
+    caplog.set_level("DEBUG")
+    disc.reload_tokens()
+
+    assert "warning suppressed" in caplog.text
+    assert "huggingface token not found" not in caplog.text
+    assert disc.failure_count == 0
+
+
 def test_stack_env_defaults_and_overrides(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     stack_dir = tmp_path / "stack_state"
