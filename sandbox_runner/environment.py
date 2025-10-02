@@ -475,28 +475,86 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
 
     if shutil.which("docker"):
         try:
-            subprocess.run(
-                ["docker", "container", "prune", "-f"],
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(
-                ["docker", "volume", "prune", "-f"],
-                capture_output=True,
-                text=True,
-            )
-            containers = (
+            try:
                 subprocess.run(
-                    ["docker", "ps", "-aq"], capture_output=True, text=True
-                ).stdout.strip().splitlines()
-            )
-            volumes = (
+                    ["docker", "container", "prune", "-f"],
+                    capture_output=True,
+                    text=True,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+                logger.warning(
+                    "docker container prune timed out (%.1fs)",
+                    duration,
+                )
+                leftovers.append("docker:container-prune")
+                _record_failed_cleanup(
+                    "docker:container-prune",
+                    reason="docker container prune timeout",
+                )
+                return
+            try:
                 subprocess.run(
+                    ["docker", "volume", "prune", "-f"],
+                    capture_output=True,
+                    text=True,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+                logger.warning(
+                    "docker volume prune timed out (%.1fs)",
+                    duration,
+                )
+                leftovers.append("docker:volume-prune")
+                _record_failed_cleanup(
+                    "docker:volume-prune",
+                    reason="docker volume prune timeout",
+                )
+                return
+            try:
+                proc = subprocess.run(
+                    ["docker", "ps", "-aq"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+                logger.warning(
+                    "docker ps timed out during artifact cleanup (%.1fs)",
+                    duration,
+                )
+                leftovers.append("docker:container-list")
+                _record_failed_cleanup(
+                    "docker:container-list",
+                    reason="docker ps timeout",
+                )
+                return
+            containers = proc.stdout.strip().splitlines()
+            try:
+                proc = subprocess.run(
                     ["docker", "volume", "ls", "-q"],
                     capture_output=True,
                     text=True,
-                ).stdout.strip().splitlines()
-            )
+                    check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+                logger.warning(
+                    "docker volume ls timed out during artifact cleanup (%.1fs)",
+                    duration,
+                )
+                leftovers.append("docker:volume-list")
+                _record_failed_cleanup(
+                    "docker:volume-list",
+                    reason="docker volume ls timeout",
+                )
+                return
+            volumes = proc.stdout.strip().splitlines()
             leftovers.extend(f"container:{c}" for c in containers)
             leftovers.extend(f"volume:{v}" for v in volumes)
         except Exception:
@@ -1752,7 +1810,20 @@ def _finalize_orphan(cid: str, dir_path: str | None) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
+    except subprocess.TimeoutExpired as exc:
+        duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+        logger.warning(
+            "orphan container remove timed out for %s (%.1fs)",
+            cid,
+            duration,
+        )
+        _record_failed_cleanup(
+            f"container:{cid}",
+            reason="docker rm timeout",
+        )
+        return
     except Exception:
         logger.exception("orphan container remove failed for %s", cid)
     _remove_active_container(cid)
@@ -2062,9 +2133,19 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode == 0:
             return True
+    except subprocess.TimeoutExpired as exc:
+        duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+        logger.warning(
+            "python rmtree helper timed out for %s (%.1fs)",
+            path,
+            duration,
+        )
+        _record_failed_cleanup(path, reason="python rmtree helper timeout")
+        return False
     except Exception as exc:
         logger.debug("rmtree helper failed: %s", exc)
 
@@ -2075,8 +2156,18 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         return proc.returncode == 0
+    except subprocess.TimeoutExpired as exc:  # pragma: no cover - rare
+        duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+        logger.warning(
+            "cmd rmdir timed out for %s (%.1fs)",
+            path,
+            duration,
+        )
+        _record_failed_cleanup(path, reason="cmd rmdir timeout")
+        return False
     except Exception as exc:  # pragma: no cover - fallback errors rare
         logger.debug("rmdir fallback failed: %s", exc)
         return False
@@ -2153,15 +2244,30 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
     else:  # pragma: no cover - fallback path
+        tmp_dirs: set[str] = set()
         try:
-            tmp_dirs: set[str] = set()
             proc = subprocess.run(
                 ["pgrep", "-fa", "qemu-system"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
+        except subprocess.TimeoutExpired as exc:
+            duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+            logger.warning(
+                "pgrep timed out during stale vm cleanup (%.1fs)",
+                duration,
+            )
+            _record_failed_cleanup(
+                "qemu-process-scan",
+                reason="pgrep timeout",
+            )
+            return removed_vms
+        except Exception as exc:
+            logger.debug("qemu process cleanup failed: %s", exc)
+        else:
             for line in proc.stdout.splitlines():
                 parts = line.strip().split(maxsplit=1)
                 if not parts:
@@ -2177,12 +2283,27 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         if arg.startswith("file="):
                             arg = arg.split("=", 1)[1]
                         tmp_dirs.add(str(Path(arg).parent))
-                res = subprocess.run(
-                    ["kill", "-9", pid],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
+                try:
+                    res = subprocess.run(
+                        ["kill", "-9", pid],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+                    logger.warning(
+                        "kill -9 timed out for qemu %s (%.1fs)",
+                        pid,
+                        duration,
+                    )
+                    _record_failed_cleanup(
+                        f"qemu:{pid}",
+                        reason="kill timeout",
+                    )
+                    _log_cleanup_event(str(pid), "vm_process", False)
+                    continue
                 removed_vms += 1
                 _log_cleanup_event(str(pid), "vm_process", res.returncode == 0)
             for d in tmp_dirs:
@@ -2200,8 +2321,6 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         _record_failed_overlay(d)
                         success = False
                 _log_cleanup_event(str(d), "vm_overlay", success)
-        except Exception as exc:
-            logger.debug("qemu process cleanup failed: %s", exc)
 
     if os.name == "nt":  # pragma: no cover - windows process cleanup
         try:
@@ -2211,13 +2330,26 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
+        except subprocess.TimeoutExpired as exc:
+            duration = float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT)
+            logger.warning(
+                "taskkill timed out during stale vm cleanup (%.1fs)",
+                duration,
+            )
+            _record_failed_cleanup(
+                "windows:qemu-taskkill",
+                reason="taskkill timeout",
+            )
+            return removed_vms
+        except Exception as exc:
+            logger.debug("taskkill failed: %s", exc)
+        else:
             for line in proc.stdout.splitlines():
                 if "SUCCESS:" in line:
                     removed_vms += 1
                     _log_cleanup_event("windows_qemu", "vm_process", True)
-        except Exception as exc:
-            logger.debug("taskkill failed: %s", exc)
 
     tmp_root = Path(tempfile.gettempdir())
     threshold = time.time() - _OVERLAY_MAX_AGE
