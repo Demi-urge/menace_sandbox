@@ -194,6 +194,9 @@ class BotRegistry:
         self.heartbeats: Dict[str, float] = {}
         self.interactions_meta: List[Dict[str, object]] = []
         self._lock = threading.RLock()
+        self._internalization_retry_attempts: Dict[str, int] = {}
+        self._internalization_retry_handles: Dict[str, threading.Timer] = {}
+        self._max_internalization_retries = 5
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -205,6 +208,135 @@ class BotRegistry:
             self.schedule_unmanaged_scan()
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to schedule unmanaged bot scan")
+
+    def _schedule_internalization_retry(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+    ) -> None:
+        """Schedule an asynchronous retry for ``internalize_coding_bot``."""
+
+        with self._lock:
+            existing = self._internalization_retry_handles.get(name)
+            if existing is not None and getattr(existing, "is_alive", lambda: False)():
+                return
+            attempts = self._internalization_retry_attempts.setdefault(name, 0)
+            retry_delay = delay if delay is not None else min(5.0, 0.5 * (attempts + 1))
+            timer = threading.Timer(retry_delay, self._retry_internalization, args=(name,))
+            timer.daemon = True
+            self._internalization_retry_handles[name] = timer
+
+        try:
+            timer.start()
+        except Exception:  # pragma: no cover - timer creation best effort
+            logger.exception("failed to start internalization retry timer for %s", name)
+
+    def _retry_internalization(self, name: str) -> None:
+        """Attempt to internalise a bot that previously failed to import."""
+
+        with self._lock:
+            handle = self._internalization_retry_handles.pop(name, None)
+            if handle is not None:
+                try:
+                    handle.cancel()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    logger.debug(
+                        "cleanup cancel failed for internalization retry timer", exc_info=True
+                    )
+
+            node = self.graph.nodes.get(name)
+            if node is None:
+                self._internalization_retry_attempts.pop(name, None)
+                return
+
+            attempts = self._internalization_retry_attempts.get(name, 0) + 1
+            self._internalization_retry_attempts[name] = attempts
+
+            mgr = node.get("selfcoding_manager") or node.get("manager")
+            db = node.get("data_bot")
+
+            try:
+                self._internalize_missing_coding_bot(
+                    name,
+                    manager=mgr,
+                    data_bot=db,
+                )
+            except Exception as exc:
+                node.setdefault("internalization_errors", []).append(str(exc))
+                if _is_transient_internalization_error(exc) and (
+                    attempts < self._max_internalization_retries
+                ):
+                    logger.debug(
+                        "retrying internalization for %s after transient error (attempt %s)",
+                        name,
+                        attempts,
+                    )
+                    self._schedule_internalization_retry(name)
+                    return
+
+                node.pop("pending_internalization", None)
+                self._internalization_retry_attempts.pop(name, None)
+                logger.error(
+                    "internalization retry for %s failed after %s attempts: %s",
+                    name,
+                    attempts,
+                    exc,
+                )
+                return
+
+            node.pop("pending_internalization", None)
+            self._internalization_retry_attempts.pop(name, None)
+            logger.info(
+                "internalization retry for %s succeeded after %s attempt(s)",
+                name,
+                attempts,
+            )
+
+    def _internalize_missing_coding_bot(
+        self,
+        name: str,
+        *,
+        manager: "SelfCodingManager | None",
+        data_bot: "DataBot | None",
+    ) -> None:
+        from .self_coding_manager import internalize_coding_bot
+        from .self_coding_engine import SelfCodingEngine
+        from .model_automation_pipeline import ModelAutomationPipeline
+        from .data_bot import DataBot
+        from .code_database import CodeDB
+        from .gpt_memory import GPTMemoryManager
+        from context_builder_util import create_context_builder
+        from .self_coding_thresholds import get_thresholds
+
+        node = self.graph.nodes[name]
+
+        ctx = create_context_builder()
+        engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=ctx)
+        pipeline = ModelAutomationPipeline(context_builder=ctx, bot_registry=self)
+        db = data_bot or DataBot(start_server=False)
+        th = get_thresholds(name)
+        internalize_coding_bot(
+            name,
+            engine,
+            pipeline,
+            data_bot=db,
+            bot_registry=self,
+            roi_threshold=getattr(th, "roi_drop", None),
+            error_threshold=getattr(th, "error_increase", None),
+            test_failure_threshold=getattr(th, "test_failure_increase", None),
+        )
+        node.pop("pending_internalization", None)
+        self._internalization_retry_attempts.pop(name, None)
+
+        if self.event_bus:
+            try:
+                self.event_bus.publish("bot:internalized", {"bot": name})
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.error(
+                    "Failed to publish bot:internalized event: %s",
+                    exc,
+                )
 
     def register_bot(
         self,
@@ -234,46 +366,11 @@ class BotRegistry:
                     missing.append("data_bot")
                 if missing:
                     try:
-                        from .self_coding_manager import internalize_coding_bot
-                        from .self_coding_engine import SelfCodingEngine
-                        from .model_automation_pipeline import ModelAutomationPipeline
-                        from .data_bot import DataBot
-                        from .code_database import CodeDB
-                        from .gpt_memory import GPTMemoryManager
-                        from context_builder_util import create_context_builder
-                        from .self_coding_thresholds import get_thresholds
-
-                        ctx = create_context_builder()
-                        engine = SelfCodingEngine(
-                            CodeDB(), GPTMemoryManager(), context_builder=ctx
-                        )
-                        pipeline = ModelAutomationPipeline(
-                            context_builder=ctx, bot_registry=self
-                        )
-                        db = db or DataBot(start_server=False)
-                        th = get_thresholds(name)
-                        internalize_coding_bot(
+                        self._internalize_missing_coding_bot(
                             name,
-                            engine,
-                            pipeline,
+                            manager=mgr,
                             data_bot=db,
-                            bot_registry=self,
-                            roi_threshold=getattr(th, "roi_drop", None),
-                            error_threshold=getattr(th, "error_increase", None),
-                            test_failure_threshold=getattr(
-                                th, "test_failure_increase", None
-                            ),
                         )
-                        if self.event_bus:
-                            try:
-                                self.event_bus.publish(
-                                    "bot:internalized", {"bot": name}
-                                )
-                            except Exception as exc:  # pragma: no cover - best effort
-                                logger.error(
-                                    "Failed to publish bot:internalized event: %s",
-                                    exc,
-                                )
                         return
                     except Exception as exc:
                         if self.event_bus:
@@ -290,6 +387,7 @@ class BotRegistry:
                         if _is_transient_internalization_error(exc):
                             node.setdefault("internalization_errors", []).append(str(exc))
                             node["pending_internalization"] = True
+                            self._schedule_internalization_retry(name)
                             logger.debug(
                                 "deferring internalization for %s due to import error", name
                             )

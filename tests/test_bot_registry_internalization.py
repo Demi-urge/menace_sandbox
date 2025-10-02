@@ -1,6 +1,16 @@
 import types
 import sys
 
+
+def _install_stub_threshold_service():
+    service = types.ModuleType("menace_sandbox.threshold_service")
+    service.threshold_service = types.SimpleNamespace(load=lambda *_a, **_k: None)
+    sys.modules.setdefault("menace_sandbox.threshold_service", service)
+    sys.modules.setdefault("threshold_service", service)
+
+
+_install_stub_threshold_service()
+
 from menace_sandbox import bot_registry
 
 class DummyBus:
@@ -29,9 +39,10 @@ class DummyContext:
 def _install_stub_modules(monkeypatch):
     scm = types.ModuleType("menace_sandbox.self_coding_manager")
     def fake_internalize(name, engine, pipeline, *, data_bot, bot_registry, **kw):
-        mgr = types.SimpleNamespace(evolution_orchestrator=None)
-        bot_registry.register_bot(name, manager=mgr, data_bot=data_bot, is_coding_bot=True)
-        return mgr
+        fake_internalize.calls.append((name, data_bot))
+        return types.SimpleNamespace(evolution_orchestrator=None)
+
+    fake_internalize.calls = []
     scm.internalize_coding_bot = fake_internalize
     monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_manager", scm)
 
@@ -57,13 +68,37 @@ def _install_stub_modules(monkeypatch):
 
     ctx_mod = types.ModuleType("vector_service.context_builder")
     ctx_mod.ContextBuilder = DummyContext
+    ctx_mod.record_failed_tags = lambda *a, **k: None
+    ctx_mod.load_failed_tags = lambda *a, **k: []
     monkeypatch.setitem(sys.modules, "vector_service.context_builder", ctx_mod)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.vector_service.context_builder", ctx_mod)
 
     th_mod = types.ModuleType("menace_sandbox.self_coding_thresholds")
     th_mod.get_thresholds = lambda _n: types.SimpleNamespace(
         roi_drop=-1.0, error_increase=1.0, test_failure_increase=1.0
     )
     monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_thresholds", th_mod)
+
+    def simple_internalize(self, name, *, manager=None, data_bot=None):
+        scm.internalize_coding_bot(
+            name,
+            None,
+            None,
+            data_bot=data_bot,
+            bot_registry=self,
+        )
+        node = self.graph.nodes[name]
+        node.pop("pending_internalization", None)
+        self._internalization_retry_attempts.pop(name, None)
+        if self.event_bus:
+            self.event_bus.publish("bot:internalized", {"bot": name})
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_internalize_missing_coding_bot",
+        simple_internalize,
+        raising=False,
+    )
 
 
 def test_register_bot_internalizes(monkeypatch):
@@ -72,3 +107,60 @@ def test_register_bot_internalizes(monkeypatch):
     reg = bot_registry.BotRegistry(event_bus=bus)
     reg.register_bot("FooBot", is_coding_bot=True)
     assert ("bot:internalized", {"bot": "FooBot"}) in bus.events
+
+
+def test_register_bot_internalization_retry(monkeypatch):
+    _install_stub_modules(monkeypatch)
+    bus = DummyBus()
+    reg = bot_registry.BotRegistry(event_bus=bus)
+
+    scm = sys.modules["menace_sandbox.self_coding_manager"]
+    original_internalize = scm.internalize_coding_bot
+    attempts = {"count": 0}
+
+    def flaky_internalize(name, engine, pipeline, *, data_bot, bot_registry, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ModuleNotFoundError("module graph still initialising")
+        return original_internalize(
+            name,
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=bot_registry,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        scm,
+        "internalize_coding_bot",
+        flaky_internalize,
+        raising=False,
+    )
+
+    class ImmediateTimer:
+        def __init__(self, interval, function, args=None, kwargs=None):
+            self.interval = interval
+            self.function = function
+            self.args = args or ()
+            self.kwargs = kwargs or {}
+            self.daemon = False
+
+        def start(self):
+            self.function(*self.args, **self.kwargs)
+
+        def cancel(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(bot_registry.threading, "Timer", ImmediateTimer)
+
+    reg.register_bot("BarBot", is_coding_bot=True)
+
+    assert attempts["count"] == 2
+    node = reg.graph.nodes["BarBot"]
+    assert "pending_internalization" not in node
+    assert ("bot:internalized", {"bot": "BarBot"}) in bus.events
+    assert "BarBot" not in reg._internalization_retry_attempts
