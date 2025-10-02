@@ -57,3 +57,30 @@ def test_windows_scripts_candidates_include_sysconfig(monkeypatch, tmp_path):
     )
 
     assert scripts_path in candidates
+
+
+def test_repo_root_injected_without_duplicates(monkeypatch, tmp_path):
+    """The bootstrap script should normalise sys.path entries on Windows."""
+
+    repo_root = tmp_path / "RepoRoot"
+    repo_root.mkdir()
+
+    original_path = [
+        "C:/Temp/Libs",
+        str(repo_root).upper(),
+        str(tmp_path / "other"),
+    ]
+
+    monkeypatch.setattr(
+        bootstrap_env.os.path,
+        "normcase",
+        lambda value: str(value).lower(),
+        raising=False,
+    )
+    monkeypatch.setattr(bootstrap_env.sys, "path", list(original_path))
+
+    bootstrap_env._ensure_repo_root_on_path(repo_root)
+
+    assert bootstrap_env.sys.path[0] == str(repo_root)
+    assert bootstrap_env.sys.path.count(str(repo_root)) == 1
+    assert len(bootstrap_env.sys.path) == len(original_path)
