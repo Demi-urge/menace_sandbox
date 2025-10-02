@@ -17,8 +17,46 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+
+
+def _normalize_sys_path_entry(entry: object) -> str | None:
+    """Return a normalized representation of *entry* suitable for comparison."""
+
+    if isinstance(entry, os.PathLike):
+        entry = os.fspath(entry)
+    if isinstance(entry, str):
+        try:
+            return os.path.normcase(os.path.abspath(entry))
+        except OSError:
+            return os.path.normcase(entry)
+    return None
+
+
+def _ensure_repo_root_on_path(repo_root: Path) -> None:
+    """Inject *repo_root* into ``sys.path`` while avoiding duplicates."""
+
+    target = os.path.normcase(str(repo_root.resolve()))
+    normalized_entries: list[str | None] = [
+        _normalize_sys_path_entry(entry) for entry in sys.path
+    ]
+
+    canonical = str(repo_root)
+
+    try:
+        existing_index = normalized_entries.index(target)  # type: ignore[arg-type]
+    except ValueError:
+        sys.path.insert(0, canonical)
+        return
+
+    if existing_index == 0:
+        sys.path[0] = canonical
+        return
+
+    sys.path.pop(existing_index)
+    sys.path.insert(0, canonical)
+
+
+_ensure_repo_root_on_path(_REPO_ROOT)
 
 
 LOGGER = logging.getLogger(__name__)
