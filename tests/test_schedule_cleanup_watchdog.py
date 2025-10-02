@@ -270,3 +270,107 @@ def test_watchdog_ignores_active_cleanup(env):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=1.0)
         loop.close()
+
+
+def test_watchdog_accepts_midpass_heartbeats(env):
+    interval = 0.2
+    delay = 0.75 * interval
+    env._POOL_CLEANUP_INTERVAL = interval
+    env._DOCKER_CLIENT = object()
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._REAPER_TASK = DummyTask()
+    env._CLEANUP_TASK = None
+    env._WATCHDOG_METRICS.clear()
+    env._LAST_CLEANUP_TS = time.monotonic()
+
+    events = {
+        name: threading.Event()
+        for name in (
+            "retry",
+            "cleanup",
+            "purge_vms",
+            "prune_volumes",
+            "prune_networks",
+            "report",
+        )
+    }
+
+    def slow_retry() -> None:
+        events["retry"].set()
+        time.sleep(delay)
+
+    def slow_cleanup_idle_containers() -> tuple[int, int]:
+        events["cleanup"].set()
+        time.sleep(delay)
+        return (0, 0)
+
+    def slow_purge_vms(record_runtime: bool = False) -> int:  # noqa: FBT001
+        events["purge_vms"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_prune_volumes() -> int:
+        events["prune_volumes"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_prune_networks() -> int:
+        events["prune_networks"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_report_failed_cleanup(alert: bool = False) -> dict[str, object]:  # noqa: FBT001
+        events["report"].set()
+        time.sleep(delay)
+        return {}
+
+    env.retry_failed_cleanup = slow_retry
+    env._cleanup_idle_containers = slow_cleanup_idle_containers
+    env._purge_stale_vms = slow_purge_vms
+    env._prune_volumes = slow_prune_volumes
+    env._prune_networks = slow_prune_networks
+    env.report_failed_cleanup = slow_report_failed_cleanup
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+
+    def schedule(coro):
+        name = getattr(getattr(coro, "cr_code", None), "co_name", "")
+        if name == "_cleanup_worker":
+            return asyncio.run_coroutine_threadsafe(coro, loop)
+        coro.close()
+        return DummyTask()
+
+    env._schedule_coroutine = schedule
+
+    stop = threading.Event()
+
+    def watchdog_runner() -> None:
+        while not stop.is_set():
+            env.watchdog_check()
+            time.sleep(interval / 4)
+
+    watchdog_thread = threading.Thread(target=watchdog_runner, daemon=True)
+    watchdog_thread.start()
+
+    try:
+        for event in events.values():
+            assert event.wait(timeout=5.0)
+
+        warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+        assert "cleanup worker stalled; restarting" not in warnings
+    finally:
+        stop.set()
+        watchdog_thread.join(timeout=1.0)
+        task = env._CLEANUP_TASK
+        if task is not None:
+            task.cancel()
+            try:
+                task.result(timeout=1.0)
+            except Exception:
+                pass
+        env._CLEANUP_TASK = None
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1.0)
+        loop.close()
