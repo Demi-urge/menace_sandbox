@@ -11,11 +11,45 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+class BootstrapError(RuntimeError):
+    """Raised when the environment bootstrap process cannot proceed."""
+
+
+@dataclass(frozen=True)
+class BootstrapConfig:
+    """Normalized configuration derived from command-line flags."""
+
+    skip_stripe_router: bool = False
+    env_file: Path | None = None
+
+    @classmethod
+    def from_namespace(cls, namespace: argparse.Namespace) -> "BootstrapConfig":
+        env_path = namespace.env_file
+        if isinstance(env_path, Path):
+            env_path = env_path.expanduser()
+        return cls(skip_stripe_router=namespace.skip_stripe_router, env_file=env_path)
+
+    def resolved_env_file(self) -> Path | None:
+        if self.env_file is None:
+            return None
+        try:
+            return self.env_file.resolve()
+        except OSError as exc:  # pragma: no cover - environment specific
+            raise BootstrapError(
+                f"Unable to resolve environment file '{self.env_file}'"
+            ) from exc
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -41,24 +75,89 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = _parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
-    # Explicitly disable safe mode regardless of existing variables
-    os.environ["MENACE_SAFE"] = "0"
-    # Menace sandbox environments often lack Hugging Face credentials; suppress
-    # the warning during bootstraps so local runs remain noise free.
-    os.environ.setdefault("MENACE_ALLOW_MISSING_HF_TOKEN", "1")
-    # Ensure bootstrap runs without interactive prompts when stdin is a TTY.
-    # CI environments as well as our automated tests execute this script in
-    # non-interactive shells and would otherwise hang waiting for user input
-    # when optional environment variables are missing.  ``startup_checks``
-    # honours ``MENACE_NON_INTERACTIVE`` so set it proactively.
-    os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
-    if args.skip_stripe_router:
-        os.environ["MENACE_SKIP_STRIPE_ROUTER"] = "1"
-    if args.env_file:
-        os.environ["MENACE_ENV_FILE"] = str(args.env_file.resolve())
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+
+
+def _apply_environment(overrides: Mapping[str, str]) -> None:
+    for key, value in overrides.items():
+        os.environ[key] = value
+
+
+def _ensure_windows_compatibility() -> None:
+    """Augment environment defaults with Windows specific safeguards."""
+
+    if os.name != "nt":  # pragma: no cover - exercised via integration tests
+        return
+
+    scripts_dirs: list[Path] = []
+    executable = Path(sys.executable)
+    candidates = [
+        executable.with_name("Scripts"),
+        executable.parent / "Scripts",
+    ]
+    venv_root = os.environ.get("VIRTUAL_ENV")
+    if venv_root:
+        candidates.append(Path(venv_root) / "Scripts")
+
+    existing_path = os.environ.get("PATH", "")
+    path_entries = [entry for entry in existing_path.split(os.pathsep) if entry]
+    seen: dict[str, str] = {}
+    ordered_entries: list[str] = []
+    for entry in path_entries:
+        key = entry.lower()
+        if key in seen:
+            continue
+        seen[key] = entry
+        ordered_entries.append(entry)
+
+    updated = False
+    for candidate in candidates:
+        if not candidate or not candidate.exists():
+            continue
+        key = str(candidate)
+        lookup = key.lower()
+        if lookup not in seen:
+            seen[lookup] = key
+            ordered_entries.insert(0, key)
+            scripts_dirs.append(candidate)
+            updated = True
+
+    if updated:
+        new_path = os.pathsep.join(ordered_entries)
+        os.environ["PATH"] = new_path
+        LOGGER.info(
+            "Ensured Windows PATH contains Scripts directories: %s",
+            ", ".join(str(path) for path in scripts_dirs),
+        )
+
+    os.environ.setdefault("PYTHONUTF8", "1")
+
+
+def _prepare_environment(config: BootstrapConfig) -> Path | None:
+    resolved_env_file = config.resolved_env_file()
+    defaults = {
+        "MENACE_ALLOW_MISSING_HF_TOKEN": "1",
+        "MENACE_NON_INTERACTIVE": "1",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+
+    overrides: dict[str, str] = {"MENACE_SAFE": "0"}
+    if config.skip_stripe_router:
+        overrides["MENACE_SKIP_STRIPE_ROUTER"] = "1"
+    if resolved_env_file is not None:
+        overrides["MENACE_ENV_FILE"] = str(resolved_env_file)
+    _apply_environment(overrides)
+    _ensure_windows_compatibility()
+    return resolved_env_file
+
+
+def _run_bootstrap(config: BootstrapConfig) -> None:
+    resolved_env_file = _prepare_environment(config)
 
     from menace.bootstrap_policy import PolicyLoader
     from menace.environment_bootstrap import EnvironmentBootstrapper
@@ -69,12 +168,10 @@ def main(argv: list[str] | None = None) -> None:
     created, env_file = ensure_bootstrap_defaults(
         startup_checks.REQUIRED_VARS,
         repo_root=_REPO_ROOT,
-        env_file=args.env_file,
+        env_file=resolved_env_file,
     )
     if created:
-        logging.getLogger(__name__).info(
-            "Persisted generated defaults to %s", env_file
-        )
+        LOGGER.info("Persisted generated defaults to %s", env_file)
 
     loader = PolicyLoader()
     auto_install = startup_checks.auto_install_enabled()
@@ -84,8 +181,25 @@ def main(argv: list[str] | None = None) -> None:
         requested=requested,
         auto_install_enabled=auto_install,
     )
-    run_startup_checks(skip_stripe_router=args.skip_stripe_router, policy=policy)
+    run_startup_checks(skip_stripe_router=config.skip_stripe_router, policy=policy)
     EnvironmentBootstrapper(policy=policy).bootstrap()
+
+
+def main(argv: list[str] | None = None) -> None:
+    _configure_logging()
+    args = _parse_args(argv)
+    config = BootstrapConfig.from_namespace(args)
+    try:
+        _run_bootstrap(config)
+    except BootstrapError as exc:
+        LOGGER.error("bootstrap aborted: %s", exc)
+        raise SystemExit(1) from exc
+    except KeyboardInterrupt:  # pragma: no cover - manual interruption
+        LOGGER.warning("Bootstrap interrupted by user")
+        raise SystemExit(130)
+    except Exception as exc:  # pragma: no cover - safety net
+        LOGGER.exception("Unexpected error during bootstrap")
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
