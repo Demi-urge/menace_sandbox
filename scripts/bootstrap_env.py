@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import sysconfig
 from functools import lru_cache
@@ -68,6 +69,31 @@ class BootstrapError(RuntimeError):
     """Raised when the environment bootstrap process cannot proceed."""
 
 
+_WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
+
+
+def _expand_environment_path(value: str) -> str:
+    """Expand environment variables in *value* across platforms."""
+
+    expanded = os.path.expandvars(value)
+    if "%" not in expanded:
+        return expanded
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group("name")
+        candidates = [name]
+        if not _is_windows():
+            for alias in (name.upper(), name.lower()):
+                if alias not in candidates:
+                    candidates.append(alias)
+        for candidate in candidates:
+            if candidate in os.environ:
+                return os.environ[candidate]
+        return match.group(0)
+
+    return _WINDOWS_ENV_VAR_PATTERN.sub(replace, expanded)
+
+
 def _coerce_log_level(value: str | int | None) -> int:
     """Translate user provided log level into the numeric representation."""
 
@@ -97,9 +123,20 @@ class BootstrapConfig:
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> "BootstrapConfig":
-        env_path = namespace.env_file
-        if isinstance(env_path, Path):
-            env_path = env_path.expanduser()
+        env_path_raw = namespace.env_file
+        env_path: Path | None
+        if env_path_raw is None:
+            env_path = None
+        else:
+            path_string = os.fspath(env_path_raw)
+            expanded = _expand_environment_path(path_string)
+            # ``expandvars`` leaves values untouched when an environment
+            # variable cannot be resolved; avoid introducing empty segments.
+            sanitized = expanded.strip()
+            if sanitized:
+                env_path = Path(sanitized).expanduser()
+            else:
+                env_path = None
         log_level = _coerce_log_level(namespace.log_level)
         return cls(
             skip_stripe_router=namespace.skip_stripe_router,
