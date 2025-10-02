@@ -12,9 +12,11 @@ import logging
 import os
 import sys
 import sysconfig
+from functools import lru_cache
+import ntpath
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -204,6 +206,45 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+@lru_cache(maxsize=None)
+def _windows_path_normalizer() -> Callable[[str], str]:
+    """Return a callable that normalizes Windows paths for comparison."""
+
+    def _normalize(value: str) -> str:
+        collapsed = ntpath.normcase(ntpath.normpath(value))
+        collapsed = collapsed.rstrip("\\/")
+        return collapsed
+
+    return _normalize
+
+
+def _gather_existing_path_entries() -> tuple[list[str], dict[str, str], bool]:
+    """Collect the current PATH entries de-duplicated by Windows semantics."""
+
+    raw_path = os.environ.get("PATH") or os.environ.get("Path") or ""
+    entries = [entry for entry in raw_path.split(os.pathsep) if entry]
+    normalizer = _windows_path_normalizer()
+    seen: dict[str, str] = {}
+    ordered: list[str] = []
+    deduplicated = False
+    for entry in entries:
+        try:
+            normalized = normalizer(entry)
+        except (TypeError, ValueError):
+            continue
+        if normalized in seen:
+            deduplicated = True
+            continue
+        seen[normalized] = entry
+        ordered.append(entry)
+    return ordered, seen, deduplicated
+
+
+def _set_windows_path(value: str) -> None:
+    os.environ["PATH"] = value
+    os.environ["Path"] = value
+
+
 def _ensure_windows_compatibility() -> None:
     """Augment environment defaults with Windows specific safeguards."""
 
@@ -214,16 +255,8 @@ def _ensure_windows_compatibility() -> None:
     executable = Path(sys.executable)
     candidates = list(_iter_windows_script_candidates(executable))
 
-    existing_path = os.environ.get("PATH", "")
-    path_entries = [entry for entry in existing_path.split(os.pathsep) if entry]
-    seen: dict[str, str] = {}
-    ordered_entries: list[str] = []
-    for entry in path_entries:
-        key = entry.lower()
-        if key in seen:
-            continue
-        seen[key] = entry
-        ordered_entries.append(entry)
+    ordered_entries, seen, deduplicated = _gather_existing_path_entries()
+    normalizer = _windows_path_normalizer()
 
     updated = False
     for candidate in candidates:
@@ -236,19 +269,23 @@ def _ensure_windows_compatibility() -> None:
         if not candidate_resolved.exists():
             continue
         key = str(candidate_resolved)
-        lookup = key.lower()
-        if lookup not in seen:
-            seen[lookup] = key
+        normalized_key = normalizer(key)
+        if normalized_key not in seen:
+            seen[normalized_key] = key
             ordered_entries.insert(0, key)
             scripts_dirs.append(candidate_resolved)
             updated = True
 
-    if updated:
-        os.environ["PATH"] = os.pathsep.join(ordered_entries)
-        LOGGER.info(
-            "Ensured Windows PATH contains Scripts directories: %s",
-            ", ".join(str(path) for path in scripts_dirs),
-        )
+    if updated or deduplicated:
+        new_path = os.pathsep.join(ordered_entries)
+        _set_windows_path(new_path)
+        if updated:
+            LOGGER.info(
+                "Ensured Windows PATH contains Scripts directories: %s",
+                ", ".join(str(path) for path in scripts_dirs),
+            )
+        elif deduplicated:
+            LOGGER.info("Normalized Windows PATH by removing duplicate entries")
 
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
