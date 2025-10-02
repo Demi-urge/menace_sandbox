@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import logging
+from contextlib import suppress
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ BACKUP_COUNT = _env_int("DB_AUDIT_LOG_BACKUPS", 5)
 _write_lock = Lock()
 _logger_lock = Lock()
 _loggers: dict[Path, logging.Logger] = {}
+_module_logger = logging.getLogger(__name__)
 
 
 class _LockedRotatingFileHandler(RotatingFileHandler):
@@ -135,30 +137,36 @@ def log_db_access(
         pass
 
     if db_conn is not None:
+        if getattr(db_conn, "_closed", False):
+            return
         try:
             cur = sqlite3.Connection.cursor(db_conn, factory=sqlite3.Cursor)
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS shared_db_audit (
-                    action TEXT,
-                    "table" TEXT,
-                    rows INTEGER,
-                    menace_id TEXT,
-                    timestamp TEXT
-                )
-                """
-            )
-            cur.execute(
-                'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
-                ' VALUES (?, ?, ?, ?, ?)',
-                (action, table_name, row_count, menace_id, record["timestamp"]),
-            )
-            db_conn.commit()
-        except sqlite3.Error:
             try:
-                db_conn.rollback()
-            except sqlite3.Error:
-                pass
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS shared_db_audit (
+                        action TEXT,
+                        "table" TEXT,
+                        rows INTEGER,
+                        menace_id TEXT,
+                        timestamp TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
+                    ' VALUES (?, ?, ?, ?, ?)',
+                    (action, table_name, row_count, menace_id, record["timestamp"]),
+                )
+            finally:
+                with suppress(sqlite3.Error):
+                    cur.close()
+            sqlite3.Connection.commit(db_conn)
+        except (sqlite3.Error, SystemError) as exc:
+            _module_logger.debug("failed to persist shared_db_audit entry: %s", exc)
+            with suppress(sqlite3.Error, SystemError):
+                if not getattr(db_conn, "_closed", False):
+                    sqlite3.Connection.rollback(db_conn)
 
 
 __all__ = ["log_db_access"]
