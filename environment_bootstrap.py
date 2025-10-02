@@ -224,16 +224,21 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def bootstrap_vector_assets(self) -> None:
         """Download model and seed default ranking weights."""
-        try:
-            from .vector_service import download_model as _dm
-
-            dest = resolve_path(
-                "vector_service/minilm/tiny-distilroberta-base.tar.xz"
+        if importlib.util.find_spec("huggingface_hub") is None:
+            self.logger.info(
+                "Skipping embedding model download; install huggingface-hub to enable automatic provisioning"
             )
-            if not dest.exists():
-                _dm.bundle(dest)
-        except Exception as exc:  # pragma: no cover - log only
-            self.logger.warning("embedding model download failed: %s", exc)
+        else:
+            try:
+                from .vector_service import download_model as _dm
+
+                dest = resolve_path(
+                    "vector_service/minilm/tiny-distilroberta-base.tar.xz"
+                )
+                if not dest.exists():
+                    _dm.bundle(dest)
+            except Exception as exc:  # pragma: no cover - log only
+                self.logger.warning("embedding model download failed: %s", exc)
 
         try:
             reg_path = resolve_path(
@@ -334,17 +339,33 @@ class EnvironmentBootstrapper:
         if importlib.util.find_spec("apscheduler") is None:
             self.install_dependencies(["apscheduler"])
         if shutil.which("systemctl"):
-            try:
-                subprocess.run(
-                    ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=True,
+            result = subprocess.run(
+                ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                stdout = (result.stdout or "").strip()
+                details = stderr or stdout or f"exit code {result.returncode}"
+                known_systemd_issue = any(
+                    marker in details.lower()
+                    for marker in (
+                        "system has not been booted with systemd",
+                        "failed to connect to bus",
+                        "sandbox_autopurge.timer does not exist",
+                    )
                 )
-            except Exception as exc:  # pragma: no cover - log only
-                self.logger.warning(
-                    "failed enabling sandbox_autopurge.timer: %s", exc
-                )
+                if known_systemd_issue:
+                    self.logger.info(
+                        "systemd unavailable; skipping sandbox_autopurge timer activation (%s)",
+                        details,
+                    )
+                else:
+                    self.logger.warning(
+                        "failed enabling sandbox_autopurge.timer: %s", details
+                    )
         else:
             self.logger.info(
                 "systemctl not available; skipping sandbox_autopurge timer activation"

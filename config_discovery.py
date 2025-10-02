@@ -19,6 +19,16 @@ RAISE_ERRORS = bool(getattr(importlib.import_module(_PARENT_PACKAGE), "RAISE_ERR
 
 logger = logging.getLogger(__name__)
 
+
+def _env_flag(name: str) -> bool:
+    """Return ``True`` when the environment variable ``name`` is truthy."""
+
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 try:
     import psutil
 except Exception:  # pragma: no cover - optional dependency
@@ -38,6 +48,7 @@ class ConfigDiscovery:
             if key in os.environ
         }
         self._token_missing_logged = False
+        self._suppress_token_warning = _env_flag("MENACE_ALLOW_MISSING_HF_TOKEN")
 
     TERRAFORM_PATHS = [
         "terraform",
@@ -97,6 +108,7 @@ class ConfigDiscovery:
     def reload_tokens(self) -> None:
         """Ensure Hugging Face tokens are exposed via ``HUGGINGFACE_TOKEN``."""
 
+        self._suppress_token_warning = _env_flag("MENACE_ALLOW_MISSING_HF_TOKEN")
         token = self._discover_huggingface_token()
         if token:
             os.environ["HUGGINGFACE_TOKEN"] = token
@@ -104,6 +116,12 @@ class ConfigDiscovery:
             os.environ["HUGGINGFACEHUB_API_TOKEN"] = token
             os.environ["HUGGINGFACE_API_TOKEN"] = token
             self._token_missing_logged = False
+            return
+
+        if self._suppress_token_warning:
+            self.logger.debug(
+                "huggingface token not configured; warning suppressed via MENACE_ALLOW_MISSING_HF_TOKEN"
+            )
             return
 
         self.failure_count += 1
