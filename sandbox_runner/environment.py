@@ -79,6 +79,7 @@ from typing import (
     get_origin,
     get_args,
     TYPE_CHECKING,
+    TypeVar,
 )
 from contextlib import asynccontextmanager, contextmanager, suppress
 from lock_utils import SandboxLock as FileLock, Timeout
@@ -1655,6 +1656,34 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
+T = TypeVar("T")
+
+
+def _read_json_default(path: Path, default: T, *, log_context: str) -> T:
+    """Return JSON data from ``path`` or ``default`` when unavailable."""
+
+    try:
+        if not path.exists():
+            return default
+        text = path.read_text()
+    except FileNotFoundError:
+        return default
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("%s %s: %s", log_context, path, exc)
+        return default
+
+    if not text.strip():
+        return default
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        logger.warning("%s %s: %s", log_context, path, exc)
+    except Exception as exc:  # pragma: no cover - unexpected failures
+        logger.warning("%s %s: %s", log_context, path, exc)
+    return default
+
+
 def _read_active_containers() -> List[str]:
     """Return list of active container IDs from file."""
     with _ACTIVE_CONTAINERS_LOCK:
@@ -1663,15 +1692,13 @@ def _read_active_containers() -> List[str]:
 
 def _read_active_containers_unlocked() -> List[str]:
     """Read active container IDs without acquiring the lock."""
-    try:
-        if _ACTIVE_CONTAINERS_FILE.exists():
-            data = json.loads(_ACTIVE_CONTAINERS_FILE.read_text())
-            if isinstance(data, list):
-                return [str(x) for x in data]
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning(
-            "failed reading active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc
-        )
+    data = _read_json_default(
+        _ACTIVE_CONTAINERS_FILE,
+        [],
+        log_context="failed reading active containers",
+    )
+    if isinstance(data, list):
+        return [str(x) for x in data]
     return []
 
 
@@ -1757,15 +1784,13 @@ def _read_active_overlays() -> List[str]:
 
 def _read_active_overlays_unlocked() -> List[str]:
     """Read active overlays without acquiring the lock."""
-    try:
-        if _ACTIVE_OVERLAYS_FILE.exists():
-            data = json.loads(_ACTIVE_OVERLAYS_FILE.read_text())
-            if isinstance(data, list):
-                return [str(x) for x in data]
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning(
-            "failed reading active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc
-        )
+    data = _read_json_default(
+        _ACTIVE_OVERLAYS_FILE,
+        [],
+        log_context="failed reading active overlays",
+    )
+    if isinstance(data, list):
+        return [str(x) for x in data]
     return []
 
 
@@ -1829,15 +1854,13 @@ def _remove_active_overlay(path: str) -> None:
 
 def _read_failed_overlays() -> List[str]:
     """Return list of overlay directories that failed to delete."""
-    try:
-        if _FAILED_OVERLAYS_FILE.exists():
-            data = json.loads(_FAILED_OVERLAYS_FILE.read_text())
-            if isinstance(data, list):
-                return [str(x) for x in data]
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning(
-            "failed reading failed overlays %s: %s", _FAILED_OVERLAYS_FILE, exc
-        )
+    data = _read_json_default(
+        _FAILED_OVERLAYS_FILE,
+        [],
+        log_context="failed reading failed overlays",
+    )
+    if isinstance(data, list):
+        return [str(x) for x in data]
     return []
 
 
@@ -1878,13 +1901,16 @@ def _record_failed_overlay(path: str) -> None:
 
 def _read_failed_cleanup() -> Dict[str, float]:
     """Return mapping of items that failed to clean up and their timestamps."""
-    try:
-        if FAILED_CLEANUP_FILE.exists():
-            data = json.loads(FAILED_CLEANUP_FILE.read_text())
-            if isinstance(data, dict):
-                return {str(k): float(v) for k, v in data.items()}
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed reading failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
+    data = _read_json_default(
+        FAILED_CLEANUP_FILE,
+        {},
+        log_context="failed reading failed cleanup",
+    )
+    if isinstance(data, dict):
+        try:
+            return {str(k): float(v) for k, v in data.items()}
+        except Exception as exc:  # pragma: no cover - conversion errors
+            logger.warning("failed reading failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
     return {}
 
 
@@ -1898,13 +1924,16 @@ def _write_failed_cleanup(entries: Dict[str, float]) -> None:
 
 def _read_cleanup_stats() -> Dict[str, int]:
     """Return persistent cleanup statistics."""
-    try:
-        if _CLEANUP_STATS_FILE.exists():
-            data = json.loads(_CLEANUP_STATS_FILE.read_text())
-            if isinstance(data, dict):
-                return {str(k): int(v) for k, v in data.items()}
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed reading cleanup stats %s: %s", _CLEANUP_STATS_FILE, exc)
+    data = _read_json_default(
+        _CLEANUP_STATS_FILE,
+        {},
+        log_context="failed reading cleanup stats",
+    )
+    if isinstance(data, dict):
+        try:
+            return {str(k): int(v) for k, v in data.items()}
+        except Exception as exc:  # pragma: no cover - conversion errors
+            logger.warning("failed reading cleanup stats %s: %s", _CLEANUP_STATS_FILE, exc)
     return {}
 
 
@@ -1925,10 +1954,16 @@ def _increment_cleanup_stat(name: str, amount: int = 1) -> None:
 
 def _read_last_autopurge() -> float:
     """Return timestamp of last automatic purge."""
+    data = _read_json_default(
+        _LAST_AUTOPURGE_FILE,
+        0.0,
+        log_context="failed reading last autopurge",
+    )
     try:
-        if _LAST_AUTOPURGE_FILE.exists():
-            return float(_LAST_AUTOPURGE_FILE.read_text())
-    except Exception as exc:  # pragma: no cover - fs errors
+        return float(data)
+    except (TypeError, ValueError) as exc:
+        logger.warning("failed reading last autopurge %s: %s", _LAST_AUTOPURGE_FILE, exc)
+    except Exception as exc:  # pragma: no cover - unexpected failures
         logger.warning("failed reading last autopurge %s: %s", _LAST_AUTOPURGE_FILE, exc)
     return 0.0
 
