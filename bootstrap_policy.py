@@ -171,7 +171,7 @@ class DependencyPolicy:
         defaults: Sequence[str],
         *,
         skip_stripe: bool,
-        stripe_sensitive: Iterable[str],
+        router_sensitive: Iterable[str],
     ) -> tuple[str, ...]:
         """Return sandbox modules to probe during startup."""
 
@@ -182,12 +182,12 @@ class DependencyPolicy:
         )
         if not modules:
             return tuple()
-        stripe_sensitive_lower = {name.lower() for name in stripe_sensitive}
+        router_sensitive_lower = {name.lower() for name in router_sensitive}
         if skip_stripe:
             return tuple(
                 module
                 for module in modules
-                if module.lower() not in stripe_sensitive_lower
+                if module.lower() not in router_sensitive_lower
             )
         return tuple(modules)
 

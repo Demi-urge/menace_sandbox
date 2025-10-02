@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .roles import ROLE_PERMISSIONS, READ
+try:  # pragma: no cover - support flat module execution
+    from .roles import ROLE_PERMISSIONS, READ
+except ImportError:  # pragma: no cover - fallback when package context missing
+    from roles import ROLE_PERMISSIONS, READ  # type: ignore
 
 
 @dataclass

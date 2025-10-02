@@ -8,7 +8,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-import yaml
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except Exception as exc:  # pragma: no cover - degrade gracefully
+    yaml = None  # type: ignore[assignment]
+    logging.getLogger(__name__).warning(
+        "PyYAML unavailable; billing anomaly configuration will use defaults: %s",
+        exc,
+    )
 from dynamic_path_router import resolve_path
 
 import audit_logger
@@ -155,6 +162,31 @@ LOCAL_TABLES.add("billing_anomalies")
 _EVENT_BUS = UnifiedEventBus()
 
 
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    """Load a YAML mapping from *path* with graceful degradation."""
+
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            if yaml is not None:  # type: ignore[truthy-function]
+                data = yaml.safe_load(fh)  # type: ignore[call-arg]
+            else:
+                text = fh.read()
+                data = json.loads(text) if text.strip() else {}
+    except FileNotFoundError:
+        logger.debug("Configuration file missing: %s", path)
+        return {}
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid JSON configuration at %s: %s", path, exc)
+        return {}
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning("Failed loading configuration %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        logger.warning("Configuration %s is not a mapping; ignoring", path)
+        return {}
+    return data
+
+
 _MEMORY_MANAGER: MenaceMemoryManager | None = None
 
 # ---------------------------------------------------------------------------
@@ -177,27 +209,17 @@ def _load_suppression_settings(path: Path | None = None) -> None:
     """Load anomaly suppression settings from YAML config."""
 
     cfg = path or _SUPPRESSION_CONFIG_PATH
-    try:
-        with cfg.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        sup = data.get("anomaly_suppression", {})
-        _SUPPRESSION_SETTINGS["window_seconds"] = float(
-            sup.get("window_seconds", _SUPPRESSION_SETTINGS["window_seconds"])
-        )
-        _SUPPRESSION_SETTINGS["max_occurrences"] = float(
-            sup.get("max_occurrences", _SUPPRESSION_SETTINGS["max_occurrences"])
-        )
-        _SUPPRESSION_SETTINGS["severity_threshold"] = float(
-            sup.get(
-                "severity_threshold", _SUPPRESSION_SETTINGS["severity_threshold"]
-            )
-        )
-    except FileNotFoundError:
-        pass
-    except Exception:  # pragma: no cover - best effort
-        logger.exception(
-            "failed to load anomaly suppression config", extra={"path": str(cfg)}
-        )
+    data = _load_yaml_mapping(cfg)
+    sup = data.get("anomaly_suppression", {})
+    _SUPPRESSION_SETTINGS["window_seconds"] = float(
+        sup.get("window_seconds", _SUPPRESSION_SETTINGS["window_seconds"])
+    )
+    _SUPPRESSION_SETTINGS["max_occurrences"] = float(
+        sup.get("max_occurrences", _SUPPRESSION_SETTINGS["max_occurrences"])
+    )
+    _SUPPRESSION_SETTINGS["severity_threshold"] = float(
+        sup.get("severity_threshold", _SUPPRESSION_SETTINGS["severity_threshold"])
+    )
 
 
 _load_suppression_settings()
@@ -262,17 +284,7 @@ def _load_instruction_overrides() -> Dict[str, str]:
 
     global _INSTRUCTION_OVERRIDES, PAYMENT_ANOMALY_THRESHOLD
     if _INSTRUCTION_OVERRIDES is None:
-        data: Dict[str, Any]
-        try:
-            with _INSTRUCTION_PATH.open("r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-        except FileNotFoundError:
-            data = {}
-        except Exception:  # pragma: no cover - best effort
-            logger.exception(
-                "failed to load billing instructions", extra={"path": str(_INSTRUCTION_PATH)}
-            )
-            data = {}
+        data: Dict[str, Any] = _load_yaml_mapping(_INSTRUCTION_PATH)
 
         instructions = data.get("instructions")
         if instructions is None:

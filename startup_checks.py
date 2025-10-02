@@ -265,39 +265,46 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
         reg_mod = sys.modules.get(reg_module_name) or importlib.import_module(
             reg_module_name
         )
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "bot registry unavailable; skipping billing route verification (%s)", exc
+        )
+        reg_mod = None
     except Exception as exc:  # pragma: no cover - import failure
         raise RuntimeError(f"bot_registry import failed: {exc}") from exc
 
     bots: set[str] = set()
 
-    # Attempt to extract bot names from a registry mapping first
-    registry = getattr(reg_mod, "REGISTRY", None)
-    if registry is not None:
-        try:
-            bots = set(registry.keys() if isinstance(registry, dict) else registry)
-        except Exception:
-            bots = set()
-    elif hasattr(reg_mod, "BotRegistry"):
-        persist = os.getenv("BOT_DB_PATH", "bots.db")
-        try:
-            reg_obj = reg_mod.BotRegistry(persist=persist)
-        except Exception as exc:  # pragma: no cover - registry load failure
-            raise RuntimeError(f"bot registry load failed: {exc}") from exc
-        graph = getattr(reg_obj, "graph", None)
-        if graph is not None and hasattr(graph, "nodes"):
+    if reg_mod is not None:
+        # Attempt to extract bot names from a registry mapping first
+        registry = getattr(reg_mod, "REGISTRY", None)
+        if registry is not None:
             try:
-                bots = {str(n) for n in graph.nodes}
+                bots = set(registry.keys() if isinstance(registry, dict) else registry)
             except Exception:
                 bots = set()
-        elif hasattr(reg_obj, "bots"):
-            bots = {str(n) for n in getattr(reg_obj, "bots")}
+        elif hasattr(reg_mod, "BotRegistry"):
+            persist = os.getenv("BOT_DB_PATH", "bots.db")
+            try:
+                reg_obj = reg_mod.BotRegistry(persist=persist)
+            except Exception as exc:  # pragma: no cover - registry load failure
+                raise RuntimeError(f"bot registry load failed: {exc}") from exc
+            graph = getattr(reg_obj, "graph", None)
+            if graph is not None and hasattr(graph, "nodes"):
+                try:
+                    bots = {str(n) for n in graph.nodes}
+                except Exception:
+                    bots = set()
+            elif hasattr(reg_obj, "bots"):
+                bots = {str(n) for n in getattr(reg_obj, "bots")}
 
     routing_table = getattr(sbr, "ROUTING_TABLE", getattr(sbr, "BILLING_RULES", {}))
-    missing = [b for b in bots if not any(key[-1] == b for key in routing_table)]
-    if missing:
-        raise RuntimeError(
-            f"Missing billing routes for bots: {', '.join(sorted(missing))}"
-        )
+    if bots:
+        missing = [b for b in bots if not any(key[-1] == b for key in routing_table)]
+        if missing:
+            raise RuntimeError(
+                f"Missing billing routes for bots: {', '.join(sorted(missing))}"
+            )
 
     required = list(mandatory_bot_ids or [])
     if required:
@@ -418,7 +425,7 @@ def run_startup_checks(
     sandbox_modules: Iterable[str] | None = policy.resolved_sandbox_modules(
         OPTIONAL_SANDBOX_MODULES,
         skip_stripe=skip_stripe_router,
-        stripe_sensitive=STRIPE_DEPENDENT_OPTIONALS,
+        router_sensitive=STRIPE_DEPENDENT_OPTIONALS,
     )
     verify_optional_dependencies(sandbox_modules)
     missing = verify_project_dependencies(
