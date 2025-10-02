@@ -1,5 +1,23 @@
+import importlib
+import importlib.util
+import subprocess
+import sys
+import time
 import types
-import sandbox_runner.environment as env
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+spec = importlib.util.spec_from_file_location("dynamic_path_router", ROOT / "dynamic_path_router.py")
+dynamic_path_router = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(dynamic_path_router)  # type: ignore[union-attr]
+sys.modules["dynamic_path_router"] = dynamic_path_router
+
+env = importlib.import_module("menace_sandbox.sandbox_runner.environment")
+sys.modules["sandbox_runner.environment"] = env
 
 
 class DummyTask:
@@ -170,3 +188,48 @@ def test_watchdog_recovers_event_listener_failure(monkeypatch):
     assert env._WORKER_CHECK_TIMER is not timer
 
     env.cancel_cleanup_check()
+
+
+def test_cleanup_timeout_does_not_stall_watchdog(monkeypatch, tmp_path, caplog):
+    caplog.set_level("WARNING")
+    file = tmp_path / "cleanup.json"
+    file.write_text("{}")
+    monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
+
+    monkeypatch.setattr(env, "autopurge_if_needed", lambda: None)
+    monkeypatch.setattr(env, "ensure_docker_client", lambda: None)
+    monkeypatch.setattr(env, "ensure_cleanup_worker", lambda: None)
+    monkeypatch.setattr(env, "retry_failed_cleanup", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
+    monkeypatch.setattr(env, "_PRUNE_VOLUMES", False)
+    monkeypatch.setattr(env, "_PRUNE_NETWORKS", False)
+
+    call_count = {"value": 0}
+
+    def fake_run(cmd, *args, **kwargs):
+        if call_count["value"] == 0:
+            call_count["value"] += 1
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+        call_count["value"] += 1
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    env._WATCHDOG_METRICS.clear()
+    env._CLEANUP_TASK = None
+    env._REAPER_TASK = None
+    env._DOCKER_CLIENT = object()
+    env._LAST_CLEANUP_TS = time.monotonic() - 100
+    env._LAST_REAPER_TS = time.monotonic()
+
+    env._run_cleanup_sync()
+
+    assert "timed out" in caplog.text
+    assert time.monotonic() - env._LAST_CLEANUP_TS < 10
+
+    before = dict(env._WATCHDOG_METRICS)
+    env.watchdog_check()
+    after = dict(env._WATCHDOG_METRICS)
+
+    assert after.get("cleanup", 0) == before.get("cleanup", 0)

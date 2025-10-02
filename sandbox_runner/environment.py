@@ -1404,6 +1404,9 @@ _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
 _POOL_CLEANUP_INTERVAL = float(os.getenv("SANDBOX_POOL_CLEANUP_INTERVAL", "60"))
 _WORKER_CHECK_INTERVAL = float(os.getenv("SANDBOX_WORKER_CHECK_INTERVAL", "30"))
+_CLEANUP_SUBPROCESS_TIMEOUT = float(
+    os.getenv("SANDBOX_CLEANUP_SUBPROCESS_TIMEOUT", "30")
+)
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
@@ -1899,8 +1902,8 @@ def _record_failed_overlay(path: str) -> None:
             logger.exception("failed to increment overlay_cleanup_failures")
 
 
-def _read_failed_cleanup() -> Dict[str, float]:
-    """Return mapping of items that failed to clean up and their timestamps."""
+def _read_failed_cleanup() -> Dict[str, Dict[str, Any]]:
+    """Return mapping of failed cleanup items and their metadata."""
     data = _read_json_default(
         FAILED_CLEANUP_FILE,
         {},
@@ -1908,13 +1911,23 @@ def _read_failed_cleanup() -> Dict[str, float]:
     )
     if isinstance(data, dict):
         try:
-            return {str(k): float(v) for k, v in data.items()}
+            entries: Dict[str, Dict[str, Any]] = {}
+            for key, value in data.items():
+                ts: float
+                reason = ""
+                if isinstance(value, dict):
+                    ts = float(value.get("ts", 0.0))
+                    reason = str(value.get("reason", ""))
+                else:
+                    ts = float(value)
+                entries[str(key)] = {"ts": ts, "reason": reason}
+            return entries
         except Exception as exc:  # pragma: no cover - conversion errors
             logger.warning("failed reading failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
     return {}
 
 
-def _write_failed_cleanup(entries: Dict[str, float]) -> None:
+def _write_failed_cleanup(entries: Dict[str, Dict[str, Any]]) -> None:
     """Persist ``entries`` to the failed cleanup file."""
     try:
         _atomic_write_json(FAILED_CLEANUP_FILE, entries)
@@ -1977,10 +1990,14 @@ def _write_last_autopurge(ts: float) -> None:
         logger.warning("failed writing last autopurge %s: %s", _LAST_AUTOPURGE_FILE, exc)
 
 
-def _record_failed_cleanup(item: str) -> None:
+def _record_failed_cleanup(item: str, *, reason: str | None = None) -> None:
     """Record ``item`` as failed to clean up with current timestamp."""
     data = _read_failed_cleanup()
-    data[item] = time.time()
+    entry = data.get(item, {"ts": 0.0, "reason": ""})
+    entry["ts"] = time.time()
+    if reason:
+        entry["reason"] = reason
+    data[item] = entry
     _write_failed_cleanup(data)
 
 
@@ -2287,6 +2304,7 @@ def _prune_volumes() -> int:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
@@ -2297,15 +2315,34 @@ def _prune_volumes() -> int:
                     logger.info("removing stale sandbox volume %s", vol)
                 except Exception as exc:
                     logger.debug("failed to log volume removal %s: %s", vol, exc)
-                subprocess.run(
-                    ["docker", "volume", "rm", "-f", vol],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
+                try:
+                    subprocess.run(
+                        ["docker", "volume", "rm", "-f", vol],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    logger.warning(
+                        "volume prune timed out for %s (%.1fs)",
+                        vol,
+                        float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                    )
+                    _record_failed_cleanup(
+                        f"volume:{vol}",
+                        reason="docker volume rm timeout",
+                    )
+                    return removed
                 removed += 1
                 labeled.add(vol)
                 _CLEANUP_METRICS["volume"] += 1
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "volume listing timed out (%.1fs)",
+            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+        )
+        return removed
     except Exception as exc:
         logger.debug("leftover volume cleanup failed: %s", exc)
 
@@ -2317,19 +2354,33 @@ def _prune_volumes() -> int:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
                 vol = vol.strip()
                 if not vol or vol in labeled:
                     continue
-                info = subprocess.run(
-                    ["docker", "volume", "inspect", vol],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
+                try:
+                    info = subprocess.run(
+                        ["docker", "volume", "inspect", vol],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                        timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    logger.warning(
+                        "volume inspect timed out for %s (%.1fs)",
+                        vol,
+                        float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                    )
+                    _record_failed_cleanup(
+                        f"volume:{vol}",
+                        reason="docker volume inspect timeout",
+                    )
+                    return removed
                 if info.returncode != 0:
                     continue
                 try:
@@ -2348,14 +2399,33 @@ def _prune_volumes() -> int:
                         logger.info("removing stale sandbox volume %s", vol)
                     except Exception as exc:
                         logger.debug("failed to log volume removal %s: %s", vol, exc)
-                    subprocess.run(
-                        ["docker", "volume", "rm", "-f", vol],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
+                    try:
+                        subprocess.run(
+                            ["docker", "volume", "rm", "-f", vol],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        logger.warning(
+                            "volume prune timed out for %s (%.1fs)",
+                            vol,
+                            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                        )
+                        _record_failed_cleanup(
+                            f"volume:{vol}",
+                            reason="docker volume rm timeout",
+                        )
+                        return removed
                     removed += 1
                     _CLEANUP_METRICS["volume"] += 1
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "volume listing timed out (%.1fs)",
+            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+        )
+        return removed
     except Exception as exc:
         logger.debug("unlabeled volume cleanup failed: %s", exc)
 
@@ -2382,6 +2452,7 @@ def _prune_networks() -> int:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
@@ -2392,15 +2463,34 @@ def _prune_networks() -> int:
                     logger.info("removing stale sandbox network %s", net)
                 except Exception as exc:
                     logger.debug("failed to log network removal %s: %s", net, exc)
-                subprocess.run(
-                    ["docker", "network", "rm", "-f", net],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
+                try:
+                    subprocess.run(
+                        ["docker", "network", "rm", "-f", net],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    logger.warning(
+                        "network prune timed out for %s (%.1fs)",
+                        net,
+                        float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                    )
+                    _record_failed_cleanup(
+                        f"network:{net}",
+                        reason="docker network rm timeout",
+                    )
+                    return removed
                 removed += 1
                 labeled.add(net)
                 _CLEANUP_METRICS["network"] += 1
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "network listing timed out (%.1fs)",
+            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+        )
+        return removed
     except Exception as exc:
         logger.debug("leftover network cleanup failed: %s", exc)
 
@@ -2412,19 +2502,33 @@ def _prune_networks() -> int:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
                 net = net.strip()
                 if not net or net in labeled:
                     continue
-                info = subprocess.run(
-                    ["docker", "network", "inspect", net],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
+                try:
+                    info = subprocess.run(
+                        ["docker", "network", "inspect", net],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                        timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    logger.warning(
+                        "network inspect timed out for %s (%.1fs)",
+                        net,
+                        float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                    )
+                    _record_failed_cleanup(
+                        f"network:{net}",
+                        reason="docker network inspect timeout",
+                    )
+                    return removed
                 if info.returncode != 0:
                     continue
                 try:
@@ -2446,14 +2550,33 @@ def _prune_networks() -> int:
                         logger.info("removing stale sandbox network %s", net)
                     except Exception as exc:
                         logger.debug("failed to log network removal %s: %s", net, exc)
-                    subprocess.run(
-                        ["docker", "network", "rm", "-f", net],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
+                    try:
+                        subprocess.run(
+                            ["docker", "network", "rm", "-f", net],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        logger.warning(
+                            "network prune timed out for %s (%.1fs)",
+                            net,
+                            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                        )
+                        _record_failed_cleanup(
+                            f"network:{net}",
+                            reason="docker network rm timeout",
+                        )
+                        return removed
                     removed += 1
                     _CLEANUP_METRICS["network"] += 1
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "network listing timed out (%.1fs)",
+            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+        )
+        return removed
     except Exception as exc:
         logger.debug("unlabeled network cleanup failed: %s", exc)
 
@@ -2485,12 +2608,26 @@ def purge_leftovers() -> None:
                         logger.info("removing recorded sandbox container %s", cid)
                     except Exception as exc:
                         logger.debug("failed to log container removal %s: %s", cid, exc)
-                    subprocess.run(
-                        ["docker", "rm", "-f", cid],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
+                    try:
+                        subprocess.run(
+                            ["docker", "rm", "-f", cid],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        logger.warning(
+                            "purge leftovers timed out removing %s (%.1fs)",
+                            cid,
+                            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                        )
+                        _record_failed_cleanup(
+                            f"container:{cid}",
+                            reason="docker rm timeout during purge",
+                        )
+                        remaining_ids.append(cid)
+                        continue
                     exists = False
                     try:
                         proc = subprocess.run(
@@ -2499,9 +2636,22 @@ def purge_leftovers() -> None:
                             stderr=subprocess.PIPE,
                             text=True,
                             check=False,
+                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
                         if proc.returncode == 0 and proc.stdout.strip():
                             exists = True
+                    except subprocess.TimeoutExpired as exc:
+                        logger.warning(
+                            "purge leftovers timed out verifying %s (%.1fs)",
+                            cid,
+                            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                        )
+                        _record_failed_cleanup(
+                            f"container:{cid}",
+                            reason="docker ps timeout during purge",
+                        )
+                        remaining_ids.append(cid)
+                        continue
                     except Exception as exc:
                         logger.debug(
                             "container existence check failed for %s: %s", cid, exc
@@ -2550,24 +2700,44 @@ def purge_leftovers() -> None:
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                 )
                 if proc.returncode == 0:
                     for cid in proc.stdout.splitlines():
                         cid = cid.strip()
-                        if cid:
-                            try:
-                                logger.info("removing stale sandbox container %s", cid)
-                            except Exception as exc:
-                                logger.debug("failed to log stale container %s: %s", cid, exc)
+                        if not cid:
+                            continue
+                        try:
+                            logger.info("removing stale sandbox container %s", cid)
+                        except Exception as exc:
+                            logger.debug("failed to log stale container %s: %s", cid, exc)
+                        try:
                             proc_rm = subprocess.run(
                                 ["docker", "rm", "-f", cid],
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                                 check=False,
+                                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                             )
-                            _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
-                            _remove_failed_cleanup(cid)
-                            removed_containers += 1
+                        except subprocess.TimeoutExpired as exc:
+                            logger.warning(
+                                "purge leftovers timed out removing %s (%.1fs)",
+                                cid,
+                                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                            )
+                            _record_failed_cleanup(
+                                f"container:{cid}",
+                                reason="docker rm timeout during purge",
+                            )
+                            continue
+                        _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
+                        _remove_failed_cleanup(cid)
+                        removed_containers += 1
+            except subprocess.TimeoutExpired as exc:
+                logger.warning(
+                    "purge leftovers timed out listing containers (%.1fs)",
+                    float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                )
             except Exception as exc:
                 logger.debug("leftover container cleanup failed: %s", exc)
 
@@ -2586,6 +2756,7 @@ def purge_leftovers() -> None:
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                 )
                 if proc.returncode == 0:
                     for line in proc.stdout.splitlines():
@@ -2610,15 +2781,33 @@ def purge_leftovers() -> None:
                                 logger.debug(
                                     "failed to log stale container %s: %s", cid, exc
                                 )
-                            proc_rm = subprocess.run(
-                                ["docker", "rm", "-f", cid],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                            )
+                            try:
+                                proc_rm = subprocess.run(
+                                    ["docker", "rm", "-f", cid],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    check=False,
+                                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                                )
+                            except subprocess.TimeoutExpired as exc:
+                                logger.warning(
+                                    "purge leftovers timed out removing %s (%.1fs)",
+                                    cid,
+                                    float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                                )
+                                _record_failed_cleanup(
+                                    f"container:{cid}",
+                                    reason="docker rm timeout during purge",
+                                )
+                                continue
                             _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
                             _remove_failed_cleanup(cid)
                             removed_containers += 1
+            except subprocess.TimeoutExpired as exc:
+                logger.warning(
+                    "purge leftovers timed out inspecting containers (%.1fs)",
+                    float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                )
             except Exception as exc:
                 logger.debug("unlabeled container cleanup failed: %s", exc)
 
@@ -3165,9 +3354,17 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 exists = True
+        except subprocess.TimeoutExpired as exc:  # pragma: no cover - timeout handling
+            logger.warning(
+                "container existence check timed out for %s (%.1fs)",
+                cid,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
+            exists = True
         except Exception as exc:  # pragma: no cover - unexpected runtime issues
             logger.debug("container existence check failed for %s: %s", cid, exc)
 
@@ -3179,6 +3376,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr or proc.stdout)
@@ -3190,11 +3388,26 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                 )
                 if confirm.returncode == 0 and confirm.stdout.strip():
                     exists = True
+            except subprocess.TimeoutExpired as exc:
+                logger.warning(
+                    "container removal verification timed out for %s (%.1fs)",
+                    cid,
+                    float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                )
+                exists = True
             except Exception as exc:
                 logger.debug("container existence re-check failed for %s: %s", cid, exc)
+        except subprocess.TimeoutExpired as exc:
+            _CLEANUP_FAILURES += 1
+            logger.error(
+                "docker rm fallback timed out for container %s (%.1fs)",
+                cid,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
         except Exception as exc:
             _CLEANUP_FAILURES += 1
             logger.error("docker rm fallback failed for container %s: %s", cid, exc)
@@ -3207,6 +3420,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
             subprocess.run(
                 ["docker", "rm", "-f", cid],
@@ -3214,6 +3428,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
             exists = False
             try:
@@ -3223,12 +3438,27 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                 )
                 if confirm.returncode == 0 and confirm.stdout.strip():
                     exists = True
+            except subprocess.TimeoutExpired as exc:
+                logger.warning(
+                    "container kill verification timed out for %s (%.1fs)",
+                    cid,
+                    float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+                )
+                exists = True
             except Exception as exc:
                 logger.debug("container existence re-check failed for %s: %s", cid, exc)
             _FORCE_KILLS += 1
+        except subprocess.TimeoutExpired as exc:
+            _CLEANUP_FAILURES += 1
+            logger.error(
+                "docker kill escalation timed out for container %s (%.1fs)",
+                cid,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
         except Exception as exc:
             _CLEANUP_FAILURES += 1
             logger.error("docker kill escalation failed for container %s: %s", cid, exc)
@@ -3273,7 +3503,7 @@ def _log_pool_metrics(image: str) -> None:
 
 def report_failed_cleanup(
     threshold: float | None = None, *, alert: bool = False
-) -> Dict[str, float]:
+) -> Dict[str, Dict[str, Any]]:
     """Return failed cleanup entries older than ``threshold``.
 
     When ``alert`` is ``True``, log errors and send a diagnostic record
@@ -3283,14 +3513,21 @@ def report_failed_cleanup(
         threshold = _FAILED_CLEANUP_ALERT_AGE
     data = _read_failed_cleanup()
     now = time.time()
-    stale = {item: ts for item, ts in data.items() if now - ts >= threshold}
+    stale = {
+        item: meta
+        for item, meta in data.items()
+        if now - float(meta.get("ts", 0.0)) >= threshold
+    }
     if alert and stale:
         try:
-            logger.error("failed cleanup items: %s", list(stale.keys()))
+            logger.error(
+                "failed cleanup items: %s",
+                {item: meta.get("reason", "") for item, meta in stale.items()},
+            )
         except Exception as exc:
             _fallback_logger().error(
                 "failed cleanup items %s (logging failed: %s)",
-                list(stale.keys()),
+                {item: meta.get("reason", "") for item, meta in stale.items()},
                 exc,
                 exc_info=True,
             )
@@ -3430,10 +3667,17 @@ def reconcile_active_containers() -> None:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
         if proc.returncode != 0:
             return
         ids = [cid.strip() for cid in proc.stdout.splitlines() if cid.strip()]
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "docker ps timed out during reconciliation (%.1fs)",
+            float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+        )
+        return
     except DockerException as exc:
         logger.debug("active container reconciliation failed: %s", exc)
         return
@@ -3452,12 +3696,25 @@ def reconcile_active_containers() -> None:
             logger.info("removing untracked sandbox container %s", cid)
         except Exception as exc:
             logger.debug("failed to log untracked container removal %s: %s", cid, exc)
-        subprocess.run(
-            ["docker", "rm", "-f", cid],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", cid],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "removing untracked sandbox container %s timed out (%.1fs)",
+                cid,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
+            _record_failed_cleanup(
+                f"container:{cid}",
+                reason="docker rm timeout during reconciliation",
+            )
+            return
         _remove_active_container(cid)
         with _POOL_LOCK:
             td = _CONTAINER_DIRS.pop(cid, None)
@@ -3485,6 +3742,39 @@ def reconcile_active_containers() -> None:
                     )
 
 
+def _resolve_cleanup_command(item: str) -> tuple[List[str], List[str] | None]:
+    """Return cleanup and verification commands for ``item``.
+
+    Raises ``ValueError`` when ``item`` is not a recognized cleanup target.
+    """
+
+    if not item:
+        raise ValueError("empty cleanup item")
+
+    target = item
+    verify: List[str] | None = None
+    if ":" in item:
+        prefix, suffix = item.split(":", 1)
+        if prefix == "volume" and suffix:
+            target = suffix
+            return (
+                ["docker", "volume", "rm", "-f", target],
+                ["docker", "volume", "ls", "-q", "--filter", f"name={target}"],
+            )
+        if prefix == "network" and suffix:
+            target = suffix
+            return (
+                ["docker", "network", "rm", "-f", target],
+                ["docker", "network", "ls", "-q", "--filter", f"name={target}"],
+            )
+        if prefix == "container" and suffix:
+            target = suffix
+
+    command = ["docker", "rm", "-f", target]
+    verify = ["docker", "ps", "-aq", "--filter", f"id={target}"]
+    return command, verify
+
+
 def retry_failed_cleanup() -> tuple[int, int]:
     """Retry deletion of items recorded in :data:`FAILED_CLEANUP_FILE`.
 
@@ -3494,7 +3784,8 @@ def retry_failed_cleanup() -> tuple[int, int]:
     data = _read_failed_cleanup()
     successes = 0
     failures = 0
-    for item in list(data.keys()):
+    for item, meta in list(data.items()):
+        reason = str(meta.get("reason", ""))
         is_path = os.path.sep in item or os.path.exists(item)
         if is_path:
             try:
@@ -3512,30 +3803,87 @@ def retry_failed_cleanup() -> tuple[int, int]:
                     _remove_failed_cleanup(item)
                     successes += 1
                     continue
+                _record_failed_cleanup(
+                    item,
+                    reason=reason or f"path removal failed: {exc}",
+                )
                 failures += 1
                 continue
         try:
+            command, verify = _resolve_cleanup_command(item)
+        except ValueError:
+            failures += 1
+            continue
+        try:
             subprocess.run(
-                ["docker", "rm", "-f", item],
+                command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
+        except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "cleanup retry timed out for %s (%.1fs)",
+                item,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
+            _record_failed_cleanup(
+                item,
+                reason=reason or f"timeout running {' '.join(command)}",
+            )
+            failures += 1
+            continue
+        except Exception as exc:
+            logger.debug("cleanup retry failed for %s: %s", item, exc)
+            _record_failed_cleanup(
+                item,
+                reason=reason or f"command failed: {' '.join(command)}",  # type: ignore[arg-type]
+            )
+            failures += 1
+            continue
+
+        if verify is None:
+            _remove_failed_cleanup(item)
+            successes += 1
+            continue
+
+        try:
             proc = subprocess.run(
-                ["docker", "ps", "-aq", "--filter", f"id={item}"],
+                verify,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
-            if proc.returncode == 0 and not proc.stdout.strip():
-                _remove_failed_cleanup(item)
-                successes += 1
-            else:
-                failures += 1
-        except Exception:
+        except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "cleanup verification timed out for %s (%.1fs)",
+                item,
+                float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
+            )
+            _record_failed_cleanup(
+                item,
+                reason=reason or f"timeout verifying {' '.join(verify)}",
+            )
             failures += 1
+            continue
+        except Exception as exc:
+            logger.debug("cleanup verification failed for %s: %s", item, exc)
+            _record_failed_cleanup(
+                item,
+                reason=reason or f"verification failed: {' '.join(verify)}",
+            )
+            failures += 1
+            continue
 
+        if proc.returncode == 0 and not proc.stdout.strip():
+            _remove_failed_cleanup(item)
+            successes += 1
+        else:
+            failures += 1
+    
     global _CLEANUP_RETRY_SUCCESSES, _CLEANUP_RETRY_FAILURES
     if successes:
         _CLEANUP_RETRY_SUCCESSES += successes
@@ -3556,6 +3904,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                 )
             except Exception:
                 logger.exception("failsafe docker prune failed")
