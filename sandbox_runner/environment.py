@@ -4148,13 +4148,25 @@ async def _cleanup_worker() -> None:
             start = time.monotonic()
             try:
                 retry_failed_cleanup()
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 cleaned, replaced = _cleanup_idle_containers()
                 total_cleaned += cleaned
                 total_replaced += replaced
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 _prune_volumes()
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 _prune_networks()
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 report_failed_cleanup(alert=True)
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
                 if cleaned:
                     logger.info(
                         "cleaned %d idle containers (total %d)", cleaned, total_cleaned
