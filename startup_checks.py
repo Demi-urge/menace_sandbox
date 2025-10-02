@@ -326,14 +326,32 @@ def _prompt_for_vars(names: Iterable[str]) -> None:
             os.environ[name] = value
 
 
-def run_startup_checks(pyproject_path: str | Path | None = None) -> None:
-    """Run dependency and configuration checks."""
+def run_startup_checks(
+    pyproject_path: str | Path | None = None,
+    *,
+    skip_stripe_router: bool = False,
+) -> None:
+    """Run dependency and configuration checks.
+
+    Parameters
+    ----------
+    pyproject_path:
+        Optional path to a ``pyproject.toml`` file used for dependency
+        validation.  Defaults to the repository root when omitted.
+    skip_stripe_router:
+        When ``True`` the Stripe router verification is bypassed.  This is
+        primarily useful for local development environments that do not have
+        access to Stripe credentials or services.
+    """
     missing_optional = validate_dependencies()
     if missing_optional:
         _install_packages(missing_optional)
     verify_optional_dependencies()
     missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
-    verify_stripe_router()
+    if skip_stripe_router:
+        logger.info("Skipping Stripe router verification at caller request")
+    else:
+        verify_stripe_router()
     mode = os.getenv("MENACE_MODE", "test").lower()
     if missing:
         msg = f"Missing required dependencies: {', '.join(missing)}"
