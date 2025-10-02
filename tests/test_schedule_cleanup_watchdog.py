@@ -374,3 +374,108 @@ def test_watchdog_accepts_midpass_heartbeats(env):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=1.0)
         loop.close()
+
+
+def test_watchdog_accepts_reaper_midpass_heartbeats(env):
+    interval = 0.2
+    delay = 0.75 * interval
+    env._POOL_CLEANUP_INTERVAL = interval
+    env._DOCKER_CLIENT = object()
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._CLEANUP_TASK = DummyTask()
+    env._WATCHDOG_METRICS.clear()
+    env._LAST_CLEANUP_TS = time.monotonic()
+    env._LAST_REAPER_TS = time.monotonic()
+
+    events = {
+        name: threading.Event()
+        for name in (
+            "autopurge",
+            "reconcile",
+            "reap",
+            "purge_vms",
+            "prune_volumes",
+            "prune_networks",
+        )
+    }
+
+    def slow_autopurge():
+        events["autopurge"].set()
+        time.sleep(delay)
+
+    def slow_reconcile():
+        events["reconcile"].set()
+        time.sleep(delay)
+
+    def slow_reap() -> int:
+        events["reap"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_purge_vms(record_runtime: bool = True) -> int:  # noqa: FBT001
+        events["purge_vms"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_prune_volumes() -> int:
+        events["prune_volumes"].set()
+        time.sleep(delay)
+        return 0
+
+    def slow_prune_networks() -> int:
+        events["prune_networks"].set()
+        time.sleep(delay)
+        return 0
+
+    env.autopurge_if_needed = slow_autopurge
+    env.reconcile_active_containers = slow_reconcile
+    env._reap_orphan_containers = slow_reap
+    env._purge_stale_vms = slow_purge_vms
+    env._prune_volumes = slow_prune_volumes
+    env._prune_networks = slow_prune_networks
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+
+    def schedule(coro):
+        name = getattr(getattr(coro, "cr_code", None), "co_name", "")
+        if name == "_reaper_worker":
+            return asyncio.run_coroutine_threadsafe(coro, loop)
+        coro.close()
+        return DummyTask()
+
+    env._schedule_coroutine = schedule
+
+    env._REAPER_TASK = schedule(env._reaper_worker())
+
+    stop = threading.Event()
+
+    def watchdog_runner() -> None:
+        while not stop.is_set():
+            env.watchdog_check()
+            time.sleep(interval / 4)
+
+    watchdog_thread = threading.Thread(target=watchdog_runner, daemon=True)
+    watchdog_thread.start()
+
+    try:
+        for event in events.values():
+            assert event.wait(timeout=5.0)
+
+        warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+        assert "reaper worker stalled; restarting" not in warnings
+    finally:
+        stop.set()
+        watchdog_thread.join(timeout=1.0)
+        task = env._REAPER_TASK
+        if task is not None:
+            task.cancel()
+            try:
+                task.result(timeout=1.0)
+            except Exception:
+                pass
+        env._REAPER_TASK = None
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1.0)
+        loop.close()
