@@ -255,7 +255,18 @@ class EnvironmentBootstrapper:
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
 
-            hist = resolve_path("sandbox_data") / "roi_history.json"
+            try:
+                data_root = resolve_path("sandbox_data")
+            except FileNotFoundError:
+                data_root = resolve_path(".") / "sandbox_data"
+                try:
+                    data_root.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:  # pragma: no cover - log only
+                    self.logger.warning(
+                        "failed creating sandbox_data directory: %s", exc
+                    )
+                    return
+            hist = data_root / "roi_history.json"
             if not hist.exists():
                 try:
                     hist.parent.mkdir(parents=True, exist_ok=True)
@@ -266,7 +277,21 @@ class EnvironmentBootstrapper:
 
     # ------------------------------------------------------------------
     def install_dependencies(self, requirements: Iterable[str]) -> None:
-        for req in requirements:
+        pkgs = [req for req in requirements if req]
+        if not pkgs:
+            return
+        if not startup_checks.auto_install_enabled():
+            joined = ", ".join(pkgs)
+            self.logger.info(
+                "Automatic installation disabled; install missing dependencies manually: %s",
+                joined,
+            )
+            self.logger.info(
+                "Set %s=1 to re-enable automatic installation during bootstrap.",
+                startup_checks.AUTO_INSTALL_ENV,
+            )
+            return
+        for req in pkgs:
             try:
                 self._run(["pip", "install", req])
             except Exception as exc:  # pragma: no cover - log only
@@ -275,6 +300,9 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def run_migrations(self) -> None:
         if not Path("alembic.ini").exists():
+            return
+        if shutil.which("alembic") is None:
+            self.logger.info("alembic command not available; skipping migrations")
             return
         try:
             self._run(["alembic", "upgrade", "head"])

@@ -42,8 +42,7 @@ class TruthAdapter:
 
     def __init__(
         self,
-        model_path: str | Path = Path(resolve_path("sandbox_data"))
-        / "truth_adapter.pkl",
+        model_path: str | Path | None = None,
         model_type: str = "ridge",
         ridge_params: dict[str, Any] | None = None,
         xgb_params: dict[str, Any] | None = None,
@@ -68,6 +67,14 @@ class TruthAdapter:
         ks_threshold:
             Override the Kolmogorov–Smirnov statistic threshold for drift detection.
         """
+
+        if model_path is None:
+            try:
+                base = resolve_path("sandbox_data")
+            except FileNotFoundError:
+                base = resolve_path(".") / "sandbox_data"
+                base.mkdir(parents=True, exist_ok=True)
+            model_path = Path(base) / "truth_adapter.pkl"
 
         self.model_path = Path(model_path)
         self.model_type = model_type
