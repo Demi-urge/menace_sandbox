@@ -48,6 +48,18 @@ except ImportError as exc:  # pragma: no cover - fallback for script execution
 
 logger = logging.getLogger(__name__)
 
+AUTO_INSTALL_ENV = "MENACE_AUTO_INSTALL"
+
+
+def auto_install_enabled(default: bool = False) -> bool:
+    """Return ``True`` when automatic dependency installation is enabled."""
+
+    value = os.getenv(AUTO_INSTALL_ENV)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 OPTIONAL_LIBS = [
     "pandas",
     "sklearn",
@@ -313,7 +325,21 @@ def verify_critical_libs(libs: Dict[str, str] = CRITICAL_LIBS) -> Dict[str, str]
 
 
 def _install_packages(packages: Iterable[str]) -> None:
-    for pkg in packages:
+    pkgs = [p for p in packages if p]
+    if not pkgs:
+        return
+    if not auto_install_enabled():
+        joined = ", ".join(pkgs)
+        logger.info(
+            "Automatic installation disabled; install optional dependencies manually: %s",
+            joined,
+        )
+        logger.info(
+            "Set %s=1 to re-enable automatic installation during bootstrap.",
+            AUTO_INSTALL_ENV,
+        )
+        return
+    for pkg in pkgs:
         try:
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", pkg],
@@ -410,4 +436,6 @@ __all__ = [
     "dependencies_from_pyproject",
     "verify_optional_dependencies",
     "verify_stripe_router",
+    "auto_install_enabled",
+    "AUTO_INSTALL_ENV",
 ]
