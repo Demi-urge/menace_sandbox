@@ -13,20 +13,34 @@ from typing import Iterable
 
 import logging
 
+
+LOGGER = logging.getLogger(__name__)
+
+
 try:  # pragma: no cover - optional dependency
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
         Ed25519PrivateKey,
         Ed25519PublicKey,
     )
     from cryptography.hazmat.primitives import serialization
+    _CRYPTO_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - optional dependency
     Ed25519PrivateKey = None  # type: ignore[assignment]
     Ed25519PublicKey = None  # type: ignore[assignment]
     serialization = None  # type: ignore[assignment]
-    logging.getLogger(__name__).warning(
-        "cryptography library unavailable; audit trail signatures disabled: %s",
-        exc,
-    )
+    _CRYPTO_IMPORT_ERROR = exc
+
+
+def _warn_once(message: str, *, level: int = logging.WARNING) -> None:
+    """Emit ``message`` once per interpreter session at ``level`` severity."""
+
+    if message in _warn_once._seen:  # type: ignore[attr-defined]
+        return
+    _warn_once._seen.add(message)  # type: ignore[attr-defined]
+    LOGGER.log(level, message)
+
+
+_warn_once._seen = set()  # type: ignore[attr-defined]
 
 
 class AuditTrail:
@@ -48,9 +62,16 @@ class AuditTrail:
         self._crypto_enabled = (
             Ed25519PrivateKey is not None and serialization is not None
         )
+        if not self._crypto_enabled and _CRYPTO_IMPORT_ERROR:
+            _warn_once(
+                "cryptography library unavailable; audit trail signatures disabled "
+                f"({_CRYPTO_IMPORT_ERROR})",
+                level=logging.INFO,
+            )
         if private_key and not self._crypto_enabled:
-            logging.getLogger(__name__).warning(
-                "Private key provided but cryptography is unavailable; signatures disabled"
+            _warn_once(
+                "Private key provided but cryptography is unavailable; signatures disabled",
+                level=logging.WARNING,
             )
             private_key = None
         if private_key and self._crypto_enabled:
@@ -76,7 +97,7 @@ class AuditTrail:
             if private_key and not self._crypto_enabled:
                 self.private_key = None
             else:
-                logging.getLogger(__name__).warning(
+                LOGGER.info(
                     "AuditTrail created without signing key; entries will not be signed"
                 )
                 self.private_key = None
@@ -120,8 +141,9 @@ class AuditTrail:
 
     def verify(self, public_key: bytes) -> bool:
         if not self._crypto_enabled:
-            logging.getLogger(__name__).warning(
-                "cryptography unavailable; assuming audit log is valid"
+            _warn_once(
+                "cryptography unavailable; assuming audit log is valid",
+                level=logging.INFO,
             )
             return True
         pub = Ed25519PublicKey.from_public_bytes(public_key)
