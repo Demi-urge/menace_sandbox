@@ -27,19 +27,44 @@ class BootstrapError(RuntimeError):
     """Raised when the environment bootstrap process cannot proceed."""
 
 
+def _coerce_log_level(value: str | int | None) -> int:
+    """Translate user provided log level into the numeric representation."""
+
+    if value is None:
+        return logging.INFO
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip().upper()
+        if not candidate:
+            return logging.INFO
+        if candidate.isdigit():
+            return int(candidate)
+        level = logging.getLevelName(candidate)
+        if isinstance(level, int):
+            return level
+    raise BootstrapError(f"Unsupported log level: {value!r}")
+
+
 @dataclass(frozen=True)
 class BootstrapConfig:
     """Normalized configuration derived from command-line flags."""
 
     skip_stripe_router: bool = False
     env_file: Path | None = None
+    log_level: int = logging.INFO
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> "BootstrapConfig":
         env_path = namespace.env_file
         if isinstance(env_path, Path):
             env_path = env_path.expanduser()
-        return cls(skip_stripe_router=namespace.skip_stripe_router, env_file=env_path)
+        log_level = _coerce_log_level(namespace.log_level)
+        return cls(
+            skip_stripe_router=namespace.skip_stripe_router,
+            env_file=env_path,
+            log_level=log_level,
+        )
 
     def resolved_env_file(self) -> Path | None:
         if self.env_file is None:
@@ -72,12 +97,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "standard discovery rules in bootstrap_defaults."
         ),
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help=(
+            "Logging level for bootstrap diagnostics. Accepts either a standard "
+            "logging name (DEBUG, INFO, WARNING, ERROR, CRITICAL) or the "
+            "corresponding numeric value."
+        ),
+    )
     return parser.parse_args(argv)
 
 
-def _configure_logging() -> None:
+def _configure_logging(level: int) -> None:
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
@@ -135,6 +169,21 @@ def _ensure_windows_compatibility() -> None:
         )
 
     os.environ.setdefault("PYTHONUTF8", "1")
+    pathext = os.environ.get("PATHEXT")
+    if pathext:
+        required_exts = {".COM", ".EXE", ".BAT", ".CMD", ".PY", ".PYW"}
+        current = [ext.strip() for ext in pathext.split(os.pathsep) if ext]
+        normalized = {ext.upper() for ext in current}
+        if not required_exts.issubset(normalized):
+            updated_exts = current[:]
+            for ext in sorted(required_exts):
+                if ext.upper() not in normalized:
+                    updated_exts.append(ext)
+            os.environ["PATHEXT"] = os.pathsep.join(updated_exts)
+            LOGGER.info("Augmented PATHEXT with Python aware extensions: %s", ". ".join(sorted(required_exts)))
+    else:
+        os.environ["PATHEXT"] = os.pathsep.join([".COM", ".EXE", ".BAT", ".CMD", ".PY", ".PYW"])
+        LOGGER.info("Initialized PATHEXT to include Python executables")
 
 
 def _prepare_environment(config: BootstrapConfig) -> Path | None:
@@ -146,7 +195,10 @@ def _prepare_environment(config: BootstrapConfig) -> Path | None:
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
 
-    overrides: dict[str, str] = {"MENACE_SAFE": "0"}
+    overrides: dict[str, str] = {
+        "MENACE_SAFE": "0",
+        "MENACE_SUPPRESS_PROMETHEUS_FALLBACK_NOTICE": "1",
+    }
     if config.skip_stripe_router:
         overrides["MENACE_SKIP_STRIPE_ROUTER"] = "1"
     if resolved_env_file is not None:
@@ -186,9 +238,9 @@ def _run_bootstrap(config: BootstrapConfig) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    _configure_logging()
     args = _parse_args(argv)
     config = BootstrapConfig.from_namespace(args)
+    _configure_logging(config.log_level)
     try:
         _run_bootstrap(config)
     except BootstrapError as exc:
