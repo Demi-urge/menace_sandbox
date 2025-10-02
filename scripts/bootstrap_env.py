@@ -109,11 +109,26 @@ class BootstrapConfig:
         if self.env_file is None:
             return None
         try:
-            return self.env_file.resolve()
+            return self.env_file.resolve(strict=False)
         except OSError as exc:  # pragma: no cover - environment specific
             raise BootstrapError(
                 f"Unable to resolve environment file '{self.env_file}'"
             ) from exc
+
+
+def _ensure_parent_directory(path: Path | None) -> None:
+    """Create the parent directory for *path* when it does not yet exist."""
+
+    if path is None:
+        return
+
+    parent = path.parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # pragma: no cover - environment specific
+        raise BootstrapError(
+            f"Unable to create parent directory '{parent}' for '{path}'"
+        ) from exc
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -276,6 +291,7 @@ def _prepare_environment(config: BootstrapConfig) -> Path | None:
     if resolved_env_file is not None:
         overrides["MENACE_ENV_FILE"] = str(resolved_env_file)
     _apply_environment(overrides)
+    _ensure_parent_directory(resolved_env_file)
     _ensure_windows_compatibility()
     return resolved_env_file
 
