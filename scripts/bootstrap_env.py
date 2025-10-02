@@ -75,6 +75,46 @@ _POSIX_ENV_VAR_PATTERN = re.compile(
 )
 
 
+def _resolve_windows_env_fallback(name: str) -> str | None:
+    """Provide cross-platform fallbacks for common Windows placeholders."""
+
+    normalized = name.upper()
+    try:
+        home = Path.home()
+    except OSError:
+        home = None
+
+    if home is None:
+        return None
+
+    home_str = os.fspath(home)
+
+    if normalized == "USERPROFILE":
+        return home_str
+
+    if normalized == "LOCALAPPDATA":
+        return os.fspath(home / "AppData" / "Local")
+
+    if normalized == "APPDATA":
+        return os.fspath(home / "AppData" / "Roaming")
+
+    if normalized in {"TEMP", "TMP"}:
+        return os.fspath(home / "AppData" / "Local" / "Temp")
+
+    if normalized == "HOMEPATH":
+        drive = home.drive
+        if drive:
+            suffix = home_str[len(drive) :]
+            return suffix or os.sep
+        return home_str
+
+    if normalized == "HOMEDRIVE":
+        drive = home.drive
+        return drive or None
+
+    return None
+
+
 def _collect_unresolved_env_tokens(value: str) -> set[str]:
     """Return unresolved environment variable placeholders found in *value*."""
 
@@ -104,6 +144,9 @@ def _expand_environment_path(value: str) -> str:
         for candidate in candidates:
             if candidate in os.environ:
                 return os.environ[candidate]
+        fallback = _resolve_windows_env_fallback(name)
+        if fallback:
+            return fallback
         return match.group(0)
 
     expanded = _WINDOWS_ENV_VAR_PATTERN.sub(replace, expanded)
