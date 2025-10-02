@@ -78,6 +78,11 @@ sys.modules.setdefault(
     ),
 )
 
+threshold_stub = types.ModuleType("menace_sandbox.threshold_service")
+threshold_stub.threshold_service = types.SimpleNamespace(load=lambda *_a, **_k: None)
+sys.modules.setdefault("menace_sandbox.threshold_service", threshold_stub)
+sys.modules.setdefault("threshold_service", threshold_stub)
+
 import pytest
 from menace_sandbox.bot_registry import BotRegistry as SandboxBotRegistry
 from menace.bot_registry import BotRegistry as RootBotRegistry
