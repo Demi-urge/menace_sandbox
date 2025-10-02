@@ -46,6 +46,26 @@ def test_gather_existing_path_entries_normalizes_duplicates(monkeypatch: pytest.
     assert scripts_entries[0].startswith('"') and scripts_entries[0].endswith('"')
 
 
+def test_gather_existing_path_entries_strips_incidental_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os, "pathsep", ";")
+    monkeypatch.setattr(bootstrap_env.os, "pathsep", ";")
+    raw_path = " ; ".join(
+        [
+            r"  C:\Tools  ",
+            r'   "C:\Program Files\Python\Scripts"   ',
+            "",  # ensure blanks are ignored
+        ]
+    )
+    monkeypatch.setenv("PATH", raw_path)
+
+    ordered, _, _ = bootstrap_env._gather_existing_path_entries()
+
+    assert all(entry == entry.strip() for entry in ordered)
+    assert ordered[0] == r"C:\Tools"
+
+
 def test_ensure_windows_compatibility_injects_scripts_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

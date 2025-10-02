@@ -347,7 +347,7 @@ def _gather_existing_path_entries() -> tuple[list[str], dict[str, str], bool]:
         parts: Iterable[str] = raw_path.split(";")
     else:
         parts = raw_path.split(separator)
-    entries = [entry for entry in parts if entry]
+    entries = [entry.strip() for entry in parts if entry and entry.strip()]
     normalizer = _windows_path_normalizer()
     seen: dict[str, str] = {}
     ordered: list[str] = []
