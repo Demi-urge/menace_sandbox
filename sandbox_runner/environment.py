@@ -3964,16 +3964,55 @@ def retry_failed_cleanup() -> tuple[int, int]:
     return successes, failures
 
 
+def _get_metrics_module() -> Any | None:
+    """Return the metrics exporter module if available."""
+
+    try:
+        from . import metrics_exporter as _me
+    except Exception:
+        try:  # pragma: no cover - package may not be available
+            import metrics_exporter as _me  # type: ignore
+        except Exception:
+            return None
+    return _me
+
+
+def _update_worker_heartbeat(worker: str, *, when: float | None = None) -> None:
+    """Record a heartbeat timestamp for the given cleanup worker."""
+
+    timestamp = when if when is not None else time.monotonic()
+    global _LAST_CLEANUP_TS, _LAST_REAPER_TS
+    if worker == "cleanup":
+        _LAST_CLEANUP_TS = timestamp
+    elif worker == "reaper":
+        _LAST_REAPER_TS = timestamp
+    else:
+        return
+
+    module = _get_metrics_module()
+    gauge = getattr(module, "cleanup_heartbeat_gauge", None) if module else None
+    if gauge is not None:
+        try:
+            gauge.labels(worker=worker).set(timestamp)
+        except (AttributeError, ValueError):
+            logger.exception("failed to update cleanup heartbeat gauge")
+
+
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
     total_replaced = 0
     try:
         while True:
-            autopurge_if_needed()
-            ensure_docker_client()
-            reconcile_active_containers()
+            _update_worker_heartbeat("cleanup")
+            try:
+                autopurge_if_needed()
+                ensure_docker_client()
+                reconcile_active_containers()
+            finally:
+                _update_worker_heartbeat("cleanup")
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            _update_worker_heartbeat("cleanup")
             start = time.monotonic()
             try:
                 retry_failed_cleanup()
@@ -4005,21 +4044,14 @@ async def _cleanup_worker() -> None:
             finally:
                 duration = time.monotonic() - start
                 _CLEANUP_DURATIONS["cleanup"] = duration
-                try:
-                    from . import metrics_exporter as _me
-                except Exception:
-                    try:  # pragma: no cover - package may not be available
-                        import metrics_exporter as _me  # type: ignore
-                    except Exception:
-                        _me = None  # type: ignore
+                _me = _get_metrics_module()
                 gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
                 if gauge is not None:
                     try:
                         gauge.labels(worker="cleanup").set(duration)
                     except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
-                global _LAST_CLEANUP_TS
-                _LAST_CLEANUP_TS = time.monotonic()
+                _update_worker_heartbeat("cleanup")
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("cleanup worker cancelled")
         raise
@@ -4030,9 +4062,14 @@ async def _reaper_worker() -> None:
     total_removed = 0
     try:
         while True:
+            _update_worker_heartbeat("reaper")
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
-            autopurge_if_needed()
-            reconcile_active_containers()
+            _update_worker_heartbeat("reaper")
+            try:
+                autopurge_if_needed()
+                reconcile_active_containers()
+            finally:
+                _update_worker_heartbeat("reaper")
             start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
@@ -4054,21 +4091,14 @@ async def _reaper_worker() -> None:
             finally:
                 duration = time.monotonic() - start
                 _CLEANUP_DURATIONS["reaper"] = duration
-                try:
-                    from . import metrics_exporter as _me
-                except Exception:
-                    try:  # pragma: no cover - package may not be available
-                        import metrics_exporter as _me  # type: ignore
-                    except Exception:
-                        _me = None  # type: ignore
+                _me = _get_metrics_module()
                 gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
                 if gauge is not None:
                     try:
                         gauge.labels(worker="reaper").set(duration)
                     except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
-                global _LAST_REAPER_TS
-                _LAST_REAPER_TS = time.monotonic()
+                _update_worker_heartbeat("reaper")
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("reaper worker cancelled")
         raise
@@ -4369,13 +4399,13 @@ def ensure_cleanup_worker() -> None:
         if _CLEANUP_TASK is None:
             _run_cleanup_sync()
             return
-        _LAST_CLEANUP_TS = time.monotonic()
+        _update_worker_heartbeat("cleanup")
         if _REAPER_TASK is None:
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
             if _REAPER_TASK is None:
                 _run_cleanup_sync()
                 return
-            _LAST_REAPER_TS = time.monotonic()
+            _update_worker_heartbeat("reaper")
         return
     try:
         done = task.done()
@@ -4397,14 +4427,14 @@ def ensure_cleanup_worker() -> None:
         if _CLEANUP_TASK is None:
             _run_cleanup_sync()
             return
-        _LAST_CLEANUP_TS = time.monotonic()
+        _update_worker_heartbeat("cleanup")
     task = _REAPER_TASK
     if task is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
         if _REAPER_TASK is None:
             _run_cleanup_sync()
             return
-        _LAST_REAPER_TS = time.monotonic()
+        _update_worker_heartbeat("reaper")
         return
     try:
         done = task.done()
@@ -4424,7 +4454,7 @@ def ensure_cleanup_worker() -> None:
         if _REAPER_TASK is None:
             _run_cleanup_sync()
             return
-        _LAST_REAPER_TS = time.monotonic()
+        _update_worker_heartbeat("reaper")
 
 
 def watchdog_check() -> None:
@@ -4453,7 +4483,7 @@ def watchdog_check() -> None:
             if _CLEANUP_TASK is None:
                 _run_cleanup_sync()
             else:
-                _LAST_CLEANUP_TS = time.monotonic()
+                _update_worker_heartbeat("cleanup")
     if now - _LAST_REAPER_TS > limit:
         logger.warning("reaper worker stalled; restarting")
         try:
@@ -4464,7 +4494,7 @@ def watchdog_check() -> None:
             if _REAPER_TASK is None:
                 _run_cleanup_sync()
             else:
-                _LAST_REAPER_TS = time.monotonic()
+                _update_worker_heartbeat("reaper")
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")
