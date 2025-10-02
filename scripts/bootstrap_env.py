@@ -11,9 +11,10 @@ import argparse
 import logging
 import os
 import sys
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -121,21 +122,44 @@ def _apply_environment(overrides: Mapping[str, str]) -> None:
         os.environ[key] = value
 
 
+def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
+    """Yield plausible ``Scripts`` directories for the active interpreter."""
+
+    scripts_dir = executable.with_name("Scripts")
+    yield scripts_dir
+    yield executable.parent / "Scripts"
+
+    # ``sysconfig`` provides a reliable view into the interpreter layout even
+    # when ``sys.executable`` points at a shim such as ``py.exe``.
+    try:
+        scripts_path = Path(sysconfig.get_path("scripts"))
+    except (KeyError, TypeError, ValueError):
+        scripts_path = None
+    if scripts_path:
+        yield scripts_path
+
+    for prefix in {sys.prefix, sys.base_prefix, sys.exec_prefix}:
+        if prefix:
+            yield Path(prefix) / "Scripts"
+
+    venv_root = os.environ.get("VIRTUAL_ENV")
+    if venv_root:
+        yield Path(venv_root) / "Scripts"
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def _ensure_windows_compatibility() -> None:
     """Augment environment defaults with Windows specific safeguards."""
 
-    if os.name != "nt":  # pragma: no cover - exercised via integration tests
+    if not _is_windows():  # pragma: no cover - exercised via integration tests
         return
 
     scripts_dirs: list[Path] = []
     executable = Path(sys.executable)
-    candidates = [
-        executable.with_name("Scripts"),
-        executable.parent / "Scripts",
-    ]
-    venv_root = os.environ.get("VIRTUAL_ENV")
-    if venv_root:
-        candidates.append(Path(venv_root) / "Scripts")
+    candidates = list(_iter_windows_script_candidates(executable))
 
     existing_path = os.environ.get("PATH", "")
     path_entries = [entry for entry in existing_path.split(os.pathsep) if entry]
@@ -150,39 +174,49 @@ def _ensure_windows_compatibility() -> None:
 
     updated = False
     for candidate in candidates:
-        if not candidate or not candidate.exists():
+        if not candidate:
             continue
-        key = str(candidate)
+        try:
+            candidate_resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        if not candidate_resolved.exists():
+            continue
+        key = str(candidate_resolved)
         lookup = key.lower()
         if lookup not in seen:
             seen[lookup] = key
             ordered_entries.insert(0, key)
-            scripts_dirs.append(candidate)
+            scripts_dirs.append(candidate_resolved)
             updated = True
 
     if updated:
-        new_path = os.pathsep.join(ordered_entries)
-        os.environ["PATH"] = new_path
+        os.environ["PATH"] = os.pathsep.join(ordered_entries)
         LOGGER.info(
             "Ensured Windows PATH contains Scripts directories: %s",
             ", ".join(str(path) for path in scripts_dirs),
         )
 
     os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
     pathext = os.environ.get("PATHEXT")
+    required_exts = (".COM", ".EXE", ".BAT", ".CMD", ".PY", ".PYW")
     if pathext:
-        required_exts = {".COM", ".EXE", ".BAT", ".CMD", ".PY", ".PYW"}
         current = [ext.strip() for ext in pathext.split(os.pathsep) if ext]
         normalized = {ext.upper() for ext in current}
-        if not required_exts.issubset(normalized):
-            updated_exts = current[:]
-            for ext in sorted(required_exts):
+        if not set(required_exts).issubset(normalized):
+            updated_exts = list(dict.fromkeys(ext.upper() for ext in current))
+            for ext in required_exts:
                 if ext.upper() not in normalized:
                     updated_exts.append(ext)
             os.environ["PATHEXT"] = os.pathsep.join(updated_exts)
-            LOGGER.info("Augmented PATHEXT with Python aware extensions: %s", ". ".join(sorted(required_exts)))
+            LOGGER.info(
+                "Augmented PATHEXT with Python aware extensions: %s",
+                ", ".join(required_exts),
+            )
     else:
-        os.environ["PATHEXT"] = os.pathsep.join([".COM", ".EXE", ".BAT", ".CMD", ".PY", ".PYW"])
+        os.environ["PATHEXT"] = os.pathsep.join(required_exts)
         LOGGER.info("Initialized PATHEXT to include Python executables")
 
 
