@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     # Explicitly disable safe mode regardless of existing variables
     os.environ["MENACE_SAFE"] = "0"
+    # Ensure bootstrap runs without interactive prompts when stdin is a TTY.
+    # CI environments as well as our automated tests execute this script in
+    # non-interactive shells and would otherwise hang waiting for user input
+    # when optional environment variables are missing.  ``startup_checks``
+    # honours ``MENACE_NON_INTERACTIVE`` so set it proactively.
+    os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
     run_startup_checks(skip_stripe_router=args.skip_stripe_router)
     EnvironmentBootstrapper().bootstrap()
 
