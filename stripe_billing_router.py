@@ -550,29 +550,32 @@ def _get_account_id(api_key: str) -> str | None:
     try:
         acct: Mapping[str, Any] | None = None
         if client:
-            try:
-                acct = client.Account.retrieve()
-            except AttributeError:
-                # Some client implementations expose resources via ``accounts``
-                # instead of the legacy ``Account`` attribute. Fallback to the
-                # module level API to maintain compatibility with both styles.
-                accounts = getattr(client, "accounts", None)
-                if accounts and hasattr(accounts, "retrieve"):
-                    retrieve = accounts.retrieve
-                    try:
-                        acct = retrieve()
-                    except TypeError:
-                        # Newer client bindings require an explicit account
-                        # identifier.  Fetch the default account via the
-                        # module-level API instead so we maintain compatibility
-                        # with both call styles.
-                        if stripe is None:
-                            raise
-                        acct = stripe.Account.retrieve(api_key=api_key)
-                else:
-                    if stripe is None:
-                        raise
-                    acct = stripe.Account.retrieve(api_key=api_key)
+            # The Stripe client bindings have evolved over time.  Older
+            # versions exposed a capitalised ``Account`` resource while newer
+            # releases prefer ``accounts`` (lowercase) and in some cases expect
+            # an explicit account identifier.  We probe the available
+            # attributes dynamically so the router remains compatible across
+            # library versions without relying on brittle attribute access.
+            account_callables: list[Any] = []
+            for attr in ("Account", "account", "accounts"):
+                resource = getattr(client, attr, None)
+                retrieve = getattr(resource, "retrieve", None)
+                if callable(retrieve):
+                    account_callables.append(retrieve)
+            for retrieve in account_callables:
+                try:
+                    acct = retrieve()
+                except TypeError:
+                    # Some retrieve implementations require an explicit
+                    # account identifier.  Continue probing other call styles
+                    # before falling back to the module-level helper.
+                    continue
+                if acct is not None:
+                    break
+            if acct is None:
+                if stripe is None:
+                    raise RuntimeError("stripe library unavailable")
+                acct = stripe.Account.retrieve(api_key=api_key)
         else:
             if stripe is None:
                 raise RuntimeError("stripe library unavailable")
