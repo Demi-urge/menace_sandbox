@@ -18,6 +18,7 @@ import threading
 import json
 
 from .config_discovery import ensure_config, ConfigDiscovery
+from .bootstrap_policy import DependencyPolicy, PolicyLoader
 
 if TYPE_CHECKING:  # pragma: no cover - for type hints only
     from .cluster_supervisor import ClusterServiceSupervisor
@@ -45,6 +46,7 @@ class EnvironmentBootstrapper:
         tf_dir: str | None = None,
         vault: VaultSecretProvider | None = None,
         cluster_supervisor: "ClusterServiceSupervisor" | None = None,
+        policy: DependencyPolicy | None = None,
     ) -> None:
         disc = ConfigDiscovery()
         disc.discover()
@@ -60,7 +62,8 @@ class EnvironmentBootstrapper:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.bootstrapper = InfrastructureBootstrapper(self.tf_dir)
         self._threads: list[threading.Thread] = []
-        self.required_commands = ["git", "curl", "python3"]
+        self.policy = policy or PolicyLoader().resolve()
+        self.required_commands = list(self.policy.required_commands)
         self.remote_endpoints = os.getenv("MENACE_REMOTE_ENDPOINTS", "").split(",")
         self.required_os_packages = os.getenv("MENACE_OS_PACKAGES", "").split(",")
         self.secrets = SecretsManager()
@@ -138,6 +141,9 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def check_remote_dependencies(self, urls: Iterable[str]) -> None:
         """Ensure remote services are reachable."""
+        if not self.policy.enforce_remote_checks:
+            self.logger.debug("remote dependency checks disabled by policy")
+            return
         missing = False
         for url in urls:
             u = url.strip()
@@ -161,15 +167,14 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def check_os_packages(self, packages: Iterable[str]) -> None:
         """Verify that required system packages are installed."""
-        if not packages:
+        if not packages or not self.policy.enforce_os_package_checks:
+            if packages and not self.policy.enforce_os_package_checks:
+                self.logger.debug(
+                    "policy '%s' disabled OS package checks", self.policy.name
+                )
             return
-        cmd: list[str] | None = None
-        if shutil.which("dpkg"):
-            cmd = ["dpkg", "-s"]
-        elif shutil.which("rpm"):
-            cmd = ["rpm", "-q"]
-        else:
-            self.logger.warning("no package manager found to verify packages")
+        probe = self._resolve_package_probe()
+        if probe is None:
             return
 
         missing: list[str] = []
@@ -178,17 +183,77 @@ class EnvironmentBootstrapper:
             if not p:
                 continue
             try:
-                subprocess.run(
-                    cmd + [p],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=True,
-                )
+                if probe[0] in {"winget", "choco"}:
+                    if not self._check_windows_package(probe, p):
+                        raise RuntimeError("missing")
+                else:
+                    subprocess.run(
+                        list(probe) + [p],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=True,
+                    )
             except Exception:
                 self.logger.error("required package missing: %s", p)
                 missing.append(p)
         if missing:
             raise RuntimeError("missing OS packages: " + ", ".join(missing))
+
+    # ------------------------------------------------------------------
+    def _resolve_package_probe(self) -> tuple[str, ...] | None:
+        """Return command prefix used to check OS packages."""
+
+        if os.name == "nt":
+            for candidate in self.policy.windows_package_managers:
+                if shutil.which(candidate):
+                    if candidate == "winget":
+                        return ("winget", "list", "--exact", "--id")
+                    if candidate == "choco":
+                        return ("choco", "list", "--local-only")
+            self.logger.info(
+                "no supported Windows package manager available; skipping OS package verification"
+            )
+            return None
+
+        for candidate in self.policy.linux_package_managers:
+            if candidate == "dpkg" and shutil.which("dpkg"):
+                return ("dpkg", "-s")
+            if candidate == "rpm" and shutil.which("rpm"):
+                return ("rpm", "-q")
+        self.logger.info(
+            "no supported package manager found to verify packages"
+        )
+        return None
+
+    # ------------------------------------------------------------------
+    def _check_windows_package(self, probe: tuple[str, ...], package: str) -> bool:
+        """Return ``True`` if ``package`` is installed on Windows hosts."""
+
+        if probe[0] == "winget":
+            cmd = list(probe) + [package]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            output = (result.stdout or "") + (result.stderr or "")
+            return package.lower() in output.lower()
+        if probe[0] == "choco":
+            cmd = list(probe) + [package]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            output = (result.stdout or "") + (result.stderr or "")
+            return package.lower() in output.lower()
+        raise ValueError(f"Unsupported Windows package probe: {probe}")
 
     # ------------------------------------------------------------------
     def export_secrets(self) -> None:
@@ -332,13 +397,14 @@ class EnvironmentBootstrapper:
                     self.check_os_packages(pkgs)
                 else:
                     raise
-        self.check_remote_dependencies(self.remote_endpoints)
-        missing = startup_checks.verify_project_dependencies()
+        if self.policy.enforce_remote_checks:
+            self.check_remote_dependencies(self.remote_endpoints)
+        missing = startup_checks.verify_project_dependencies(policy=self.policy)
         if missing:
             self.install_dependencies(missing)
-        if importlib.util.find_spec("apscheduler") is None:
+        if self.policy.ensure_apscheduler and importlib.util.find_spec("apscheduler") is None:
             self.install_dependencies(["apscheduler"])
-        if shutil.which("systemctl"):
+        if self.policy.enforce_systemd and shutil.which("systemctl"):
             result = subprocess.run(
                 ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
                 capture_output=True,
@@ -366,7 +432,7 @@ class EnvironmentBootstrapper:
                     self.logger.warning(
                         "failed enabling sandbox_autopurge.timer: %s", details
                     )
-        else:
+        elif self.policy.enforce_systemd:
             self.logger.info(
                 "systemctl not available; skipping sandbox_autopurge timer activation"
             )
@@ -374,7 +440,14 @@ class EnvironmentBootstrapper:
         deps = [d.strip() for d in deps if d.strip()]
         if deps:
             self.install_dependencies(deps)
-        self.run_migrations()
+        if self.policy.additional_python_dependencies:
+            self.install_dependencies(self.policy.additional_python_dependencies)
+        if self.policy.run_database_migrations:
+            self.run_migrations()
+        else:
+            self.logger.debug(
+                "policy '%s' disabled database migrations", self.policy.name
+            )
         self.bootstrapper.bootstrap()
         # The security auditor previously enforced Bandit and Safety checks
         # and enabled safe mode when they failed. These checks have been
@@ -398,7 +471,8 @@ class EnvironmentBootstrapper:
         if hosts:
             self.deploy_across_hosts(hosts)
         start_scheduler_from_env()
-        self.bootstrap_vector_assets()
+        if self.policy.provision_vector_assets:
+            self.bootstrap_vector_assets()
 
 
 __all__ = ["EnvironmentBootstrapper"]

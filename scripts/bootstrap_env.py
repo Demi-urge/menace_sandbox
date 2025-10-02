@@ -19,6 +19,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from menace.startup_checks import run_startup_checks
 from menace.environment_bootstrap import EnvironmentBootstrapper
+from menace.bootstrap_policy import PolicyLoader
+from menace import startup_checks
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,8 +50,16 @@ def main(argv: list[str] | None = None) -> None:
     # when optional environment variables are missing.  ``startup_checks``
     # honours ``MENACE_NON_INTERACTIVE`` so set it proactively.
     os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
-    run_startup_checks(skip_stripe_router=args.skip_stripe_router)
-    EnvironmentBootstrapper().bootstrap()
+    loader = PolicyLoader()
+    auto_install = startup_checks.auto_install_enabled()
+    env_requested = os.getenv("MENACE_BOOTSTRAP_PROFILE")
+    requested = env_requested or ("minimal" if not auto_install else None)
+    policy = loader.resolve(
+        requested=requested,
+        auto_install_enabled=auto_install,
+    )
+    run_startup_checks(skip_stripe_router=args.skip_stripe_router, policy=policy)
+    EnvironmentBootstrapper(policy=policy).bootstrap()
 
 
 if __name__ == "__main__":

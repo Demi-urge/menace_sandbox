@@ -11,6 +11,25 @@ from pathlib import Path
 from typing import Iterable, Dict, Sequence
 import logging
 
+try:  # pragma: no cover - prefer package-relative import
+    from .bootstrap_policy import (
+        DependencyPolicy,
+        PolicyLoader,
+        DEFAULT_OPTIONAL_PYTHON_MODULES,
+        DEFAULT_SANDBOX_MODULES,
+        DEFAULT_STRIPE_OPTIONALS,
+        DEFAULT_CRITICAL_DEPENDENCIES,
+    )
+except ImportError:  # pragma: no cover - fallback when executed as script
+    from bootstrap_policy import (  # type: ignore
+        DependencyPolicy,
+        PolicyLoader,
+        DEFAULT_OPTIONAL_PYTHON_MODULES,
+        DEFAULT_SANDBOX_MODULES,
+        DEFAULT_STRIPE_OPTIONALS,
+        DEFAULT_CRITICAL_DEPENDENCIES,
+    )
+
 try:  # pragma: no cover - prefer package relative imports
     from .audit_trail import AuditTrail
 except ImportError as exc:  # pragma: no cover - fallback for script execution
@@ -60,29 +79,23 @@ def auto_install_enabled(default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-OPTIONAL_LIBS = [
-    "pandas",
-    "sklearn",
-    "stripe",  # router will fail at runtime if this is absent
-    "httpx",
-]
+# ``OPTIONAL_LIBS`` et al are maintained for backwards compatibility with the
+# previous implementation and mirror the defaults defined in
+# :mod:`menace.bootstrap_policy`.
+OPTIONAL_LIBS = list(DEFAULT_OPTIONAL_PYTHON_MODULES)
 
 # Optional sandbox modules that are probed during startup to surface missing
 # integrations early.  ``quick_fix_engine`` drags in ``stripe_billing_router``
 # when imported.
-OPTIONAL_SANDBOX_MODULES = ["quick_fix_engine"]
+OPTIONAL_SANDBOX_MODULES = list(DEFAULT_SANDBOX_MODULES)
 
 # Subset of ``OPTIONAL_SANDBOX_MODULES`` that transitively import Stripe.  When
 # callers opt-out of Stripe checks we suppress probes for these modules to avoid
 # touching the Stripe API on import.
-STRIPE_DEPENDENT_OPTIONALS = {"quick_fix_engine"}
+STRIPE_DEPENDENT_OPTIONALS = set(DEFAULT_STRIPE_OPTIONALS)
 
 # critical dependencies with expected versions
-CRITICAL_LIBS: Dict[str, str] = {
-    "pandas": "",
-    "torch": "",
-    "networkx": "",
-}
+CRITICAL_LIBS: Dict[str, str] = dict(DEFAULT_CRITICAL_DEPENDENCIES)
 
 # Default path to the repository's ``pyproject.toml``
 PYPROJECT_PATH = resolve_path("pyproject.toml")
@@ -159,10 +172,16 @@ def dependencies_from_pyproject(path: str | Path = PYPROJECT_PATH) -> Sequence[s
     return [_parse_requirement(d) for d in deps]
 
 
-def verify_project_dependencies(path: str | Path = PYPROJECT_PATH) -> list[str]:
+def verify_project_dependencies(
+    path: str | Path = PYPROJECT_PATH,
+    *,
+    policy: DependencyPolicy | None = None,
+) -> list[str]:
     """Return missing modules declared in pyproject."""
 
     modules = dependencies_from_pyproject(path)
+    if policy:
+        modules = policy.resolved_project_dependencies(modules)
     return verify_modules(modules)
 
 
@@ -313,9 +332,18 @@ def validate_config(vars: Iterable[str] = REQUIRED_VARS) -> list[str]:
     return missing
 
 
-def verify_critical_libs(libs: Dict[str, str] = CRITICAL_LIBS) -> Dict[str, str]:
+def verify_critical_libs(
+    libs: Dict[str, str] | None = None,
+    *,
+    policy: DependencyPolicy | None = None,
+) -> Dict[str, str]:
     """Check for critical dependencies and versions."""
-    failures = verify_dependencies(libs)
+    target_libs = dict(libs or CRITICAL_LIBS)
+    if policy:
+        target_libs = dict(policy.resolved_critical_dependencies(target_libs))
+    if not target_libs:
+        return {}
+    failures = verify_dependencies(target_libs)
     if failures:
         for name, status in failures.items():
             logger.error(
@@ -366,6 +394,7 @@ def run_startup_checks(
     pyproject_path: str | Path | None = None,
     *,
     skip_stripe_router: bool = False,
+    policy: DependencyPolicy | None = None,
 ) -> None:
     """Run dependency and configuration checks.
 
@@ -381,18 +410,20 @@ def run_startup_checks(
         optional dependency probes that would import the router and, by
         extension, attempt Stripe API calls during startup.
     """
-    missing_optional = validate_dependencies()
+    policy = policy or PolicyLoader().resolve()
+    optional_libs = policy.resolved_optional_python_modules(OPTIONAL_LIBS)
+    missing_optional = validate_dependencies(optional_libs)
     if missing_optional:
         _install_packages(missing_optional)
-    sandbox_modules: Iterable[str] | None = OPTIONAL_SANDBOX_MODULES
-    if skip_stripe_router:
-        sandbox_modules = [
-            mod
-            for mod in OPTIONAL_SANDBOX_MODULES
-            if mod not in STRIPE_DEPENDENT_OPTIONALS
-        ]
+    sandbox_modules: Iterable[str] | None = policy.resolved_sandbox_modules(
+        OPTIONAL_SANDBOX_MODULES,
+        skip_stripe=skip_stripe_router,
+        stripe_sensitive=STRIPE_DEPENDENT_OPTIONALS,
+    )
     verify_optional_dependencies(sandbox_modules)
-    missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
+    missing = verify_project_dependencies(
+        pyproject_path or PYPROJECT_PATH, policy=policy
+    )
     if skip_stripe_router:
         logger.info("Skipping Stripe router verification at caller request")
     else:
@@ -412,7 +443,7 @@ def run_startup_checks(
             raise RuntimeError(
                 f"Missing required configuration variables: {', '.join(vars_missing)}"
             )
-    verify_critical_libs()
+    verify_critical_libs(policy=policy)
 
     audit_path = os.getenv("AUDIT_LOG_PATH", "audit.log")
     pubkey_env = os.getenv("AUDIT_PUBKEY")
