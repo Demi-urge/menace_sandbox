@@ -218,21 +218,119 @@ def _windows_path_normalizer() -> Callable[[str], str]:
     return _normalize
 
 
+def _strip_windows_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1]
+    return value
+
+
+def _is_quoted_windows_value(value: str) -> bool:
+    value = value.strip()
+    return len(value) >= 2 and value[0] == value[-1] == '"'
+
+
+def _needs_windows_path_quotes(value: str) -> bool:
+    return any(symbol in value for symbol in (" ", ";", "(", ")", "&"))
+
+
+def _format_windows_path_entry(value: str) -> str:
+    trimmed = _strip_windows_quotes(value)
+    if not trimmed:
+        return trimmed
+    if _needs_windows_path_quotes(trimmed):
+        return f'"{trimmed}"'
+    return trimmed
+
+
+def _score_windows_entry(entry: str) -> tuple[int, int, int, int]:
+    stripped = _strip_windows_quotes(entry)
+    try:
+        exists = Path(stripped).exists()
+    except OSError:
+        exists = False
+    quotes_mismatch = int(_needs_windows_path_quotes(stripped) != _is_quoted_windows_value(entry))
+    trailing_sep = int(stripped.endswith(("\\", "/")))
+    return (
+        0 if exists else 1,
+        quotes_mismatch,
+        trailing_sep,
+        len(entry),
+    )
+
+
+def _choose_preferred_path_entry(
+    existing: str,
+    candidate: str,
+    normalizer: Callable[[str], str],
+) -> str:
+    if existing == candidate:
+        return existing
+
+    existing_core = _strip_windows_quotes(existing)
+    candidate_core = _strip_windows_quotes(candidate)
+    existing_normalized = normalizer(existing_core)
+    candidate_normalized = normalizer(candidate_core)
+
+    if existing_normalized == candidate_normalized:
+        normalized_candidate = _format_windows_path_entry(candidate)
+        if normalized_candidate != candidate:
+            candidate = normalized_candidate
+            candidate_core = _strip_windows_quotes(candidate)
+        existing_requires_quotes = _needs_windows_path_quotes(existing_core)
+        candidate_requires_quotes = _needs_windows_path_quotes(candidate_core)
+        existing_is_quoted = _is_quoted_windows_value(existing)
+        candidate_is_quoted = _is_quoted_windows_value(candidate)
+        if existing_requires_quotes and not existing_is_quoted and candidate_requires_quotes:
+            return candidate
+        if candidate_requires_quotes and not candidate_is_quoted and existing_requires_quotes:
+            candidate = _format_windows_path_entry(candidate)
+            candidate_core = _strip_windows_quotes(candidate)
+        if candidate_requires_quotes and not existing_requires_quotes:
+            return candidate
+        if existing_requires_quotes and not candidate_requires_quotes:
+            return _format_windows_path_entry(existing)
+        if existing_core != candidate_core:
+            return candidate
+        return existing
+
+    existing_score = _score_windows_entry(existing)
+    candidate_score = _score_windows_entry(candidate)
+    if existing_score == candidate_score and existing_core != candidate_core:
+        return candidate
+    return existing if existing_score <= candidate_score else candidate
+
+
 def _gather_existing_path_entries() -> tuple[list[str], dict[str, str], bool]:
     """Collect the current PATH entries de-duplicated by Windows semantics."""
 
     raw_path = os.environ.get("PATH") or os.environ.get("Path") or ""
-    entries = [entry for entry in raw_path.split(os.pathsep) if entry]
+    separator = os.pathsep
+    if ";" in raw_path and separator != ";":
+        parts: Iterable[str] = raw_path.split(";")
+    else:
+        parts = raw_path.split(separator)
+    entries = [entry for entry in parts if entry]
     normalizer = _windows_path_normalizer()
     seen: dict[str, str] = {}
     ordered: list[str] = []
     deduplicated = False
     for entry in entries:
         try:
-            normalized = normalizer(entry)
+            normalized = normalizer(_strip_windows_quotes(entry))
         except (TypeError, ValueError):
             continue
-        if normalized in seen:
+        existing = seen.get(normalized)
+        if existing is not None:
+            preferred = _choose_preferred_path_entry(existing, entry, normalizer)
+            if preferred != existing:
+                try:
+                    index = ordered.index(existing)
+                except ValueError:
+                    ordered.append(preferred)
+                else:
+                    ordered[index] = preferred
+                seen[normalized] = preferred
             deduplicated = True
             continue
         seen[normalized] = entry
@@ -252,6 +350,7 @@ def _ensure_windows_compatibility() -> None:
         return
 
     scripts_dirs: list[Path] = []
+    normalized_updates: list[tuple[str, str]] = []
     executable = Path(sys.executable)
     candidates = list(_iter_windows_script_candidates(executable))
 
@@ -268,22 +367,46 @@ def _ensure_windows_compatibility() -> None:
             continue
         if not candidate_resolved.exists():
             continue
-        key = str(candidate_resolved)
-        normalized_key = normalizer(key)
-        if normalized_key not in seen:
+        key = _format_windows_path_entry(str(candidate_resolved))
+        normalized_key = normalizer(_strip_windows_quotes(key))
+        existing_entry = seen.get(normalized_key)
+        if existing_entry is None:
             seen[normalized_key] = key
             ordered_entries.insert(0, key)
             scripts_dirs.append(candidate_resolved)
             updated = True
+            continue
+
+        preferred = _choose_preferred_path_entry(existing_entry, key, normalizer)
+        if preferred == existing_entry:
+            continue
+        try:
+            index = ordered_entries.index(existing_entry)
+        except ValueError:
+            ordered_entries.insert(0, preferred)
+        else:
+            ordered_entries[index] = preferred
+        seen[normalized_key] = preferred
+        normalized_updates.append((existing_entry, preferred))
+        updated = True
 
     if updated or deduplicated:
         new_path = os.pathsep.join(ordered_entries)
         _set_windows_path(new_path)
         if updated:
-            LOGGER.info(
-                "Ensured Windows PATH contains Scripts directories: %s",
-                ", ".join(str(path) for path in scripts_dirs),
-            )
+            if scripts_dirs:
+                LOGGER.info(
+                    "Ensured Windows PATH contains Scripts directories: %s",
+                    ", ".join(str(path) for path in scripts_dirs),
+                )
+            if normalized_updates:
+                LOGGER.info(
+                    "Normalized existing Windows PATH entries: %s",
+                    ", ".join(
+                        f"{original!r} -> {updated_entry!r}"
+                        for original, updated_entry in normalized_updates
+                    ),
+                )
         elif deduplicated:
             LOGGER.info("Normalized Windows PATH by removing duplicate entries")
 
