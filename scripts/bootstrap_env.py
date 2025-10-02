@@ -70,14 +70,29 @@ class BootstrapError(RuntimeError):
 
 
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
+_POSIX_ENV_VAR_PATTERN = re.compile(
+    r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<simple>[A-Za-z_][A-Za-z0-9_]*))"
+)
+
+
+def _collect_unresolved_env_tokens(value: str) -> set[str]:
+    """Return unresolved environment variable placeholders found in *value*."""
+
+    unresolved: set[str] = set()
+    for match in _WINDOWS_ENV_VAR_PATTERN.finditer(value):
+        unresolved.add(match.group(0))
+    for match in _POSIX_ENV_VAR_PATTERN.finditer(value):
+        token = match.group(0)
+        if token == "$$":
+            continue
+        unresolved.add(token)
+    return unresolved
 
 
 def _expand_environment_path(value: str) -> str:
     """Expand environment variables in *value* across platforms."""
 
     expanded = os.path.expandvars(value)
-    if "%" not in expanded:
-        return expanded
 
     def replace(match: re.Match[str]) -> str:
         name = match.group("name")
@@ -91,7 +106,19 @@ def _expand_environment_path(value: str) -> str:
                 return os.environ[candidate]
         return match.group(0)
 
-    return _WINDOWS_ENV_VAR_PATTERN.sub(replace, expanded)
+    expanded = _WINDOWS_ENV_VAR_PATTERN.sub(replace, expanded)
+
+    unresolved_tokens = _collect_unresolved_env_tokens(expanded)
+    if unresolved_tokens:
+        tokens = ", ".join(sorted(unresolved_tokens))
+        raise BootstrapError(
+            "Unable to expand environment variables in path "
+            f"{value!r}; unresolved placeholder(s): {tokens}. "
+            "Define the missing variables or escape literal percent/dollar "
+            "symbols by doubling them."
+        )
+
+    return expanded
 
 
 def _coerce_log_level(value: str | int | None) -> int:
@@ -148,11 +175,18 @@ class BootstrapConfig:
         if self.env_file is None:
             return None
         try:
-            return self.env_file.resolve(strict=False)
+            resolved = self.env_file.resolve(strict=False)
         except OSError as exc:  # pragma: no cover - environment specific
             raise BootstrapError(
                 f"Unable to resolve environment file '{self.env_file}'"
             ) from exc
+
+        if resolved.exists() and resolved.is_dir():
+            raise BootstrapError(
+                f"Environment file path '{resolved}' refers to a directory"
+            )
+
+        return resolved
 
 
 def _ensure_parent_directory(path: Path | None) -> None:
