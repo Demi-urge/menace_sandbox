@@ -4211,15 +4211,27 @@ async def _reaper_worker() -> None:
             _update_worker_heartbeat("reaper")
             try:
                 autopurge_if_needed()
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
                 reconcile_active_containers()
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
             finally:
                 _update_worker_heartbeat("reaper")
             start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
                 vol_removed = _prune_volumes()
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
                 net_removed = _prune_networks()
+                _update_worker_heartbeat("reaper")
+                await asyncio.sleep(0)
                 total_removed += removed + vm_removed
                 if removed or vm_removed or vol_removed or net_removed:
                     logger.info(
