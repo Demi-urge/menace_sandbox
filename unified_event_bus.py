@@ -34,8 +34,15 @@ else:
         def handle(self, event: object) -> None:
             ...
 
-from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
-from .logging_utils import set_correlation_id
+try:  # pragma: no cover - allow flat imports
+    from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
+except Exception:  # pragma: no cover - fallback for flat layout
+    from resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff  # type: ignore
+
+try:  # pragma: no cover - allow flat imports
+    from .logging_utils import set_correlation_id
+except Exception:  # pragma: no cover - fallback for flat layout
+    from logging_utils import set_correlation_id  # type: ignore
 
 logger = logging.getLogger(__name__)
 

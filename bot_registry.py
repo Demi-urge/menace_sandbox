@@ -44,9 +44,20 @@ except Exception:  # pragma: no cover - flat layout fallback
 import db_router
 from db_router import DBRouter, init_db_router
 
-from .sandbox_settings import SandboxSettings, normalize_workflow_tests
-from .threshold_service import threshold_service
-from .retry_utils import with_retry
+try:  # pragma: no cover - allow flat imports
+    from .sandbox_settings import SandboxSettings, normalize_workflow_tests
+except Exception:  # pragma: no cover - fallback for flat layout
+    from sandbox_settings import SandboxSettings, normalize_workflow_tests  # type: ignore
+
+try:  # pragma: no cover - allow flat imports
+    from .threshold_service import threshold_service
+except Exception:  # pragma: no cover - fallback for flat layout
+    from threshold_service import threshold_service  # type: ignore
+
+try:  # pragma: no cover - allow flat imports
+    from .retry_utils import with_retry
+except Exception:  # pragma: no cover - fallback for flat layout
+    from retry_utils import with_retry  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .self_coding_manager import SelfCodingManager
