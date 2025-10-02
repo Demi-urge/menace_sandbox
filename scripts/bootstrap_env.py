@@ -50,8 +50,17 @@ def main(argv: list[str] | None = None) -> None:
 
     from menace.bootstrap_policy import PolicyLoader
     from menace.environment_bootstrap import EnvironmentBootstrapper
-    from menace import startup_checks
-    from menace.startup_checks import run_startup_checks
+    import startup_checks
+    from startup_checks import run_startup_checks
+    from menace.bootstrap_defaults import ensure_bootstrap_defaults
+
+    created, env_file = ensure_bootstrap_defaults(
+        startup_checks.REQUIRED_VARS, repo_root=_REPO_ROOT
+    )
+    if created:
+        logging.getLogger(__name__).info(
+            "Persisted generated defaults to %s", env_file
+        )
 
     loader = PolicyLoader()
     auto_install = startup_checks.auto_install_enabled()
