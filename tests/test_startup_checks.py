@@ -214,6 +214,24 @@ def test_run_startup_checks_invokes_stripe_router(monkeypatch, tmp_path):
     assert called["val"]
 
 
+def test_run_startup_checks_skips_stripe_router(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_MODE", "test")
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, [])
+    called = {"val": False}
+
+    def fake_verify(*a, **k) -> None:
+        called["val"] = True
+
+    monkeypatch.setattr(sc, "verify_stripe_router", fake_verify)
+    monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
+
+    sc.run_startup_checks(pyproject_path=str(pyproj), skip_stripe_router=True)
+
+    assert not called["val"]
+
+
 def test_verify_stripe_router_checks(monkeypatch):
     class FakeRegistry:
         def __init__(self, *a, **k):

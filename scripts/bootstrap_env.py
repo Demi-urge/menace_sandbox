@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Bootstrap the Menace environment and verify dependencies."""
+"""Bootstrap the Menace environment and verify dependencies.
+
+Run ``python scripts/bootstrap_env.py`` to install required tooling and
+configuration.  Pass ``--skip-stripe-router`` to bypass the Stripe router
+startup verification when working offline or without Stripe credentials.
+"""
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -15,11 +21,25 @@ from menace.startup_checks import run_startup_checks
 from menace.environment_bootstrap import EnvironmentBootstrapper
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skip-stripe-router",
+        action="store_true",
+        help=(
+            "Bypass the Stripe router startup verification. Useful when Stripe "
+            "credentials are unavailable during local bootstraps."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     # Explicitly disable safe mode regardless of existing variables
     os.environ["MENACE_SAFE"] = "0"
-    run_startup_checks()
+    run_startup_checks(skip_stripe_router=args.skip_stripe_router)
     EnvironmentBootstrapper().bootstrap()
 
 
