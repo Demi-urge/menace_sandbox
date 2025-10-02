@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator, MutableSet
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -61,6 +62,64 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 _STRIPE_LEDGER = StripeLedger()
+_SKIP_STRIPE_ENV_VAR = "MENACE_SKIP_STRIPE_ROUTER"
+
+
+def _skip_stripe_verification() -> bool:
+    """Return ``True`` when Stripe router verification should be bypassed."""
+
+    value = os.getenv(_SKIP_STRIPE_ENV_VAR)
+    if value is None:
+        return False
+    return value.strip().lower() not in {"", "0", "false", "no"}
+
+
+class _AllowedSecretKeySet(MutableSet[str]):
+    """Lazy wrapper around the configured Stripe secret keys."""
+
+    def __init__(self) -> None:
+        self._cache: set[str] | None = None
+
+    def _materialise(self) -> set[str]:
+        if self._cache is None:
+            if _skip_stripe_verification():
+                self._cache = set()
+            else:
+                self._cache = _load_allowed_keys()
+        return self._cache
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._materialise()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._materialise())
+
+    def __len__(self) -> int:
+        return len(self._materialise())
+
+    def add(self, value: str) -> None:
+        self._materialise().add(value)
+
+    def discard(self, value: str) -> None:
+        self._materialise().discard(value)
+
+    def clear(self) -> None:
+        self._materialise().clear()
+
+    def refresh(self) -> None:
+        self._cache = None
+
+    def materialise(self) -> set[str]:
+        return self._materialise()
+
+
+ALLOWED_SECRET_KEYS: _AllowedSecretKeySet = _AllowedSecretKeySet()
+
+
+def _allowed_secret_keys() -> set[str]:
+    """Return the cached set of allowed Stripe secret keys."""
+
+    return ALLOWED_SECRET_KEYS.materialise()
 
 # Billing instruction overrides used by :mod:`menace_sanity_layer`.  The
 # instructions are cached within that module so we monitor the config file and
@@ -659,16 +718,15 @@ def iter_master_events(
     except Exception as exc:  # pragma: no cover - network/API issues
         logger.exception("Stripe event listing failed: %s", exc)
         raise RuntimeError("Stripe event listing failed") from exc
-
-
-ALLOWED_SECRET_KEYS = _load_allowed_keys()
-
-
 def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
     """Validate the resolved route before executing payment actions."""
 
+    if _skip_stripe_verification():
+        return
+
     key = route.get("secret_key")
-    if not key or key not in ALLOWED_SECRET_KEYS:
+    allowed = _allowed_secret_keys()
+    if not key or key not in allowed:
         _alert_mismatch(bot_id, route.get("account_id") or "unknown")
         raise RuntimeError("Stripe account mismatch")
     account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
