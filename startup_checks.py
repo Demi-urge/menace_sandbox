@@ -55,6 +55,16 @@ OPTIONAL_LIBS = [
     "httpx",
 ]
 
+# Optional sandbox modules that are probed during startup to surface missing
+# integrations early.  ``quick_fix_engine`` drags in ``stripe_billing_router``
+# when imported.
+OPTIONAL_SANDBOX_MODULES = ["quick_fix_engine"]
+
+# Subset of ``OPTIONAL_SANDBOX_MODULES`` that transitively import Stripe.  When
+# callers opt-out of Stripe checks we suppress probes for these modules to avoid
+# touching the Stripe API on import.
+STRIPE_DEPENDENT_OPTIONALS = {"quick_fix_engine"}
+
 # critical dependencies with expected versions
 CRITICAL_LIBS: Dict[str, str] = {
     "pandas": "",
@@ -94,7 +104,7 @@ def validate_dependencies(modules: Iterable[str] = OPTIONAL_LIBS) -> list[str]:
 def verify_optional_dependencies(modules: Iterable[str] | None = None) -> list[str]:
     """Return list of optional modules specific to the sandbox that are missing."""
 
-    modules = list(modules) if modules is not None else ["quick_fix_engine"]
+    modules = list(modules) if modules is not None else list(OPTIONAL_SANDBOX_MODULES)
     missing: list[str] = []
     for mod in modules:
         try:
@@ -341,12 +351,21 @@ def run_startup_checks(
     skip_stripe_router:
         When ``True`` the Stripe router verification is bypassed.  This is
         primarily useful for local development environments that do not have
-        access to Stripe credentials or services.
+        access to Stripe credentials or services.  The flag also disables any
+        optional dependency probes that would import the router and, by
+        extension, attempt Stripe API calls during startup.
     """
     missing_optional = validate_dependencies()
     if missing_optional:
         _install_packages(missing_optional)
-    verify_optional_dependencies()
+    sandbox_modules: Iterable[str] | None = OPTIONAL_SANDBOX_MODULES
+    if skip_stripe_router:
+        sandbox_modules = [
+            mod
+            for mod in OPTIONAL_SANDBOX_MODULES
+            if mod not in STRIPE_DEPENDENT_OPTIONALS
+        ]
+    verify_optional_dependencies(sandbox_modules)
     missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
     if skip_stripe_router:
         logger.info("Skipping Stripe router verification at caller request")

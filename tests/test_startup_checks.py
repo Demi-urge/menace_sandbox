@@ -232,6 +232,47 @@ def test_run_startup_checks_skips_stripe_router(monkeypatch, tmp_path):
     assert not called["val"]
 
 
+def test_skip_stripe_router_suppresses_optional_stripe_import(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_MODE", "test")
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, [])
+
+    monkeypatch.setattr(sc, "validate_dependencies", lambda modules=sc.OPTIONAL_LIBS: [])
+    monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
+    monkeypatch.setattr(sc, "validate_config", lambda: [])
+    monkeypatch.setattr(sc, "verify_critical_libs", lambda: None)
+    monkeypatch.setattr(sc, "_prompt_for_vars", lambda names: None)
+    monkeypatch.setattr(sc, "_install_packages", lambda pkgs: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: pytest.fail("stripe router should be skipped"))
+
+    captured: dict[str, list[str] | None] = {}
+    original_optional = sc.verify_optional_dependencies
+
+    def fake_optional(modules=None):
+        captured["modules"] = list(modules) if modules is not None else None
+        return original_optional(modules)
+
+    monkeypatch.setattr(sc, "verify_optional_dependencies", fake_optional)
+
+    original_import = sc.importlib.import_module
+
+    def guarded_import(name, *args, **kwargs):
+        if "stripe_billing_router" in name:
+            raise AssertionError("stripe_billing_router import attempted")
+        if name == "quick_fix_engine":
+            raise AssertionError("quick_fix_engine import attempted")
+        return types.ModuleType(name)
+
+    monkeypatch.setattr(sc.importlib, "import_module", guarded_import)
+
+    try:
+        sc.run_startup_checks(pyproject_path=str(pyproj), skip_stripe_router=True)
+    finally:
+        monkeypatch.setattr(sc.importlib, "import_module", original_import)
+
+    assert captured["modules"] == []
+
+
 def test_verify_stripe_router_checks(monkeypatch):
     class FakeRegistry:
         def __init__(self, *a, **k):
