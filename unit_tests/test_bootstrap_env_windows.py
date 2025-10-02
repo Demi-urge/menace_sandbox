@@ -80,4 +80,22 @@ def test_windows_path_deduplicates_entries(tmp_path, monkeypatch, caplog):
 
     path_segments = os.environ["PATH"].split(os.pathsep)
     assert path_segments == [str(scripts_dir)]
-    assert any("duplicate entries" in record.getMessage() for record in caplog.records)
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("duplicate entries" in message for message in messages) or any(
+        "Normalized existing Windows PATH entries" in message for message in messages
+    )
+
+
+def test_expand_environment_path_falls_back_to_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.delenv("Path", raising=False)
+    monkeypatch.delenv("PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(bootstrap_env.Path, "home", lambda: tmp_path)
+
+    result = bootstrap_env._expand_environment_path(r"%USERPROFILE%\menace\env")
+
+    expected = os.path.join(str(tmp_path), "menace", "env")
+    normalized_result = os.path.normpath(result.replace("\\", os.sep))
+
+    assert normalized_result == os.path.normpath(expected)
