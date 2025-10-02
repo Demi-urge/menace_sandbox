@@ -548,8 +548,19 @@ def _get_account_id(api_key: str) -> str | None:
     except Exception:
         return None
     try:
+        acct: Mapping[str, Any] | None = None
         if client:
-            acct = client.Account.retrieve()
+            try:
+                acct = client.Account.retrieve()
+            except AttributeError:
+                # Some client implementations expose resources via ``accounts``
+                # instead of the legacy ``Account`` attribute. Fallback to the
+                # module level API to maintain compatibility with both styles.
+                accounts = getattr(client, "accounts", None)
+                if accounts and hasattr(accounts, "retrieve"):
+                    acct = accounts.retrieve()
+                else:
+                    acct = stripe.Account.retrieve(api_key=api_key)
         else:
             acct = stripe.Account.retrieve(api_key=api_key)
         if isinstance(acct, Mapping):
