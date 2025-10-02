@@ -6,109 +6,66 @@ from sandbox_settings import SandboxSettings
 
 settings = SandboxSettings()
 _LIGHT_IMPORTS = settings.menace_light_imports
+
+_env_mod = None
 _env_simulate_temporal_trajectory = None
 
-if not _LIGHT_IMPORTS:
-    from .environment import (
-        simulate_execution_environment,
-        generate_sandbox_report,
-        run_repo_section_simulations,
-        run_workflow_simulations,
-        run_scenarios,
-        simulate_temporal_trajectory as _env_simulate_temporal_trajectory,
-        temporal_trajectory_presets,
-        auto_include_modules,
-        discover_and_integrate_orphans,
-        integrate_new_orphans,
-        simulate_full_environment,
-        generate_input_stubs,
-        record_module_usage,
-        SANDBOX_INPUT_STUBS,
-        SANDBOX_EXTRA_METRICS,
-        SANDBOX_ENV_PRESETS,
-        _preset_high_latency,
-        _preset_resource_strain,
-        _preset_chaotic_failure,
-    )
-    try:  # telemetry optional
-        from .meta_logger import _SandboxMetaLogger
-    except ImportError as exc:  # pragma: no cover - meta logger missing
-        _SandboxMetaLogger = None  # type: ignore
-        get_logger(__name__).warning(
-            "sandbox meta logging unavailable: %s", exc
+_ENV_EXPORTS = (
+    "simulate_execution_environment",
+    "generate_sandbox_report",
+    "run_repo_section_simulations",
+    "run_workflow_simulations",
+    "run_scenarios",
+    "temporal_trajectory_presets",
+    "auto_include_modules",
+    "discover_and_integrate_orphans",
+    "integrate_new_orphans",
+    "simulate_full_environment",
+    "generate_input_stubs",
+    "record_module_usage",
+    "SANDBOX_INPUT_STUBS",
+    "SANDBOX_EXTRA_METRICS",
+    "SANDBOX_ENV_PRESETS",
+    "_preset_high_latency",
+    "_preset_resource_strain",
+    "_preset_chaotic_failure",
+)
+
+
+def _load_env() -> None:
+    """Import :mod:`sandbox_runner.environment` and cache key exports."""
+
+    global _env_mod, _env_simulate_temporal_trajectory
+    if _env_mod is None:
+        _env_mod = importlib.import_module(".environment", __name__)
+        for name in _ENV_EXPORTS:
+            globals()[name] = getattr(_env_mod, name)
+        _env_simulate_temporal_trajectory = getattr(
+            _env_mod, "simulate_temporal_trajectory"
         )
-else:  # defer heavy imports until needed
-    _env_mod = None
 
-    def _load_env() -> None:
-        global _env_mod, _env_simulate_temporal_trajectory
-        if _env_mod is None:
-            _env_mod = importlib.import_module(".environment", __name__)
-            for name in (
-                "simulate_execution_environment",
-                "generate_sandbox_report",
-                "run_repo_section_simulations",
-                "run_workflow_simulations",
-                "run_scenarios",
-                "temporal_trajectory_presets",
-                "auto_include_modules",
-                "discover_and_integrate_orphans",
-                "integrate_new_orphans",
-                "simulate_full_environment",
-                "generate_input_stubs",
-                "record_module_usage",
-                "SANDBOX_INPUT_STUBS",
-                "SANDBOX_EXTRA_METRICS",
-                "SANDBOX_ENV_PRESETS",
-                "_preset_high_latency",
-                "_preset_resource_strain",
-                "_preset_chaotic_failure",
-            ):
-                globals()[name] = getattr(_env_mod, name)
-            _env_simulate_temporal_trajectory = getattr(
-                _env_mod, "simulate_temporal_trajectory"
+
+def __getattr__(name: str):  # type: ignore[override]
+    if name in _ENV_EXPORTS:
+        _load_env()
+        return globals()[name]
+    if name == "_SandboxMetaLogger":
+        try:
+            from .meta_logger import _SandboxMetaLogger as ml
+        except ImportError as exc:  # pragma: no cover - meta logger missing
+            get_logger(__name__).warning(
+                "sandbox meta logging unavailable: %s", exc
             )
+            globals()[name] = None
+            return None
+        globals()[name] = ml
+        return ml
+    if name == "_sandbox_cycle_runner":
+        from .cycle import _sandbox_cycle_runner as cyc
 
-    def __getattr__(name: str):  # type: ignore[override]
-        if name in {
-            "simulate_execution_environment",
-            "generate_sandbox_report",
-            "run_repo_section_simulations",
-            "run_workflow_simulations",
-            "run_scenarios",
-            "temporal_trajectory_presets",
-            "auto_include_modules",
-            "discover_and_integrate_orphans",
-            "integrate_new_orphans",
-            "simulate_full_environment",
-            "generate_input_stubs",
-            "record_module_usage",
-            "SANDBOX_INPUT_STUBS",
-            "SANDBOX_EXTRA_METRICS",
-            "SANDBOX_ENV_PRESETS",
-            "_preset_high_latency",
-            "_preset_resource_strain",
-            "_preset_chaotic_failure",
-            "_sandbox_cycle_runner",
-            "_SandboxMetaLogger",
-        }:
-            if name == "_SandboxMetaLogger":
-                try:
-                    from .meta_logger import _SandboxMetaLogger as ml
-                except ImportError as exc:  # pragma: no cover - meta logger missing
-                    get_logger(__name__).warning(
-                        "sandbox meta logging unavailable: %s", exc
-                    )
-                    raise
-                globals()["_SandboxMetaLogger"] = ml
-                return ml
-            _load_env()
-            if name == "_sandbox_cycle_runner":
-                from .cycle import _sandbox_cycle_runner as cyc
-                globals()["_sandbox_cycle_runner"] = cyc
-                return cyc
-            return globals()[name]
-        raise AttributeError(name)
+        globals()[name] = cyc
+        return cyc
+    raise AttributeError(name)
 
 
 def simulate_temporal_trajectory(
