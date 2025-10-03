@@ -498,3 +498,18 @@ def test_worker_context_extraction_ignores_backoff_tokens() -> None:
     assert cleaned
     assert metadata["docker_worker_backoff"] == "45s"
     assert "docker_worker_context" not in metadata
+
+
+def test_worker_stall_detected_variant_is_normalised() -> None:
+    """Windows stall detection banners should be collapsed into canonical phrasing."""
+
+    message = (
+        "WARNING: worker stall detected; restarting due to virtualization pressure"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stall detected" not in cleaned.lower()
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
