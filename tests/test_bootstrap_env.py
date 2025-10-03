@@ -644,6 +644,19 @@ def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
     assert metadata["docker_worker_last_error_banner"] == "worker stalled; restarting"
 
 
+def test_normalise_docker_warning_extracts_last_error_code() -> None:
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "lastErrorCode=WSL_KERNEL_OUTDATED lastError=\"kernel outdated\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL_KERNEL_OUTDATED"
+    assert metadata["docker_worker_last_error"].lower() == "kernel outdated"
+
+
 def test_normalise_docker_warning_handles_has_stalled_phrase() -> None:
     message = "WARNING: worker has stalled; restarting in 45s due to host sleep"
 
