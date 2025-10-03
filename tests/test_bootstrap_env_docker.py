@@ -158,6 +158,35 @@ def test_errcode_field_feeds_worker_error_guidance() -> None:
     assert any("wsl kernel" in detail.lower() for detail in assessment.details)
     assert any("wsl --update" in step.lower() for step in assessment.remediation)
 
+
+def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
+    """vpnkit-specific error codes should surface targeted networking guidance."""
+
+    message = (
+        "WARNING[0032]: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 backoff=30s errCode=VPNKIT_HEALTHCHECK_FAILED "
+        "lastError=\"vpnkit health check timed out\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_HEALTHCHECK_FAILED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("vpnkit" in reason.lower() for reason in assessment.reasons)
+    assert any("vpnkit" in detail.lower() for detail in assessment.details)
+    assert any(
+        "vpnkit" in step.lower() or "network" in step.lower()
+        for step in assessment.remediation
+    )
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_healthcheck_failed"
+    assert assessment.metadata[guidance_key].startswith("Restart Docker Desktop")
+
+
 def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
     """Structured worker telemetry should be extracted from the warning payload."""
 
