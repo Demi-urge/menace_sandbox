@@ -68,6 +68,10 @@ def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.Mo
     assert metadata["docker_worker_health_severity"] == "warning"
     assert "docker_worker_health_reasons" not in metadata
     assert metadata["wsl_default_version"] == "1"
+    summary = metadata["docker_worker_health_summary"]
+    assert summary
+    assert "worker stalled" not in summary.lower()
+    assert summary in warnings
 
 
 def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,6 +106,10 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
     reasons = metadata["docker_worker_health_reasons"]
     assert "six worker restarts" in reasons
     assert metadata["wsl_integration"] == "disabled"
+    summary = metadata["docker_worker_health_summary"]
+    assert summary
+    assert "worker stalled" not in summary.lower()
+    assert summary in errors
 
 
 def test_worker_error_code_guidance_enriches_classification() -> None:
