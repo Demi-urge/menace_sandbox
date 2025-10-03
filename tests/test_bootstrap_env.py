@@ -627,6 +627,20 @@ def test_normalise_docker_warning_handles_clock_style_backoff() -> None:
     assert "worker stalled" not in cleaned.lower()
 
 
+def test_normalise_docker_warning_handles_iso_duration_backoff() -> None:
+    message = (
+        "WARNING: worker stalled; restarting backoff=\"PT1H2M3.5S\" "
+        "lastError=\"io pressure\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_backoff"] == "1h 2m 3.5s"
+    assert metadata["docker_worker_last_error"] == "io pressure"
+    assert "1h 2m 3.5s" in cleaned
+    assert "worker stalled" not in cleaned.lower()
+
+
 def test_normalise_docker_warning_handles_multiplier_and_due_to_reason() -> None:
     message = (
         "WARN[0042] moby/buildkit: worker stalled; restarting (x3 over ~45s) due to network jitter"

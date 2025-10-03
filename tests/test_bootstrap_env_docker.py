@@ -310,7 +310,7 @@ def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> Non
     assert metadata["docker_worker_health"] == "flapping"
     assert metadata["docker_worker_context"] == "vpnkit"
     assert metadata["docker_worker_restart_count"] == "7"
-    assert metadata["docker_worker_backoff"].lower().startswith("pt45")
+    assert metadata["docker_worker_backoff"] == "45s"
     assert metadata["docker_worker_last_error"].lower().startswith("context deadline")
     assert metadata["docker_worker_last_restart"] == "2024-05-01T10:15:00Z"
 
@@ -330,6 +330,20 @@ def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
     assert metadata["docker_worker_backoff"] == "5s"
     assert metadata["docker_worker_last_error"] == "EOF"
     assert metadata["docker_worker_last_error_raw"] == "EOF)"
+
+
+def test_normalize_warning_collection_parses_iso_backoff_metadata() -> None:
+    """ISO-8601 backoff tokens should be normalised to human readable durations."""
+
+    warnings = [
+        "WARNING: worker stalled; restarting backoff=\"PT45S\" restartCount=2"
+    ]
+
+    normalized, metadata = bootstrap_env._normalize_warning_collection(warnings)
+
+    assert normalized and "worker stalled" not in normalized[0].lower()
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_restart_count"] == "2"
 
 
 def test_normalize_warnings_interprets_mapping_components() -> None:
