@@ -207,6 +207,94 @@ _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
 )
 
 
+_WORKER_INLINE_CONTEXT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "been",
+    "could",
+    "had",
+    "has",
+    "have",
+    "is",
+    "may",
+    "might",
+    "nearly",
+    "possibly",
+    "probably",
+    "reportedly",
+    "seems",
+    "seemed",
+    "seeming",
+    "should",
+    "still",
+    "that",
+    "the",
+    "this",
+    "virtually",
+    "was",
+    "were",
+    "would",
+}
+
+_WORKER_INLINE_CONTEXT_PATTERN = re.compile(
+    r"""
+    worker
+    (?P<context_block>
+        (?:
+            \s+
+            (?:
+                \[[^\]]+\]
+                |
+                \([^\)]+\)
+                |
+                \{[^\}]+\}
+                |
+                [\"'`]
+                [^\"'`]+?
+                [\"'`]
+                |
+                [A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*
+            )
+        )+
+    )
+    \s+stalled
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _rewrite_inline_worker_contexts(message: str) -> str:
+    """Normalise ``worker <context> stalled`` phrasing while retaining context."""
+
+    if not message:
+        return ""
+
+    def _replacement(match: re.Match[str]) -> str:
+        block = match.group("context_block")
+        if not block:
+            return match.group(0)
+
+        candidate = _clean_worker_metadata_value(block)
+        if not candidate:
+            return match.group(0)
+
+        tokens = [
+            token
+            for token in re.split(r"\s+", candidate)
+            if token and token.strip().lower() not in _WORKER_INLINE_CONTEXT_STOPWORDS
+        ]
+
+        if not tokens:
+            return match.group(0)
+
+        context = " ".join(tokens)
+        return f"worker stalled (context={context})"
+
+    return _WORKER_INLINE_CONTEXT_PATTERN.sub(_replacement, message)
+
+
 _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
     r"""
     worker
@@ -1492,7 +1580,8 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
     if not message:
         return ""
 
-    return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", message)
+    normalized = _rewrite_inline_worker_contexts(message)
+    return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", normalized)
 
 
 _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
