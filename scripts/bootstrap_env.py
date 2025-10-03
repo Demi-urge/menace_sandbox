@@ -19,7 +19,7 @@ import sysconfig
 from collections.abc import Iterable as IterableABC, Mapping as MappingABC
 from functools import lru_cache
 import ntpath
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Callable, Iterable, Mapping, Sequence, Literal
 
@@ -1744,6 +1744,208 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     return cleaned, metadata
 
 
+@dataclass
+class _WorkerWarningRecord:
+    """Capture restart telemetry for an individual Docker worker."""
+
+    context: str | None
+    restart_count: int | None = None
+    backoff_hint: str | None = None
+    backoff_seconds: float | None = None
+    last_seen: str | None = None
+    last_error: str | None = None
+    restart_samples: list[int] = field(default_factory=list)
+    backoff_hints: list[str] = field(default_factory=list)
+    last_seen_samples: list[str] = field(default_factory=list)
+    last_error_samples: list[str] = field(default_factory=list)
+
+    def update(self, metadata: Mapping[str, str]) -> None:
+        """Merge ``metadata`` gleaned from a worker warning into the record."""
+
+        context = metadata.get("docker_worker_context")
+        if context and not self.context:
+            self.context = context.strip()
+
+        restart_value = metadata.get("docker_worker_restart_count")
+        restart_count = _coerce_optional_int(restart_value)
+        if restart_count is not None:
+            self.restart_samples.append(restart_count)
+            if self.restart_count is None or restart_count > self.restart_count:
+                self.restart_count = restart_count
+
+        backoff_hint = metadata.get("docker_worker_backoff")
+        if backoff_hint:
+            normalized_hint = backoff_hint.strip()
+            if normalized_hint:
+                self.backoff_hints.append(normalized_hint)
+                candidate_seconds = _estimate_backoff_seconds(normalized_hint)
+                if candidate_seconds is not None:
+                    if (
+                        self.backoff_seconds is None
+                        or candidate_seconds > self.backoff_seconds
+                        or (
+                            candidate_seconds == self.backoff_seconds
+                            and not self.backoff_hint
+                        )
+                    ):
+                        self.backoff_seconds = candidate_seconds
+                        self.backoff_hint = normalized_hint
+                elif not self.backoff_hint:
+                    self.backoff_hint = normalized_hint
+
+        last_restart = metadata.get("docker_worker_last_restart")
+        if last_restart:
+            cleaned_restart = last_restart.strip()
+            if cleaned_restart:
+                self.last_seen_samples.append(cleaned_restart)
+                self.last_seen = cleaned_restart
+
+        last_error = metadata.get("docker_worker_last_error")
+        if last_error:
+            cleaned_error = last_error.strip()
+            if cleaned_error:
+                self.last_error_samples.append(cleaned_error)
+                self.last_error = cleaned_error
+
+
+class _WorkerWarningAggregator:
+    """Accumulate worker restart telemetry across multiple Docker warnings."""
+
+    def __init__(self) -> None:
+        self._records: dict[str, _WorkerWarningRecord] = {}
+        self._order: list[str] = []
+        self._health: str | None = None
+
+    def ingest(self, metadata: Mapping[str, str]) -> None:
+        """Record ``metadata`` emitted by ``_normalise_docker_warning``."""
+
+        if not metadata:
+            return
+
+        health = metadata.get("docker_worker_health")
+        if health and not self._health:
+            self._health = health
+
+        context = metadata.get("docker_worker_context")
+        normalized_context = context.strip() if isinstance(context, str) else None
+        key = normalized_context.casefold() if normalized_context else "__anonymous"
+
+        record = self._records.get(key)
+        if record is None:
+            record = _WorkerWarningRecord(context=normalized_context)
+            self._records[key] = record
+            self._order.append(key)
+        else:
+            if normalized_context and not record.context:
+                record.context = normalized_context
+
+        record.update(metadata)
+
+    def finalize(self) -> dict[str, str]:
+        """Produce a consolidated metadata mapping for downstream diagnostics."""
+
+        result: dict[str, str] = {}
+        if self._health:
+            result["docker_worker_health"] = self._health
+
+        records = [self._records[key] for key in self._order if self._records[key]]
+        if not records:
+            return result
+
+        primary = self._select_primary_record(records)
+
+        contexts = _coalesce_iterable(
+            [record.context for record in records if record.context]
+        )
+        if primary and primary.context:
+            result["docker_worker_context"] = primary.context
+        elif contexts:
+            result["docker_worker_context"] = contexts[0]
+        if len(contexts) > 1:
+            result["docker_worker_contexts"] = ", ".join(contexts)
+
+        restart_samples = sorted(
+            {
+                sample
+                for record in records
+                for sample in record.restart_samples
+                if sample is not None
+            }
+        )
+        if primary and primary.restart_count is not None:
+            result["docker_worker_restart_count"] = str(primary.restart_count)
+        elif restart_samples:
+            result["docker_worker_restart_count"] = str(restart_samples[-1])
+        if len(restart_samples) > 1:
+            result["docker_worker_restart_count_samples"] = ", ".join(
+                str(sample) for sample in restart_samples
+            )
+
+        backoff_hints = _coalesce_iterable(
+            [hint for record in records for hint in record.backoff_hints]
+        )
+        if primary and primary.backoff_hint:
+            result["docker_worker_backoff"] = primary.backoff_hint
+        elif backoff_hints:
+            backoff_candidates = [
+                (hint, _estimate_backoff_seconds(hint)) for hint in backoff_hints
+            ]
+            chosen_hint, _ = max(
+                backoff_candidates,
+                key=lambda item: (
+                    item[1] is not None,
+                    item[1] or 0.0,
+                    len(item[0]),
+                ),
+            )
+            result["docker_worker_backoff"] = chosen_hint
+        if len(backoff_hints) > 1:
+            result["docker_worker_backoff_options"] = ", ".join(backoff_hints)
+
+        last_restart_markers = _coalesce_iterable(
+            [marker for record in records for marker in record.last_seen_samples]
+        )
+        if primary and primary.last_seen:
+            result["docker_worker_last_restart"] = primary.last_seen
+        elif last_restart_markers:
+            result["docker_worker_last_restart"] = last_restart_markers[-1]
+        if len(last_restart_markers) > 1:
+            result["docker_worker_last_restart_samples"] = ", ".join(
+                last_restart_markers
+            )
+
+        last_errors = _coalesce_iterable(
+            [error for record in records for error in record.last_error_samples]
+        )
+        if primary and primary.last_error:
+            result["docker_worker_last_error"] = primary.last_error
+        elif last_errors:
+            result["docker_worker_last_error"] = last_errors[-1]
+        if len(last_errors) > 1:
+            result["docker_worker_last_error_samples"] = "; ".join(last_errors)
+
+        return result
+
+    @staticmethod
+    def _select_primary_record(
+        records: Sequence[_WorkerWarningRecord],
+    ) -> _WorkerWarningRecord | None:
+        if not records:
+            return None
+
+        return max(
+            records,
+            key=lambda record: (
+                record.restart_count is not None,
+                record.restart_count or 0,
+                record.backoff_seconds is not None,
+                record.backoff_seconds or 0.0,
+                1 if record.last_error else 0,
+                len(record.context or ""),
+            ),
+        )
+
+
 def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], dict[str, str]]:
     """Normalise warning ``messages`` and capture associated metadata."""
 
@@ -1751,8 +1953,16 @@ def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], d
     metadata: dict[str, str] = {}
     seen: set[str] = set()
 
+    worker_aggregator = _WorkerWarningAggregator()
+
     for message in messages:
         cleaned, extracted = _normalise_docker_warning(message)
+        if extracted:
+            worker_aggregator.ingest(extracted)
+            for key, value in extracted.items():
+                if key.startswith("docker_worker_"):
+                    continue
+                metadata[key] = value
         if not cleaned:
             continue
         key = cleaned.lower()
@@ -1760,7 +1970,9 @@ def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], d
             continue
         seen.add(key)
         normalized.append(cleaned)
-        metadata.update(extracted)
+
+    worker_metadata = worker_aggregator.finalize()
+    metadata.update(worker_metadata)
 
     return normalized, metadata
 
@@ -1993,7 +2205,7 @@ def _estimate_backoff_seconds(value: str | None) -> float | None:
     match = _BACKOFF_INTERVAL_PATTERN.search(value)
     if not match:
         return None
-    raw = match.group("value")
+    raw = match.group("number")
     unit = match.group("unit") or "s"
     try:
         numeric = float(raw)

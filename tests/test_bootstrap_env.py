@@ -246,6 +246,34 @@ def test_normalise_docker_warning_enriches_restart_metadata() -> None:
     assert "context canceled" in cleaned
 
 
+def test_normalize_warning_collection_aggregates_worker_metadata() -> None:
+    warnings = [
+        (
+            'time="2024-07-01T12:00:00Z" level=warning msg="worker stalled; restarting" '
+            'component="background-sync" restarts=7 backoff=1m err="panic: disk IO" '
+            'last_restart="2024-07-01T11:59:00Z"'
+        ),
+        (
+            'time="2024-07-01T12:01:00Z" level=warning msg="worker stalled; restarting" '
+            'component="moby/buildkit" restarts=2 backoff=5s err="deadline exceeded"'
+        ),
+    ]
+
+    normalized, metadata = bootstrap_env._normalize_warning_collection(warnings)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "background-sync"
+    assert "background-sync" in metadata["docker_worker_contexts"]
+    assert "moby/buildkit" in metadata["docker_worker_contexts"]
+    assert metadata["docker_worker_restart_count"] == "7"
+    assert "2" in metadata["docker_worker_restart_count_samples"]
+    assert metadata["docker_worker_backoff"] == "1m"
+    assert "5s" in metadata["docker_worker_backoff_options"]
+    assert metadata["docker_worker_last_error"].lower().startswith("panic")
+    assert "deadline exceeded" in metadata["docker_worker_last_error_samples"]
+    assert metadata["docker_worker_last_restart"] == "2024-07-01T11:59:00Z"
+
+
 def test_normalise_docker_warning_detects_implied_backoff_interval() -> None:
     message = "WARNING: worker stalled; restarting in 30s (background-sync)"
     cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
