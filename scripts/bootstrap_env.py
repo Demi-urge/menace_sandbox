@@ -1899,6 +1899,26 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
         return message
 
     canonical = message
+
+    # Canonicalise plural ``workers`` (and ``worker(s)``) into the singular form so
+    # that downstream detection logic can treat "workers stalled" banners emitted
+    # by newer Docker Desktop builds the same way as the long-standing singular
+    # variant.  The plural phrases always appear alongside stall/restart
+    # diagnostics which means the substitution remains specific to Docker worker
+    # telemetry rather than generic log output mentioning unrelated worker pools.
+    canonical = re.sub(
+        r"worker\s*\(\s*s\s*\)",
+        "workers",
+        canonical,
+        flags=re.IGNORECASE,
+    )
+    canonical = re.sub(
+        r"\bworkers\b",
+        "worker",
+        canonical,
+        flags=re.IGNORECASE,
+    )
+
     for pattern, replacement in _WORKER_STALL_CANONICALISERS:
         canonical = pattern.sub(replacement, canonical)
 
