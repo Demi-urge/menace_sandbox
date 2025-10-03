@@ -2503,6 +2503,10 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
     if lowered_normalized.startswith("in ") and any(char.isdigit() for char in normalized):
         return None
+    if "code" in lowered_normalized and "=" in normalized:
+        return None
+    if lowered_normalized.startswith("errcode"):
+        return None
     if " because " in lowered_normalized:
         return None
     if not any(char.isalpha() for char in normalized):
@@ -3099,8 +3103,23 @@ def _extract_worker_flapping_descriptors(
         normalized = _clean_worker_metadata_value(value)
         if not normalized:
             continue
-        penalty = 0
+
         lowered_value = normalized.lower()
+
+        # ``errCode`` fields often accompany worker stall banners on Windows.
+        # They describe remediation categories rather than the actual worker
+        # name and therefore should never be treated as the affected worker
+        # context.  Earlier heuristics occasionally elevated values such as
+        # ``Code=WSL_KERNEL_OUTDATED`` to the primary context which produced
+        # awkward guidance like "Affected component: Code=WSL_KERNEL_OUTDATED".
+        # Filter these fragments so that subsequent diagnostics focus on the
+        # real worker (for example ``vpnkit``) when available.
+        if "code" in lowered_value and "=" in normalized:
+            continue
+        if lowered_value.startswith("errcode"):
+            continue
+
+        penalty = 0
         if lowered_value in {"docker-desktop", "desktop-linux"}:
             penalty -= 6
         elif lowered_value in {"desktop-windows", "desktop"}:
@@ -4571,8 +4590,6 @@ def _classify_worker_flapping(
                 "Docker repeatedly restarted the worker after stalls, indicating instability",
             )
 
-    severity: Literal["warning", "error"] = "error" if severity_reasons else "warning"
-
     guidance_metadata = _apply_error_code_guidance(
         error_codes,
         register_reason=_register_reason,
@@ -4592,6 +4609,8 @@ def _classify_worker_flapping(
         remediation.append(
             "Restart the Docker daemon and inspect host virtualization services for resource starvation or crashes."
         )
+
+    severity: Literal["warning", "error"] = "error" if severity_reasons else "warning"
 
     if severity == "warning":
         headline = (
