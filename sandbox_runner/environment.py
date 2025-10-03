@@ -3721,22 +3721,29 @@ def _check_disk_usage(cid: str) -> bool:
         return False
 
 
-def _cleanup_idle_containers() -> tuple[int, int]:
+def _cleanup_idle_containers(
+    *, progress: Callable[[], None] | None = None
+) -> tuple[int, int]:
     """Remove idle or unhealthy containers.
 
     Returns a tuple ``(cleaned, replaced)`` where ``cleaned`` is the number of
     idle containers removed and ``replaced`` is the number of unhealthy
-    containers purged.
+    containers purged. When ``progress`` is supplied, the callback is invoked
+    as work advances to provide heartbeat updates.
     """
     if _DOCKER_CLIENT is None:
-        return 0
+        _notify_progress(progress)
+        return 0, 0
     cleaned = 0
     replaced = 0
     now = time.time()
+    _notify_progress(progress)
     with _POOL_LOCK:
         pools_snapshot = {img: list(pool) for img, pool in _CONTAINER_POOLS.items()}
     for image, pool in pools_snapshot.items():
+        _notify_progress(progress)
         for c in list(pool):
+            _notify_progress(progress)
             with _POOL_LOCK:
                 last = _CONTAINER_LAST_USED.get(c.id, 0)
                 created = _CONTAINER_CREATED.get(c.id, last)
@@ -3750,11 +3757,13 @@ def _cleanup_idle_containers() -> tuple[int, int]:
             elif not _verify_container(c):
                 reason = "unhealthy"
             if reason:
+                _notify_progress(progress)
                 with _POOL_LOCK:
                     actual_pool = _CONTAINER_POOLS.get(image, [])
                     if c in actual_pool:
                         actual_pool.remove(c)
                 success = _stop_and_remove(c)
+                _notify_progress(progress)
                 _log_cleanup_event(c.id, reason, success)
                 global _STALE_CONTAINERS_REMOVED
                 _STALE_CONTAINERS_REMOVED += 1
@@ -3767,6 +3776,7 @@ def _cleanup_idle_containers() -> tuple[int, int]:
                         logger.exception(
                             "temporary directory removal failed for %s", td
                         )
+                    _notify_progress(progress)
                 with _POOL_LOCK:
                     _CONTAINER_LAST_USED.pop(c.id, None)
                     _CONTAINER_CREATED.pop(c.id, None)
@@ -3776,6 +3786,8 @@ def _cleanup_idle_containers() -> tuple[int, int]:
                     replaced += 1
                 _CLEANUP_METRICS[reason] += 1
                 _ensure_pool_size_async(image)
+                _notify_progress(progress)
+    _notify_progress(progress)
     return cleaned, replaced
 
 
@@ -4221,7 +4233,7 @@ async def _cleanup_worker() -> None:
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
                 _notify_progress(_progress)
-                cleaned, replaced = _cleanup_idle_containers()
+                cleaned, replaced = _cleanup_idle_containers(progress=_progress)
                 total_cleaned += cleaned
                 total_replaced += replaced
                 _notify_progress(_progress)

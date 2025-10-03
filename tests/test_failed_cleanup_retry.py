@@ -23,7 +23,7 @@ def test_cleanup_worker_removes_container(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
     monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
 
     def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
@@ -50,7 +50,7 @@ def test_cleanup_worker_removes_overlay(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
     monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
 
     removed = []
