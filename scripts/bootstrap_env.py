@@ -4346,7 +4346,7 @@ class WorkerRestartTelemetry:
 class WorkerHealthAssessment:
     """Classification of Docker worker restart telemetry."""
 
-    severity: Literal["warning", "error"]
+    severity: Literal["info", "warning", "error"]
     headline: str
     details: tuple[str, ...] = ()
     remediation: tuple[str, ...] = ()
@@ -4597,29 +4597,61 @@ def _classify_worker_flapping(
         remediation_collector=remediation,
     )
 
-    if context.is_wsl:
-        remediation.append(
-            "Ensure WSL 2 is enabled for the distribution, install the latest WSL kernel update, and enable Docker Desktop's WSL integration for the distribution in settings."
-        )
-    elif context.is_windows:
-        remediation.append(
-            "Enable the Hyper-V and Virtual Machine Platform Windows features, allocate sufficient CPU and memory to Docker Desktop, and restart Docker Desktop after applying changes."
-        )
+    sustained_backoff = max_backoff_seconds is not None and max_backoff_seconds >= 30
+
+    severity: Literal["info", "warning", "error"]
+    if severity_reasons:
+        severity = "error"
     else:
-        remediation.append(
-            "Restart the Docker daemon and inspect host virtualization services for resource starvation or crashes."
+        mild_recovery = (
+            occurrence_count <= 1
+            and (max_restart is None or max_restart <= 1)
+            and not sustained_backoff
+            and not error_codes
+            and not critical_errors
         )
+        severity = "info" if mild_recovery else "warning"
 
-    severity: Literal["warning", "error"] = "error" if severity_reasons else "warning"
-
-    if severity == "warning":
+    if severity == "info":
+        headline = (
+            "Docker Desktop briefly restarted a background worker and reports it is healthy."
+        )
+        remediation.append(
+            "No immediate action is required, but monitor Docker Desktop if the message reappears."
+        )
+        guidance_metadata.setdefault("docker_worker_health_state", "recovered")
+    elif severity == "warning":
         headline = (
             "Docker Desktop observed worker restarts but reported they are recovering automatically. Monitor Docker Desktop and re-run bootstrap if instability persists."
         )
+        if context.is_wsl:
+            remediation.append(
+                "Ensure WSL 2 is enabled for the distribution, install the latest WSL kernel update, and enable Docker Desktop's WSL integration for the distribution in settings."
+            )
+        elif context.is_windows:
+            remediation.append(
+                "Enable the Hyper-V and Virtual Machine Platform Windows features, allocate sufficient CPU and memory to Docker Desktop, and restart Docker Desktop after applying changes."
+            )
+        else:
+            remediation.append(
+                "Restart the Docker daemon and inspect host virtualization services for resource starvation or crashes."
+            )
     else:
         headline = (
             "Docker Desktop worker processes are repeatedly restarting and may not stabilize without intervention."
         )
+        if context.is_wsl:
+            remediation.append(
+                "Ensure WSL 2 is enabled for the distribution, install the latest WSL kernel update, and enable Docker Desktop's WSL integration for the distribution in settings."
+            )
+        elif context.is_windows:
+            remediation.append(
+                "Enable the Hyper-V and Virtual Machine Platform Windows features, allocate sufficient CPU and memory to Docker Desktop, and restart Docker Desktop after applying changes."
+            )
+        else:
+            remediation.append(
+                "Restart the Docker daemon and inspect host virtualization services for resource starvation or crashes."
+            )
 
     return WorkerHealthAssessment(
         severity=severity,
@@ -4660,6 +4692,9 @@ def _post_process_docker_health(
         )
     if assessment.metadata:
         additional_metadata.update(assessment.metadata)
+
+    if assessment.severity == "info":
+        return warnings, errors, additional_metadata
 
     virtualization_warnings: list[str] = []
     virtualization_errors: list[str] = []
