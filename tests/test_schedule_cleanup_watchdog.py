@@ -3,7 +3,7 @@ import ast
 import threading
 import time
 import types
-from collections import Counter
+from collections import Counter, deque
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Callable, Iterator
@@ -87,6 +87,9 @@ def _load_environment_subset() -> dict[str, object]:
         "_progress_heartbeat_scope",
         "_cleanup_worker",
         "_reaper_worker",
+        "_clear_watchdog_restart_history",
+        "_note_watchdog_restart",
+        "_enter_watchdog_cooldown",
         "ensure_cleanup_worker",
         "watchdog_check",
         "schedule_cleanup_check",
@@ -118,6 +121,23 @@ def _load_environment_subset() -> dict[str, object]:
         "_SANDBOX_DISABLE_CLEANUP": False,
         "_log_cleanup_disabled": lambda context=None: None,
         "_suspend_cleanup_workers": lambda reason=None: None,
+        "_WATCHDOG_STALL_THRESHOLD": 3,
+        "_WATCHDOG_STALL_WINDOW": 10.0,
+        "_WATCHDOG_COOLDOWN_SECONDS": 30.0,
+        "_WATCHDOG_RECHECK_SECONDS": 15.0,
+        "_WATCHDOG_COOLDOWN_UNTIL": None,
+        "_WATCHDOG_COOLDOWN_REASON": None,
+        "_WATCHDOG_COOLDOWN_LOGGED": False,
+        "_WORKER_RESTART_HISTORY": {
+            "cleanup": deque(),
+            "reaper": deque(),
+        },
+        "_fallback_logger": lambda: types.SimpleNamespace(
+            warning=lambda *args, **kwargs: None,
+            error=lambda *args, **kwargs: None,
+        ),
+        "_docker_available": lambda: True,
+        "deque": deque,
     }
     exec(compile(subset, str(path), "exec"), namespace)  # noqa: S102
     return namespace
@@ -128,6 +148,7 @@ def env():
     ns = _load_environment_subset()
     logger = DummyLogger()
     ns["logger"] = logger
+    ns["_fallback_logger"] = lambda: logger
     @contextmanager
     def _noop_scope(callback):
         yield
@@ -310,6 +331,46 @@ def test_watchdog_ignores_active_cleanup(env):
         thread.join(timeout=1.0)
         loop.close()
 
+
+def test_watchdog_enters_cooldown_after_repeated_stalls(env):
+    reasons: list[str | None] = []
+    env._WATCHDOG_STALL_THRESHOLD = 2
+    env._WATCHDOG_STALL_WINDOW = 120.0
+    env._WATCHDOG_COOLDOWN_SECONDS = 45.0
+    env._WATCHDOG_RECHECK_SECONDS = 5.0
+    env._WORKER_RESTART_HISTORY = {
+        "cleanup": deque(maxlen=2),
+        "reaper": deque(maxlen=2),
+    }
+    env._suspend_cleanup_workers = lambda reason=None: reasons.append(reason)
+    env._CLEANUP_TASK = DummyTask()
+    env._REAPER_TASK = DummyTask()
+    env._DOCKER_CLIENT = object()
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._POOL_CLEANUP_INTERVAL = 1.0
+    env._CLEANUP_DURATIONS["cleanup"] = 0.0
+    env._CLEANUP_WATCHDOG_MARGIN = 0.0
+
+    env._WORKER_ACTIVITY["cleanup"] = True
+    env._LAST_CLEANUP_TS = time.monotonic() - 10.0
+    env.watchdog_check()
+
+    first_warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+    assert "cleanup worker stalled; restarting" in first_warnings
+
+    env.logger.messages.clear()
+    env._WORKER_ACTIVITY["cleanup"] = True
+    env._LAST_CLEANUP_TS = time.monotonic() - 10.0
+    env.watchdog_check()
+
+    assert env._WATCHDOG_COOLDOWN_UNTIL is not None
+    assert any(reason and "repeated stalls" in reason for reason in reasons)
+
+    warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+    assert "cleanup worker stalled; restarting" not in warnings
+
+    errors = [msg for level, msg in env.logger.messages if level == "error"]
+    assert any("repeated stalls" in msg for msg in errors)
 
 def test_cleanup_disabled_short_circuits(env):
     env._ns["_SANDBOX_DISABLE_CLEANUP"] = True
