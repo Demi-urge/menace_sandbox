@@ -283,6 +283,20 @@ def test_normalise_docker_warning_detects_implied_backoff_interval() -> None:
     assert "30s" in cleaned
 
 
+def test_normalise_docker_warning_handles_clock_style_backoff() -> None:
+    message = (
+        "WARN[0045] moby/buildkit: worker stalled; restarting in 00:45:30 "
+        "due to transient network starvation"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_backoff"] == "45m 30s"
+    assert metadata["docker_worker_last_error"] == "transient network starvation"
+    assert "45m 30s" in cleaned
+    assert "worker stalled" not in cleaned.lower()
+
+
 def test_normalise_docker_warning_handles_multiplier_and_due_to_reason() -> None:
     message = (
         "WARN[0042] moby/buildkit: worker stalled; restarting (x3 over ~45s) due to network jitter"
@@ -360,6 +374,12 @@ def test_parse_docker_json_surfaces_non_json_output() -> None:
     assert data is None
     assert any("no json" in warning.lower() for warning in warnings)
     assert metadata == {}
+
+
+def test_estimate_backoff_seconds_supports_clock_and_go_durations() -> None:
+    assert bootstrap_env._estimate_backoff_seconds("1h 2m 3s") == pytest.approx(3723.0)
+    assert bootstrap_env._estimate_backoff_seconds("00:45:30") == pytest.approx(2730.0)
+    assert bootstrap_env._estimate_backoff_seconds("~00:00:05") == pytest.approx(5.0)
 
 
 def test_collect_windows_virtualization_insights_reports_inactive_components(monkeypatch: pytest.MonkeyPatch) -> None:

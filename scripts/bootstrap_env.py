@@ -116,6 +116,30 @@ _GO_DURATION_COMPONENT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+_CLOCK_DURATION_PATTERN = re.compile(r"^\d+(?::\d+){1,3}(?:\.\d+)?$")
+
+_CLOCK_DURATION_SEARCH_PATTERN = re.compile(r"\b\d+(?::\d+){1,3}(?:\.\d+)?\b")
+
+_CLOCK_DURATION_LAYOUTS: dict[int, tuple[str, ...]] = {
+    2: ("minutes", "seconds"),
+    3: ("hours", "minutes", "seconds"),
+    4: ("days", "hours", "minutes", "seconds"),
+}
+
+_CLOCK_DURATION_FACTORS = {
+    "seconds": 1.0,
+    "minutes": 60.0,
+    "hours": 3600.0,
+    "days": 86400.0,
+}
+
+_CLOCK_DURATION_SYMBOLS = {
+    "seconds": "s",
+    "minutes": "m",
+    "hours": "h",
+    "days": "d",
+}
+
 _DURATION_UNIT_NORMALISATION = {
     "ms": "ms",
     "msec": "ms",
@@ -1494,6 +1518,59 @@ def _format_go_duration(token: str) -> str | None:
     return " ".join(normalized_segments) if normalized_segments else None
 
 
+def _interpret_clock_duration(value: str) -> tuple[str, float] | None:
+    """Return a normalized clock-style duration and its total seconds."""
+
+    candidate = value.strip()
+    if not candidate or not _CLOCK_DURATION_PATTERN.match(candidate):
+        return None
+
+    parts = candidate.split(":")
+    layout = _CLOCK_DURATION_LAYOUTS.get(len(parts))
+    if not layout:
+        return None
+
+    numeric_parts: list[float] = []
+    for token, unit in zip(parts, layout):
+        if unit == "seconds":
+            try:
+                numeric = float(token)
+            except ValueError:
+                return None
+        else:
+            try:
+                numeric = int(token)
+            except ValueError:
+                return None
+        numeric_parts.append(numeric)
+
+    total_seconds = sum(
+        numeric * _CLOCK_DURATION_FACTORS[unit]
+        for numeric, unit in zip(numeric_parts, layout)
+    )
+
+    segments: list[str] = []
+    for numeric, unit in zip(numeric_parts, layout):
+        symbol = _CLOCK_DURATION_SYMBOLS[unit]
+        if unit == "seconds":
+            if numeric == 0 and segments:
+                continue
+            if abs(numeric - round(numeric)) < 1e-9:
+                rendered = str(int(round(numeric)))
+            else:
+                rendered = ("%g" % numeric).rstrip("0").rstrip(".")
+            segments.append(f"{rendered}{symbol}")
+        else:
+            if numeric == 0:
+                continue
+            segments.append(f"{int(numeric)}{symbol}")
+
+    if not segments:
+        segments.append("0s")
+
+    return " ".join(segments), total_seconds
+
+
 def _normalise_backoff_hint(value: str) -> str | None:
     """Return a normalised representation of a worker backoff interval."""
 
@@ -1522,22 +1599,26 @@ def _normalise_backoff_hint(value: str) -> str | None:
     if go_candidate:
         normalized = go_candidate
     else:
-        match = _BACKOFF_INTERVAL_PATTERN.match(candidate)
-        if not match:
-            combined = _combine(prefix, candidate)
-            return combined or None
-        number = match.group("number")
-        unit = match.group("unit")
-        if not number:
-            combined = _combine(prefix, candidate)
-            return combined or None
-        normalized = number
-        if unit:
-            normalized_unit = _DURATION_UNIT_NORMALISATION.get(unit.lower())
-            if normalized_unit:
-                normalized = f"{number}{normalized_unit}"
-            else:
-                normalized = f"{number}{unit.strip()}"
+        clock_candidate = _interpret_clock_duration(candidate)
+        if clock_candidate:
+            normalized, _ = clock_candidate
+        else:
+            match = _BACKOFF_INTERVAL_PATTERN.match(candidate)
+            if not match:
+                combined = _combine(prefix, candidate)
+                return combined or None
+            number = match.group("number")
+            unit = match.group("unit")
+            if not number:
+                combined = _combine(prefix, candidate)
+                return combined or None
+            normalized = number
+            if unit:
+                normalized_unit = _DURATION_UNIT_NORMALISATION.get(unit.lower())
+                if normalized_unit:
+                    normalized = f"{number}{normalized_unit}"
+                else:
+                    normalized = f"{number}{unit.strip()}"
     if prefix:
         return _combine(prefix, normalized)
     return normalized.strip() if normalized else None
@@ -1554,6 +1635,18 @@ def _scan_backoff_hint_from_message(message: str) -> str | None:
         return None
 
     for match in _GO_DURATION_PATTERN.finditer(message):
+        prefix_fragment = message[: match.start()]
+        suffix_match = _APPROX_SUFFIX_PATTERN.search(prefix_fragment)
+        if suffix_match:
+            candidate_start = suffix_match.start()
+        else:
+            candidate_start = match.start()
+        candidate = message[candidate_start:match.end()]
+        normalized = _normalise_backoff_hint(candidate)
+        if normalized and any(char.isalpha() for char in normalized):
+            return normalized
+
+    for match in _CLOCK_DURATION_SEARCH_PATTERN.finditer(message):
         prefix_fragment = message[: match.start()]
         suffix_match = _APPROX_SUFFIX_PATTERN.search(prefix_fragment)
         if suffix_match:
@@ -2202,24 +2295,70 @@ def _estimate_backoff_seconds(value: str | None) -> float | None:
 
     if not value:
         return None
-    match = _BACKOFF_INTERVAL_PATTERN.search(value)
+    candidate = value.strip()
+    if not candidate:
+        return None
+
+    candidate = candidate.strip(";.,:)")
+    candidate = candidate.strip("()[]{}")
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+
+    prefix_match = _APPROX_PREFIX_PATTERN.match(candidate)
+    if prefix_match:
+        candidate = candidate[prefix_match.end() :].lstrip()
+    suffix_match = _APPROX_SUFFIX_PATTERN.search(candidate)
+    if suffix_match and suffix_match.end() == len(candidate):
+        candidate = candidate[: suffix_match.start()].rstrip()
+
+    if not candidate:
+        return None
+
+    condensed = candidate.replace(" ", "")
+    go_components = list(_GO_DURATION_COMPONENT_PATTERN.finditer(condensed))
+    if go_components:
+        reconstructed = "".join(match.group(0) for match in go_components)
+        if reconstructed.lower() == condensed.lower():
+            total = 0.0
+            for match in go_components:
+                try:
+                    numeric = float(match.group("value"))
+                except (TypeError, ValueError):
+                    return None
+                unit = match.group("unit").lower()
+                if unit == "h":
+                    total += numeric * 3600.0
+                elif unit == "m":
+                    total += numeric * 60.0
+                elif unit == "s":
+                    total += numeric
+                else:  # pragma: no cover - defensive
+                    return None
+            return total
+
+    clock_candidate = _interpret_clock_duration(candidate)
+    if clock_candidate:
+        _, seconds = clock_candidate
+        return seconds
+
+    match = _BACKOFF_INTERVAL_PATTERN.search(candidate)
     if not match:
         return None
     raw = match.group("number")
-    unit = match.group("unit") or "s"
+    unit = (match.group("unit") or "s").lower()
     try:
         numeric = float(raw)
     except (TypeError, ValueError):
         return None
 
-    unit_normalized = unit.lower()
-    if unit_normalized in {"ms", "msec", "milliseconds"}:
+    if unit in {"ms", "msec", "milliseconds"}:
         return numeric / 1000.0
-    if unit_normalized in {"s", "sec", "secs", "seconds"}:
+    if unit in {"s", "sec", "secs", "seconds"}:
         return numeric
-    if unit_normalized in {"m", "min", "mins", "minutes"}:
+    if unit in {"m", "min", "mins", "minutes"}:
         return numeric * 60.0
-    if unit_normalized in {"h", "hr", "hrs", "hours"}:
+    if unit in {"h", "hr", "hrs", "hours"}:
         return numeric * 3600.0
     return None
 
