@@ -1009,6 +1009,11 @@ _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
+    r"(?P<context>[A-Za-z0-9_.:/\\-]+)\s*(?:[:\-]|::)\s*worker\s+stalled",
+    re.IGNORECASE,
+)
+
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
     r"(?P<key>context|component|module|id|name|worker)\s*(?:=|:)\s*"
     r"(?P<value>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
@@ -1116,12 +1121,16 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
             candidates.append((candidate, 90))
 
     for pattern in (
+        _WORKER_CONTEXT_PREFIX_PATTERN,
         _WORKER_CONTEXT_KV_PATTERN,
         _WORKER_CONTEXT_RESTART_PATTERN,
         _WORKER_CONTEXT_STALLED_PATTERN,
     ):
         for match in pattern.finditer(message):
-            raw_candidate = match.group("value") if "value" in match.groupdict() else match.group("context")
+            if "value" in match.groupdict():
+                raw_candidate = match.group("value")
+            else:
+                raw_candidate = match.group("context")
             normalized = _normalize_worker_context_candidate(raw_candidate)
             if normalized:
                 weight = 20
@@ -1133,7 +1142,7 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                     weight = 60
                 elif key_normalized in {"module"}:
                     weight = 50
-                elif pattern is _WORKER_CONTEXT_RESTART_PATTERN:
+                elif pattern in {_WORKER_CONTEXT_RESTART_PATTERN, _WORKER_CONTEXT_PREFIX_PATTERN}:
                     weight = 70
                 candidates.append((normalized, weight))
 
@@ -1239,6 +1248,17 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
         )
         if fallback_backoff:
             backoff_hint = _clean_worker_metadata_value(fallback_backoff.group("value"))
+
+    if backoff_hint is None:
+        interval_match = re.search(
+            r"worker\s+stalled;\s*restarting(?:\s+in\s+(?P<interval>[0-9.]+\s*(?:ms|s|sec|seconds|m|min|minutes|h|hours)?))?",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if interval_match:
+            interval = interval_match.group("interval")
+            if interval:
+                backoff_hint = interval.strip()
 
     if restart_count is not None and restart_count >= 0:
         metadata["docker_worker_restart_count"] = str(restart_count)
