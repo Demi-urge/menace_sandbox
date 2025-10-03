@@ -92,3 +92,34 @@ def test_ensure_windows_compatibility_injects_scripts_directory(
     # PATHEXT should be augmented with common Python extensions.
     pathext_entries = {ext.upper() for ext in os.environ["PATHEXT"].split(";")}
     assert {".PY", ".PYW"}.issubset(pathext_entries)
+
+
+def test_ensure_windows_compatibility_adds_docker_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(os, "pathsep", ";")
+    monkeypatch.setattr(bootstrap_env.os, "pathsep", ";")
+    docker_dir = tmp_path / "Docker" / "resources" / "bin"
+    docker_dir.mkdir(parents=True)
+    (docker_dir / "docker.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("PATH", r"C:\Existing")
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_windows_script_candidates",
+        lambda executable: [],
+    )
+    monkeypatch.setattr(bootstrap_env.sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_windows_docker_directories",
+        lambda: [docker_dir],
+    )
+
+    bootstrap_env._ensure_windows_compatibility()
+
+    updated_path = os.environ["PATH"].split(";")
+    formatted = bootstrap_env._format_windows_path_entry(str(docker_dir.resolve()))
+    assert formatted in updated_path
