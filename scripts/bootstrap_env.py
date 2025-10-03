@@ -572,6 +572,24 @@ _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
 )
 
 
+def _contains_worker_stall_signal(message: str) -> bool:
+    """Return ``True`` when *message* resembles a Docker worker stall banner."""
+
+    if not message:
+        return False
+
+    lowered = message.casefold()
+    if "worker" not in lowered or "stall" not in lowered:
+        return False
+
+    normalized = _normalise_worker_stalled_phrase(message)
+    collapsed = re.sub(r"\s+", " ", normalized).strip().casefold()
+    if "worker stalled" in collapsed:
+        return True
+
+    return False
+
+
 def _coalesce_iterable(values: Iterable[str]) -> list[str]:
     """Return *values* with duplicates removed while preserving ordering."""
 
@@ -2296,8 +2314,7 @@ def _extract_structured_error_details(payload: Any) -> tuple[str | None, dict[st
 
     def _select_message(candidates: list[str]) -> str | None:
         for candidate in candidates:
-            lowered = candidate.lower()
-            if "worker stalled" not in lowered:
+            if not _contains_worker_stall_signal(candidate):
                 return candidate
         return candidates[0] if candidates else None
 
@@ -2336,8 +2353,7 @@ def _coalesce_warning_lines(payload: str) -> Iterable[str]:
             continue
 
         indent = len(raw_line) - len(raw_line.lstrip())
-        lowered = stripped.casefold()
-        line_reports_worker = "worker stalled" in lowered
+        line_reports_worker = _contains_worker_stall_signal(stripped)
         looks_like_metadata = _looks_like_worker_metadata_line(stripped)
 
         if pending:
@@ -3974,8 +3990,8 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
         return None, {}
 
     metadata: dict[str, str] = {}
-    normalized_cleaned = _normalise_worker_stalled_phrase(cleaned)
-    if "worker stalled" in normalized_cleaned.lower():
+    if _contains_worker_stall_signal(cleaned):
+        normalized_cleaned = _normalise_worker_stalled_phrase(cleaned)
         metadata["docker_worker_health"] = "flapping"
 
         normalized_original = _normalise_worker_stalled_phrase(message)
@@ -4012,8 +4028,7 @@ def _scrub_residual_worker_warnings(
             rewritten.append(message)
             continue
 
-        lowered = message.lower()
-        if "worker stall" not in lowered:
+        if not _contains_worker_stall_signal(message):
             rewritten.append(message)
             continue
 
@@ -5648,7 +5663,7 @@ def _summarize_docker_command_failure(
             continue
 
         normalized = _normalise_worker_stalled_phrase(stripped)
-        if "worker stalled" in normalized.lower():
+        if _contains_worker_stall_signal(normalized):
             normalized_error, detail, _ = _normalise_worker_error_message(
                 normalized,
                 raw_original=stripped,
