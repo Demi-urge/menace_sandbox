@@ -1449,14 +1449,109 @@ except Exception as exc:  # pragma: no cover - docker may be unavailable
     APIError = Exception  # type: ignore
     _DOCKER_CLIENT = None
 else:
+    _DOCKER_CLIENT = None
+
+
+_DOCKER_CLIENT_TIMEOUT = float(os.getenv("SANDBOX_DOCKER_CLIENT_TIMEOUT", "5"))
+_DOCKER_PING_TIMEOUT = float(
+    os.getenv("SANDBOX_DOCKER_PING_TIMEOUT", str(max(1.0, _DOCKER_CLIENT_TIMEOUT)))
+)
+
+
+def _close_docker_client(client: Any | None) -> None:
+    """Best effort close for Docker client instances."""
+
+    if client is None:
+        return
+    close = getattr(client, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.debug("failed to close docker client", exc_info=True)
+
+
+def _configure_docker_client(client: Any) -> None:
+    """Tune client level timeouts for more responsive failures."""
+
     try:
-        _DOCKER_CLIENT = docker.from_env()
+        api = getattr(client, "api", None)
+        if api is not None:
+            if hasattr(api, "timeout"):
+                api.timeout = max(float(getattr(api, "timeout", 0.0) or 0.0), _DOCKER_CLIENT_TIMEOUT)
+            http_client = getattr(api, "client", None)
+            if http_client is not None and hasattr(http_client, "timeout"):
+                http_client.timeout = _DOCKER_CLIENT_TIMEOUT
+    except Exception:
+        logger.debug("failed to configure docker client timeouts", exc_info=True)
+
+
+def _ping_docker(
+    client: Any,
+    *,
+    timeout: float | None = None,
+) -> tuple[bool, Exception | None]:
+    """Return ``(True, None)`` when ``client`` responds to ``ping`` within ``timeout``."""
+
+    if client is None:
+        return False, None
+
+    methods: list[Callable[..., object]] = []
+    ping_fn = getattr(client, "ping", None)
+    if callable(ping_fn):
+        methods.append(ping_fn)
+    api = getattr(client, "api", None)
+    if api is not None:
+        ping_fn = getattr(api, "ping", None)
+        if callable(ping_fn):
+            methods.append(ping_fn)
+
+    last_exc: Exception | None = None
+    for method in methods:
+        try:
+            if timeout is not None:
+                try:
+                    method(timeout=timeout)
+                except TypeError:
+                    method()
+            else:
+                method()
+            return True, None
+        except DockerException as exc:  # pragma: no cover - depends on docker availability
+            last_exc = exc
+        except Exception as exc:  # pragma: no cover - defensive guard
+            last_exc = exc
+    return False, last_exc
+
+
+def _create_docker_client() -> tuple[Any | None, Exception | None]:
+    """Return a connected Docker client or ``(None, exc)`` when unavailable."""
+
+    if docker is None:
+        return None, None
+    try:
+        client = docker.from_env(timeout=_DOCKER_CLIENT_TIMEOUT)
     except DockerException as exc:  # pragma: no cover - docker may be unavailable
+        return None, exc
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return None, exc
+
+    _configure_docker_client(client)
+    healthy, exc = _ping_docker(client, timeout=_DOCKER_PING_TIMEOUT)
+    if healthy:
+        return client, None
+
+    _close_docker_client(client)
+    return None, exc
+
+
+if docker is not None:
+    _DOCKER_CLIENT, _DOCKER_STARTUP_ERROR = _create_docker_client()
+    if _DOCKER_CLIENT is None and _DOCKER_STARTUP_ERROR is not None:
         logger.info(
             "Docker client unavailable (%s); container pooling features disabled",
-            exc,
+            _DOCKER_STARTUP_ERROR,
         )
-        _DOCKER_CLIENT = None
 
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
@@ -1580,6 +1675,57 @@ _CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
 _POOL_METRICS_FILE = _env_path(
     "SANDBOX_POOL_METRICS_FILE", "sandbox_data/pool_failures.json", create=True
 )
+
+
+def _suspend_cleanup_workers(reason: str | None = None) -> None:
+    """Cancel background cleanup workers when Docker is unavailable."""
+
+    global _CLEANUP_TASK, _REAPER_TASK, _WORKER_CHECK_TIMER
+
+    tasks = {
+        "cleanup": _CLEANUP_TASK,
+        "reaper": _REAPER_TASK,
+    }
+    for name, task in tasks.items():
+        if task is None:
+            continue
+        cancel = getattr(task, "cancel", None)
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception:
+                logger.debug("failed to cancel %s worker", name, exc_info=True)
+    _CLEANUP_TASK = None
+    _REAPER_TASK = None
+    _WORKER_ACTIVITY["cleanup"] = False
+    _WORKER_ACTIVITY["reaper"] = False
+
+    timer = _WORKER_CHECK_TIMER
+    if timer is not None:
+        try:
+            timer.cancel()
+        except Exception:
+            logger.debug("failed to cancel cleanup watchdog timer", exc_info=True)
+        _WORKER_CHECK_TIMER = None
+
+    stopper = globals().get("stop_container_event_listener")
+    if callable(stopper):
+        try:
+            stopper()
+        except Exception:
+            logger.debug(
+                "failed to stop container event listener during docker suspension",
+                exc_info=True,
+            )
+
+    if reason:
+        try:
+            logger.warning(reason)
+        except Exception as exc:
+            _fallback_logger().warning(
+                "cleanup suspension notice failed: %s", exc,
+                exc_info=True,
+            )
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
@@ -3019,25 +3165,36 @@ def ensure_docker_client() -> None:
     global _DOCKER_CLIENT
     if docker is None:
         return
-    reconnect = False
-    if _DOCKER_CLIENT is None:
+
+    client = _DOCKER_CLIENT
+    reconnect = client is None
+    ping_error: Exception | None = None
+    if client is not None:
+        healthy, ping_error = _ping_docker(client, timeout=_DOCKER_PING_TIMEOUT)
+        if healthy:
+            return
         reconnect = True
-    else:
         try:
-            _DOCKER_CLIENT.ping()
-        except DockerException as exc:  # pragma: no cover - ping may fail
-            reconnect = True
-            try:
-                logger.warning("docker client ping failed: %s", exc)
-            except Exception as log_exc:
-                _fallback_logger().warning(
-                    "docker client ping failed: %s (logging failed: %s)",
-                    exc,
-                    log_exc,
-                    exc_info=True,
-                )
+            if ping_error is None:
+                logger.warning("docker client ping failed")
+            else:
+                logger.warning("docker client ping failed: %s", ping_error)
+        except Exception as log_exc:
+            description = "docker client ping failed"
+            if ping_error is not None:
+                description += f": {ping_error}"
+            _fallback_logger().warning(
+                "%s (logging failed: %s)",
+                description,
+                log_exc,
+                exc_info=True,
+            )
+        _close_docker_client(client)
+        _DOCKER_CLIENT = None
+
     if not reconnect:
         return
+
     try:
         logger.info("reconnecting docker client")
     except Exception as log_exc:
@@ -3046,13 +3203,19 @@ def ensure_docker_client() -> None:
             log_exc,
             exc_info=True,
         )
-    try:
-        _DOCKER_CLIENT = docker.from_env()
-        _DOCKER_CLIENT.ping()
-        logger.info("docker client reconnected")
-    except DockerException as exc:  # pragma: no cover - docker may be down
-        _DOCKER_CLIENT = None
-        logger.error("docker client reconnection failed: %s", exc)
+
+    new_client, error = _create_docker_client()
+    if new_client is None:
+        combined_error = error or ping_error
+        if combined_error is not None:
+            logger.error("docker client reconnection failed: %s", combined_error)
+        else:
+            logger.error("docker client reconnection failed")
+        _suspend_cleanup_workers("docker client unavailable; background cleanup paused")
+        return
+
+    _DOCKER_CLIENT = new_client
+    logger.info("docker client reconnected")
 
 
 def _ensure_pool_size_async(image: str) -> None:
@@ -4661,6 +4824,7 @@ def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
     global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
     if _DOCKER_CLIENT is None:
+        _suspend_cleanup_workers()
         return
     if _EVENT_THREAD is None or not _EVENT_THREAD.is_alive():
         start_container_event_listener()
