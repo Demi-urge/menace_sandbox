@@ -985,15 +985,15 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     return cleaned, metadata
 
 
-def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]]:
-    """Normalise Docker warnings into unique, user-friendly strings."""
+def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], dict[str, str]]:
+    """Normalise warning ``messages`` and capture associated metadata."""
 
     normalized: list[str] = []
     metadata: dict[str, str] = {}
     seen: set[str] = set()
 
-    for candidate in _iter_docker_warning_messages(value):
-        cleaned, extracted = _normalise_docker_warning(candidate)
+    for message in messages:
+        cleaned, extracted = _normalise_docker_warning(message)
         if not cleaned:
             continue
         key = cleaned.lower()
@@ -1006,8 +1006,14 @@ def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]
     return normalized, metadata
 
 
-def _extract_json_document(stdout: str, stderr: str) -> tuple[str | None, list[str]]:
-    """Extract the JSON payload from Docker command output.
+def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]]:
+    """Normalise Docker warnings into unique, user-friendly strings."""
+
+    return _normalize_warning_collection(_iter_docker_warning_messages(value))
+
+
+def _extract_json_document(stdout: str, stderr: str) -> tuple[str | None, list[str], dict[str, str]]:
+    """Extract the JSON payload and structured warnings from Docker command output.
 
     Docker Desktop – especially on Windows – occasionally prefixes formatted
     JSON output with warning banners such as ``WARNING: worker stalled;
@@ -1015,8 +1021,8 @@ def _extract_json_document(stdout: str, stderr: str) -> tuple[str | None, list[s
     ``stdout`` payload which failed in these situations and left the user with a
     cryptic parsing error.  This helper tolerantly searches ``stdout`` for the
     first decodable JSON document while collecting any surrounding text as human
-    readable warnings.  ``stderr`` content is also normalised into warnings so
-    that diagnostics remain actionable.
+    readable warnings.  ``stderr`` content is also normalised into warnings and
+    annotated metadata so that diagnostics remain actionable.
     """
 
     decoder = json.JSONDecoder()
@@ -1059,31 +1065,39 @@ def _extract_json_document(stdout: str, stderr: str) -> tuple[str | None, list[s
 
     if json_fragment is None:
         warnings.extend(_iter_docker_warning_messages(stderr_normalized))
-        return None, warnings
+        normalized_warnings, metadata = _normalize_warning_collection(warnings)
+        return None, normalized_warnings, metadata
 
     warnings.extend(_iter_docker_warning_messages(stderr_normalized))
-    return json_fragment.strip(), warnings
+    normalized_warnings, warning_metadata = _normalize_warning_collection(warnings)
+    return json_fragment.strip(), normalized_warnings, warning_metadata
 
 
 def _parse_docker_json(
     proc: subprocess.CompletedProcess[str],
     command: str,
-) -> tuple[object | None, list[str]]:
-    """Return decoded JSON output and collected warnings from Docker CLI."""
+) -> tuple[object | None, list[str], dict[str, str]]:
+    """Return decoded JSON output, normalised warnings, and metadata."""
 
-    payload, collected_warnings = _extract_json_document(proc.stdout, proc.stderr)
+    payload, collected_warnings, warning_metadata = _extract_json_document(
+        proc.stdout, proc.stderr
+    )
 
     if not payload:
         collected_warnings.append(f"docker {command} produced no JSON output")
-        return None, collected_warnings
+        normalized_warnings, metadata = _normalize_warning_collection(collected_warnings)
+        metadata.update(warning_metadata)
+        return None, normalized_warnings, metadata
 
     try:
         decoded = json.loads(payload)
     except json.JSONDecodeError as exc:
         collected_warnings.append(f"Failed to parse docker {command} payload: {exc}")
-        return None, collected_warnings
+        normalized_warnings, metadata = _normalize_warning_collection(collected_warnings)
+        metadata.update(warning_metadata)
+        return None, normalized_warnings, metadata
 
-    return decoded, collected_warnings
+    return decoded, collected_warnings, warning_metadata
 
 
 def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str, str], list[str], list[str]]:
@@ -1109,8 +1123,11 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         )
         return metadata, warnings, errors
 
-    version_data, version_warnings = _parse_docker_json(version_proc, "version")
+    version_data, version_warnings, version_metadata = _parse_docker_json(
+        version_proc, "version"
+    )
     warnings.extend(version_warnings)
+    metadata.update(version_metadata)
 
     if isinstance(version_data, dict):
         client_data = version_data.get("Client", {}) if isinstance(version_data, dict) else {}
@@ -1149,8 +1166,9 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         )
         return metadata, warnings, errors
 
-    info_data, info_warnings = _parse_docker_json(info_proc, "info")
+    info_data, info_warnings, info_metadata = _parse_docker_json(info_proc, "info")
     warnings.extend(info_warnings)
+    metadata.update(info_metadata)
 
     if isinstance(info_data, dict):
         for key, metadata_key in (

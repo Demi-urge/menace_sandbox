@@ -144,12 +144,13 @@ def test_extract_json_document_tolerates_prefixed_warnings() -> None:
     stdout = "WARNING: worker stalled; restarting\n\n" + payload
     stderr = "warning: docker desktop resources low"
 
-    extracted, warnings = bootstrap_env._extract_json_document(stdout, stderr)
+    extracted, warnings, metadata = bootstrap_env._extract_json_document(stdout, stderr)
 
     assert extracted is not None
     assert json.loads(extracted)["Client"]["Version"] == "27.0"
-    assert any("worker stalled" in warning.lower() for warning in warnings)
+    assert any("docker desktop reported" in warning.lower() for warning in warnings)
     assert any("resources" in warning.lower() for warning in warnings)
+    assert metadata.get("docker_worker_health") == "flapping"
 
 
 def test_parse_docker_json_surfaces_non_json_output() -> None:
@@ -160,7 +161,8 @@ def test_parse_docker_json_surfaces_non_json_output() -> None:
         "",
     )
 
-    data, warnings = bootstrap_env._parse_docker_json(completed, "info")
+    data, warnings, metadata = bootstrap_env._parse_docker_json(completed, "info")
 
     assert data is None
     assert any("no json" in warning.lower() for warning in warnings)
+    assert metadata == {}
