@@ -166,7 +166,9 @@ def test_cleanup_worker_calls_retry(monkeypatch):
             await task
 
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "retry_failed_cleanup", lambda: called.append(True) or (0, 0))
+    monkeypatch.setattr(
+        env, "retry_failed_cleanup", lambda progress=None: called.append(True) or (0, 0)
+    )
     monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
 

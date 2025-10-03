@@ -41,7 +41,7 @@ def purge_leftovers():
     with open(os.environ['OUT_FILE'], 'a') as fh:
         fh.write('purge\\n')
 
-def retry_failed_cleanup():
+def retry_failed_cleanup(progress=None):
     with open(os.environ['OUT_FILE'], 'a') as fh:
         fh.write('retry\\n')
 """

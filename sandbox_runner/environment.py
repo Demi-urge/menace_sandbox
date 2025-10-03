@@ -1465,6 +1465,9 @@ _WORKER_CHECK_INTERVAL = float(os.getenv("SANDBOX_WORKER_CHECK_INTERVAL", "30"))
 _CLEANUP_SUBPROCESS_TIMEOUT = float(
     os.getenv("SANDBOX_CLEANUP_SUBPROCESS_TIMEOUT", "30")
 )
+_CLEANUP_WATCHDOG_MARGIN = float(
+    os.getenv("SANDBOX_CLEANUP_WATCHDOG_MARGIN", "30")
+)
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
@@ -1594,6 +1597,8 @@ _CLEANUP_ALERT_THRESHOLD = int(os.getenv("SANDBOX_CLEANUP_ALERT_THRESHOLD", "3")
 _MAX_FAILURE_ATTEMPTS = int(os.getenv("SANDBOX_PRUNE_THRESHOLD", "5"))
 _WATCHDOG_METRICS: Counter[str] = Counter()
 _CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
+_CLEANUP_CURRENT_RUNTIME = {"cleanup": 0.0, "reaper": 0.0}
+_WORKER_ACTIVITY = {"cleanup": False, "reaper": False}
 _LAST_CLEANUP_TS = time.monotonic()
 _LAST_REAPER_TS = time.monotonic()
 
@@ -2416,7 +2421,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     return removed_vms
 
 
-def _prune_volumes() -> int:
+def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
     """Remove Docker volumes created by the sandbox."""
     if not _PRUNE_VOLUMES:
         return 0
@@ -2438,6 +2443,7 @@ def _prune_volumes() -> int:
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
+        _notify_progress(progress)
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
                 vol = vol.strip()
@@ -2455,6 +2461,7 @@ def _prune_volumes() -> int:
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
+                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "volume prune timed out for %s (%.1fs)",
@@ -2465,6 +2472,7 @@ def _prune_volumes() -> int:
                         f"volume:{vol}",
                         reason="docker volume rm timeout",
                     )
+                    _notify_progress(progress)
                     return removed
                 removed += 1
                 labeled.add(vol)
@@ -2474,6 +2482,7 @@ def _prune_volumes() -> int:
             "volume listing timed out (%.1fs)",
             float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
         )
+        _notify_progress(progress)
         return removed
     except Exception as exc:
         logger.debug("leftover volume cleanup failed: %s", exc)
@@ -2488,6 +2497,7 @@ def _prune_volumes() -> int:
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
+        _notify_progress(progress)
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
                 vol = vol.strip()
@@ -2502,6 +2512,7 @@ def _prune_volumes() -> int:
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
+                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "volume inspect timed out for %s (%.1fs)",
@@ -2512,6 +2523,7 @@ def _prune_volumes() -> int:
                         f"volume:{vol}",
                         reason="docker volume inspect timeout",
                     )
+                    _notify_progress(progress)
                     return removed
                 if info.returncode != 0:
                     continue
@@ -2539,6 +2551,7 @@ def _prune_volumes() -> int:
                             check=False,
                             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
+                        _notify_progress(progress)
                     except subprocess.TimeoutExpired as exc:
                         logger.warning(
                             "volume prune timed out for %s (%.1fs)",
@@ -2549,14 +2562,17 @@ def _prune_volumes() -> int:
                             f"volume:{vol}",
                             reason="docker volume rm timeout",
                         )
+                        _notify_progress(progress)
                         return removed
                     removed += 1
                     _CLEANUP_METRICS["volume"] += 1
+                    _notify_progress(progress)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "volume listing timed out (%.1fs)",
             float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
         )
+        _notify_progress(progress)
         return removed
     except Exception as exc:
         logger.debug("unlabeled volume cleanup failed: %s", exc)
@@ -2564,7 +2580,7 @@ def _prune_volumes() -> int:
     return removed
 
 
-def _prune_networks() -> int:
+def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
     """Remove Docker networks created by the sandbox."""
     if not _PRUNE_NETWORKS:
         return 0
@@ -2586,6 +2602,7 @@ def _prune_networks() -> int:
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
+        _notify_progress(progress)
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
                 net = net.strip()
@@ -2603,6 +2620,7 @@ def _prune_networks() -> int:
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
+                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "network prune timed out for %s (%.1fs)",
@@ -2613,6 +2631,7 @@ def _prune_networks() -> int:
                         f"network:{net}",
                         reason="docker network rm timeout",
                     )
+                    _notify_progress(progress)
                     return removed
                 removed += 1
                 labeled.add(net)
@@ -2622,6 +2641,7 @@ def _prune_networks() -> int:
             "network listing timed out (%.1fs)",
             float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
         )
+        _notify_progress(progress)
         return removed
     except Exception as exc:
         logger.debug("leftover network cleanup failed: %s", exc)
@@ -2636,6 +2656,7 @@ def _prune_networks() -> int:
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
+        _notify_progress(progress)
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
                 net = net.strip()
@@ -2650,6 +2671,7 @@ def _prune_networks() -> int:
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
+                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "network inspect timed out for %s (%.1fs)",
@@ -2660,6 +2682,7 @@ def _prune_networks() -> int:
                         f"network:{net}",
                         reason="docker network inspect timeout",
                     )
+                    _notify_progress(progress)
                     return removed
                 if info.returncode != 0:
                     continue
@@ -2690,6 +2713,7 @@ def _prune_networks() -> int:
                             check=False,
                             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
+                        _notify_progress(progress)
                     except subprocess.TimeoutExpired as exc:
                         logger.warning(
                             "network prune timed out for %s (%.1fs)",
@@ -2700,14 +2724,17 @@ def _prune_networks() -> int:
                             f"network:{net}",
                             reason="docker network rm timeout",
                         )
+                        _notify_progress(progress)
                         return removed
                     removed += 1
                     _CLEANUP_METRICS["network"] += 1
+                    _notify_progress(progress)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "network listing timed out (%.1fs)",
             float(exc.timeout or _CLEANUP_SUBPROCESS_TIMEOUT),
         )
+        _notify_progress(progress)
         return removed
     except Exception as exc:
         logger.debug("unlabeled network cleanup failed: %s", exc)
@@ -3752,7 +3779,7 @@ def _cleanup_idle_containers() -> tuple[int, int]:
     return cleaned, replaced
 
 
-def _reap_orphan_containers() -> int:
+def _reap_orphan_containers(*, progress: Callable[[], None] | None = None) -> int:
     """Remove containers labeled with :data:`_POOL_LABEL` not in the pool."""
     if _DOCKER_CLIENT is None:
         return 0
@@ -3776,6 +3803,7 @@ def _reap_orphan_containers() -> int:
         success = _stop_and_remove(c)
         _log_cleanup_event(c.id, "orphan", success)
         removed += 1
+        _notify_progress(progress)
         with _POOL_LOCK:
             td = _CONTAINER_DIRS.pop(c.id, None)
         if td:
@@ -3787,6 +3815,7 @@ def _reap_orphan_containers() -> int:
             _CONTAINER_LAST_USED.pop(c.id, None)
             _CONTAINER_CREATED.pop(c.id, None)
         _CLEANUP_METRICS["orphan"] += 1
+        _notify_progress(progress)
     return removed
 
 
@@ -3907,7 +3936,7 @@ def _resolve_cleanup_command(item: str) -> tuple[List[str], List[str] | None]:
     return command, verify
 
 
-def retry_failed_cleanup() -> tuple[int, int]:
+def retry_failed_cleanup(*, progress: Callable[[], None] | None = None) -> tuple[int, int]:
     """Retry deletion of items recorded in :data:`FAILED_CLEANUP_FILE`.
 
     Each entry represents a previous cleanup failure. This function retries the
@@ -3917,6 +3946,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
     successes = 0
     failures = 0
     for item, meta in list(data.items()):
+        _notify_progress(progress)
         reason = str(meta.get("reason", ""))
         is_path = os.path.sep in item or os.path.exists(item)
         if is_path:
@@ -3924,6 +3954,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 shutil.rmtree(item)
                 _remove_failed_cleanup(item)
                 successes += 1
+                _notify_progress(progress)
                 continue
             except OSError as exc:
                 logger.warning(
@@ -3934,17 +3965,20 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 if os.name == "nt" and _rmtree_windows(item):
                     _remove_failed_cleanup(item)
                     successes += 1
+                    _notify_progress(progress)
                     continue
                 _record_failed_cleanup(
                     item,
                     reason=reason or f"path removal failed: {exc}",
                 )
                 failures += 1
+                _notify_progress(progress)
                 continue
         try:
             command, verify = _resolve_cleanup_command(item)
         except ValueError:
             failures += 1
+            _notify_progress(progress)
             continue
         try:
             subprocess.run(
@@ -3954,6 +3988,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 check=False,
                 timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
+            _notify_progress(progress)
         except subprocess.TimeoutExpired as exc:
             logger.warning(
                 "cleanup retry timed out for %s (%.1fs)",
@@ -3965,6 +4000,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 reason=reason or f"timeout running {' '.join(command)}",
             )
             failures += 1
+            _notify_progress(progress)
             continue
         except Exception as exc:
             logger.debug("cleanup retry failed for %s: %s", item, exc)
@@ -3973,11 +4009,13 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 reason=reason or f"command failed: {' '.join(command)}",  # type: ignore[arg-type]
             )
             failures += 1
+            _notify_progress(progress)
             continue
 
         if verify is None:
             _remove_failed_cleanup(item)
             successes += 1
+            _notify_progress(progress)
             continue
 
         try:
@@ -3989,6 +4027,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 check=False,
                 timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
+            _notify_progress(progress)
         except subprocess.TimeoutExpired as exc:
             logger.warning(
                 "cleanup verification timed out for %s (%.1fs)",
@@ -4000,6 +4039,7 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 reason=reason or f"timeout verifying {' '.join(verify)}",
             )
             failures += 1
+            _notify_progress(progress)
             continue
         except Exception as exc:
             logger.debug("cleanup verification failed for %s: %s", item, exc)
@@ -4008,13 +4048,16 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 reason=reason or f"verification failed: {' '.join(verify)}",
             )
             failures += 1
+            _notify_progress(progress)
             continue
 
         if proc.returncode == 0 and not proc.stdout.strip():
             _remove_failed_cleanup(item)
             successes += 1
+            _notify_progress(progress)
         else:
             failures += 1
+            _notify_progress(progress)
     
     global _CLEANUP_RETRY_SUCCESSES, _CLEANUP_RETRY_FAILURES
     if successes:
@@ -4116,8 +4159,10 @@ def _update_worker_heartbeat(worker: str, *, when: float | None = None) -> None:
     global _LAST_CLEANUP_TS, _LAST_REAPER_TS
     if worker == "cleanup":
         _LAST_CLEANUP_TS = timestamp
+        _WORKER_ACTIVITY["cleanup"] = True
     elif worker == "reaper":
         _LAST_REAPER_TS = timestamp
+        _WORKER_ACTIVITY["reaper"] = True
     else:
         return
 
@@ -4130,41 +4175,79 @@ def _update_worker_heartbeat(worker: str, *, when: float | None = None) -> None:
             logger.exception("failed to update cleanup heartbeat gauge")
 
 
+def _notify_progress(callback: Callable[[], None] | None) -> None:
+    """Invoke ``callback`` if provided, suppressing unexpected errors."""
+
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception:  # pragma: no cover - defensive guard
+        logger.exception("cleanup progress callback failed")
+
+
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
     total_replaced = 0
+
+    def _progress() -> None:
+        _update_worker_heartbeat("cleanup")
+
     try:
         while True:
             _update_worker_heartbeat("cleanup")
             try:
                 autopurge_if_needed()
+                _notify_progress(_progress)
+                await asyncio.sleep(0)
                 ensure_docker_client()
+                _notify_progress(_progress)
+                await asyncio.sleep(0)
                 reconcile_active_containers()
+                _notify_progress(_progress)
+                await asyncio.sleep(0)
             finally:
                 _update_worker_heartbeat("cleanup")
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             _update_worker_heartbeat("cleanup")
             start = time.monotonic()
+            _CLEANUP_CURRENT_RUNTIME["cleanup"] = 0.0
             try:
-                retry_failed_cleanup()
+                _notify_progress(_progress)
+                retry_failed_cleanup(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
+                _notify_progress(_progress)
                 cleaned, replaced = _cleanup_idle_containers()
                 total_cleaned += cleaned
                 total_replaced += replaced
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
+                _notify_progress(_progress)
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
-                _prune_volumes()
+                _notify_progress(_progress)
+                _prune_volumes(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
-                _prune_networks()
+                _notify_progress(_progress)
+                _prune_networks(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
+                _notify_progress(_progress)
                 report_failed_cleanup(alert=True)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
                 if cleaned:
@@ -4196,6 +4279,7 @@ async def _cleanup_worker() -> None:
                     except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
                 _update_worker_heartbeat("cleanup")
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = 0.0
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("cleanup worker cancelled")
         raise
@@ -4204,6 +4288,10 @@ async def _cleanup_worker() -> None:
 async def _reaper_worker() -> None:
     """Background task to reap orphan containers."""
     total_removed = 0
+
+    def _progress() -> None:
+        _update_worker_heartbeat("reaper")
+
     try:
         while True:
             _update_worker_heartbeat("reaper")
@@ -4211,25 +4299,39 @@ async def _reaper_worker() -> None:
             _update_worker_heartbeat("reaper")
             try:
                 autopurge_if_needed()
+                _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
                 reconcile_active_containers()
+                _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
             finally:
                 _update_worker_heartbeat("reaper")
             start = time.monotonic()
+            _CLEANUP_CURRENT_RUNTIME["reaper"] = 0.0
             try:
-                removed = _reap_orphan_containers()
+                _notify_progress(_progress)
+                removed = _reap_orphan_containers(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
+                _notify_progress(_progress)
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                vol_removed = _prune_volumes()
+                _notify_progress(_progress)
+                vol_removed = _prune_volumes(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                net_removed = _prune_networks()
+                _notify_progress(_progress)
+                net_removed = _prune_networks(progress=_progress)
+                _notify_progress(_progress)
+                _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
                 total_removed += removed + vm_removed
@@ -4255,6 +4357,7 @@ async def _reaper_worker() -> None:
                     except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
                 _update_worker_heartbeat("reaper")
+                _CLEANUP_CURRENT_RUNTIME["reaper"] = 0.0
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("reaper worker cancelled")
         raise
@@ -4556,12 +4659,14 @@ def ensure_cleanup_worker() -> None:
             _run_cleanup_sync()
             return
         _update_worker_heartbeat("cleanup")
+        _WORKER_ACTIVITY["cleanup"] = False
         if _REAPER_TASK is None:
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
             if _REAPER_TASK is None:
                 _run_cleanup_sync()
                 return
             _update_worker_heartbeat("reaper")
+            _WORKER_ACTIVITY["reaper"] = False
         return
     try:
         done = task.done()
@@ -4584,6 +4689,7 @@ def ensure_cleanup_worker() -> None:
             _run_cleanup_sync()
             return
         _update_worker_heartbeat("cleanup")
+        _WORKER_ACTIVITY["cleanup"] = False
     task = _REAPER_TASK
     if task is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
@@ -4591,6 +4697,7 @@ def ensure_cleanup_worker() -> None:
             _run_cleanup_sync()
             return
         _update_worker_heartbeat("reaper")
+        _WORKER_ACTIVITY["reaper"] = False
         return
     try:
         done = task.done()
@@ -4611,6 +4718,7 @@ def ensure_cleanup_worker() -> None:
             _run_cleanup_sync()
             return
         _update_worker_heartbeat("reaper")
+        _WORKER_ACTIVITY["reaper"] = False
 
 
 def watchdog_check() -> None:
@@ -4628,8 +4736,19 @@ def watchdog_check() -> None:
     ensure_cleanup_worker()
 
     now = time.monotonic()
-    limit = 2 * _POOL_CLEANUP_INTERVAL
-    if now - _LAST_CLEANUP_TS > limit:
+    margin = max(0.0, float(_CLEANUP_WATCHDOG_MARGIN))
+    cleanup_limit = max(
+        2 * _POOL_CLEANUP_INTERVAL,
+        float(_CLEANUP_DURATIONS.get("cleanup", 0.0)) + margin,
+        float(_CLEANUP_CURRENT_RUNTIME.get("cleanup", 0.0)) + margin,
+    )
+    reaper_limit = max(
+        2 * _POOL_CLEANUP_INTERVAL,
+        float(_CLEANUP_DURATIONS.get("reaper", 0.0)) + margin,
+        float(_CLEANUP_CURRENT_RUNTIME.get("reaper", 0.0)) + margin,
+    )
+
+    if _WORKER_ACTIVITY.get("cleanup") and now - _LAST_CLEANUP_TS > cleanup_limit:
         logger.warning("cleanup worker stalled; restarting")
         try:
             if _CLEANUP_TASK is not None:
@@ -4640,7 +4759,8 @@ def watchdog_check() -> None:
                 _run_cleanup_sync()
             else:
                 _update_worker_heartbeat("cleanup")
-    if now - _LAST_REAPER_TS > limit:
+                _WORKER_ACTIVITY["cleanup"] = False
+    if _WORKER_ACTIVITY.get("reaper") and now - _LAST_REAPER_TS > reaper_limit:
         logger.warning("reaper worker stalled; restarting")
         try:
             if _REAPER_TASK is not None:
@@ -4651,6 +4771,7 @@ def watchdog_check() -> None:
                 _run_cleanup_sync()
             else:
                 _update_worker_heartbeat("reaper")
+                _WORKER_ACTIVITY["reaper"] = False
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")

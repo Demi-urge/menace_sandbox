@@ -55,8 +55,8 @@ def test_docker_ps_failure_logged(monkeypatch):
     monkeypatch.setattr(env, "cancel_cleanup_check", lambda: None)
     monkeypatch.setattr(env, "_WARMUP_TASKS", {})
     monkeypatch.setattr(env, "_DOCKER_CLIENT", None)
-    monkeypatch.setattr(env, "_prune_volumes", lambda: 0)
-    monkeypatch.setattr(env, "_prune_networks", lambda: 0)
+    monkeypatch.setattr(env, "_prune_volumes", lambda progress=None: 0)
+    monkeypatch.setattr(env, "_prune_networks", lambda progress=None: 0)
     monkeypatch.setattr(env, "_release_pool_lock", lambda: None)
     monkeypatch.setattr(env, "_POOL_FILE_LOCK", types.SimpleNamespace(acquire=lambda: None))
 
