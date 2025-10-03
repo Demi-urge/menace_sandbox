@@ -384,6 +384,35 @@ def test_normalize_warnings_handles_worker_collections() -> None:
     assert backoff.endswith("s")
 
 
+def test_structured_warning_infers_context_from_display_name() -> None:
+    """Display name and status message fields should map to actionable guidance."""
+
+    payload = {
+        "diagnostics": {
+            "components": [
+                {
+                    "componentDisplayName": "VPNKit Service",
+                    "statusMessage": "worker stalled; restarting (errCode=VPNKIT_UNRESPONSIVE)",
+                    "err_code": "VPNKIT_UNRESPONSIVE",
+                    "lastErrorMessage": "vpnkit stopped responding to health checks",
+                }
+            ]
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings, "expected a synthesized warning"
+    message = warnings[0]
+    assert "worker stalled; restarting" not in message.lower()
+    assert "vpnkit" in message.lower()
+    assert "vpnkit" in metadata["docker_worker_context"].lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_UNRESPONSIVE"
+    assert metadata["docker_worker_last_error"].lower().startswith(
+        "vpnkit stopped responding"
+    )
+
+
 def test_normalize_warnings_handles_worker_stall_detected_banner() -> None:
     """Structured payloads using ``worker stall`` phrasing are canonicalised."""
 
