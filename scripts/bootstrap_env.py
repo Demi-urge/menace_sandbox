@@ -1821,6 +1821,36 @@ _WORKER_CONTEXT_BASE_KEYS = (
     "handler",
 )
 
+_WORKER_CONTEXT_NOISE_TOKENS = {
+    "backoff",
+    "backoffs",
+    "delay",
+    "delays",
+    "cooldown",
+    "cooldowns",
+    "interval",
+    "intervals",
+    "retry",
+    "retries",
+    "restart",
+    "restarts",
+    "restartcount",
+    "restartcounts",
+    "attempt",
+    "attempts",
+    "attemptcount",
+    "attemptcounts",
+    "wait",
+    "waiting",
+}
+
+_WORKER_CONTEXT_NOISE_LEADING = {"next", "pending", "upcoming", "future"}
+
+_WORKER_CONTEXT_DURATION_PATTERN = re.compile(
+    r"^(?:\d+(?:\.\d+)?)(?:ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?$",
+    flags=re.IGNORECASE,
+)
+
 _WORKER_CONTEXT_KEY_PATTERN = (
     r"(?P<key>(?:"
     + "|".join(_WORKER_CONTEXT_BASE_KEYS)
@@ -1971,6 +2001,10 @@ _WARNING_CONTEXT_PATH_IGNORED_TOKENS = {
 _WARNING_STRUCTURED_CONTEXT_KEYS = (
     "context",
     "component",
+    "component_name",
+    "componentname",
+    "component_id",
+    "componentid",
     "name",
     "worker",
     "module",
@@ -2519,6 +2553,35 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
     return normalized or None
 
 
+def _is_worker_context_noise(candidate: str) -> bool:
+    """Return ``True`` when *candidate* resembles telemetry rather than context."""
+
+    lowered = candidate.strip().lower()
+    if not lowered:
+        return True
+
+    if _WORKER_CONTEXT_DURATION_PATTERN.fullmatch(lowered):
+        return True
+
+    normalized = re.sub(r"[\s\-_/]+", " ", lowered).strip()
+    if not normalized:
+        return True
+
+    tokens = [token for token in normalized.split(" ") if token]
+    if not tokens:
+        return True
+
+    if all(token in _WORKER_CONTEXT_NOISE_TOKENS for token in tokens):
+        return True
+
+    if tokens[0] in _WORKER_CONTEXT_NOISE_LEADING and len(tokens) > 1:
+        remaining = [token for token in tokens[1:] if token not in _WORKER_INLINE_CONTEXT_STOPWORDS]
+        if remaining and all(token in _WORKER_CONTEXT_NOISE_TOKENS for token in remaining):
+            return True
+
+    return False
+
+
 def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     """Extract the most meaningful worker context descriptor from *message*."""
 
@@ -2648,6 +2711,17 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         for option, _ in sorted(candidates, key=lambda item: (-item[1], -len(item[0]))):
             if not option.lower().startswith("worker "):
                 return option
+        return None
+
+    if _is_worker_context_noise(best_candidate):
+        for option, _ in sorted(candidates, key=lambda item: (-item[1], -len(item[0]))):
+            if option == best_candidate:
+                continue
+            if option.lower().startswith("worker "):
+                continue
+            if _is_worker_context_noise(option):
+                continue
+            return option
         return None
 
     return best_candidate
