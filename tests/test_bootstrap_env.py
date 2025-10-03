@@ -311,6 +311,62 @@ def test_classify_worker_flapping_surfaces_aggregated_diagnostics() -> None:
     assert "Additional backoff intervals observed" in joined_details
     assert "Restart markers captured" in joined_details
     assert any("Hyper-V" in hint for hint in assessment.remediation)
+    assert any("six worker restarts" in reason for reason in assessment.reasons)
+
+
+def test_classify_worker_flapping_escalates_restart_loop() -> None:
+    telemetry = bootstrap_env.WorkerRestartTelemetry(
+        context="vpnkit",
+        restart_count=1,
+        backoff_hint=None,
+        last_seen=None,
+        last_error="restart loop detected",
+        last_error_codes=("restart_loop",),
+    )
+
+    context = bootstrap_env.RuntimeContext(
+        platform="Windows",
+        is_windows=True,
+        is_wsl=False,
+        inside_container=False,
+        container_runtime=None,
+        container_indicators=(),
+        is_ci=False,
+        ci_indicators=(),
+    )
+
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
+
+    assert assessment.severity == "error"
+    assert any("restart loop" in reason for reason in assessment.reasons)
+
+
+def test_classify_worker_flapping_escalates_persistent_stalls() -> None:
+    telemetry = bootstrap_env.WorkerRestartTelemetry(
+        context="moby/buildkit",
+        restart_count=2,
+        backoff_hint="45s",
+        last_seen="2024-08-01T00:00:00Z",
+        last_error="worker stalled; restarting",
+        warning_occurrences=3,
+        last_error_codes=("stalled_restart",),
+    )
+
+    context = bootstrap_env.RuntimeContext(
+        platform="Linux",
+        is_windows=False,
+        is_wsl=True,
+        inside_container=False,
+        container_runtime=None,
+        container_indicators=(),
+        is_ci=False,
+        ci_indicators=(),
+    )
+
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
+
+    assert assessment.severity == "error"
+    assert any("restarted the worker after stalls" in reason for reason in assessment.reasons)
 
 
 def test_normalise_docker_warning_strips_ansi_sequences() -> None:

@@ -65,6 +65,8 @@ def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.Mo
     assert called.count == 1
     assert errors == []
     assert any("Virtualization issue detected" in warning for warning in warnings)
+    assert metadata["docker_worker_health_severity"] == "warning"
+    assert "docker_worker_health_reasons" not in metadata
     assert metadata["wsl_default_version"] == "1"
 
 
@@ -96,6 +98,9 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
 
     assert any("Docker Desktop WSL distribution is stopped" in warning for warning in warnings)
     assert any(error == "WSL integration is disabled" for error in errors)
+    assert metadata["docker_worker_health_severity"] == "error"
+    reasons = metadata["docker_worker_health_reasons"]
+    assert "six worker restarts" in reasons
     assert metadata["wsl_integration"] == "disabled"
 
 

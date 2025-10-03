@@ -3236,13 +3236,19 @@ class WorkerHealthAssessment:
     headline: str
     details: tuple[str, ...] = ()
     remediation: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
 
     def render(self) -> str:
         """Compose a human readable message from the assessment components."""
 
         segments = [self.headline]
+        detail_segments: list[str] = []
         if self.details:
-            segments.append(" ".join(detail.strip() for detail in self.details if detail))
+            detail_segments.extend(detail.strip() for detail in self.details if detail)
+        if self.reasons:
+            detail_segments.extend(reason.strip() for reason in self.reasons if reason)
+        if detail_segments:
+            segments.append(" ".join(detail_segments))
         if self.remediation:
             segments.append(" ".join(hint.strip() for hint in self.remediation if hint))
         return " ".join(segment for segment in segments if segment)
@@ -3276,6 +3282,17 @@ def _classify_worker_flapping(
 
     details: list[str] = []
     remediation: list[str] = []
+    severity_reasons: list[str] = []
+    severity_reason_keys: set[str] = set()
+
+    def _register_reason(key: str, message: str) -> None:
+        if key in severity_reason_keys:
+            return
+        severity_reason_keys.add(key)
+        normalized = message.rstrip()
+        if not normalized.endswith("."):
+            normalized += "."
+        severity_reasons.append(normalized)
 
     contexts = telemetry.all_contexts
     if contexts:
@@ -3291,6 +3308,11 @@ def _classify_worker_flapping(
         details.append(
             f"Docker emitted {occurrence_count} worker stall warning{plural} during diagnostics."
         )
+        if occurrence_count >= 4:
+            _register_reason(
+                "warning_frequency",
+                "Docker emitted four or more worker stall warnings during a single diagnostics run",
+            )
 
     if telemetry.context_occurrences:
         rendered_context_occurrences = ", ".join(
@@ -3316,6 +3338,11 @@ def _classify_worker_flapping(
             details.append(
                 f"Additional restart counts observed across repeated runs: {rendered}."
             )
+        if max_restart >= 6:
+            _register_reason(
+                "excessive_restarts",
+                "Docker recorded at least six worker restarts during diagnostics",
+            )
     elif telemetry.restart_samples:
         rendered = ", ".join(str(sample) for sample in telemetry.restart_samples)
         details.append(f"Docker reported restart counts during diagnostics: {rendered}.")
@@ -3331,6 +3358,16 @@ def _classify_worker_flapping(
     if extra_backoff:
         rendered = ", ".join(extra_backoff)
         details.append(f"Additional backoff intervals observed: {rendered}.")
+
+    max_backoff_seconds = telemetry.max_backoff_seconds
+    if max_backoff_seconds is not None and max_backoff_seconds >= 60:
+        descriptor = backoff_hint or extra_backoff[0] if extra_backoff else None
+        if descriptor is None:
+            descriptor = f"approximately {int(round(max_backoff_seconds))}s"
+        _register_reason(
+            "prolonged_backoff",
+            f"Docker advertised a restart backoff of at least {descriptor}, indicating sustained recovery attempts",
+        )
 
     restart_markers = telemetry.all_last_restarts
     if restart_markers:
@@ -3353,8 +3390,16 @@ def _classify_worker_flapping(
                 rendered += ", …"
             details.append(f"Additional errors encountered: {rendered}.")
 
-    if telemetry.last_error_codes:
-        primary_code = telemetry.last_error_codes[0]
+    critical_errors = [message for message in last_errors if _is_critical_worker_error(message)]
+    if critical_errors:
+        _register_reason(
+            "critical_error",
+            f"Docker reported a critical worker error: {critical_errors[0]}",
+        )
+
+    error_codes = tuple(_coalesce_iterable(telemetry.last_error_codes))
+    if error_codes:
+        primary_code = error_codes[0]
         label = _WORKER_ERROR_CODE_LABELS.get(
             primary_code,
             primary_code.replace("_", " "),
@@ -3363,23 +3408,27 @@ def _classify_worker_flapping(
             f"Docker categorised the recent worker issue as {label}."
         )
 
-    severity: Literal["warning", "error"] = "warning"
+        code_reason_map = {
+            "restart_loop": "Docker classified the worker as being stuck in a restart loop",
+            "healthcheck_failure": "Docker reported repeated health-check failures for the worker",
+        }
+        for code in error_codes:
+            reason = code_reason_map.get(code)
+            if reason:
+                _register_reason(f"code:{code}", reason)
 
-    if max_restart is not None:
-        if max_restart >= 6:
-            severity = "error"
-        elif max_restart >= 3:
-            severity = "warning"
+        sustained_backoff = max_backoff_seconds is not None and max_backoff_seconds >= 30
+        if "stalled_restart" in error_codes and (
+            (max_restart is not None and max_restart >= 3)
+            or occurrence_count >= 2
+            or sustained_backoff
+        ):
+            _register_reason(
+                "persistent_stalls",
+                "Docker repeatedly restarted the worker after stalls, indicating instability",
+            )
 
-    max_backoff_seconds = telemetry.max_backoff_seconds
-    if max_backoff_seconds is not None and max_backoff_seconds >= 60:
-        severity = "error"
-
-    if any(_is_critical_worker_error(message) for message in last_errors):
-        severity = "error"
-
-    if occurrence_count >= 4:
-        severity = "error"
+    severity: Literal["warning", "error"] = "error" if severity_reasons else "warning"
 
     if context.is_wsl:
         remediation.append(
@@ -3408,6 +3457,7 @@ def _classify_worker_flapping(
         headline=headline,
         details=tuple(details),
         remediation=tuple(remediation),
+        reasons=tuple(severity_reasons),
     )
 
 
@@ -3428,7 +3478,13 @@ def _post_process_docker_health(
 
     warnings: list[str] = []
     errors: list[str] = []
-    additional_metadata: dict[str, str] = {}
+    additional_metadata: dict[str, str] = {
+        "docker_worker_health_severity": assessment.severity,
+    }
+    if assessment.reasons:
+        additional_metadata["docker_worker_health_reasons"] = "; ".join(
+            assessment.reasons
+        )
 
     virtualization_warnings: list[str] = []
     virtualization_errors: list[str] = []
