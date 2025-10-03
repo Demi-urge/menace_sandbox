@@ -207,6 +207,66 @@ def test_inline_errcode_banner_is_not_misclassified_as_context() -> None:
     assert any("wsl kernel" in detail.lower() for detail in assessment.details)
 
 
+def test_unknown_wsl_errcode_generates_generic_guidance() -> None:
+    """Unrecognised WSL errCodes should still surface actionable guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=3 errCode=WSL_VM_STOPPED "
+        "lastError=\"WSL VM stopped unexpectedly\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL_VM_STOPPED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity == "error"
+    assert any("wsl" in reason.lower() for reason in assessment.reasons)
+    assert any("wsl" in detail.lower() for detail in assessment.details)
+    assert any("wsl --status" in step.lower() for step in assessment.remediation)
+
+    guidance_key = "docker_worker_last_error_guidance_wsl_vm_stopped"
+    assert guidance_key in assessment.metadata
+    assert "docker desktop" in assessment.metadata[guidance_key].lower()
+
+
+def test_virtualization_errcode_generic_guidance() -> None:
+    """Virtualization-centric errCodes should yield virtualization remediation."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vm\" "
+        "restartCount=5 errCode=HCS_E_ACCESS_DENIED "
+        "lastError=\"Access denied while starting VM\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "HCS_E_ACCESS_DENIED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity == "error"
+    assert any("virtualization" in reason.lower() for reason in assessment.reasons)
+    assert any(
+        "hyper-v" in detail.lower() or "host compute" in detail.lower()
+        for detail in assessment.details
+    )
+    assert any(
+        "hyper-v" in step.lower() or "virtualization" in step.lower()
+        for step in assessment.remediation
+    )
+
+    guidance_key = "docker_worker_last_error_guidance_hcs_e_access_denied"
+    assert guidance_key in assessment.metadata
+    assert "virtualization" in assessment.metadata[guidance_key].lower()
+
+
 def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
     """vpnkit-specific error codes should surface targeted networking guidance."""
 
