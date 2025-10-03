@@ -2009,6 +2009,10 @@ _WORKER_CONTEXT_NOISE_TOKENS = {
     "attemptcounts",
     "wait",
     "waiting",
+    "code",
+    "codes",
+    "errcode",
+    "errorcode",
 }
 
 _WORKER_CONTEXT_NOISE_LEADING = {"next", "pending", "upcoming", "future"}
@@ -2942,7 +2946,8 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
     if lowered_normalized.startswith("in ") and any(char.isdigit() for char in normalized):
         return None
-    if "code" in lowered_normalized and "=" in normalized:
+    separators = {"=", ":"}
+    if "code" in lowered_normalized and any(sep in normalized for sep in separators):
         return None
     if lowered_normalized.startswith("errcode"):
         return None

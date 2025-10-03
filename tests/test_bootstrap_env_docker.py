@@ -591,6 +591,19 @@ def test_worker_context_extraction_ignores_backoff_tokens() -> None:
     assert "docker_worker_context" not in metadata
 
 
+def test_worker_context_extraction_ignores_errcode_colon_delimiter() -> None:
+    """Colon-delimited ``errCode`` metadata should not leak into the context."""
+
+    message = "WARNING: worker stalled; restarting errCode:WSL_VM_PAUSED"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "Code:" not in cleaned
+    assert metadata["docker_worker_last_error_code"] == "WSL_VM_PAUSED"
+    assert "docker_worker_context" not in metadata
+
+
 def test_worker_stall_detected_variant_is_normalised() -> None:
     """Windows stall detection banners should be collapsed into canonical phrasing."""
 
