@@ -84,6 +84,20 @@ _POSIX_ENV_VAR_PATTERN = re.compile(
 )
 
 
+def _coalesce_iterable(values: Iterable[str]) -> list[str]:
+    """Return *values* with duplicates removed while preserving ordering."""
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(value)
+    return unique
+
+
 def _resolve_windows_env_fallback(name: str) -> str | None:
     """Provide cross-platform fallbacks for common Windows placeholders."""
 
@@ -995,6 +1009,83 @@ _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_WORKER_CONTEXT_KV_PATTERN = re.compile(
+    r"(?P<key>context|component|module|id|name|worker)\s*(?:=|:)\s*"
+    r"(?P<value>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    re.IGNORECASE,
+)
+
+_WORKER_CONTEXT_RESTART_PATTERN = re.compile(
+    r"restarting(?:\s+worker)?\s+(?P<context>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    re.IGNORECASE,
+)
+
+_WORKER_CONTEXT_STALLED_PATTERN = re.compile(
+    r"worker\s+(?P<context>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)\s+stalled",
+    re.IGNORECASE,
+)
+
+
+def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
+    """Return a cleaned worker context string if *candidate* is meaningful."""
+
+    if not candidate:
+        return None
+
+    cleaned = candidate.strip().strip("\"'()[]{}<>")
+    cleaned = cleaned.strip(".,;:")
+    if not cleaned:
+        return None
+
+    lowered = cleaned.lower()
+    if lowered in {"worker", "workers", "after", "restart", "restarting"}:
+        return None
+    if lowered.startswith("after") or lowered.startswith("workerafter"):
+        return None
+    if not any(char.isalpha() for char in cleaned):
+        return None
+
+    return cleaned
+
+
+def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
+    """Extract the most meaningful worker context descriptor from *message*."""
+
+    candidates: list[str] = []
+
+    context_match = re.search(
+        r"worker\s+stalled[\s;,:-]*(?:restarting|restart)"
+        r"(?:\s*(?:[:\-]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?",
+        cleaned_message,
+        flags=re.IGNORECASE,
+    )
+    if context_match:
+        candidate = _normalize_worker_context_candidate(context_match.group("context"))
+        if candidate:
+            candidates.append(candidate)
+
+    for pattern in (
+        _WORKER_CONTEXT_KV_PATTERN,
+        _WORKER_CONTEXT_RESTART_PATTERN,
+        _WORKER_CONTEXT_STALLED_PATTERN,
+    ):
+        for match in pattern.finditer(message):
+            candidate = match.group("value") if "value" in match.groupdict() else match.group("context")
+            normalized = _normalize_worker_context_candidate(candidate)
+            if normalized:
+                candidates.append(normalized)
+
+    if not candidates:
+        return None
+
+    for candidate in candidates:
+        lowered = candidate.lower()
+        if lowered.startswith("worker "):
+            continue
+        return candidate
+
+    return candidates[0]
+
 
 def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]:
     """Return a cleaned warning and metadata extracted from Docker output."""
@@ -1008,20 +1099,9 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     lowered = cleaned.lower()
     if "worker stalled" in lowered:
         metadata["docker_worker_health"] = "flapping"
-        context: str | None = None
-        context_match = re.search(
-            r"worker\s+stalled[\s;,:-]*"
-            r"(?:restarting|restart)"
-            r"(?:\s*(?:[:\-]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-        if context_match:
-            candidate = context_match.group("context")
-            if candidate:
-                context = candidate.strip().strip("()[]{}.")
-                if context:
-                    metadata["docker_worker_context"] = context
+        context = _extract_worker_context(message, cleaned)
+        if context:
+            metadata["docker_worker_context"] = context
 
         cleaned = (
             "Docker Desktop reported repeated restarts of a background worker. "
@@ -1577,6 +1657,9 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     warnings.extend(health_warnings)
     errors.extend(health_errors)
     metadata.update(health_metadata)
+
+    warnings = _coalesce_iterable(warnings)
+    errors = _coalesce_iterable(errors)
 
     available = not errors
 

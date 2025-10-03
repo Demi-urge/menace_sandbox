@@ -163,6 +163,28 @@ def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     assert metadata["docker_worker_context"] == "background-sync"
 
 
+def test_normalise_docker_warning_extracts_key_value_context() -> None:
+    message = (
+        'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting" '
+        'context="buildkitd" id="buildkitd"'
+    )
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "docker desktop reported" in cleaned.lower()
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "buildkitd"
+
+
+def test_normalise_docker_warning_extracts_context_after_restarting_clause() -> None:
+    message = "WARNING: worker stalled; restarting worker moby-buildkit (pid=1234)"
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "docker desktop reported" in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby-buildkit"
+
+
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
     payload = (
         "  NAME                   STATE           VERSION\n"
