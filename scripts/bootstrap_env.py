@@ -1373,10 +1373,7 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
 
     if isinstance(value, str):
         text = _strip_control_sequences(value).replace("\r", "\n")
-        for line in text.split("\n"):
-            candidate = line.strip()
-            if candidate:
-                yield candidate
+        yield from _coalesce_warning_lines(text)
         return
 
     if isinstance(value, MappingABC):
@@ -1552,6 +1549,87 @@ _WORKER_METADATA_TOKEN_PATTERN = re.compile(
     rf"(?P<key>[A-Za-z0-9_.-]+)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
+
+_WORKER_METADATA_HEURISTIC_KEYWORDS = {
+    "component",
+    "context",
+    "module",
+    "subsystem",
+    "worker",
+    "namespace",
+    "service",
+    "scope",
+    "target",
+    "restarts",
+    "restart",
+    "backoff",
+    "last_restart",
+    "last-restart",
+    "last error",
+    "last_error",
+    "error",
+    "reason",
+    "err",
+    "retry",
+    "attempt",
+}
+
+
+def _looks_like_worker_metadata_line(line: str) -> bool:
+    """Heuristically determine whether ``line`` contains worker metadata."""
+
+    if not line:
+        return False
+
+    token_iter = _WORKER_METADATA_TOKEN_PATTERN.finditer(line)
+    for _ in token_iter:
+        return True
+
+    lowered = line.casefold()
+    return any(keyword in lowered for keyword in _WORKER_METADATA_HEURISTIC_KEYWORDS)
+
+
+def _coalesce_warning_lines(payload: str) -> Iterable[str]:
+    """Combine continuation lines emitted as part of structured warnings."""
+
+    pending: list[str] = []
+    pending_is_worker_warning = False
+
+    for raw_line in payload.split("\n"):
+        if not raw_line:
+            continue
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip())
+        lowered = stripped.casefold()
+        line_reports_worker = "worker stalled" in lowered
+        looks_like_metadata = _looks_like_worker_metadata_line(stripped)
+
+        if pending:
+            if indent > 0:
+                pending.append(stripped)
+                pending_is_worker_warning = pending_is_worker_warning or line_reports_worker
+                continue
+            if (
+                pending_is_worker_warning
+                and looks_like_metadata
+                and not line_reports_worker
+            ):
+                pending.append(stripped)
+                continue
+
+            yield " ".join(pending)
+            pending = []
+            pending_is_worker_warning = False
+
+        pending.append(stripped)
+        pending_is_worker_warning = line_reports_worker
+
+    if pending:
+        yield " ".join(pending)
+
 
 _WORKER_RESTART_KEYS = {
     "restart",
