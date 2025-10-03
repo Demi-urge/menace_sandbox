@@ -24,6 +24,7 @@ del _alias, _this_module
 import ast
 import asyncio
 import json
+import math
 import os
 import yaml
 from vector_service.context_builder import ContextBuilder
@@ -85,7 +86,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress, nullcontex
 from lock_utils import SandboxLock as FileLock, Timeout
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
-from collections import deque
+from collections import deque, defaultdict
 
 T = TypeVar("T")
 
@@ -1575,6 +1576,167 @@ _HEARTBEAT_GUARD_MAX_DURATION = float(
         "SANDBOX_HEARTBEAT_GUARD_MAX_DURATION",
         str(_DEFAULT_HEARTBEAT_GUARD_MAX),
     )
+)
+
+
+def _coerce_positive_float(value: str | None, default: float) -> float:
+    """Return ``value`` parsed as a positive float or ``default`` on failure."""
+
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        return default
+    return parsed
+
+
+def _coerce_positive_int(value: str | None, default: int) -> int:
+    """Return ``value`` parsed as a positive integer or ``default`` on failure."""
+
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _is_windows_platform() -> bool:
+    """Return ``True`` when running on Windows or Windows Subsystem for Linux."""
+
+    if os.name == "nt":
+        return True
+    # Heuristic: WSL exports ``WSL_DISTRO_NAME``/``WSL_INTEROP`` variables.
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    return False
+
+
+def _docker_host_uses_named_pipe() -> bool:
+    """Return ``True`` when Docker communicates over a Windows named pipe."""
+
+    host = (os.environ.get("DOCKER_HOST") or "").lower()
+    if not host:
+        return False
+    if host.startswith("npipe://") or host.startswith("npipe:"):
+        return True
+    return "\\\pipe\\" in host or "//./pipe/" in host
+
+
+_WINDOWS_DOCKER_CONTEXT = _is_windows_platform() or _docker_host_uses_named_pipe()
+_WINDOWS_WATCHDOG_FACTOR = 1.0
+if _WINDOWS_DOCKER_CONTEXT:
+    _WINDOWS_WATCHDOG_FACTOR = max(
+        1.0,
+        _coerce_positive_float(
+            os.getenv("SANDBOX_WINDOWS_WATCHDOG_FACTOR"),
+            3.0,
+        ),
+    )
+
+
+class _AdaptiveWatchdogBudget:
+    """Adaptive limits for the cleanup watchdog to avoid false positives."""
+
+    def __init__(
+        self,
+        *,
+        history_size: int = 40,
+        percentile: float = 0.95,
+        base_backoff: float = 15.0,
+        max_backoff: float = 240.0,
+        windows_bias: float = 1.0,
+    ) -> None:
+        self._history: defaultdict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=max(1, history_size))
+        )
+        self._restarts: defaultdict[str, int] = defaultdict(int)
+        self._lock = threading.Lock()
+        self._percentile = percentile if 0.0 < percentile <= 1.0 else 0.95
+        self._base_backoff = max(0.0, base_backoff)
+        self._max_backoff = max(self._base_backoff, max_backoff)
+        self._windows_bias = max(1.0, windows_bias)
+
+    def record(self, worker: str, duration: float) -> None:
+        """Track ``duration`` for ``worker`` and reset restart counters."""
+
+        if duration <= 0.0:
+            return
+        with self._lock:
+            self._history[worker].append(float(duration))
+            self._restarts.pop(worker, None)
+
+    def effective_limit(self, worker: str, baseline: float) -> float:
+        """Return a watchdog limit adjusted for observed runtime variance."""
+
+        limit = max(0.0, float(baseline))
+        with self._lock:
+            history = list(self._history.get(worker, ()))
+            restarts = self._restarts.get(worker, 0)
+
+        if history and self._percentile > 0.0:
+            ordered = sorted(history)
+            idx = max(0, int(math.ceil(len(ordered) * self._percentile)) - 1)
+            percentile_value = ordered[idx]
+            limit = max(limit, float(percentile_value) + _CLEANUP_WATCHDOG_MARGIN)
+
+        if restarts and self._base_backoff > 0.0:
+            penalty = min(
+                self._base_backoff * (2 ** max(0, restarts - 1)),
+                self._max_backoff,
+            )
+            limit = max(limit, float(baseline) + penalty)
+
+        if self._windows_bias > 1.0:
+            limit = max(limit, float(baseline) * self._windows_bias)
+
+        return limit
+
+    def note_restart(self, worker: str) -> None:
+        """Increase the restart counter for ``worker`` to widen future limits."""
+
+        with self._lock:
+            self._restarts[worker] = self._restarts.get(worker, 0) + 1
+
+    def reset(self, worker: str) -> None:
+        """Clear restart counters when the worker stabilises."""
+
+        with self._lock:
+            self._restarts.pop(worker, None)
+
+
+_WATCHDOG_HISTORY_SIZE = _coerce_positive_int(
+    os.getenv("SANDBOX_WATCHDOG_HISTORY"),
+    40,
+)
+_WATCHDOG_PERCENTILE = min(
+    max(
+        _coerce_positive_float(os.getenv("SANDBOX_WATCHDOG_PERCENTILE"), 0.95),
+        0.01,
+    ),
+    1.0,
+)
+_WATCHDOG_BACKOFF = _coerce_positive_float(
+    os.getenv("SANDBOX_WATCHDOG_BACKOFF"),
+    15.0,
+)
+_WATCHDOG_BACKOFF_MAX = _coerce_positive_float(
+    os.getenv("SANDBOX_WATCHDOG_BACKOFF_MAX"),
+    240.0,
+)
+
+_WATCHDOG_BUDGET = _AdaptiveWatchdogBudget(
+    history_size=_WATCHDOG_HISTORY_SIZE,
+    percentile=_WATCHDOG_PERCENTILE,
+    base_backoff=_WATCHDOG_BACKOFF,
+    max_backoff=_WATCHDOG_BACKOFF_MAX,
+    windows_bias=_WINDOWS_WATCHDOG_FACTOR,
 )
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
@@ -4722,6 +4884,15 @@ async def _cleanup_worker() -> None:
             finally:
                 duration = time.monotonic() - start
                 _CLEANUP_DURATIONS["cleanup"] = duration
+                budget = globals().get("_WATCHDOG_BUDGET")
+                record = getattr(budget, "record", None) if budget is not None else None
+                if callable(record):
+                    try:
+                        record("cleanup", duration)
+                    except Exception:
+                        logger.debug(
+                            "watchdog budget record failed", exc_info=True
+                        )
                 _me = _get_metrics_module()
                 gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
                 if gauge is not None:
@@ -4820,6 +4991,15 @@ async def _reaper_worker() -> None:
             finally:
                 duration = time.monotonic() - start
                 _CLEANUP_DURATIONS["reaper"] = duration
+                budget = globals().get("_WATCHDOG_BUDGET")
+                record = getattr(budget, "record", None) if budget is not None else None
+                if callable(record):
+                    try:
+                        record("reaper", duration)
+                    except Exception:
+                        logger.debug(
+                            "watchdog budget record failed", exc_info=True
+                        )
                 _me = _get_metrics_module()
                 gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
                 if gauge is not None:
@@ -5203,6 +5383,20 @@ def watchdog_check() -> None:
     if _DOCKER_CLIENT is None:
         return
 
+    budget = globals().get("_WATCHDOG_BUDGET")
+    if budget is None:
+        class _NoopWatchdogBudget:
+            def effective_limit(self, worker: str, baseline: float) -> float:  # pragma: no cover - shim for tests
+                return baseline
+
+            def note_restart(self, worker: str) -> None:  # pragma: no cover - shim for tests
+                return
+
+            def reset(self, worker: str) -> None:  # pragma: no cover - shim for tests
+                return
+
+        budget = _NoopWatchdogBudget()
+
     prev_cleanup = _CLEANUP_TASK
     prev_reaper = _REAPER_TASK
     prev_event = _EVENT_THREAD
@@ -5211,41 +5405,53 @@ def watchdog_check() -> None:
 
     now = time.monotonic()
     margin = max(0.0, float(_CLEANUP_WATCHDOG_MARGIN))
-    cleanup_limit = max(
+    cleanup_limit_base = max(
         2 * _POOL_CLEANUP_INTERVAL,
         float(_CLEANUP_DURATIONS.get("cleanup", 0.0)) + margin,
         float(_CLEANUP_CURRENT_RUNTIME.get("cleanup", 0.0)) + margin,
     )
-    reaper_limit = max(
+    cleanup_limit = budget.effective_limit("cleanup", cleanup_limit_base)
+    reaper_limit_base = max(
         2 * _POOL_CLEANUP_INTERVAL,
         float(_CLEANUP_DURATIONS.get("reaper", 0.0)) + margin,
         float(_CLEANUP_CURRENT_RUNTIME.get("reaper", 0.0)) + margin,
     )
+    reaper_limit = budget.effective_limit("reaper", reaper_limit_base)
 
-    if _WORKER_ACTIVITY.get("cleanup") and now - _LAST_CLEANUP_TS > cleanup_limit:
+    cleanup_elapsed = now - _LAST_CLEANUP_TS
+    reaper_elapsed = now - _LAST_REAPER_TS
+
+    if _WORKER_ACTIVITY.get("cleanup") and cleanup_elapsed > cleanup_limit:
         logger.warning("cleanup worker stalled; restarting")
         try:
             if _CLEANUP_TASK is not None:
                 _CLEANUP_TASK.cancel()
         finally:
+            budget.note_restart("cleanup")
             _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
             if _CLEANUP_TASK is None:
                 _run_cleanup_sync()
             else:
                 _update_worker_heartbeat("cleanup")
                 _WORKER_ACTIVITY["cleanup"] = False
-    if _WORKER_ACTIVITY.get("reaper") and now - _LAST_REAPER_TS > reaper_limit:
+    elif cleanup_elapsed <= cleanup_limit_base:
+        budget.reset("cleanup")
+
+    if _WORKER_ACTIVITY.get("reaper") and reaper_elapsed > reaper_limit:
         logger.warning("reaper worker stalled; restarting")
         try:
             if _REAPER_TASK is not None:
                 _REAPER_TASK.cancel()
         finally:
+            budget.note_restart("reaper")
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
             if _REAPER_TASK is None:
                 _run_cleanup_sync()
             else:
                 _update_worker_heartbeat("reaper")
                 _WORKER_ACTIVITY["reaper"] = False
+    elif reaper_elapsed <= reaper_limit_base:
+        budget.reset("reaper")
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")
