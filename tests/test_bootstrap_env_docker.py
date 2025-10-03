@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import types
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,43 @@ def _windows_context() -> bootstrap_env.RuntimeContext:
         is_ci=False,
         ci_indicators=(),
     )
+
+
+def test_windows_docker_directory_variants(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ensure Windows Docker discovery scans modern CLI bundle locations."""
+
+    program_files = tmp_path / "Program Files"
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+
+    program_data = tmp_path / "ProgramData"
+    monkeypatch.setenv("ProgramData", str(program_data))
+
+    local_appdata = tmp_path / "LocalAppData"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+
+    directories = list(bootstrap_env._iter_windows_docker_directories())
+    directory_set = set(directories)
+
+    expected = {
+        program_files / "Docker" / "Docker" / "resources" / "cli",
+        program_files / "Docker" / "Docker" / "resources" / "cli-wsl",
+        program_files / "Docker" / "Docker" / "resources" / "cli-linux",
+        program_files / "Docker" / "Docker" / "resources" / "cli-bin",
+        program_files / "Docker" / "Docker" / "resources" / "docker-cli",
+        program_files / "Docker" / "Docker" / "cli",
+        program_data / "DockerDesktop" / "cli",
+        program_data / "DockerDesktop" / "cli-bin",
+        program_data / "DockerDesktop" / "cli-tools",
+        local_appdata / "DockerDesktop" / "cli",
+        local_appdata / "DockerDesktop" / "cli-bin",
+        local_appdata / "DockerDesktop" / "cli-tools",
+    }
+
+    assert expected.issubset(directory_set)
 
 
 def test_worker_warning_sanitization_removes_raw_banner() -> None:

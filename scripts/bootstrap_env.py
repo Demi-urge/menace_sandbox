@@ -1093,26 +1093,75 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
             for path in (r"C:\\Program Files", r"C:\\Program Files (x86)")
         )
 
-    default_targets = [
-        root / "Docker" / "Docker" / "resources" / "bin" for root in program_roots
-    ]
+    resource_suffixes: tuple[tuple[str, ...], ...] = (
+        ("Docker", "Docker", "resources", "bin"),
+        ("Docker", "Docker", "resources", "cli"),
+        ("Docker", "Docker", "resources", "cli-wsl"),
+        ("Docker", "Docker", "resources", "cli-linux"),
+        ("Docker", "Docker", "resources", "cli-bin"),
+        ("Docker", "Docker", "resources", "docker-cli"),
+    )
+
+    default_targets: list[Path] = []
+    for root in program_roots:
+        for suffix in resource_suffixes:
+            default_targets.append(root.joinpath(*suffix))
+        # Docker Desktop began shipping side-by-side CLI bundles that live next
+        # to the legacy ``resources\\bin`` directory starting with 4.29.  Those
+        # bundles mirror the Windows installer layout under ``Program Files``
+        # and surface either ``docker.exe`` or ``com.docker.cli.exe`` directly.
+        # Surfacing the base directory keeps discovery resilient as Docker
+        # iterates on the exact folder name (``cli``, ``cli-wsl`` or
+        # ``cli-linux``) without requiring bootstrap changes for each rename.
+        default_targets.append(root / "Docker" / "Docker" / "cli")
 
     program_data = os.environ.get("ProgramData")
     if program_data:
-        default_targets.append(Path(program_data) / "DockerDesktop" / "version-bin")
+        program_data_root = Path(program_data) / "DockerDesktop"
     else:
-        default_targets.append(Path(r"C:\\ProgramData") / "DockerDesktop" / "version-bin")
+        program_data_root = Path(r"C:\\ProgramData") / "DockerDesktop"
+
+    default_targets.extend(
+        program_data_root / variant
+        for variant in (
+            Path("version-bin"),
+            Path("cli"),
+            Path("cli-bin"),
+            Path("cli-tools"),
+        )
+    )
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         user_root = Path(local_appdata)
-        default_targets.append(
-            user_root / "Programs" / "Docker" / "Docker" / "resources" / "bin"
+        default_targets.extend(
+            user_root.joinpath(*suffix) for suffix in resource_suffixes
         )
-        default_targets.append(user_root / "Docker" / "resources" / "bin")
+        default_targets.append(user_root / "Docker" / "resources" / "cli")
+        default_targets.extend(
+            user_root / "DockerDesktop" / variant
+            for variant in (
+                "version-bin",
+                "cli",
+                "cli-bin",
+                "cli-tools",
+            )
+        )
     else:
-        default_targets.append(
-            Path.home() / "AppData" / "Local" / "Programs" / "Docker" / "Docker" / "resources" / "bin"
+        home_root = Path.home() / "AppData" / "Local"
+        default_targets.extend(
+            home_root.joinpath("Programs", *suffix)
+            for suffix in resource_suffixes
+        )
+        default_targets.append(home_root / "Docker" / "resources" / "cli")
+        default_targets.extend(
+            home_root / "DockerDesktop" / variant
+            for variant in (
+                "version-bin",
+                "cli",
+                "cli-bin",
+                "cli-tools",
+            )
         )
 
     for target in _unique(default_targets):
