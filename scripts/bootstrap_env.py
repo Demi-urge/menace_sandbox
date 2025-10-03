@@ -1537,7 +1537,9 @@ def _run_command(command: Sequence[str], *, timeout: float) -> tuple[subprocess.
         return None, f"Failed to execute {command[0]!s}: {exc}"
 
 
-def _iter_docker_warning_messages(value: object) -> Iterable[str]:
+def _iter_docker_warning_messages(
+    value: object, *, context: tuple[str, ...] = ()
+) -> Iterable[str]:
     """Yield normalized warning strings from Docker diagnostic payloads."""
 
     if value is None:
@@ -1548,7 +1550,7 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
             decoded = value.decode("utf-8", "ignore")
         except Exception:  # pragma: no cover - defensive fallback
             return
-        yield from _iter_docker_warning_messages(decoded)
+        yield from _iter_docker_warning_messages(decoded, context=context)
         return
 
     if isinstance(value, str):
@@ -1557,14 +1559,28 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
         return
 
     if isinstance(value, MappingABC):
-        iterable: IterableABC[object] = value.values()
-    elif isinstance(value, IterableABC):
-        iterable = value
-    else:
+        if _mapping_contains_payload_fields(value):
+            rendered = _stringify_structured_warning(value, context)
+            if rendered:
+                yield rendered
+                return
+        for key, child in value.items():
+            child_context = context + (str(key),)
+            canonical = _canonicalize_warning_key(str(key)) if isinstance(key, str) else ""
+            if canonical in _WARNING_STRUCTURED_CONTEXT_KEYS or canonical in _WARNING_STRUCTURED_MESSAGE_KEYS:
+                if isinstance(child, (MappingABC, IterableABC)) and not isinstance(
+                    child, (str, bytes, bytearray)
+                ):
+                    yield from _iter_docker_warning_messages(child, context=child_context)
+                continue
+            yield from _iter_docker_warning_messages(child, context=child_context)
         return
 
-    for item in iterable:
-        yield from _iter_docker_warning_messages(item)
+    if isinstance(value, IterableABC):
+        for index, item in enumerate(value):
+            child_context = context + (str(index),)
+            yield from _iter_docker_warning_messages(item, context=child_context)
+        return
 
 
 _ANSI_ESCAPE_PATTERN = re.compile(
@@ -1850,6 +1866,351 @@ def _coalesce_warning_lines(payload: str) -> Iterable[str]:
 
     if pending:
         yield " ".join(pending)
+
+
+_WARNING_CONTEXT_PATH_IGNORED_TOKENS = {
+    "",
+    "warning",
+    "warnings",
+    "detail",
+    "details",
+    "diagnostic",
+    "diagnostics",
+    "telemetry",
+    "data",
+    "payload",
+    "entries",
+    "items",
+    "list",
+    "values",
+    "status",
+    "message",
+    "messages",
+    "worker",
+    "workers",
+    "component",
+    "components",
+    "context",
+    "contexts",
+    "info",
+    "information",
+    "metadata",
+    "value",
+}
+
+_WARNING_STRUCTURED_CONTEXT_KEYS = (
+    "context",
+    "component",
+    "name",
+    "worker",
+    "module",
+    "service",
+    "scope",
+    "subsystem",
+    "target",
+    "unit",
+    "process",
+    "pipeline",
+    "channel",
+    "namespace",
+)
+
+_WARNING_STRUCTURED_MESSAGE_KEYS = (
+    "status",
+    "msg",
+    "message",
+    "warning",
+    "detail",
+    "description",
+    "summary",
+    "status_text",
+)
+
+_WARNING_PAYLOAD_FIELD_MARKERS = {
+    "status",
+    "msg",
+    "message",
+    "warning",
+    "detail",
+    "description",
+    "summary",
+    "last_error",
+    "last_error_message",
+    "last_error_code",
+    "error",
+    "err",
+    "err_code",
+    "errcode",
+    "restart",
+    "restart_count",
+    "restartcounts",
+    "restartattempt",
+    "backoff",
+    "backoff_interval",
+    "backoffseconds",
+    "backoff_ms",
+    "backoff_millis",
+    "backoff_milliseconds",
+    "backoff_duration",
+}
+
+_WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
+    "restart": "restartCount",
+    "restarts": "restartCount",
+    "restart_count": "restartCount",
+    "restartcount": "restartCount",
+    "restartcounts": "restartCount",
+    "restart_attempt": "restartCount",
+    "restartattempt": "restartCount",
+    "restartattempts": "restartCount",
+    "restart_attempts": "restartCount",
+    "attempt": "restartCount",
+    "attempts": "restartCount",
+    "retry": "restartCount",
+    "retry_count": "restartCount",
+    "retrycount": "restartCount",
+    "tries": "restartCount",
+    "trycount": "restartCount",
+    "bouncecount": "restartCount",
+    "backoff": "backoff",
+    "backoff_interval": "backoff",
+    "backoffinterval": "backoff",
+    "backoff_interval_ms": "backoff",
+    "backoffintervalms": "backoff",
+    "backoff_ms": "backoff",
+    "backoff_millis": "backoff",
+    "backoff_milliseconds": "backoff",
+    "backoff_seconds": "backoff",
+    "backoffseconds": "backoff",
+    "backoff_duration": "backoff",
+    "delay": "backoff",
+    "wait": "backoff",
+    "cooldown": "backoff",
+    "lasterror": "lastError",
+    "last_error": "lastError",
+    "error": "lastError",
+    "err": "lastError",
+    "reason": "lastError",
+    "failure": "lastError",
+    "failreason": "lastError",
+    "cause": "lastError",
+    "description": "lastError",
+    "lasterrorcode": "errCode",
+    "last_error_code": "errCode",
+    "errcode": "errCode",
+    "errorcode": "errCode",
+    "last_restart": "lastRestart",
+    "lastrestart": "lastRestart",
+    "last_seen": "lastRestart",
+    "lastseen": "lastRestart",
+    "last_start": "lastRestart",
+    "laststart": "lastRestart",
+    "last_success": "lastRestart",
+    "lastsuccess": "lastRestart",
+}
+
+
+def _canonicalize_warning_key(key: str) -> str:
+    """Return a lowercase snake_case token suitable for structured analysis."""
+
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", key.strip())
+    if not sanitized:
+        return ""
+    sanitized = re.sub(r"(?<!^)(?=[A-Z])", "_", sanitized)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_").lower()
+
+
+def _mapping_contains_payload_fields(mapping: Mapping[Any, Any]) -> bool:
+    """Return True when *mapping* resembles a worker warning payload."""
+
+    for raw_key in mapping.keys():
+        if not isinstance(raw_key, str):
+            continue
+        canonical = _canonicalize_warning_key(raw_key)
+        if canonical in _WARNING_PAYLOAD_FIELD_MARKERS:
+            return True
+    return False
+
+
+def _derive_warning_context_from_path(context: tuple[str, ...]) -> str | None:
+    """Return a human friendly context extracted from the traversal path."""
+
+    candidates: list[str] = []
+    for token in context:
+        normalized = str(token).strip()
+        if not normalized:
+            continue
+        canonical = _canonicalize_warning_key(normalized)
+        if not canonical or canonical.isdigit():
+            continue
+        if canonical in _WARNING_CONTEXT_PATH_IGNORED_TOKENS:
+            continue
+        candidates.append(normalized)
+
+    if not candidates:
+        return None
+
+    return candidates[-1] if len(candidates) == 1 else " ".join(candidates)
+
+
+def _normalize_backoff_metadata_value(key: str, value: str) -> str:
+    """Render a structured backoff value into a consistent textual form."""
+
+    cleaned = _clean_worker_metadata_value(value)
+    if not cleaned:
+        return ""
+
+    numeric: float | None = None
+    try:
+        numeric = float(cleaned)
+    except ValueError:
+        numeric = None
+
+    canonical = key.lower()
+    if numeric is not None:
+        if "ms" in canonical or "millis" in canonical:
+            seconds = numeric / 1000.0
+            if seconds >= 1.0:
+                if abs(seconds - round(seconds)) < 1e-9:
+                    return f"{int(round(seconds))}s"
+                return ("%g" % seconds).rstrip("0").rstrip(".") + "s"
+            return f"{int(round(numeric))}ms"
+        if "min" in canonical:
+            seconds = numeric * 60.0
+            if abs(seconds - round(seconds)) < 1e-9:
+                return f"{int(round(seconds))}s"
+            return ("%g" % seconds).rstrip("0").rstrip(".") + "s"
+        if abs(numeric - round(numeric)) < 1e-9:
+            return f"{int(round(numeric))}s"
+        return ("%g" % numeric).rstrip("0").rstrip(".") + "s"
+
+    normalized = _normalise_backoff_hint(cleaned)
+    return normalized or cleaned
+
+
+def _format_warning_metadata_token(
+    canonical_key: str, value: str
+) -> tuple[str, str] | None:
+    """Return a normalized ``(key, value)`` pair for structured warning metadata."""
+
+    alias = _WARNING_METADATA_TOKEN_ALIASES.get(canonical_key)
+    cleaned = _clean_worker_metadata_value(value)
+    if not alias or not cleaned:
+        if canonical_key.endswith("code") and cleaned:
+            alias = "errCode"
+        else:
+            return None
+
+    normalized_value = cleaned
+    lowered_alias = alias.lower()
+
+    if lowered_alias == "restartcount":
+        match = re.search(r"-?\d+", cleaned)
+        if not match:
+            return None
+        normalized_value = match.group(0)
+    elif lowered_alias == "backoff":
+        normalized_value = _normalize_backoff_metadata_value(canonical_key, cleaned)
+    return alias, normalized_value
+
+
+def _render_warning_token(key: str, value: str) -> str:
+    """Render ``key=value`` pairs while preserving readability."""
+
+    if not value:
+        return key
+    if re.search(r"\s", value) or any(ch in value for ch in {'"', "'"}):
+        return f"{key}={json.dumps(value, ensure_ascii=False)}"
+    return f"{key}={value}"
+
+
+def _stringify_structured_warning(
+    mapping: Mapping[Any, Any], context: tuple[str, ...]
+) -> str | None:
+    """Convert structured Docker warning payloads into textual diagnostics."""
+
+    if not _mapping_contains_payload_fields(mapping):
+        return None
+
+    envelope: dict[str, str] = {}
+    _ingest_structured_mapping(envelope, mapping)
+    if not envelope:
+        return None
+
+    canonical: dict[str, str] = {}
+    for raw_key, raw_value in envelope.items():
+        canonical_key = _canonicalize_warning_key(raw_key)
+        if not canonical_key:
+            continue
+        canonical.setdefault(canonical_key, raw_value)
+
+    context_hint: str | None = None
+    for candidate in _WARNING_STRUCTURED_CONTEXT_KEYS:
+        value = canonical.get(candidate)
+        if not value:
+            continue
+        cleaned = _clean_worker_metadata_value(value)
+        if cleaned:
+            context_hint = cleaned
+            break
+    if not context_hint:
+        path_hint = _derive_warning_context_from_path(context)
+        if path_hint:
+            context_hint = _clean_worker_metadata_value(path_hint) or path_hint
+
+    message: str | None = None
+    for candidate in _WARNING_STRUCTURED_MESSAGE_KEYS:
+        value = canonical.get(candidate)
+        if not value:
+            continue
+        cleaned = _clean_worker_metadata_value(value)
+        if cleaned:
+            message = cleaned
+            break
+    if not message:
+        for fallback in ("last_error", "last_error_message", "error"):
+            value = canonical.get(fallback)
+            if not value:
+                continue
+            cleaned = _clean_worker_metadata_value(value)
+            if cleaned:
+                message = cleaned
+                break
+
+    token_map: dict[str, str] = {}
+    for canonical_key, raw_value in canonical.items():
+        if canonical_key in _WARNING_STRUCTURED_MESSAGE_KEYS or canonical_key in _WARNING_STRUCTURED_CONTEXT_KEYS:
+            continue
+        formatted = _format_warning_metadata_token(canonical_key, raw_value)
+        if not formatted:
+            continue
+        normalized_key, normalized_value = formatted
+        if normalized_key not in token_map:
+            token_map[normalized_key] = normalized_value
+
+    parts: list[str] = []
+    if context_hint:
+        parts.append(f"context={context_hint}")
+    if message:
+        parts.append(message)
+
+    if token_map:
+        tokens = [_render_warning_token(key, value) for key, value in sorted(token_map.items())]
+        parts.append(" ".join(tokens))
+
+    rendered = " ".join(segment.strip() for segment in parts if segment and segment.strip())
+    if not rendered:
+        return None
+
+    normalized = _normalise_worker_stalled_phrase(rendered)
+    lowered = normalized.lower()
+    if not any(pattern.search(lowered) for pattern, _code, _ in _WORKER_ERROR_NORMALISERS):
+        keywords = {"worker stalled", "restart", "backoff", "errcode", "error"}
+        if not any(keyword in lowered for keyword in keywords):
+            return None
+
+    return rendered
 
 
 _WORKER_RESTART_KEYS = {
