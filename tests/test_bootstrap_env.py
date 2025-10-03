@@ -77,6 +77,20 @@ def test_collect_docker_diagnostics_missing_cli(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
     monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: False)
     monkeypatch.setattr(bootstrap_env.shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_detect_runtime_context",
+        lambda: bootstrap_env.RuntimeContext(
+            platform="linux",
+            is_windows=False,
+            is_wsl=False,
+            inside_container=False,
+            container_runtime=None,
+            container_indicators=(),
+            is_ci=False,
+            ci_indicators=(),
+        ),
+    )
 
     result = bootstrap_env._collect_docker_diagnostics(timeout=0.1)
 
@@ -94,6 +108,20 @@ def test_collect_docker_diagnostics_reports_server_error(
     monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
     monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: False)
     monkeypatch.setattr(bootstrap_env.shutil, "which", lambda _: str(fake_cli))
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_detect_runtime_context",
+        lambda: bootstrap_env.RuntimeContext(
+            platform="linux",
+            is_windows=False,
+            is_wsl=False,
+            inside_container=False,
+            container_runtime=None,
+            container_indicators=(),
+            is_ci=False,
+            ci_indicators=(),
+        ),
+    )
 
     def _fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         if "version" in cmd:
@@ -109,3 +137,30 @@ def test_collect_docker_diagnostics_reports_server_error(
     assert result.available is False
     assert any("daemon" in error.lower() or "server" in error.lower() for error in result.errors)
     assert result.metadata["cli_path"] == str(fake_cli)
+
+
+def test_extract_json_document_tolerates_prefixed_warnings() -> None:
+    payload = json.dumps({"Client": {"Version": "27.0"}})
+    stdout = "WARNING: worker stalled; restarting\n\n" + payload
+    stderr = "warning: docker desktop resources low"
+
+    extracted, warnings = bootstrap_env._extract_json_document(stdout, stderr)
+
+    assert extracted is not None
+    assert json.loads(extracted)["Client"]["Version"] == "27.0"
+    assert any("worker stalled" in warning.lower() for warning in warnings)
+    assert any("resources" in warning.lower() for warning in warnings)
+
+
+def test_parse_docker_json_surfaces_non_json_output() -> None:
+    completed = subprocess.CompletedProcess(
+        ["docker", "info"],
+        0,
+        "WARNING: diagnostics disabled",
+        "",
+    )
+
+    data, warnings = bootstrap_env._parse_docker_json(completed, "info")
+
+    assert data is None
+    assert any("no json" in warning.lower() for warning in warnings)
