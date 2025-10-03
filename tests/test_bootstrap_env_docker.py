@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import types
 
@@ -364,6 +365,35 @@ def test_structured_warning_component_name_context() -> None:
     assert metadata["docker_worker_context"] == "vpnkitCore"
     assert any("vpnkitcore" in warning.lower() for warning in warnings)
     assert "worker stalled; restarting" not in warnings[0].lower()
+
+
+def test_worker_stall_json_error_payload_enriched() -> None:
+    """JSON ``lastError`` payloads should surface actionable metadata."""
+
+    payload = json.dumps(
+        {
+            "code": "VPNKIT_UNRESPONSIVE",
+            "message": "worker stalled; restarting",
+            "detail": "vpnkit lost connectivity to the network stack",
+        }
+    )
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=3 backoff=45s "
+        f"lastError={payload}"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_UNRESPONSIVE"
+    assert (
+        metadata["docker_worker_last_error_structured_message"]
+        == "vpnkit lost connectivity to the network stack"
+    )
+    assert metadata["docker_worker_backoff"] == "45s"
 
 
 def test_worker_context_extraction_ignores_backoff_tokens() -> None:

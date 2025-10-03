@@ -8,6 +8,7 @@ startup verification when working offline or without Stripe credentials.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import logging
 import os
@@ -1774,10 +1775,8 @@ _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
 )
 
 _WORKER_VALUE_PATTERN = (
-    r"(?:\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+"
-    r"(?:\s+(?![A-Za-z0-9_.:/\\-]+\s*(?:=|:))[A-Za-z0-9_.:/\\-]+)*)"
+    r"(?:\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+(?:\s+(?![A-Za-z0-9_.:/\\-]+\s*(?:=|:))[A-Za-z0-9_.:/\\-]+)*)"
 )
-
 
 _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
     r"""
@@ -1854,7 +1853,7 @@ _WORKER_CONTEXT_DURATION_PATTERN = re.compile(
 _WORKER_CONTEXT_KEY_PATTERN = (
     r"(?P<key>(?:"
     + "|".join(_WORKER_CONTEXT_BASE_KEYS)
-    + r")(?:(?:[._-][A-Za-z0-9]+)|(?:[A-Z][a-z0-9]+)|(?:\d+))*)"
+    + r")(?:(?:[._-][A-Za-z0-9]+)|(?:[A-Z][a-z0-9]+)|(?:\d+))*")
 )
 
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
@@ -1910,6 +1909,235 @@ _WORKER_METADATA_HEURISTIC_KEYWORDS = {
     "retry",
     "attempt",
 }
+
+
+def _iter_structured_json_tokens(message: str) -> Iterable[tuple[str, str]]:
+    """Yield ``(key, json_text)`` pairs for inline JSON diagnostic fields."""
+
+    if not message:
+        return
+
+    length = len(message)
+    index = 0
+
+    while index < length:
+        match = re.search(r"([A-Za-z0-9_.-]+)\s*(=|:)\s*([\[{])", message[index:])
+        if not match:
+            break
+        key = match.group(1)
+        opener = match.group(3)
+        closer = "}" if opener == "{" else "]"
+        start = index + match.start(3)
+        cursor = start
+        depth = 0
+        in_string: str | None = None
+        escaped = False
+
+        while cursor < length:
+            char = message[cursor]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == in_string:
+                    in_string = None
+            else:
+                if char == opener:
+                    depth += 1
+                elif char == closer:
+                    depth -= 1
+                    if depth == 0:
+                        cursor += 1
+                        break
+                elif char in {'"', "'"}:
+                    in_string = char
+            cursor += 1
+
+        if depth != 0:
+            break
+
+        value = message[start:cursor]
+        yield key, value
+        index = cursor
+
+
+def _unwrap_structured_payload(value: str) -> str:
+    """Return *value* without redundant quoting around JSON payloads."""
+
+    candidate = value.strip()
+    if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'"}:
+        inner = candidate[1:-1]
+        if inner and inner[0] in "[{":
+            candidate = inner
+    return candidate
+
+
+def _coerce_json_like_scalar(token: str) -> str:
+    """Normalise JSON-like scalars so ``ast.literal_eval`` can parse them."""
+
+    replacements = {
+        "true": "True",
+        "false": "False",
+        "null": "None",
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        value = match.group(0)
+        return replacements.get(value.lower(), value)
+
+    return re.sub(r"\b(?:true|false|null)\b", _replace, token, flags=re.IGNORECASE)
+
+
+def _maybe_parse_structured_value(value: object) -> Any | None:
+    """Best-effort decoding of JSON-like payloads embedded in diagnostics."""
+
+    if isinstance(value, MappingABC):
+        return value
+    if isinstance(value, SequenceABC) and not isinstance(value, (str, bytes, bytearray)):
+        return list(value)
+    if not isinstance(value, str):
+        return None
+
+    candidate = _unwrap_structured_payload(value)
+    if not candidate or candidate[0] not in "[{":
+        return None
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        python_candidate = _coerce_json_like_scalar(candidate)
+        return ast.literal_eval(python_candidate)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _merge_structured_error_metadata(
+    target: dict[str, str], incoming: Mapping[str, str]
+) -> None:
+    """Merge structured worker error metadata into ``target`` without clobbering."""
+
+    for key, value in incoming.items():
+        if not value:
+            continue
+
+        if key == "docker_worker_last_error_code":
+            existing = target.get(key)
+            if existing and existing != value:
+                combined = [existing]
+                existing_multi = target.get("docker_worker_last_error_codes")
+                if existing_multi:
+                    for token in _split_metadata_values(existing_multi):
+                        if token not in combined:
+                            combined.append(token)
+                if value not in combined:
+                    combined.append(value)
+                target["docker_worker_last_error_codes"] = ", ".join(combined)
+            else:
+                target.setdefault(key, value)
+            continue
+
+        if key == "docker_worker_last_error_codes":
+            existing = target.get(key)
+            if existing:
+                merged = list(dict.fromkeys(_split_metadata_values(existing)))
+                for token in _split_metadata_values(value):
+                    if token not in merged:
+                        merged.append(token)
+                target[key] = ", ".join(merged)
+            else:
+                target[key] = value
+            continue
+
+        target.setdefault(key, value)
+
+
+def _extract_structured_error_details(payload: Any) -> tuple[str | None, dict[str, str]]:
+    """Return an informative error message and metadata from *payload*."""
+
+    prioritized_messages: list[str] = []
+    fallback_messages: list[str] = []
+    codes: list[str] = []
+
+    def _register_message(bucket: list[str], candidate: Any) -> None:
+        if candidate is None:
+            return
+        if isinstance(candidate, (MappingABC, SequenceABC)) and not isinstance(
+            candidate, (str, bytes, bytearray)
+        ):
+            for item in candidate:
+                _register_message(bucket, item)
+            return
+        text = _stringify_envelope_value(candidate)
+        if not text:
+            return
+        cleaned = _clean_worker_metadata_value(text)
+        if cleaned:
+            bucket.append(cleaned)
+
+    def _register_code(candidate: Any) -> None:
+        if candidate is None:
+            return
+        text = _stringify_envelope_value(candidate)
+        if not text:
+            return
+        cleaned = _clean_worker_metadata_value(text)
+        if cleaned:
+            codes.append(cleaned)
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, MappingABC):
+            for raw_key, value in node.items():
+                if not isinstance(raw_key, str):
+                    continue
+                canonical = _canonicalize_warning_key(raw_key)
+                if canonical in {"detail", "description", "reason", "cause"}:
+                    _register_message(prioritized_messages, value)
+                elif canonical in {"message", "msg", "summary", "status"}:
+                    _register_message(fallback_messages, value)
+                elif canonical in {"code", "err_code", "error_code"}:
+                    _register_code(value)
+
+                if canonical in {"error", "last_error", "lasterror", "failure"}:
+                    _walk(value)
+                    continue
+
+                if isinstance(value, (MappingABC, SequenceABC)) and not isinstance(
+                    value, (str, bytes, bytearray)
+                ):
+                    _walk(value)
+        elif isinstance(node, SequenceABC) and not isinstance(node, (str, bytes, bytearray)):
+            for item in node:
+                _walk(item)
+
+    _walk(payload)
+
+    metadata: dict[str, str] = {}
+
+    if codes:
+        unique_codes: list[str] = []
+        for code in codes:
+            if code not in unique_codes:
+                unique_codes.append(code)
+        metadata["docker_worker_last_error_code"] = unique_codes[0]
+        if len(unique_codes) > 1:
+            metadata["docker_worker_last_error_codes"] = ", ".join(unique_codes)
+
+    def _select_message(candidates: list[str]) -> str | None:
+        for candidate in candidates:
+            lowered = candidate.lower()
+            if "worker stalled" not in lowered:
+                return candidate
+        return candidates[0] if candidates else None
+
+    message = _select_message(prioritized_messages) or _select_message(fallback_messages)
+    if message:
+        metadata.setdefault("docker_worker_last_error_structured_message", message)
+
+    return message, metadata
 
 
 def _looks_like_worker_metadata_line(line: str) -> bool:
@@ -3236,17 +3464,35 @@ def _extract_worker_flapping_descriptors(
                     restart_count = None
             return
         if category == "error":
-            key_suffix = normalized_key.rsplit("_", 1)[-1]
-            if key_suffix.endswith("code") or normalized_key.endswith("code"):
-                metadata.setdefault("docker_worker_last_error_code", cleaned_value)
-                return
-
             def _should_accept_error(existing: str | None) -> bool:
                 if existing is None:
                     return True
                 if existing in _WORKER_ERROR_NARRATIVES:
                     return True
                 return False
+
+            structured_payload = _maybe_parse_structured_value(value)
+            if structured_payload is not None:
+                structured_message, structured_metadata = _extract_structured_error_details(
+                    structured_payload
+                )
+                _merge_structured_error_metadata(metadata, structured_metadata)
+                if structured_message and _should_accept_error(last_error):
+                    if isinstance(value, str):
+                        last_error_raw_value = value.strip()
+                    else:
+                        serialized = _stringify_envelope_value(structured_payload)
+                        if not serialized:
+                            serialized = json.dumps(
+                                structured_payload, ensure_ascii=False, sort_keys=True
+                            )
+                        last_error_raw_value = serialized
+                    last_error = structured_message
+                    return
+            key_suffix = normalized_key.rsplit("_", 1)[-1]
+            if key_suffix.endswith("code") or normalized_key.endswith("code"):
+                metadata.setdefault("docker_worker_last_error_code", cleaned_value)
+                return
 
             message_suffixes = {
                 "error",
@@ -3292,6 +3538,9 @@ def _extract_worker_flapping_descriptors(
 
     for match in _WORKER_METADATA_TOKEN_PATTERN.finditer(message):
         _ingest_metadata_candidate(match.group("key"), match.group("value"))
+
+    for key, value in _iter_structured_json_tokens(message):
+        _ingest_metadata_candidate(key, value)
 
     if restart_count is None:
         fallback_restart = re.search(
