@@ -11,6 +11,7 @@ import argparse
 import ast
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -107,6 +108,31 @@ _BACKOFF_INTERVAL_PATTERN = re.compile(
     (?P<number>[0-9]+(?:\.[0-9]+)?)
     \s*
     (?P<unit>ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+_ISO_DURATION_PATTERN = re.compile(
+    r"""
+    ^
+    (?P<sign>[-+]?)
+    P
+    (?=
+        (?:\d+[YMWDHMS])
+        |
+        T(?:\d+[HMS])
+    )
+    (?:(?P<years>\d+(?:\.\d+)?)Y)?
+    (?:(?P<months>\d+(?:\.\d+)?)M)?
+    (?:(?P<weeks>\d+(?:\.\d+)?)W)?
+    (?:(?P<days>\d+(?:\.\d+)?)D)?
+    (?:
+        T
+        (?:(?P<hours>\d+(?:\.\d+)?)H)?
+        (?:(?P<minutes>\d+(?:\.\d+)?)M)?
+        (?:(?P<seconds>\d+(?:\.\d+)?)S)?
+    )?
+    $
     """,
     flags=re.IGNORECASE | re.VERBOSE,
 )
@@ -3382,6 +3408,81 @@ def _interpret_clock_duration(value: str) -> tuple[str, float] | None:
     return " ".join(segments), total_seconds
 
 
+def _clean_iso_numeric(token: str | None) -> float:
+    if not token:
+        return 0.0
+    normalized = token.replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError:
+        return 0.0
+
+
+def _parse_iso8601_duration_seconds(value: str) -> float | None:
+    """Return total seconds represented by an ISO-8601 duration token."""
+
+    if not value:
+        return None
+
+    match = _ISO_DURATION_PATTERN.fullmatch(value.strip())
+    if not match:
+        return None
+
+    sign = -1.0 if match.group("sign") == "-" else 1.0
+
+    years = _clean_iso_numeric(match.group("years"))
+    months = _clean_iso_numeric(match.group("months"))
+    weeks = _clean_iso_numeric(match.group("weeks"))
+    days = _clean_iso_numeric(match.group("days"))
+    hours = _clean_iso_numeric(match.group("hours"))
+    minutes = _clean_iso_numeric(match.group("minutes"))
+    seconds = _clean_iso_numeric(match.group("seconds"))
+
+    total_seconds = 0.0
+    total_seconds += years * 365.0 * _CLOCK_DURATION_FACTORS["days"]
+    total_seconds += months * 30.0 * _CLOCK_DURATION_FACTORS["days"]
+    total_seconds += weeks * 7.0 * _CLOCK_DURATION_FACTORS["days"]
+    total_seconds += days * _CLOCK_DURATION_FACTORS["days"]
+    total_seconds += hours * _CLOCK_DURATION_FACTORS["hours"]
+    total_seconds += minutes * _CLOCK_DURATION_FACTORS["minutes"]
+    total_seconds += seconds * _CLOCK_DURATION_FACTORS["seconds"]
+
+    return sign * total_seconds
+
+
+def _format_seconds_duration(value: float) -> str:
+    """Render ``value`` seconds as a compact ``1h 2m 3s`` style duration."""
+
+    seconds = float(value)
+    if not math.isfinite(seconds):
+        return "0s"
+
+    sign = "-" if seconds < 0 else ""
+    seconds = abs(seconds)
+
+    hours = int(seconds // _CLOCK_DURATION_FACTORS["hours"])
+    seconds -= hours * _CLOCK_DURATION_FACTORS["hours"]
+    minutes = int(seconds // _CLOCK_DURATION_FACTORS["minutes"])
+    seconds -= minutes * _CLOCK_DURATION_FACTORS["minutes"]
+
+    def _format_seconds_component(component: float) -> str:
+        if abs(component - round(component)) < 1e-9:
+            return f"{int(round(component))}s"
+        text = ("%.6f" % component).rstrip("0").rstrip(".")
+        return f"{text}s"
+
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(_format_seconds_component(seconds))
+
+    rendered = " ".join(parts)
+    return f"{sign}{rendered}" if sign else rendered
+
+
 def _normalise_backoff_hint(value: str) -> str | None:
     """Return a normalised representation of a worker backoff interval."""
 
@@ -3405,6 +3506,13 @@ def _normalise_backoff_hint(value: str) -> str | None:
     if prefix_match:
         prefix = _normalise_approx_prefix(prefix_match.group("prefix"))
         candidate = candidate[prefix_match.end() :].lstrip()
+
+    iso_seconds = _parse_iso8601_duration_seconds(candidate)
+    if iso_seconds is not None:
+        normalized = _format_seconds_duration(abs(iso_seconds))
+        if iso_seconds < 0:
+            normalized = f"-{normalized}"
+        return _combine(prefix, normalized)
 
     go_candidate = _format_go_duration(candidate)
     if go_candidate:
