@@ -21,7 +21,7 @@ from functools import lru_cache
 import ntpath
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence, Literal
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -81,6 +81,12 @@ _DOCKER_ASSUME_NO_ENV = "MENACE_BOOTSTRAP_ASSUME_NO_DOCKER"
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
 _POSIX_ENV_VAR_PATTERN = re.compile(
     r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<simple>[A-Za-z_][A-Za-z0-9_]*))"
+)
+
+
+_BACKOFF_INTERVAL_PATTERN = re.compile(
+    r"(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?P<unit>ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?",
+    flags=re.IGNORECASE,
 )
 
 
@@ -1547,6 +1553,180 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
     return warnings, errors, metadata
 
 
+def _coerce_optional_int(value: object) -> int | None:
+    """Convert *value* to ``int`` when possible."""
+
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _estimate_backoff_seconds(value: str | None) -> float | None:
+    """Approximate the restart backoff interval extracted from Docker warnings."""
+
+    if not value:
+        return None
+    match = _BACKOFF_INTERVAL_PATTERN.search(value)
+    if not match:
+        return None
+    raw = match.group("value")
+    unit = match.group("unit") or "s"
+    try:
+        numeric = float(raw)
+    except (TypeError, ValueError):
+        return None
+
+    unit_normalized = unit.lower()
+    if unit_normalized in {"ms", "msec", "milliseconds"}:
+        return numeric / 1000.0
+    if unit_normalized in {"s", "sec", "secs", "seconds"}:
+        return numeric
+    if unit_normalized in {"m", "min", "mins", "minutes"}:
+        return numeric * 60.0
+    if unit_normalized in {"h", "hr", "hrs", "hours"}:
+        return numeric * 3600.0
+    return None
+
+
+@dataclass(frozen=True)
+class WorkerRestartTelemetry:
+    """Structured representation of Docker worker health metadata."""
+
+    context: str | None
+    restart_count: int | None
+    backoff_hint: str | None
+    last_seen: str | None
+    last_error: str | None
+
+    @classmethod
+    def from_metadata(cls, metadata: Mapping[str, str]) -> "WorkerRestartTelemetry":
+        return cls(
+            context=metadata.get("docker_worker_context"),
+            restart_count=_coerce_optional_int(metadata.get("docker_worker_restart_count")),
+            backoff_hint=metadata.get("docker_worker_backoff"),
+            last_seen=metadata.get("docker_worker_last_restart"),
+            last_error=metadata.get("docker_worker_last_error"),
+        )
+
+    @property
+    def backoff_seconds(self) -> float | None:
+        """Best-effort conversion of the Docker restart backoff to seconds."""
+
+        return _estimate_backoff_seconds(self.backoff_hint)
+
+
+@dataclass(frozen=True)
+class WorkerHealthAssessment:
+    """Classification of Docker worker restart telemetry."""
+
+    severity: Literal["warning", "error"]
+    headline: str
+    details: tuple[str, ...] = ()
+    remediation: tuple[str, ...] = ()
+
+    def render(self) -> str:
+        """Compose a human readable message from the assessment components."""
+
+        segments = [self.headline]
+        if self.details:
+            segments.append(" ".join(detail.strip() for detail in self.details if detail))
+        if self.remediation:
+            segments.append(" ".join(hint.strip() for hint in self.remediation if hint))
+        return " ".join(segment for segment in segments if segment)
+
+
+_CRITICAL_WORKER_ERROR_KEYWORDS = (
+    "fatal",
+    "panic",
+    "exhausted",
+    "cannot allocate",
+    "unrecoverable",
+    "out of memory",
+    "corrupted",
+)
+
+
+def _is_critical_worker_error(message: str | None) -> bool:
+    """Return ``True`` when *message* indicates a severe worker failure."""
+
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(keyword in lowered for keyword in _CRITICAL_WORKER_ERROR_KEYWORDS)
+
+
+def _classify_worker_flapping(
+    telemetry: WorkerRestartTelemetry,
+    context: RuntimeContext,
+) -> WorkerHealthAssessment:
+    """Categorise Docker worker restart telemetry into actionable guidance."""
+
+    details: list[str] = []
+    remediation: list[str] = []
+
+    if telemetry.context:
+        details.append(f"Affected component: {telemetry.context}.")
+
+    if telemetry.restart_count is not None:
+        plural = "s" if telemetry.restart_count != 1 else ""
+        details.append(f"Docker reported {telemetry.restart_count} restart{plural} in the last diagnostic window.")
+
+    if telemetry.backoff_hint:
+        details.append(f"Backoff interval advertised by Docker: {telemetry.backoff_hint}.")
+
+    if telemetry.last_seen:
+        details.append(f"Last restart marker: {telemetry.last_seen}.")
+
+    if telemetry.last_error:
+        details.append(f"Most recent worker error: {telemetry.last_error}.")
+
+    severity: Literal["warning", "error"] = "warning"
+
+    if telemetry.restart_count is not None and telemetry.restart_count >= 6:
+        severity = "error"
+    elif telemetry.restart_count is not None and telemetry.restart_count >= 3:
+        # Elevated churn warrants increased attention but can often self-resolve.
+        severity = "warning"
+
+    if telemetry.backoff_seconds is not None and telemetry.backoff_seconds >= 60:
+        severity = "error"
+
+    if _is_critical_worker_error(telemetry.last_error):
+        severity = "error"
+
+    if context.is_wsl:
+        remediation.append(
+            "Ensure WSL 2 is enabled for the distribution, install the latest WSL kernel update, and enable Docker Desktop's WSL integration for the distribution in settings."
+        )
+    elif context.is_windows:
+        remediation.append(
+            "Enable the Hyper-V and Virtual Machine Platform Windows features, allocate sufficient CPU and memory to Docker Desktop, and restart Docker Desktop after applying changes."
+        )
+    else:
+        remediation.append(
+            "Restart the Docker daemon and inspect host virtualization services for resource starvation or crashes."
+        )
+
+    if severity == "warning":
+        headline = (
+            "Docker Desktop observed worker restarts but reported they are recovering automatically. Monitor Docker Desktop and re-run bootstrap if instability persists."
+        )
+    else:
+        headline = (
+            "Docker Desktop worker processes are repeatedly restarting and may not stabilize without intervention."
+        )
+
+    return WorkerHealthAssessment(
+        severity=severity,
+        headline=headline,
+        details=tuple(details),
+        remediation=tuple(remediation),
+    )
+
+
 def _post_process_docker_health(
     *,
     metadata: dict[str, str],
@@ -1559,33 +1739,25 @@ def _post_process_docker_health(
     if worker_health != "flapping":
         return [], [], {}
 
+    telemetry = WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = _classify_worker_flapping(telemetry, context)
+
     warnings: list[str] = []
     errors: list[str] = []
     additional_metadata: dict[str, str] = {}
 
-    base_error = (
-        "Docker Desktop reported that internal worker processes are repeatedly restarting. "
-        "The Docker VM is likely starved of resources or the Windows virtualization stack is misconfigured."
-    )
+    if assessment.severity == "warning":
+        warnings.append(assessment.render())
+        return warnings, errors, additional_metadata
+
+    errors.append(assessment.render())
 
     if context.is_wsl or context.is_windows:
         vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(timeout=timeout)
         warnings.extend(vw_warnings)
         errors.extend(vw_errors)
         additional_metadata.update(vw_metadata)
-        if context.is_wsl:
-            base_error += (
-                " Verify that WSL 2 is enabled for the current distribution, the WSL kernel is up to date, "
-                "and that Docker Desktop's WSL integration is enabled for this distribution."
-            )
-        else:
-            base_error += (
-                " Confirm that Hyper-V and the Virtual Machine Platform features are enabled, allocate sufficient CPU/RAM to Docker Desktop, and restart Docker Desktop after making changes."
-            )
-    else:
-        base_error += " Restart the Docker daemon and inspect the host virtualization tooling for faults."
 
-    errors.insert(0, base_error)
     return warnings, errors, additional_metadata
 
 
