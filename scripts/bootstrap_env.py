@@ -84,10 +84,55 @@ _POSIX_ENV_VAR_PATTERN = re.compile(
 )
 
 
-_BACKOFF_INTERVAL_PATTERN = re.compile(
-    r"(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?P<unit>ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?",
+_APPROX_PREFIX_PATTERN = re.compile(
+    r"^(?P<prefix>about|approx(?:\.|imately)?|approximately|around|roughly|near(?:ly)?|~|≈)\s*",
     flags=re.IGNORECASE,
 )
+
+_APPROX_SUFFIX_PATTERN = re.compile(
+    r"(about|approx(?:\.|imately)?|approximately|around|roughly|near(?:ly)?|~|≈)\s*$",
+    flags=re.IGNORECASE,
+)
+
+_BACKOFF_INTERVAL_PATTERN = re.compile(
+    r"""
+    (?P<prefix>
+        (?:about|approx(?:\.|imately)?|approximately|around|roughly|near(?:ly)?|~|≈)\s*
+    )?
+    (?P<number>[0-9]+(?:\.[0-9]+)?)
+    \s*
+    (?P<unit>ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+_GO_DURATION_PATTERN = re.compile(
+    r"\b[0-9]+(?:\.[0-9]+)?[hms](?:[0-9]+(?:\.[0-9]+)?[hms]){0,2}\b",
+    flags=re.IGNORECASE,
+)
+
+_GO_DURATION_COMPONENT_PATTERN = re.compile(
+    r"(?P<value>[0-9]+(?:\.[0-9]+)?)(?P<unit>[hms])",
+    flags=re.IGNORECASE,
+)
+
+_DURATION_UNIT_NORMALISATION = {
+    "ms": "ms",
+    "msec": "ms",
+    "milliseconds": "ms",
+    "s": "s",
+    "sec": "s",
+    "secs": "s",
+    "seconds": "s",
+    "m": "m",
+    "min": "m",
+    "mins": "m",
+    "minutes": "m",
+    "h": "h",
+    "hr": "h",
+    "hrs": "h",
+    "hours": "h",
+}
 
 
 def _coalesce_iterable(values: Iterable[str]) -> list[str]:
@@ -1290,6 +1335,15 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
 
     normalized = re.sub(r"\s+", " ", cleaned).strip()
+    if re.match(r"^[x×]\s*\d+", normalized):
+        return None
+    lowered_normalized = normalized.lower()
+    if lowered_normalized.startswith("x") and any(char.isdigit() for char in normalized):
+        return None
+    if lowered_normalized.startswith("in ") and any(char.isdigit() for char in normalized):
+        return None
+    if " because " in lowered_normalized:
+        return None
     return normalized or None
 
 
@@ -1398,6 +1452,128 @@ def _normalise_worker_metadata_key(raw_key: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", normalised)
 
 
+def _normalise_approx_prefix(raw: str | None) -> str | None:
+    """Return a user-friendly approximation qualifier if *raw* is meaningful."""
+
+    if not raw:
+        return None
+    lowered = raw.strip().lower()
+    if not lowered:
+        return None
+    if lowered in {"~", "≈"}:
+        return "~"
+    if lowered.startswith("approx"):
+        return "approximately"
+    if lowered in {"about", "around", "roughly"}:
+        return "about"
+    if lowered in {"near", "nearly"}:
+        return "nearly"
+    return lowered
+
+
+def _format_go_duration(token: str) -> str | None:
+    """Return a human readable representation of Go-style duration *token*."""
+
+    sanitized = token.replace(" ", "")
+    if not sanitized:
+        return None
+
+    components = list(_GO_DURATION_COMPONENT_PATTERN.finditer(sanitized))
+    if not components:
+        return None
+
+    reconstructed = "".join(match.group(0) for match in components)
+    if reconstructed.lower() != sanitized.lower():
+        return None
+
+    normalized_segments: list[str] = []
+    for match in components:
+        value = match.group("value").lstrip("0") or "0"
+        unit = match.group("unit").lower()
+        normalized_segments.append(f"{value}{unit}")
+    return " ".join(normalized_segments) if normalized_segments else None
+
+
+def _normalise_backoff_hint(value: str) -> str | None:
+    """Return a normalised representation of a worker backoff interval."""
+
+    if not value:
+        return None
+
+    candidate = value.strip().strip(";.,:)")
+    candidate = candidate.strip("()[]{}")
+    if not candidate:
+        return None
+
+    def _combine(prefix_value: str | None, token: str) -> str:
+        if not prefix_value:
+            return token
+        if prefix_value == "~":
+            return f"~{token}".strip()
+        return f"{prefix_value} {token}".strip()
+
+    prefix: str | None = None
+    prefix_match = _APPROX_PREFIX_PATTERN.match(candidate)
+    if prefix_match:
+        prefix = _normalise_approx_prefix(prefix_match.group("prefix"))
+        candidate = candidate[prefix_match.end() :].lstrip()
+
+    go_candidate = _format_go_duration(candidate)
+    if go_candidate:
+        normalized = go_candidate
+    else:
+        match = _BACKOFF_INTERVAL_PATTERN.match(candidate)
+        if not match:
+            combined = _combine(prefix, candidate)
+            return combined or None
+        number = match.group("number")
+        unit = match.group("unit")
+        if not number:
+            combined = _combine(prefix, candidate)
+            return combined or None
+        normalized = number
+        if unit:
+            normalized_unit = _DURATION_UNIT_NORMALISATION.get(unit.lower())
+            if normalized_unit:
+                normalized = f"{number}{normalized_unit}"
+            else:
+                normalized = f"{number}{unit.strip()}"
+    if prefix:
+        return _combine(prefix, normalized)
+    return normalized.strip() if normalized else None
+
+
+def _scan_backoff_hint_from_message(message: str) -> str | None:
+    """Extract a plausible backoff interval embedded within *message*."""
+
+    if not message:
+        return None
+
+    lowered = message.lower()
+    if not any(token in lowered for token in {"restart", "retry", "backoff", "stalled"}):
+        return None
+
+    for match in _GO_DURATION_PATTERN.finditer(message):
+        prefix_fragment = message[: match.start()]
+        suffix_match = _APPROX_SUFFIX_PATTERN.search(prefix_fragment)
+        if suffix_match:
+            candidate_start = suffix_match.start()
+        else:
+            candidate_start = match.start()
+        candidate = message[candidate_start:match.end()]
+        normalized = _normalise_backoff_hint(candidate)
+        if normalized and any(char.isalpha() for char in normalized):
+            return normalized
+
+    for match in _BACKOFF_INTERVAL_PATTERN.finditer(message):
+        candidate = match.group(0)
+        normalized = _normalise_backoff_hint(candidate)
+        if normalized and any(char.isalpha() for char in normalized):
+            return normalized
+
+    return None
+
+
 def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[str, str]]:
     """Derive human friendly descriptors for flapping Docker workers."""
 
@@ -1408,6 +1584,14 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
     last_error: str | None = None
     backoff_hint: str | None = None
     last_seen: str | None = None
+
+    def _set_backoff_hint(candidate: str | None) -> None:
+        nonlocal backoff_hint
+        if backoff_hint is not None or not candidate:
+            return
+        normalized = _normalise_backoff_hint(candidate)
+        if normalized:
+            backoff_hint = normalized
 
     for match in _WORKER_METADATA_TOKEN_PATTERN.finditer(message):
         key = _normalise_worker_metadata_key(match.group("key"))
@@ -1430,8 +1614,8 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
             last_error = value
             continue
 
-        if category == "backoff" and backoff_hint is None:
-            backoff_hint = value
+        if category == "backoff":
+            _set_backoff_hint(value)
             continue
 
         if category == "last_seen" and last_seen is None:
@@ -1440,13 +1624,21 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
 
     if restart_count is None:
         fallback_restart = re.search(
-            r"(?:attempt|retry|restart)[^0-9]*?(?P<count>\d+)",
+            r"(?:attempts?|retries?|restart(?:s|_count|count)?)(?!ing)\D*(?P<count>\d+)",
             message,
             flags=re.IGNORECASE,
         )
         if fallback_restart:
             try:
                 restart_count = int(fallback_restart.group("count"))
+            except ValueError:
+                restart_count = None
+
+    if restart_count is None:
+        multiplier_match = re.search(r"(?<![0-9A-Za-z])[x×]\s*(?P<count>\d+)", message)
+        if multiplier_match:
+            try:
+                restart_count = int(multiplier_match.group("count"))
             except ValueError:
                 restart_count = None
 
@@ -1459,6 +1651,17 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
         if fallback_error:
             last_error = _clean_worker_metadata_value(fallback_error.group("value"))
 
+    if last_error is None:
+        due_match = re.search(
+            r"(?:due to|because(?: of)?)\s+(?P<reason>[^;.,()]+)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if due_match:
+            candidate = _clean_worker_metadata_value(due_match.group("reason"))
+            if candidate:
+                last_error = candidate
+
     if backoff_hint is None:
         fallback_backoff = re.search(
             r"backoff\s*[=:]\s*(?P<value>\"[^\"]+\"|'[^']+'|[^;\n]+)",
@@ -1466,18 +1669,23 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
             flags=re.IGNORECASE,
         )
         if fallback_backoff:
-            backoff_hint = _clean_worker_metadata_value(fallback_backoff.group("value"))
+            _set_backoff_hint(_clean_worker_metadata_value(fallback_backoff.group("value")))
 
     if backoff_hint is None:
         interval_match = re.search(
-            r"worker\s+stalled;\s*restarting(?:\s+in\s+(?P<interval>[0-9.]+\s*(?:ms|s|sec|seconds|m|min|minutes|h|hours)?))?",
+            r"worker\s+stalled;\s*restarting(?:\s+in\s+(?P<interval>(?:[0-9]+(?:\.[0-9]+)?[hms](?:[0-9]+(?:\.[0-9]+)?[hms]){0,2}|[0-9.]+\s*(?:ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours))))?",
             message,
             flags=re.IGNORECASE,
         )
         if interval_match:
             interval = interval_match.group("interval")
             if interval:
-                backoff_hint = interval.strip()
+                _set_backoff_hint(interval.strip())
+
+    if backoff_hint is None:
+        derived_backoff = _scan_backoff_hint_from_message(message)
+        if derived_backoff:
+            backoff_hint = derived_backoff
 
     if restart_count is not None and restart_count >= 0:
         metadata["docker_worker_restart_count"] = str(restart_count)
