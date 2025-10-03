@@ -1882,6 +1882,7 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
 _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
+    (re.compile(r"\bworker[\s_-]+stalls\b", re.IGNORECASE), "worker stalled"),
 )
 
 
