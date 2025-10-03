@@ -2010,6 +2010,17 @@ def _classify_worker_metadata_key(key: str) -> str | None:
     ):
         return "error"
 
+    # Docker Desktop on Windows frequently emits ``errCode`` or
+    # ``lastErrorCode`` metadata alongside worker stall notifications.  These
+    # identifiers do not contain underscores and therefore bypass the prefix
+    # based detection above even though they are semantically error related.
+    # Recognising them ensures that remediation guidance driven by
+    # ``_WORKER_ERROR_CODE_GUIDANCE`` is applied to Windows specific error
+    # codes such as ``WSL_KERNEL_OUTDATED``.
+    for token in tokens:
+        if re.search(r"(?:err|error|fail|reason)[a-z0-9]*code$", token):
+            return "error"
+
     if _matches(
         _WORKER_BACKOFF_KEYS, _WORKER_BACKOFF_PREFIXES, allow_substring=True
     ):
