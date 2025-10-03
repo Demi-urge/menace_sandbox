@@ -185,6 +185,24 @@ def test_normalise_docker_warning_extracts_context_after_restarting_clause() -> 
     assert metadata["docker_worker_context"] == "moby-buildkit"
 
 
+def test_normalise_docker_warning_enriches_restart_metadata() -> None:
+    message = (
+        "time=\"2024-05-05T00:01:02Z\" level=warning msg=\"worker stalled; restarting\" "
+        "module=buildkit worker=buildkitd restarts=7 backoff=20s err=\"context canceled\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "buildkitd"
+    assert metadata["docker_worker_restart_count"] == "7"
+    assert metadata["docker_worker_backoff"] == "20s"
+    assert metadata["docker_worker_last_error"] == "context canceled"
+    assert "additional context" in cleaned.lower()
+    assert "7 restart" in cleaned
+    assert "context canceled" in cleaned
+
+
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
     payload = (
         "  NAME                   STATE           VERSION\n"
