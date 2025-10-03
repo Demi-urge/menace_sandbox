@@ -1850,11 +1850,7 @@ _WORKER_CONTEXT_DURATION_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
-_WORKER_CONTEXT_KEY_PATTERN = (
-    r"(?P<key>(?:"
-    + "|".join(_WORKER_CONTEXT_BASE_KEYS)
-    + r")(?:(?:[._-][A-Za-z0-9]+)|(?:[A-Z][a-z0-9]+)|(?:\d+))*")
-)
+_WORKER_CONTEXT_KEY_PATTERN = rf"(?P<key>(?:{'|'.join(_WORKER_CONTEXT_BASE_KEYS)})(?:(?:[._-][A-Za-z0-9]+)|(?:[A-Z][a-z0-9]+)|(?:\d+))*)"
 
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
     rf"{_WORKER_CONTEXT_KEY_PATTERN}\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
