@@ -4428,6 +4428,27 @@ def _parse_key_value_lines(payload: str) -> dict[str, str]:
     return parsed
 
 
+def _parse_bcdedit_configuration(payload: str) -> dict[str, str]:
+    """Return boot configuration entries extracted from ``bcdedit`` output."""
+
+    entries: dict[str, str] = {}
+
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line or set(line) <= {"-"}:
+            continue
+        match = re.match(r"^(?P<key>[A-Za-z0-9._-]+)\s+(?P<value>.+)$", line)
+        if not match:
+            continue
+        key = match.group("key").strip().lower()
+        value = match.group("value").strip()
+        if not key or not value:
+            continue
+        entries[key] = value
+
+    return entries
+
+
 def _parse_wsl_distribution_table(payload: str) -> list[dict[str, str | bool]]:
     """Return WSL distribution metadata parsed from ``wsl.exe -l -v`` output."""
 
@@ -4618,6 +4639,22 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
                 errors.append(
                     "Hyper-V compute service (vmcompute) is %s. Start the service from an elevated PowerShell session with 'Start-Service vmcompute'."
                     % vmcompute_state
+                )
+
+    bcdedit_cmd = ["bcdedit.exe", "/enum", "{current}"]
+    bcdedit_proc, failure = _run_command(bcdedit_cmd, timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to inspect boot configuration: {failure}")
+    elif bcdedit_proc is not None:
+        entries = _parse_bcdedit_configuration(bcdedit_proc.stdout)
+        hypervisor_mode = entries.get("hypervisorlaunchtype")
+        if hypervisor_mode:
+            metadata["hypervisor_launch_type"] = hypervisor_mode
+            normalized_mode = hypervisor_mode.strip().lower()
+            if normalized_mode not in {"auto", "automatic"}:
+                errors.append(
+                    "Boot configuration sets hypervisorlaunchtype to %s. Enable the hypervisor by running 'bcdedit /set hypervisorlaunchtype auto' from an elevated PowerShell session and reboot."
+                    % hypervisor_mode
                 )
 
     return warnings, errors, metadata
