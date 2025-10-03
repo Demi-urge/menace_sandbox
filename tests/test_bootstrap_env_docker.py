@@ -39,6 +39,36 @@ def test_worker_warning_sanitization_removes_raw_banner() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_plural_worker_banner_is_normalised() -> None:
+    """Plural ``workers stalled`` banners should be normalised into guidance."""
+
+    message = (
+        "WARNING: workers stalled; restarting component=\"vpnkit\" restartCount=3"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_restart_count"] == "3"
+    assert metadata["docker_worker_context"] == "vpnkit"
+
+
+def test_parenthetical_plural_worker_banner_is_normalised() -> None:
+    """``worker(s) stalled`` phrasing should also be rewritten into guidance."""
+
+    message = (
+        "WARNING: worker(s) stalled; restarting backoff=\"PT45S\" "
+        "component=\"vpnkit\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_context"] == "vpnkit"
+
+
 def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Virtualization diagnostics should run even for warning level telemetry."""
 
