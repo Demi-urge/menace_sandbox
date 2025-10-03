@@ -185,3 +185,55 @@ def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
     assert metadata["docker_worker_backoff"] == "5s"
     assert metadata["docker_worker_last_error"] == "EOF"
     assert metadata["docker_worker_last_error_raw"] == "EOF)"
+
+
+def test_normalize_warnings_interprets_mapping_components() -> None:
+    """Structured warning mappings should propagate worker context metadata."""
+
+    payload = {
+        "vpnkit": {
+            "status": "worker stalled; restarting",
+            "restartCount": 4,
+            "backoffSeconds": 45,
+            "lastError": "context deadline exceeded",
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert len(warnings) == 1
+    message = warnings[0]
+    assert "worker stalled; restarting" not in message.lower()
+    assert "vpnkit" in message.lower()
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "4"
+    assert metadata["docker_worker_backoff"].startswith("45") or metadata[
+        "docker_worker_backoff"
+    ].startswith("1m")
+    assert metadata["docker_worker_last_error"].lower().startswith("context deadline")
+
+
+def test_normalize_warnings_handles_worker_collections() -> None:
+    """Nested worker collections should yield independent diagnostics."""
+
+    payload = {
+        "workers": [
+            {
+                "name": "vpnkit",
+                "status": "worker stalled; restarting",
+                "restartAttempts": 3,
+                "backoffIntervalMs": 30000,
+            },
+            {"name": "buildkit", "status": "running"},
+        ]
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert len(warnings) == 1
+    message = warnings[0]
+    assert "vpnkit" in message.lower()
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "3"
+    backoff = metadata.get("docker_worker_backoff", "")
+    assert backoff.endswith("s")
