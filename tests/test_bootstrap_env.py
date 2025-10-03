@@ -874,6 +874,25 @@ def test_parse_docker_json_surfaces_non_json_output() -> None:
     assert metadata == {}
 
 
+def test_parse_bcdedit_configuration_extracts_entries() -> None:
+    payload = (
+        "Windows Boot Loader\n"
+        "-------------------\n"
+        "identifier              {current}\n"
+        "hypervisorlaunchtype    Off\n"
+        "test-key               value with spaces\n"
+        "invalidline\n"
+        "---\n"
+    )
+
+    entries = bootstrap_env._parse_bcdedit_configuration(payload)
+
+    assert entries["identifier"] == "{current}"
+    assert entries["hypervisorlaunchtype"] == "Off"
+    assert entries["test-key"] == "value with spaces"
+    assert "invalidline" not in entries
+
+
 def test_estimate_backoff_seconds_supports_clock_and_go_durations() -> None:
     assert bootstrap_env._estimate_backoff_seconds("1h 2m 3s") == pytest.approx(3723.0)
     assert bootstrap_env._estimate_backoff_seconds("00:45:30") == pytest.approx(2730.0)
@@ -900,6 +919,9 @@ def test_collect_windows_virtualization_insights_reports_inactive_components(mon
             return subprocess.CompletedProcess(command, 0, "Enabled\n", ""), None
         if "vmcompute" in command[-1]:
             return subprocess.CompletedProcess(command, 0, "Stopped\n", ""), None
+        if command[:3] == ["bcdedit.exe", "/enum", "{current}"]:
+            payload = "hypervisorlaunchtype    Off\n"
+            return subprocess.CompletedProcess(command, 0, payload, ""), None
         raise AssertionError(f"Unexpected command: {command}")
 
     monkeypatch.setattr(bootstrap_env, "_run_command", _fake_run)
@@ -909,5 +931,7 @@ def test_collect_windows_virtualization_insights_reports_inactive_components(mon
     assert any("default wsl distribution" in warning.lower() for warning in warnings)
     assert any("docker desktop" in error.lower() for error in errors)
     assert any("vmcompute" in error.lower() for error in errors)
+    assert any("hypervisorlaunchtype" in error.lower() for error in errors)
     assert metadata["wsl_distro_docker_desktop_state"] == "Stopped"
     assert metadata["vmcompute_status"].lower() == "stopped"
+    assert metadata["hypervisor_launch_type"] == "Off"
