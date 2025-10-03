@@ -1006,6 +1006,86 @@ def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]
     return normalized, metadata
 
 
+def _extract_json_document(stdout: str, stderr: str) -> tuple[str | None, list[str]]:
+    """Extract the JSON payload from Docker command output.
+
+    Docker Desktop – especially on Windows – occasionally prefixes formatted
+    JSON output with warning banners such as ``WARNING: worker stalled;
+    restarting``.  Earlier bootstrap logic attempted to ``json.loads`` the raw
+    ``stdout`` payload which failed in these situations and left the user with a
+    cryptic parsing error.  This helper tolerantly searches ``stdout`` for the
+    first decodable JSON document while collecting any surrounding text as human
+    readable warnings.  ``stderr`` content is also normalised into warnings so
+    that diagnostics remain actionable.
+    """
+
+    decoder = json.JSONDecoder()
+    warnings: list[str] = []
+
+    def _normalise_stream(value: str | None) -> str:
+        if not value:
+            return ""
+        return value.replace("\r", "\n")
+
+    stdout_normalized = _normalise_stream(stdout)
+    stderr_normalized = _normalise_stream(stderr)
+
+    json_fragment: str | None = None
+
+    if stdout_normalized:
+        search_text = stdout_normalized
+        index = 0
+        length = len(search_text)
+        while index < length:
+            char = search_text[index]
+            if char not in "[{":
+                index += 1
+                continue
+            try:
+                _, end = decoder.raw_decode(search_text[index:])
+            except json.JSONDecodeError:
+                index += 1
+                continue
+            start = index
+            finish = index + end
+            json_fragment = search_text[start:finish]
+            prefix = search_text[:start]
+            suffix = search_text[finish:]
+            warnings.extend(_iter_docker_warning_messages(prefix))
+            warnings.extend(_iter_docker_warning_messages(suffix))
+            break
+        if json_fragment is None:
+            warnings.extend(_iter_docker_warning_messages(search_text))
+
+    if json_fragment is None:
+        warnings.extend(_iter_docker_warning_messages(stderr_normalized))
+        return None, warnings
+
+    warnings.extend(_iter_docker_warning_messages(stderr_normalized))
+    return json_fragment.strip(), warnings
+
+
+def _parse_docker_json(
+    proc: subprocess.CompletedProcess[str],
+    command: str,
+) -> tuple[object | None, list[str]]:
+    """Return decoded JSON output and collected warnings from Docker CLI."""
+
+    payload, collected_warnings = _extract_json_document(proc.stdout, proc.stderr)
+
+    if not payload:
+        collected_warnings.append(f"docker {command} produced no JSON output")
+        return None, collected_warnings
+
+    try:
+        decoded = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        collected_warnings.append(f"Failed to parse docker {command} payload: {exc}")
+        return None, collected_warnings
+
+    return decoded, collected_warnings
+
+
 def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str, str], list[str], list[str]]:
     """Gather Docker daemon metadata and associated warnings/errors."""
 
@@ -1029,31 +1109,26 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         )
         return metadata, warnings, errors
 
-    payload = version_proc.stdout.strip()
-    if payload:
-        try:
-            version_data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            warnings.append(f"Failed to parse docker version payload: {exc}")
+    version_data, version_warnings = _parse_docker_json(version_proc, "version")
+    warnings.extend(version_warnings)
+
+    if isinstance(version_data, dict):
+        client_data = version_data.get("Client", {}) if isinstance(version_data, dict) else {}
+        server_data = version_data.get("Server", {}) if isinstance(version_data, dict) else {}
+        client_version = str(client_data.get("Version", "")).strip()
+        api_version = str(client_data.get("ApiVersion", "")).strip()
+        server_version = str(server_data.get("Version", "")).strip()
+        if client_version:
+            metadata["client_version"] = client_version
+        if api_version:
+            metadata["api_version"] = api_version
+        if server_version:
+            metadata["server_version"] = server_version
         else:
-            client_data = version_data.get("Client", {}) if isinstance(version_data, dict) else {}
-            server_data = version_data.get("Server", {}) if isinstance(version_data, dict) else {}
-            client_version = str(client_data.get("Version", "")).strip()
-            api_version = str(client_data.get("ApiVersion", "")).strip()
-            server_version = str(server_data.get("Version", "")).strip()
-            if client_version:
-                metadata["client_version"] = client_version
-            if api_version:
-                metadata["api_version"] = api_version
-            if server_version:
-                metadata["server_version"] = server_version
-            else:
-                errors.append(
-                    "Docker daemon appears to be unavailable; version output omitted server details. "
-                    "Start Docker Desktop or connect to a reachable daemon."
-                )
-    else:
-        warnings.append("docker version produced no output")
+            errors.append(
+                "Docker daemon appears to be unavailable; version output omitted server details. "
+                "Start Docker Desktop or connect to a reachable daemon."
+            )
 
     if errors:
         return metadata, warnings, errors
@@ -1074,42 +1149,36 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         )
         return metadata, warnings, errors
 
-    info_payload = info_proc.stdout.strip()
-    if info_payload:
-        try:
-            info_data = json.loads(info_payload)
-        except json.JSONDecodeError as exc:
-            warnings.append(f"Failed to parse docker info payload: {exc}")
-        else:
-            if isinstance(info_data, dict):
-                for key, metadata_key in (
-                    ("ServerVersion", "server_version"),
-                    ("OperatingSystem", "operating_system"),
-                    ("OSType", "os_type"),
-                    ("Architecture", "architecture"),
-                    ("DockerRootDir", "root_dir"),
-                ):
-                    value = str(info_data.get(key, "")).strip()
-                    if value and metadata_key not in metadata:
-                        metadata[metadata_key] = value
+    info_data, info_warnings = _parse_docker_json(info_proc, "info")
+    warnings.extend(info_warnings)
 
-                warnings_field = info_data.get("Warnings")
-                normalized_warnings, warning_metadata = _normalize_docker_warnings(warnings_field)
-                warnings.extend(normalized_warnings)
-                metadata.update(warning_metadata)
+    if isinstance(info_data, dict):
+        for key, metadata_key in (
+            ("ServerVersion", "server_version"),
+            ("OperatingSystem", "operating_system"),
+            ("OSType", "os_type"),
+            ("Architecture", "architecture"),
+            ("DockerRootDir", "root_dir"),
+        ):
+            value = str(info_data.get(key, "")).strip()
+            if value and metadata_key not in metadata:
+                metadata[metadata_key] = value
 
-                if _is_windows() or _is_wsl():
-                    context = str(info_data.get("Name", "")).strip()
-                    if context and context.lower() not in {"docker-desktop", "desktop-linux"}:
-                        warnings.append(
-                            "Docker context '%s' is active; Docker Desktop typically uses 'docker-desktop'. "
-                            "Verify that the desired context is selected before launching sandboxes."
-                            % context
-                        )
-            else:  # pragma: no cover - unexpected payloads
-                warnings.append("docker info returned an unexpected payload structure")
-    else:
-        warnings.append("docker info produced no output")
+        warnings_field = info_data.get("Warnings")
+        normalized_warnings, warning_metadata = _normalize_docker_warnings(warnings_field)
+        warnings.extend(normalized_warnings)
+        metadata.update(warning_metadata)
+
+        if _is_windows() or _is_wsl():
+            context = str(info_data.get("Name", "")).strip()
+            if context and context.lower() not in {"docker-desktop", "desktop-linux"}:
+                warnings.append(
+                    "Docker context '%s' is active; Docker Desktop typically uses 'docker-desktop'. "
+                    "Verify that the desired context is selected before launching sandboxes."
+                    % context
+                )
+    elif info_data is not None:  # pragma: no cover - unexpected payloads
+        warnings.append("docker info returned an unexpected payload structure")
 
     return metadata, warnings, errors
 
