@@ -200,6 +200,8 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
     "restart_loop": "a restart loop",
     "healthcheck_failure": "a health-check failure",
+    "VPNKIT_HEALTHCHECK_FAILED": "a vpnkit health-check failure",
+    "VPNKIT_UNRESPONSIVE": "an unresponsive vpnkit service",
 }
 
 
@@ -285,6 +287,34 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_virtualization_unavailable": (
                 "Enable CPU virtualization in firmware and ensure no other hypervisor is monopolising it"
+            ),
+        },
+    ),
+    "VPNKIT_HEALTHCHECK_FAILED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that its vpnkit networking service failed health checks",
+        detail="The embedded vpnkit process is restarting after repeated health-check failures, leaving containers without networking",
+        remediation=(
+            "Restart Docker Desktop to rebuild the vpnkit networking service",
+            "Allow 'com.docker.backend' and 'vpnkit' through local firewalls, antivirus, or VPN filters",
+            "Reset Docker Desktop networking from Settings > Troubleshooting if restarts do not stabilise vpnkit",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_healthcheck_failed": (
+                "Restart Docker Desktop, permit vpnkit through security software, or reset Docker Desktop networking"
+            ),
+        },
+    ),
+    "VPNKIT_UNRESPONSIVE": _WorkerErrorCodeDirective(
+        reason="Docker Desktop reported that its vpnkit networking service stopped responding",
+        detail="vpnkit is the network proxy that bridges Windows and Linux networking; when it stalls containers lose connectivity",
+        remediation=(
+            "Restart Docker Desktop to relaunch the vpnkit networking backend",
+            "Temporarily disable or reconfigure VPN clients that intercept network adapters used by Docker Desktop",
+            "Run 'wsl --shutdown' and relaunch Docker Desktop to rebuild the networking integration",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_unresponsive": (
+                "Restart Docker Desktop, adjust VPN/firewall tooling, or rebuild networking with 'wsl --shutdown'"
             ),
         },
     ),
@@ -2724,6 +2754,7 @@ def _normalise_worker_error_message(
     raw_value: str,
     *,
     raw_original: str | None = None,
+    existing_code: str | None = None,
 ) -> tuple[str | None, str | None, dict[str, str]]:
     """Return a user-facing worker error description and supplemental metadata."""
 
@@ -2750,16 +2781,38 @@ def _normalise_worker_error_message(
     if preserved_banner:
         metadata["docker_worker_last_error_banner_raw"] = preserved_banner
 
+    codes: list[str] = []
+    if existing_code:
+        normalized_existing = existing_code.strip()
+        if normalized_existing:
+            metadata["docker_worker_last_error_code"] = normalized_existing
+            codes.append(normalized_existing)
+
     for pattern, code, narrative in _WORKER_ERROR_NORMALISERS:
         if pattern.search(lowered):
-            metadata["docker_worker_last_error_code"] = code
             metadata["docker_worker_last_error_original"] = narrative
+            if not codes:
+                metadata["docker_worker_last_error_code"] = code
+                codes.append(code)
+            elif code not in codes:
+                codes.append(code)
+                metadata.setdefault(
+                    "docker_worker_last_error_code_inferred", code
+                )
+            else:
+                metadata.setdefault(
+                    "docker_worker_last_error_code_inferred", code
+                )
             detail = f"{narrative}."
+            if len(codes) > 1:
+                metadata["docker_worker_last_error_codes"] = ", ".join(codes)
             return narrative, detail, metadata
 
     fallback_detail = (
         "Docker Desktop reported the worker error '%s'." % collapsed
     )
+    if len(codes) > 1:
+        metadata["docker_worker_last_error_codes"] = ", ".join(codes)
     return collapsed, fallback_detail, metadata
 
 
@@ -3261,9 +3314,11 @@ def _extract_worker_flapping_descriptors(
         )
 
     if last_error:
+        existing_code = metadata.get("docker_worker_last_error_code")
         normalized_error, error_detail, error_metadata = _normalise_worker_error_message(
             last_error,
             raw_original=last_error_raw_value or last_error,
+            existing_code=existing_code,
         )
         if normalized_error:
             metadata["docker_worker_last_error"] = normalized_error
@@ -3278,6 +3333,7 @@ def _extract_worker_flapping_descriptors(
             _normalise_worker_error_message(
                 fallback_source,
                 raw_original=fallback_source,
+                existing_code=metadata.get("docker_worker_last_error_code"),
             )
             if fallback_source
             else (None, None, {})
