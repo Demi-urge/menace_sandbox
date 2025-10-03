@@ -1037,7 +1037,7 @@ _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
 )
 
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
-    rf"(?P<key>context|component|module|id|name|worker|scope|subsystem|service|pipeline|task|unit|process)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
+    rf"(?P<key>(?:context|component|module|id|name|worker|scope|subsystem|service|pipeline|task|unit|process|engine|backend|runner|channel|queue|thread|target|namespace|project|group|agent|executor|handler)(?:[._-][A-Za-z0-9]+)*)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
 
@@ -1048,6 +1048,11 @@ _WORKER_CONTEXT_RESTART_PATTERN = re.compile(
 
 _WORKER_CONTEXT_STALLED_PATTERN = re.compile(
     rf"worker\s+(?P<context>{_WORKER_VALUE_PATTERN})\s+stalled",
+    re.IGNORECASE,
+)
+
+_WORKER_CONTEXT_BRACKET_PATTERN = re.compile(
+    r"\[(?P<context>[^\]\s][^\]]*?)\]\s*(?:worker\s+)?stalled",
     re.IGNORECASE,
 )
 
@@ -1069,6 +1074,18 @@ _WORKER_RESTART_KEYS = {
     "retries",
     "tries",
     "trycount",
+    "retrycount",
+    "retry_count",
+    "next_retry_attempt",
+    "bouncecount",
+}
+
+_WORKER_RESTART_PREFIXES = {
+    "restart",
+    "retry",
+    "attempt",
+    "try",
+    "bounce",
 }
 
 _WORKER_ERROR_KEYS = {
@@ -1082,6 +1099,13 @@ _WORKER_ERROR_KEYS = {
     "reason",
 }
 
+_WORKER_ERROR_PREFIXES = {
+    "error",
+    "fail",
+    "reason",
+    "last_error",
+}
+
 _WORKER_BACKOFF_KEYS = {
     "backoff",
     "delay",
@@ -1089,6 +1113,24 @@ _WORKER_BACKOFF_KEYS = {
     "cooldown",
     "interval",
     "duration",
+    "next_retry",
+    "nextretry",
+    "retry_after",
+    "next_restart",
+    "nextstart",
+}
+
+_WORKER_BACKOFF_PREFIXES = {
+    "backoff",
+    "delay",
+    "wait",
+    "cooldown",
+    "interval",
+    "duration",
+    "next_retry",
+    "retry_after",
+    "next_restart",
+    "nextstart",
 }
 
 _WORKER_LAST_SEEN_KEYS = {
@@ -1100,7 +1142,36 @@ _WORKER_LAST_SEEN_KEYS = {
     "laststart",
     "last_seen",
     "lastseen",
+    "last_success",
+    "lastsuccess",
 }
+
+_WORKER_LAST_SEEN_PREFIXES = {
+    "last",
+    "since",
+    "previous",
+}
+
+
+def _classify_worker_metadata_key(key: str) -> str | None:
+    """Return a semantic category for a worker telemetry key."""
+
+    if not key:
+        return None
+
+    if key in _WORKER_RESTART_KEYS or any(key.startswith(prefix) for prefix in _WORKER_RESTART_PREFIXES):
+        return "restart"
+
+    if key in _WORKER_ERROR_KEYS or any(key.startswith(prefix) for prefix in _WORKER_ERROR_PREFIXES):
+        return "error"
+
+    if key in _WORKER_BACKOFF_KEYS or any(key.startswith(prefix) for prefix in _WORKER_BACKOFF_PREFIXES):
+        return "backoff"
+
+    if key in _WORKER_LAST_SEEN_KEYS or any(key.startswith(prefix) for prefix in _WORKER_LAST_SEEN_PREFIXES):
+        return "last_seen"
+
+    return None
 
 
 def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
@@ -1148,6 +1219,7 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         _WORKER_CONTEXT_KV_PATTERN,
         _WORKER_CONTEXT_RESTART_PATTERN,
         _WORKER_CONTEXT_STALLED_PATTERN,
+        _WORKER_CONTEXT_BRACKET_PATTERN,
     ):
         for match in pattern.finditer(message):
             if "value" in match.groupdict():
@@ -1159,6 +1231,8 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                 weight = 20
                 key = match.groupdict().get("key", "")
                 key_normalized = key.lower() if key else ""
+                if key_normalized and any(sep in key_normalized for sep in {".", "-"}):
+                    key_normalized = re.split(r"[._-]", key_normalized, 1)[0]
                 if key_normalized in {"worker", "id", "name"}:
                     weight = 80
                 elif key_normalized in {"context", "component"}:
@@ -1173,10 +1247,25 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                     "task",
                     "unit",
                     "process",
+                    "channel",
+                    "queue",
+                    "thread",
+                    "engine",
+                    "backend",
+                    "runner",
+                    "target",
+                    "namespace",
+                    "project",
+                    "group",
+                    "agent",
+                    "executor",
+                    "handler",
                 }:
                     weight = 55
                 elif pattern in {_WORKER_CONTEXT_RESTART_PATTERN, _WORKER_CONTEXT_PREFIX_PATTERN}:
                     weight = 70
+                elif pattern is _WORKER_CONTEXT_BRACKET_PATTERN:
+                    weight = 65
                 candidates.append((normalized, weight))
 
     if not candidates:
@@ -1231,7 +1320,9 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
         if not key or not value:
             continue
 
-        if key in _WORKER_RESTART_KEYS and restart_count is None:
+        category = _classify_worker_metadata_key(key)
+
+        if category == "restart" and restart_count is None:
             number_match = re.search(r"(-?\d+)", value)
             if number_match:
                 try:
@@ -1240,15 +1331,15 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
                     restart_count = None
             continue
 
-        if key in _WORKER_ERROR_KEYS and last_error is None:
+        if category == "error" and last_error is None:
             last_error = value
             continue
 
-        if key in _WORKER_BACKOFF_KEYS and backoff_hint is None:
+        if category == "backoff" and backoff_hint is None:
             backoff_hint = value
             continue
 
-        if key in _WORKER_LAST_SEEN_KEYS and last_seen is None:
+        if category == "last_seen" and last_seen is None:
             last_seen = value
             continue
 

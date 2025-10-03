@@ -245,6 +245,22 @@ def test_normalise_docker_warning_detects_implied_backoff_interval() -> None:
     assert "30s" in cleaned
 
 
+def test_normalise_docker_warning_handles_bracketed_context_and_retry_tokens() -> None:
+    message = (
+        "WARN[0030] [background-sync] worker stalled; restarting; "
+        "retry_count=4 nextRetry=45s lastError=\"i/o timeout\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "docker desktop reported" in cleaned.lower()
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "background-sync"
+    assert metadata["docker_worker_restart_count"] == "4"
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_last_error"] == "i/o timeout"
+
+
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
     payload = (
         "  NAME                   STATE           VERSION\n"
