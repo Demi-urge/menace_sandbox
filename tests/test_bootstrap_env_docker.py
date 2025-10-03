@@ -601,6 +601,56 @@ def test_structured_warning_component_name_context() -> None:
     assert "worker stalled; restarting" not in warnings[0].lower()
 
 
+def test_structured_warning_prefers_status_message_over_status() -> None:
+    """Status message fields should outrank generic status strings."""
+
+    payload = {
+        "components": [
+            {
+                "name": "vpnkit",
+                "status": {
+                    "status": "degraded",
+                    "statusMessage": "worker stalled; restarting",
+                    "restartCount": 4,
+                    "backoff": "PT30S",
+                    "lastError": {
+                        "code": "VPNKIT_BACKGROUND_SYNC_STALLED",
+                        "message": "vpnkit background sync worker stalled; restarting",
+                    },
+                },
+            }
+        ]
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    assert any(
+        "docker desktop reported repeated restarts" in warning.lower()
+        for warning in warnings
+    )
+    assert all(
+        "worker stalled; restarting" not in warning.lower()
+        for warning in warnings
+    )
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "4"
+    assert metadata["docker_worker_backoff"] == "30s"
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_STALLED"
+
+    rewritten, aggregated = bootstrap_env._scrub_residual_worker_warnings(warnings)
+
+    assert rewritten
+    assert "worker stalled; restarting" not in rewritten[0].lower()
+    assert "vpnkit" in rewritten[0].lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "4"
+    assert metadata["docker_worker_backoff"] == "30s"
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_STALLED"
+    assert aggregated == {}
+
+
 def test_worker_stall_json_error_payload_enriched() -> None:
     """JSON ``lastError`` payloads should surface actionable metadata."""
 
