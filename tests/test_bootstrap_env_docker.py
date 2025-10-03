@@ -104,6 +104,29 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
     assert metadata["wsl_integration"] == "disabled"
 
 
+def test_worker_error_code_guidance_enriches_classification() -> None:
+    """Known worker error codes should drive actionable remediation guidance."""
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(
+        {
+            "docker_worker_context": "vpnkit",
+            "docker_worker_health": "flapping",
+            "docker_worker_last_error_code": "WSL_KERNEL_OUTDATED",
+            "docker_worker_last_error": "WSL kernel outdated",
+        }
+    )
+
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any(
+        "windows subsystem for linux" in reason.lower()
+        for reason in assessment.reasons
+    )
+    assert any("wsl --update" in step.lower() for step in assessment.remediation)
+    guidance_key = "docker_worker_last_error_guidance_wsl_kernel_outdated"
+    assert assessment.metadata[guidance_key].startswith("Update the WSL kernel")
+
+
 def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
     """Structured worker telemetry should be extracted from the warning payload."""
 

@@ -202,6 +202,94 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "healthcheck_failure": "a health-check failure",
 }
 
+
+@dataclass(frozen=True)
+class _WorkerErrorCodeDirective:
+    """Guidance describing how to remediate a specific worker error code."""
+
+    reason: str
+    detail: str | None = None
+    remediation: tuple[str, ...] = ()
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+_WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
+    "WSL_KERNEL_OUTDATED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected that the Windows Subsystem for Linux kernel is outdated"
+        ),
+        detail=(
+            "Update the Windows Subsystem for Linux kernel so Docker Desktop can stabilise "
+            "its background workers"
+        ),
+        remediation=(
+            "Run 'wsl --update' from an elevated PowerShell session to install the latest WSL kernel",
+            "Reboot Windows after updating the WSL kernel to restart Docker Desktop with the new kernel",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_kernel_outdated": (
+                "Update the WSL kernel via 'wsl --update' and reboot Windows"
+            ),
+        },
+    ),
+    "WSL_DISTRIBUTION_STOPPED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported that its WSL distributions are stopped or unavailable"
+        ),
+        detail=(
+            "Ensure the 'docker-desktop' and 'docker-desktop-data' WSL distributions are running"
+        ),
+        remediation=(
+            "Run 'wsl --shutdown' followed by launching Docker Desktop to restart the distributions",
+            "Verify Docker Desktop > Settings > Resources > WSL Integration has the required distributions enabled",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_distribution_stopped": (
+                "Restart the docker-desktop WSL distributions and re-enable WSL integration"
+            ),
+        },
+    ),
+    "HYPERV_DISABLED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop flagged that Hyper-V is disabled",
+        detail="Enable Hyper-V features required for Docker Desktop's virtualization stack",
+        remediation=(
+            "Enable 'Hyper-V' and 'Virtual Machine Platform' via OptionalFeatures.exe and reboot Windows",
+            "Ensure virtualization support is enabled in firmware before re-launching Docker Desktop",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_hyperv_disabled": (
+                "Enable Hyper-V and the Virtual Machine Platform Windows features, then reboot"
+            ),
+        },
+    ),
+    "WSL_VM_PAUSED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop observed the WSL virtualization environment is paused",
+        detail="Resume the Windows virtualization stack so Docker Desktop workers can recover",
+        remediation=(
+            "Run 'wsl --shutdown' and relaunch Docker Desktop to rebuild the virtualization VM",
+            "Disable Windows Fast Startup or hibernation features that pause WSL between reboots",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_vm_paused": (
+                "Resume WSL by running 'wsl --shutdown' and restarting Docker Desktop"
+            ),
+        },
+    ),
+    "VIRTUALIZATION_UNAVAILABLE": _WorkerErrorCodeDirective(
+        reason="Docker Desktop cannot access hardware virtualization",
+        detail="Enable hardware virtualization support in firmware or the host OS",
+        remediation=(
+            "Enable virtualization extensions (Intel VT-x/AMD-V) in the system BIOS/UEFI settings",
+            "Close other hypervisors (Hyper-V, VirtualBox, VMware) that might be monopolising virtualization",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_virtualization_unavailable": (
+                "Enable CPU virtualization in firmware and ensure no other hypervisor is monopolising it"
+            ),
+        },
+    ),
+}
+
 _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
     normaliser[2] for normaliser in _WORKER_ERROR_NORMALISERS
 )
@@ -3710,6 +3798,7 @@ class WorkerHealthAssessment:
     details: tuple[str, ...] = ()
     remediation: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
+    metadata: Mapping[str, str] = field(default_factory=dict)
 
     def render(self) -> str:
         """Compose a human readable message from the assessment components."""
@@ -3745,6 +3834,53 @@ def _is_critical_worker_error(message: str | None) -> bool:
         return False
     lowered = message.lower()
     return any(keyword in lowered for keyword in _CRITICAL_WORKER_ERROR_KEYWORDS)
+
+
+def _apply_error_code_guidance(
+    codes: Iterable[str],
+    *,
+    register_reason: Callable[[str, str], None],
+    detail_collector: list[str],
+    remediation_collector: list[str],
+) -> dict[str, str]:
+    """Enrich worker assessments with remediation guidance for known error codes."""
+
+    metadata: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for raw_code in codes:
+        if not raw_code:
+            continue
+        normalized = raw_code.strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+
+        directive = _WORKER_ERROR_CODE_GUIDANCE.get(normalized)
+        if directive is None:
+            continue
+
+        reason_key = f"error_code_{normalized.lower()}"
+        register_reason(reason_key, directive.reason)
+
+        if directive.detail:
+            detail = directive.detail.strip()
+            if detail and detail not in detail_collector:
+                if not detail.endswith("."):
+                    detail += "."
+                detail_collector.append(detail)
+
+        for step in directive.remediation:
+            normalized_step = step.strip()
+            if not normalized_step:
+                continue
+            if normalized_step not in remediation_collector:
+                remediation_collector.append(normalized_step)
+
+        for key, value in directive.metadata.items():
+            metadata.setdefault(key, value)
+
+    return metadata
 
 
 def _classify_worker_flapping(
@@ -3903,6 +4039,13 @@ def _classify_worker_flapping(
 
     severity: Literal["warning", "error"] = "error" if severity_reasons else "warning"
 
+    guidance_metadata = _apply_error_code_guidance(
+        error_codes,
+        register_reason=_register_reason,
+        detail_collector=details,
+        remediation_collector=remediation,
+    )
+
     if context.is_wsl:
         remediation.append(
             "Ensure WSL 2 is enabled for the distribution, install the latest WSL kernel update, and enable Docker Desktop's WSL integration for the distribution in settings."
@@ -3931,6 +4074,7 @@ def _classify_worker_flapping(
         details=tuple(details),
         remediation=tuple(remediation),
         reasons=tuple(severity_reasons),
+        metadata=guidance_metadata,
     )
 
 
@@ -3958,6 +4102,8 @@ def _post_process_docker_health(
         additional_metadata["docker_worker_health_reasons"] = "; ".join(
             assessment.reasons
         )
+    if assessment.metadata:
+        additional_metadata.update(assessment.metadata)
 
     virtualization_warnings: list[str] = []
     virtualization_errors: list[str] = []
