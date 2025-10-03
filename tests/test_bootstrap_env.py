@@ -153,6 +153,18 @@ def test_extract_json_document_tolerates_prefixed_warnings() -> None:
     assert metadata.get("docker_worker_health") == "flapping"
 
 
+def test_extract_json_document_handles_warn_prefix_without_colon() -> None:
+    payload = json.dumps({"Server": {"Version": "27.1"}})
+    stdout = "WARN[0012] moby/buildkit: worker stalled; restarting\n" + payload
+
+    extracted, warnings, metadata = bootstrap_env._extract_json_document(stdout, "")
+
+    assert extracted is not None
+    assert json.loads(extracted)["Server"]["Version"] == "27.1"
+    assert any("docker desktop reported" in warning.lower() for warning in warnings)
+    assert metadata.get("docker_worker_context") == "moby/buildkit"
+
+
 def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     message = "WARNING[0012]: worker stalled; restarting (background-sync)"
     cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
@@ -192,6 +204,18 @@ def test_normalise_docker_warning_extracts_prefix_context() -> None:
     assert "docker desktop reported" in cleaned.lower()
     assert metadata["docker_worker_health"] == "flapping"
     assert metadata["docker_worker_context"] == "moby/buildkit"
+
+
+def test_normalise_docker_warning_extracts_subsystem_context() -> None:
+    message = (
+        'time="2024-06-10T08:55:13-07:00" level=warning msg="worker stalled; restarting" '
+        'subsystem="background sync" scope="builder"'
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "background sync"
 
 
 def test_normalise_docker_warning_enriches_restart_metadata() -> None:
