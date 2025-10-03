@@ -203,6 +203,24 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
 }
 
 
+_WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
+    r"""
+    worker
+    (?:
+        \s+(?:has|have|had|is|was|are|were)(?:\s+been)?
+        |
+        \s+(?:appears?|appeared|appearing|seems?|seemed|seeming)(?:\s+to)?(?:\s+have)?(?:\s+been)?
+        |
+        \s+(?:may|might|could|should|would)\s+(?:have)?(?:\s+been)?
+        |
+        \s+(?:apparently|reportedly|likely|probably|possibly|potentially|maybe|virtually|nearly|almost|still|persistently|chronically|repeatedly)
+    )+
+    \s+stalled
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 def _coalesce_iterable(values: Iterable[str]) -> list[str]:
     """Return *values* with duplicates removed while preserving ordering."""
 
@@ -1467,6 +1485,15 @@ def _strip_control_sequences(text: str) -> str:
     return cleaned
 
 
+def _normalise_worker_stalled_phrase(message: str) -> str:
+    """Collapse phrasing variants of ``worker has stalled`` into ``worker stalled``."""
+
+    if not message:
+        return ""
+
+    return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", message)
+
+
 _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
     r"""
     ^\s*
@@ -1652,7 +1679,7 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
 
     lowered = cleaned.lower()
-    if lowered in {"worker", "workers", "after", "restart", "restarting"}:
+    if lowered in {"worker", "workers", "after", "restart", "restarting", "in"}:
         return None
     if lowered.startswith("after") or lowered.startswith("workerafter"):
         return None
@@ -1676,22 +1703,51 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     """Extract the most meaningful worker context descriptor from *message*."""
 
     candidates: list[tuple[str, int]] = []
+    candidate_positions: dict[str, int] = {}
 
-    context_match = re.search(
-        r"""
-        worker\s+stalled
-        (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
-        restart(?:ing)?
-        (?:\s+(?:in|after)\s+[^()]+)?
-        (?:\s*(?:[:\-–—]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?
-        """,
-        cleaned_message,
-        flags=re.IGNORECASE | re.VERBOSE,
-    )
-    if context_match:
-        candidate = _normalize_worker_context_candidate(context_match.group("context"))
-        if candidate:
-            candidates.append((candidate, 90))
+    def _record_candidate(text: str, weight: int) -> None:
+        key = text.lower()
+        existing_index = candidate_positions.get(key)
+        if existing_index is None:
+            candidate_positions[key] = len(candidates)
+            candidates.append((text, weight))
+            return
+        existing_text, existing_weight = candidates[existing_index]
+        if weight > existing_weight or (
+            weight == existing_weight and len(text) > len(existing_text)
+        ):
+            candidates[existing_index] = (text, weight)
+
+    normalized_message = _normalise_worker_stalled_phrase(message)
+    normalized_cleaned = _normalise_worker_stalled_phrase(cleaned_message)
+
+    cleaned_candidates: list[str] = []
+    for candidate in (cleaned_message, normalized_cleaned):
+        if candidate and candidate not in cleaned_candidates:
+            cleaned_candidates.append(candidate)
+
+    for candidate_text in cleaned_candidates:
+        context_match = re.search(
+            r"""
+            worker\s+stalled
+            (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
+            restart(?:ing)?
+            (?:\s+(?:in|after)\s+[^()]+)?
+            (?:\s*(?:[:\-–—]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?
+            """,
+            candidate_text,
+            flags=re.IGNORECASE | re.VERBOSE,
+        )
+        if context_match:
+            candidate = _normalize_worker_context_candidate(context_match.group("context"))
+            if candidate:
+                _record_candidate(candidate, 90)
+            break
+
+    message_sources: list[str] = []
+    for source in (message, normalized_message):
+        if source and source not in message_sources:
+            message_sources.append(source)
 
     for pattern in (
         _WORKER_CONTEXT_PREFIX_PATTERN,
@@ -1700,13 +1756,15 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         _WORKER_CONTEXT_STALLED_PATTERN,
         _WORKER_CONTEXT_BRACKET_PATTERN,
     ):
-        for match in pattern.finditer(message):
-            if "value" in match.groupdict():
-                raw_candidate = match.group("value")
-            else:
-                raw_candidate = match.group("context")
-            normalized = _normalize_worker_context_candidate(raw_candidate)
-            if normalized:
+        for source in message_sources:
+            for match in pattern.finditer(source):
+                if "value" in match.groupdict():
+                    raw_candidate = match.group("value")
+                else:
+                    raw_candidate = match.group("context")
+                normalized = _normalize_worker_context_candidate(raw_candidate)
+                if not normalized:
+                    continue
                 weight = 20
                 key = match.groupdict().get("key", "")
                 key_normalized = key.lower() if key else ""
@@ -1745,7 +1803,8 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                     weight = 70
                 elif pattern is _WORKER_CONTEXT_BRACKET_PATTERN:
                     weight = 65
-                candidates.append((normalized, weight))
+                _record_candidate(normalized, weight)
+            # allow normalized source to contribute when original fails while avoiding duplicate matches
 
     if not candidates:
         return None
@@ -2039,7 +2098,9 @@ def _scan_backoff_hint_from_message(message: str) -> str | None:
     return None
 
 
-def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[str, str]]:
+def _extract_worker_flapping_descriptors(
+    message: str, *, normalized_message: str | None = None
+) -> tuple[list[str], dict[str, str]]:
     """Derive human friendly descriptors for flapping Docker workers."""
 
     context_descriptor: str | None = None
@@ -2050,6 +2111,8 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
     last_error: str | None = None
     backoff_hint: str | None = None
     last_seen: str | None = None
+
+    normalized_source = normalized_message or _normalise_worker_stalled_phrase(message)
 
     envelope = _parse_docker_log_envelope(message)
 
@@ -2146,7 +2209,7 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
     if last_error is None:
         due_match = re.search(
             r"(?:due to|because(?: of)?)\s+(?P<reason>[^;.,()]+)",
-            message,
+            normalized_source,
             flags=re.IGNORECASE,
         )
         if due_match:
@@ -2172,13 +2235,13 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
             \s+(?:in|after)\s+
             (?P<interval>[^;.,()\n]+)
             """,
-            message,
+            normalized_source,
             flags=re.IGNORECASE | re.VERBOSE,
         )
         if not interval_match:
             interval_match = re.search(
                 r"re(?:start(?:ing)?|starting)\s+(?:in|after)\s+(?P<interval>[^;.,()\n]+)",
-                message,
+                normalized_source,
                 flags=re.IGNORECASE,
             )
         if interval_match:
@@ -2189,13 +2252,15 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
                     _set_backoff_hint(cleaned_interval)
 
     if backoff_hint is None:
-        derived_backoff = _scan_backoff_hint_from_message(message)
+        derived_backoff = _scan_backoff_hint_from_message(normalized_source)
         if derived_backoff:
             backoff_hint = derived_backoff
 
     if "docker_worker_context" not in metadata:
-        cleaned_message = re.sub(r"\s+", " ", _strip_control_sequences(message)).strip()
-        context_candidate = _extract_worker_context(message, cleaned_message)
+        cleaned_message = re.sub(
+            r"\s+", " ", _strip_control_sequences(normalized_source)
+        ).strip()
+        context_candidate = _extract_worker_context(normalized_source, cleaned_message)
         if context_candidate:
             metadata["docker_worker_context"] = context_candidate
 
@@ -2257,11 +2322,14 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
         return None, {}
 
     metadata: dict[str, str] = {}
-    lowered = cleaned.lower()
-    if "worker stalled" in lowered:
+    normalized_cleaned = _normalise_worker_stalled_phrase(cleaned)
+    if "worker stalled" in normalized_cleaned.lower():
         metadata["docker_worker_health"] = "flapping"
 
-        descriptors, worker_metadata = _extract_worker_flapping_descriptors(message)
+        normalized_original = _normalise_worker_stalled_phrase(message)
+        descriptors, worker_metadata = _extract_worker_flapping_descriptors(
+            message, normalized_message=normalized_original
+        )
         metadata.update(worker_metadata)
 
         headline = "Docker Desktop reported repeated restarts of a background worker."

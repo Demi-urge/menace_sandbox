@@ -490,6 +490,31 @@ def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
     assert metadata["docker_worker_last_error_raw"] == "worker stalled; restarting"
 
 
+def test_normalise_docker_warning_handles_has_stalled_phrase() -> None:
+    message = "WARNING: worker has stalled; restarting in 45s due to host sleep"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_last_error"] == "host sleep"
+    assert "worker has stalled" not in cleaned.lower()
+    assert "Docker Desktop reported" in cleaned
+
+
+def test_normalise_docker_warning_extracts_context_from_has_stalled_variant() -> None:
+    message = (
+        "WARN[0002] [vpnkit] worker has stalled; restarting in ~30s due to disk latency"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_backoff"] == "~30s"
+    assert metadata["docker_worker_last_error"] == "disk latency"
+    assert "worker has stalled" not in cleaned.lower()
+
+
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
     payload = (
         "  NAME                   STATE           VERSION\n"
