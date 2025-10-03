@@ -81,7 +81,7 @@ from typing import (
     TYPE_CHECKING,
     TypeVar,
 )
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress, nullcontext
 from lock_utils import SandboxLock as FileLock, Timeout
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
@@ -1562,6 +1562,17 @@ _CLEANUP_SUBPROCESS_TIMEOUT = float(
 )
 _CLEANUP_WATCHDOG_MARGIN = float(
     os.getenv("SANDBOX_CLEANUP_WATCHDOG_MARGIN", "30")
+)
+
+_HEARTBEAT_GUARD_INTERVAL = float(
+    os.getenv("SANDBOX_HEARTBEAT_GUARD_INTERVAL", "1.0")
+)
+_DEFAULT_HEARTBEAT_GUARD_MAX = 480.0 if os.name == "nt" else 300.0
+_HEARTBEAT_GUARD_MAX_DURATION = float(
+    os.getenv(
+        "SANDBOX_HEARTBEAT_GUARD_MAX_DURATION",
+        str(_DEFAULT_HEARTBEAT_GUARD_MAX),
+    )
 )
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
@@ -4389,6 +4400,94 @@ def _current_progress_callback() -> Callable[[], None] | None:
     return getattr(_PROGRESS_SCOPE, "callback", None)
 
 
+@contextmanager
+def _background_progress_guard(
+    progress: Callable[[], None] | None,
+    *,
+    interval: float | None = None,
+    max_duration: float | None = None,
+) -> Iterator[None]:
+    """Emit synthetic progress heartbeats while a blocking call is running."""
+
+    if progress is None:
+        yield
+        return
+
+    beat = float(interval or _HEARTBEAT_GUARD_INTERVAL)
+    if not beat or beat <= 0.0:
+        beat = 1.0
+    else:
+        beat = max(0.25, min(5.0, beat))
+
+    limit = max_duration
+    if limit is None or limit <= 0.0:
+        limit = _HEARTBEAT_GUARD_MAX_DURATION
+    try:
+        limit = float(limit)
+    except (TypeError, ValueError):
+        limit = _HEARTBEAT_GUARD_MAX_DURATION
+    if limit < 0:
+        limit = 0.0
+
+    stop_event = threading.Event()
+    start_ts = time.monotonic()
+
+    def _publisher() -> None:
+        try:
+            _notify_progress(progress)
+            while not stop_event.wait(beat):
+                _notify_progress(progress)
+                if limit > 0 and time.monotonic() - start_ts >= limit:
+                    logger.warning(
+                        "background heartbeat exceeded %.1fs without foreground completion; allowing watchdog to intervene",
+                        limit,
+                    )
+                    break
+        except Exception:
+            logger.exception("background heartbeat publisher failed")
+        finally:
+            stop_event.set()
+
+    thread = threading.Thread(
+        target=_publisher,
+        name="sandbox-progress-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=max(beat * 2.0, 1.0))
+        try:
+            _notify_progress(progress)
+        except Exception:
+            logger.debug("final progress notification failed", exc_info=True)
+
+
+@contextmanager
+def _progress_heartbeat_scope(
+    progress: Callable[[], None] | None,
+    *,
+    interval: float | None = None,
+    max_duration: float | None = None,
+) -> Iterator[None]:
+    """Combine :func:`_progress_scope` with the heartbeat guard."""
+
+    if progress is None:
+        with nullcontext():
+            yield
+        return
+
+    with _progress_scope(progress):
+        with _background_progress_guard(
+            progress,
+            interval=interval,
+            max_duration=max_duration,
+        ):
+            yield
+
+
 def _run_subprocess_with_progress(
     args: Sequence[str] | str,
     *,
@@ -4452,15 +4551,25 @@ async def _cleanup_worker() -> None:
         while True:
             _update_worker_heartbeat("cleanup")
             try:
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(None),
+                ):
                     autopurge_if_needed()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(None),
+                    max_duration=_HEARTBEAT_GUARD_MAX_DURATION,
+                ):
                     ensure_docker_client()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(None),
+                ):
                     reconcile_active_containers()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
@@ -4471,40 +4580,57 @@ async def _cleanup_worker() -> None:
             start = time.monotonic()
             _CLEANUP_CURRENT_RUNTIME["cleanup"] = 0.0
             try:
-                _notify_progress(_progress)
-                retry_failed_cleanup(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    retry_failed_cleanup(progress=_progress)
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                cleaned, replaced = _cleanup_idle_containers(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    cleaned, replaced = _cleanup_idle_containers(progress=_progress)
                 total_cleaned += cleaned
                 total_replaced += replaced
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
                     vm_removed = _purge_stale_vms(record_runtime=True)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                _prune_volumes(progress=_progress)
-                _notify_progress(_progress)
-                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
-                _update_worker_heartbeat("cleanup")
-                await asyncio.sleep(0)
-                _notify_progress(_progress)
-                _prune_networks(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    _prune_volumes(progress=_progress)
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    _prune_networks(progress=_progress)
                 _notify_progress(_progress)
-                report_failed_cleanup(alert=True)
+                _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
+                _update_worker_heartbeat("cleanup")
+                await asyncio.sleep(0)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    report_failed_cleanup(alert=True)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
@@ -4556,12 +4682,18 @@ async def _reaper_worker() -> None:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             _update_worker_heartbeat("reaper")
             try:
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(None),
+                ):
                     autopurge_if_needed()
                 _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(None),
+                ):
                     reconcile_active_containers()
                 _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
@@ -4571,26 +4703,37 @@ async def _reaper_worker() -> None:
             start = time.monotonic()
             _CLEANUP_CURRENT_RUNTIME["reaper"] = 0.0
             try:
-                _notify_progress(_progress)
-                removed = _reap_orphan_containers(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    removed = _reap_orphan_containers(progress=_progress)
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                with _progress_scope(_progress):
+                with _progress_heartbeat_scope(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
                     vm_removed = _purge_stale_vms(record_runtime=True)
                 _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                vol_removed = _prune_volumes(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    vol_removed = _prune_volumes(progress=_progress)
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                _notify_progress(_progress)
-                net_removed = _prune_networks(progress=_progress)
+                with _background_progress_guard(
+                    _progress,
+                    interval=_heartbeat_interval(_CLEANUP_SUBPROCESS_TIMEOUT),
+                ):
+                    net_removed = _prune_networks(progress=_progress)
                 _notify_progress(_progress)
                 _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")

@@ -4,9 +4,9 @@ import threading
 import time
 import types
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import pytest
 
@@ -82,6 +82,9 @@ def _load_environment_subset() -> dict[str, object]:
     targets = [
         "_update_worker_heartbeat",
         "_notify_progress",
+        "_heartbeat_interval",
+        "_background_progress_guard",
+        "_progress_heartbeat_scope",
         "_cleanup_worker",
         "_reaper_worker",
         "ensure_cleanup_worker",
@@ -103,8 +106,15 @@ def _load_environment_subset() -> dict[str, object]:
         "time": time,
         "threading": threading,
         "Callable": Callable,
+        "Iterator": Iterator,
+        "contextmanager": contextmanager,
         "_WORKER_CHECK_INTERVAL": 0.1,
         "_POOL_CLEANUP_INTERVAL": 0.1,
+        "_CLEANUP_SUBPROCESS_TIMEOUT": 0.5,
+        "_HEARTBEAT_GUARD_INTERVAL": 0.05,
+        "_HEARTBEAT_GUARD_MAX_DURATION": 1.0,
+        "nullcontext": nullcontext,
+        "_PROGRESS_SCOPE": threading.local(),
     }
     exec(compile(subset, str(path), "exec"), namespace)  # noqa: S102
     return namespace
@@ -132,7 +142,14 @@ def env():
     ns["_prune_volumes"] = lambda progress=None: 0
     ns["_prune_networks"] = lambda progress=None: 0
     ns["report_failed_cleanup"] = lambda alert=False: {}
-    ns["_schedule_coroutine"] = lambda coro: DummyTask()
+    def _schedule_stub(coro):
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return DummyTask()
+
+    ns["_schedule_coroutine"] = _schedule_stub
     ns["_run_cleanup_sync"] = lambda: None
     ns["start_container_event_listener"] = lambda: None
     ns["stop_container_event_listener"] = lambda: None
@@ -254,7 +271,11 @@ def test_watchdog_ignores_active_cleanup(env):
     env.ensure_docker_client = lambda: None
     env.reconcile_active_containers = lambda: None
     env.retry_failed_cleanup = lambda progress=None: None
-    env._schedule_coroutine = lambda coro: DummyTask()
+    def schedule_stub(coro):
+        coro.close()
+        return DummyTask()
+
+    env._schedule_coroutine = schedule_stub
     env._DOCKER_CLIENT = object()
     env._REAPER_TASK = DummyTask()
     env._WATCHDOG_METRICS.clear()
@@ -276,6 +297,66 @@ def test_watchdog_ignores_active_cleanup(env):
         assert "cleanup worker stalled" not in warnings
         assert autopurge_finished.wait(timeout=1.0)
     finally:
+        future.cancel()
+        try:
+            future.result(timeout=1.0)
+        except Exception:
+            pass
+        env._CLEANUP_TASK = None
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1.0)
+        loop.close()
+
+
+def test_watchdog_handles_extended_docker_startup(env):
+    interval = 0.05
+    env._POOL_CLEANUP_INTERVAL = interval
+    env._CLEANUP_WATCHDOG_MARGIN = 0.0
+    env._HEARTBEAT_GUARD_INTERVAL = 0.01
+    env._HEARTBEAT_GUARD_MAX_DURATION = 5.0
+
+    autopurge_entered = threading.Event()
+    release_autopurge = threading.Event()
+
+    def blocking_autopurge():
+        autopurge_entered.set()
+        release_autopurge.wait(timeout=2.0)
+
+    env.autopurge_if_needed = blocking_autopurge
+    env._cleanup_idle_containers = lambda *_, **__: (0, 0)
+    env._purge_stale_vms = lambda record_runtime=False: 0
+    env._prune_volumes = lambda progress=None: 0
+    env._prune_networks = lambda progress=None: 0
+    env.report_failed_cleanup = lambda alert=False: {}
+    env.ensure_docker_client = lambda: None
+    env.reconcile_active_containers = lambda: None
+    env.retry_failed_cleanup = lambda progress=None: None
+    def schedule_stub(coro):
+        coro.close()
+        return DummyTask()
+
+    env._schedule_coroutine = schedule_stub
+    env._DOCKER_CLIENT = object()
+    env._REAPER_TASK = DummyTask()
+    env._WATCHDOG_METRICS.clear()
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._LAST_CLEANUP_TS = time.monotonic() - 5 * interval
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+
+    future = asyncio.run_coroutine_threadsafe(env._cleanup_worker(), loop)
+    env._CLEANUP_TASK = future
+
+    try:
+        assert autopurge_entered.wait(timeout=1.0)
+        time.sleep(interval * 6)
+        env.watchdog_check()
+        warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+        assert "cleanup worker stalled" not in warnings
+    finally:
+        release_autopurge.set()
         future.cancel()
         try:
             future.result(timeout=1.0)
