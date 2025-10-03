@@ -1901,17 +1901,79 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     return best_candidate
 
 
+def _strip_enclosing_pairs(value: str, pairs: SequenceABC[tuple[str, str]]) -> str:
+    """Remove repeated wrapping pairs such as quotes or parentheses."""
+
+    candidate = value
+    changed = True
+    while changed and candidate:
+        changed = False
+        for prefix, suffix in pairs:
+            if candidate.startswith(prefix) and candidate.endswith(suffix):
+                candidate = candidate[len(prefix) : -len(suffix)].strip()
+                changed = True
+                break
+    return candidate
+
+
+_WRAPPER_BALANCED_PAIRS: tuple[tuple[str, str], ...] = (
+    ("\"", "\""),
+    ("'", "'"),
+    ("`", "`"),
+)
+
+_WRAPPER_STRUCTURAL_PAIRS: tuple[tuple[str, str], ...] = (
+    ("(", ")"),
+    ("[", "]"),
+    ("{", "}"),
+    ("<", ">"),
+)
+
+_TRAILING_CLOSERS = {
+    ")": "(",
+    "]": "[",
+    "}": "{",
+    ">": "<",
+}
+
+_LEADING_OPENERS = {value: key for key, value in _TRAILING_CLOSERS.items()}
+
+
 def _clean_worker_metadata_value(raw_value: str) -> str:
     """Return a sanitised token extracted from worker diagnostic payloads."""
 
     cleaned = raw_value.strip()
-    if cleaned and cleaned[0] in {'"', "'"} and cleaned[-1] == cleaned[0]:
-        cleaned = cleaned[1:-1]
-    return cleaned.strip()
+    if not cleaned:
+        return ""
+
+    cleaned = _strip_enclosing_pairs(cleaned, _WRAPPER_BALANCED_PAIRS)
+    cleaned = _strip_enclosing_pairs(cleaned, _WRAPPER_STRUCTURAL_PAIRS)
+    cleaned = _strip_enclosing_pairs(cleaned, _WRAPPER_BALANCED_PAIRS)
+
+    while cleaned and cleaned[0] in _LEADING_OPENERS:
+        opener = cleaned[0]
+        closer = _LEADING_OPENERS[opener]
+        if cleaned.count(opener) > cleaned.count(closer):
+            cleaned = cleaned[1:].lstrip()
+            continue
+        break
+
+    while cleaned and cleaned[-1] in _TRAILING_CLOSERS:
+        closer = cleaned[-1]
+        opener = _TRAILING_CLOSERS[closer]
+        if cleaned.count(opener) < cleaned.count(closer):
+            cleaned = cleaned[:-1].rstrip()
+            continue
+        break
+
+    cleaned = cleaned.strip(" \t\r\n;,:")
+    return cleaned
 
 
 def _normalise_worker_error_message(
     raw_value: str,
+    *,
+    raw_original: str | None = None,
 ) -> tuple[str | None, str | None, dict[str, str]]:
     """Return a user-facing worker error description and supplemental metadata."""
 
@@ -1924,9 +1986,10 @@ def _normalise_worker_error_message(
         return None, None, {}
 
     lowered = collapsed.lower()
+    original_token = (raw_original or raw_value).strip()
     metadata: dict[str, str] = {
         "docker_worker_last_error_original": collapsed,
-        "docker_worker_last_error_raw": collapsed,
+        "docker_worker_last_error_raw": original_token or collapsed,
     }
 
     for pattern, code, narrative in _WORKER_ERROR_NORMALISERS:
@@ -2187,6 +2250,7 @@ def _extract_worker_flapping_descriptors(
 
     restart_count: int | None = None
     last_error: str | None = None
+    last_error_raw_value: str | None = None
     backoff_hint: str | None = None
     last_seen: str | None = None
 
@@ -2224,7 +2288,7 @@ def _extract_worker_flapping_descriptors(
             backoff_hint = normalized
 
     def _ingest_metadata_candidate(key: str | None, value: str | None) -> None:
-        nonlocal restart_count, last_error, backoff_hint, last_seen
+        nonlocal restart_count, last_error, backoff_hint, last_seen, last_error_raw_value
         if not key or value is None:
             return
         normalized_key = _normalise_worker_metadata_key(key)
@@ -2242,6 +2306,10 @@ def _extract_worker_flapping_descriptors(
             return
         if category == "error" and last_error is None:
             last_error = cleaned_value
+            if isinstance(value, str):
+                last_error_raw_value = value.strip()
+            else:
+                last_error_raw_value = str(value).strip()
             return
         if category == "backoff":
             _set_backoff_hint(cleaned_value)
@@ -2282,7 +2350,9 @@ def _extract_worker_flapping_descriptors(
             flags=re.IGNORECASE,
         )
         if fallback_error:
-            last_error = _clean_worker_metadata_value(fallback_error.group("value"))
+            raw_candidate = fallback_error.group("value")
+            last_error_raw_value = raw_candidate.strip()
+            last_error = _clean_worker_metadata_value(raw_candidate)
 
     if last_error is None:
         due_match = re.search(
@@ -2291,9 +2361,11 @@ def _extract_worker_flapping_descriptors(
             flags=re.IGNORECASE,
         )
         if due_match:
-            candidate = _clean_worker_metadata_value(due_match.group("reason"))
+            raw_candidate = due_match.group("reason")
+            candidate = _clean_worker_metadata_value(raw_candidate)
             if candidate:
                 last_error = candidate
+                last_error_raw_value = raw_candidate.strip()
 
     if backoff_hint is None:
         fallback_backoff = re.search(
@@ -2367,7 +2439,8 @@ def _extract_worker_flapping_descriptors(
 
     if last_error:
         normalized_error, error_detail, error_metadata = _normalise_worker_error_message(
-            last_error
+            last_error,
+            raw_original=last_error_raw_value or last_error,
         )
         if normalized_error:
             metadata["docker_worker_last_error"] = normalized_error
@@ -2379,7 +2452,10 @@ def _extract_worker_flapping_descriptors(
     else:
         fallback_source = normalized_source or message
         fallback_error, fallback_detail, fallback_metadata = (
-            _normalise_worker_error_message(fallback_source)
+            _normalise_worker_error_message(
+                fallback_source,
+                raw_original=fallback_source,
+            )
             if fallback_source
             else (None, None, {})
         )
