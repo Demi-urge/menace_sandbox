@@ -4576,6 +4576,9 @@ def _post_process_docker_health(
     additional_metadata: dict[str, str] = {
         "docker_worker_health_severity": assessment.severity,
     }
+    summary = assessment.render()
+    if summary:
+        additional_metadata["docker_worker_health_summary"] = summary
     if assessment.reasons:
         additional_metadata["docker_worker_health_reasons"] = "; ".join(
             assessment.reasons
@@ -4596,7 +4599,8 @@ def _post_process_docker_health(
         virtualization_metadata.update(vw_metadata)
 
     if assessment.severity == "warning":
-        warnings.append(assessment.render())
+        if summary:
+            warnings.append(summary)
         if virtualization_warnings:
             warnings.extend(virtualization_warnings)
         if virtualization_errors:
@@ -4608,7 +4612,8 @@ def _post_process_docker_health(
             additional_metadata.update(virtualization_metadata)
         return warnings, errors, additional_metadata
 
-    errors.append(assessment.render())
+    if summary:
+        errors.append(summary)
 
     if virtualization_warnings:
         warnings.extend(virtualization_warnings)
