@@ -169,8 +169,10 @@ def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     message = "WARNING[0012]: worker stalled; restarting (background-sync)"
     cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
 
-    assert "docker desktop reported" in cleaned.lower()
-    assert cleaned.lower().endswith("background-sync.")
+    normalized = cleaned.lower()
+    assert "docker desktop reported" in normalized
+    assert "background-sync" in normalized
+    assert normalized.endswith("retrying.")
     assert metadata["docker_worker_health"] == "flapping"
     assert metadata["docker_worker_context"] == "background-sync"
 
@@ -313,6 +315,21 @@ def test_normalise_docker_warning_handles_multiplier_and_due_to_reason() -> None
     assert "worker stalled" not in cleaned.lower()
 
 
+def test_normalise_docker_warning_handles_unicode_separators() -> None:
+    message = (
+        "WARN[0038] moby/buildkit — worker stalled → restarting in ≈45s due to disk latency"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby/buildkit"
+    assert metadata["docker_worker_backoff"] == "~45s"
+    assert metadata["docker_worker_last_error"] == "disk latency"
+    assert "worker stalled" not in cleaned.lower()
+    assert "~45s" in cleaned
+
+
 def test_normalise_docker_warning_interprets_go_duration_tokens() -> None:
     message = "WARNING: worker stalled; restarting in 1m0s because of IO pressure"
 
@@ -339,6 +356,19 @@ def test_normalise_docker_warning_handles_bracketed_context_and_retry_tokens() -
     assert metadata["docker_worker_restart_count"] == "4"
     assert metadata["docker_worker_backoff"] == "45s"
     assert metadata["docker_worker_last_error"] == "i/o timeout"
+
+
+def test_normalise_docker_warning_detects_after_keyword() -> None:
+    message = (
+        "WARNING: worker stalled - restarting after 90s (background-sync) due to IO pressure"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_backoff"] == "90s"
+    assert metadata["docker_worker_last_error"] == "IO pressure"
+    assert metadata["docker_worker_context"] == "background-sync"
+    assert "worker stalled" not in cleaned.lower()
 
 
 def test_normalise_docker_warning_processes_json_logs() -> None:

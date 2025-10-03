@@ -1368,8 +1368,16 @@ _WORKER_VALUE_PATTERN = (
 
 
 _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
-    r"(?P<context>[A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*)\s*(?:[:\-]|::)\s*worker\s+stalled",
-    re.IGNORECASE,
+    r"""
+    (?P<context>[A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*)
+    \s*
+    (?:
+        [:\-]|::|->|=>|—|–|→|⇒
+    )
+    \s*
+    worker\s+stalled
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
@@ -1549,10 +1557,15 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     candidates: list[tuple[str, int]] = []
 
     context_match = re.search(
-        r"worker\s+stalled[\s;,:-]*(?:restarting|restart)"
-        r"(?:\s*(?:[:\-]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?",
+        r"""
+        worker\s+stalled
+        (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
+        restart(?:ing)?
+        (?:\s+(?:in|after)\s+[^()]+)?
+        (?:\s*(?:[:\-–—]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?
+        """,
         cleaned_message,
-        flags=re.IGNORECASE,
+        flags=re.IGNORECASE | re.VERBOSE,
     )
     if context_match:
         candidate = _normalize_worker_context_candidate(context_match.group("context"))
@@ -1646,6 +1659,40 @@ def _normalise_worker_metadata_key(raw_key: str) -> str:
     if not normalised:
         return normalised
     return re.sub(r"[^a-z0-9]+", "_", normalised)
+
+
+def _strip_interval_clause_suffix(raw: str) -> str:
+    """Trim descriptive tails from interval clauses such as ``"30s due to"``."""
+
+    trimmed = raw.strip()
+    if not trimmed:
+        return ""
+
+    trimmed = re.split(
+        r"\b(?:due|because|caused|cause|owing|reason|while|when|with|after|before|as|pending)\b",
+        trimmed,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    if "=" in trimmed:
+        key, value = trimmed.split("=", 1)
+        key_normalized = key.strip().lower()
+        if key_normalized in {
+            "backoff",
+            "delay",
+            "wait",
+            "cooldown",
+            "interval",
+            "duration",
+            "next",
+            "nextretry",
+            "next_restart",
+            "nextretryin",
+        }:
+            trimmed = value
+
+    return trimmed.strip(" \t\n\r,.);:")
 
 
 def _normalise_approx_prefix(raw: str | None) -> str | None:
@@ -1842,7 +1889,8 @@ def _scan_backoff_hint_from_message(message: str) -> str | None:
 def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[str, str]]:
     """Derive human friendly descriptors for flapping Docker workers."""
 
-    descriptors: list[str] = []
+    context_descriptor: str | None = None
+    context_details: list[str] = []
     metadata: dict[str, str] = {}
 
     restart_count: int | None = None
@@ -1855,8 +1903,9 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
     context_fields = (
         "context",
         "component",
-        "module",
+        "subsystem",
         "worker",
+        "module",
         "namespace",
         "service",
         "scope",
@@ -1963,14 +2012,28 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
 
     if backoff_hint is None:
         interval_match = re.search(
-            r"worker\s+stalled;\s*restarting(?:\s+in\s+(?P<interval>(?:[0-9]+(?:\.[0-9]+)?[hms](?:[0-9]+(?:\.[0-9]+)?[hms]){0,2}|[0-9.]+\s*(?:ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours))))?",
+            r"""
+            worker\s+stalled
+            (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
+            restart(?:ing)?
+            \s+(?:in|after)\s+
+            (?P<interval>[^;.,()\n]+)
+            """,
             message,
-            flags=re.IGNORECASE,
+            flags=re.IGNORECASE | re.VERBOSE,
         )
+        if not interval_match:
+            interval_match = re.search(
+                r"re(?:start(?:ing)?|starting)\s+(?:in|after)\s+(?P<interval>[^;.,()\n]+)",
+                message,
+                flags=re.IGNORECASE,
+            )
         if interval_match:
             interval = interval_match.group("interval")
             if interval:
-                _set_backoff_hint(interval.strip())
+                cleaned_interval = _strip_interval_clause_suffix(interval)
+                if cleaned_interval:
+                    _set_backoff_hint(cleaned_interval)
 
     if backoff_hint is None:
         derived_backoff = _scan_backoff_hint_from_message(message)
@@ -1985,28 +2048,41 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
 
     context_value = metadata.get("docker_worker_context")
     if context_value:
-        descriptors.append(f"Affected component: {context_value}.")
+        context_descriptor = f"Affected component: {context_value}."
 
     if restart_count is not None and restart_count >= 0:
         metadata["docker_worker_restart_count"] = str(restart_count)
         plural = "s" if restart_count != 1 else ""
-        descriptors.append(
+        context_details.append(
             f"Docker reported {restart_count} restart{plural} during diagnostics."
         )
 
     if backoff_hint:
         metadata["docker_worker_backoff"] = backoff_hint
-        descriptors.append(
+        context_details.append(
             f"Docker advertised a restart backoff interval of {backoff_hint}."
         )
 
     if last_seen:
         metadata["docker_worker_last_restart"] = last_seen
-        descriptors.append(f"Last restart marker emitted by Docker: {last_seen}.")
+        context_details.append(
+            f"Last restart marker emitted by Docker: {last_seen}."
+        )
 
     if last_error:
         metadata["docker_worker_last_error"] = last_error
-        descriptors.append(f"Most recent worker error: {last_error}.")
+        context_details.append(f"Most recent worker error: {last_error}.")
+
+    descriptors: list[str] = []
+    if context_descriptor:
+        descriptors.append(context_descriptor)
+    if context_details:
+        if context_descriptor:
+            descriptors.append(
+                "Additional context: " + " ".join(context_details)
+            )
+        else:
+            descriptors.extend(context_details)
 
     return descriptors, metadata
 
