@@ -1011,33 +1011,48 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
 
 
 _DOCKER_WARNING_PREFIX_PATTERN = re.compile(
-    r"^\s*warning(?:\[[^\]]+\])?:\s*",
-    re.IGNORECASE,
+    r"""
+    ^\s*
+    (?:
+        warn(?:ing)?
+        (?:\[[^\]]+\])?
+        (?:[:\-]|::)?
+        \s*
+        |
+        (?:warn|warning)\[[^\]]+\]\s+
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
+_WORKER_VALUE_PATTERN = (
+    r"(?:\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+"
+    r"(?:\s+(?![A-Za-z0-9_.:/\\-]+\s*(?:=|:))[A-Za-z0-9_.:/\\-]+)*)"
+)
+
+
 _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
-    r"(?P<context>[A-Za-z0-9_.:/\\-]+)\s*(?:[:\-]|::)\s*worker\s+stalled",
+    r"(?P<context>[A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*)\s*(?:[:\-]|::)\s*worker\s+stalled",
     re.IGNORECASE,
 )
 
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
-    r"(?P<key>context|component|module|id|name|worker)\s*(?:=|:)\s*"
-    r"(?P<value>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    rf"(?P<key>context|component|module|id|name|worker|scope|subsystem|service|pipeline|task|unit|process)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
 
 _WORKER_CONTEXT_RESTART_PATTERN = re.compile(
-    r"restarting(?:\s+worker)?\s+(?P<context>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    rf"restarting(?:\s+worker)?\s+(?P<context>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
 
 _WORKER_CONTEXT_STALLED_PATTERN = re.compile(
-    r"worker\s+(?P<context>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)\s+stalled",
+    rf"worker\s+(?P<context>{_WORKER_VALUE_PATTERN})\s+stalled",
     re.IGNORECASE,
 )
 
 _WORKER_METADATA_TOKEN_PATTERN = re.compile(
-    r"(?P<key>[A-Za-z0-9_.-]+)\s*(?:=|:)\s*(?P<value>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    rf"(?P<key>[A-Za-z0-9_.-]+)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
 
@@ -1095,6 +1110,7 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
 
     cleaned = candidate.strip().strip("\"'()[]{}<>")
+    cleaned = re.sub(r"^(?:warn(?:ing)?|err(?:or)?|info|debug)\s*(?:[:\-]|::)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip(".,;:")
     if not cleaned:
         return None
@@ -1107,7 +1123,8 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
     if not any(char.isalpha() for char in cleaned):
         return None
 
-    return cleaned
+    normalized = re.sub(r"\s+", " ", cleaned).strip()
+    return normalized or None
 
 
 def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
@@ -1148,6 +1165,16 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                     weight = 60
                 elif key_normalized in {"module"}:
                     weight = 50
+                elif key_normalized in {
+                    "subsystem",
+                    "service",
+                    "scope",
+                    "pipeline",
+                    "task",
+                    "unit",
+                    "process",
+                }:
+                    weight = 55
                 elif pattern in {_WORKER_CONTEXT_RESTART_PATTERN, _WORKER_CONTEXT_PREFIX_PATTERN}:
                     weight = 70
                 candidates.append((normalized, weight))
