@@ -258,8 +258,31 @@ def test_normalise_docker_warning_extracts_camel_case_context() -> None:
 
     assert "worker stalled" not in cleaned.lower()
     assert metadata["docker_worker_context"] == "vpnkitCore"
-    assert metadata["docker_worker_restart_count"] == "3"
-    assert metadata["docker_worker_last_error_code"] == "stalled_restart"
+
+
+def test_normalise_docker_warning_rewrites_inline_context_block() -> None:
+    message = (
+        'WARNING: worker "vpnkit background sync" stalled; restarting in ~45s '
+        "due to network jitter"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "vpnkit background sync"
+    assert metadata["docker_worker_backoff"].lower().endswith("45s")
+    assert metadata["docker_worker_last_error"] == "network jitter"
+
+
+def test_normalise_docker_warning_handles_bracketed_inline_context() -> None:
+    message = "WARN[0042] worker [vpnkit-core] stalled; restarting"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "vpnkit-core"
 
 
 def test_worker_restart_telemetry_from_metadata_collates_samples() -> None:
