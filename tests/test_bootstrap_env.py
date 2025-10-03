@@ -341,6 +341,31 @@ def test_normalise_docker_warning_handles_bracketed_context_and_retry_tokens() -
     assert metadata["docker_worker_last_error"] == "i/o timeout"
 
 
+def test_normalise_docker_warning_processes_json_logs() -> None:
+    message = json.dumps(
+        {
+            "level": "warning",
+            "msg": "worker stalled; restarting",
+            "component": "desktop-windows",
+            "telemetry": {
+                "restartCount": 9,
+                "backoff": "90s",
+                "lastError": "hypervisor unavailable",
+            },
+        }
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "desktop-windows"
+    assert metadata["docker_worker_restart_count"] == "9"
+    assert metadata["docker_worker_backoff"] == "90s"
+    assert metadata["docker_worker_last_error"] == "hypervisor unavailable"
+    assert "docker desktop reported" in cleaned.lower()
+    assert "desktop-windows" in cleaned
+
+
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
     payload = (
         "  NAME                   STATE           VERSION\n"

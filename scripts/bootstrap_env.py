@@ -16,12 +16,16 @@ import shutil
 import subprocess
 import sys
 import sysconfig
-from collections.abc import Iterable as IterableABC, Mapping as MappingABC
+from collections.abc import (
+    Iterable as IterableABC,
+    Mapping as MappingABC,
+    Sequence as SequenceABC,
+)
 from functools import lru_cache
 import ntpath
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Callable, Iterable, Mapping, Sequence, Literal
+from typing import Any, Callable, Iterable, Mapping, Sequence, Literal
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -201,6 +205,128 @@ def _decode_docker_log_value(value: str) -> str:
         return value
 
 
+def _stringify_envelope_value(value: Any) -> str | None:
+    """Convert structured log payload values into displayable strings."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            decoded = value.decode("utf-8", errors="replace").strip()
+        except Exception:  # pragma: no cover - defensive guardrail
+            decoded = bytes(value).decode("utf-8", errors="ignore").strip()
+        return decoded or None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _ingest_structured_envelope(
+    envelope: dict[str, str], payload: Any, prefix: str | None = None
+) -> None:
+    """Populate ``envelope`` with data extracted from *payload* recursively."""
+
+    if isinstance(payload, MappingABC):
+        _ingest_structured_mapping(envelope, payload, prefix)
+        return
+
+    if isinstance(payload, SequenceABC) and not isinstance(payload, (str, bytes, bytearray)):
+        for index, item in enumerate(payload):
+            child_prefix = f"{prefix}_{index}" if prefix else str(index)
+            _ingest_structured_envelope(envelope, item, child_prefix)
+        return
+
+    if prefix and prefix not in envelope:
+        text = _stringify_envelope_value(payload)
+        if text:
+            envelope[prefix] = text
+
+
+def _ingest_structured_mapping(
+    envelope: dict[str, str], mapping: Mapping[Any, Any], prefix: str | None = None
+) -> None:
+    """Flatten mapping-like Docker payloads into the ``envelope`` dictionary."""
+
+    for raw_key, value in mapping.items():
+        if not isinstance(raw_key, str):
+            continue
+        normalized_key = raw_key.strip()
+        if not normalized_key:
+            continue
+
+        composite_key = (
+            normalized_key if prefix is None else f"{prefix}_{normalized_key}"
+        )
+
+        if isinstance(value, MappingABC):
+            _ingest_structured_mapping(envelope, value, composite_key)
+            continue
+
+        if isinstance(value, SequenceABC) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            inline_parts: list[str] = []
+            for index, item in enumerate(value):
+                if isinstance(item, MappingABC):
+                    _ingest_structured_envelope(
+                        envelope, item, f"{composite_key}_{index}"
+                    )
+                    continue
+                text = _stringify_envelope_value(item)
+                if not text:
+                    continue
+                inline_parts.append(text)
+                if prefix is not None:
+                    indexed_key = f"{composite_key}_{index}"
+                    if indexed_key not in envelope:
+                        envelope[indexed_key] = text
+            if inline_parts:
+                joined = ", ".join(inline_parts)
+                if normalized_key not in envelope:
+                    envelope[normalized_key] = joined
+                if (
+                    composite_key not in envelope
+                    and composite_key != normalized_key
+                ):
+                    envelope[composite_key] = joined
+            continue
+
+        text = _stringify_envelope_value(value)
+        if not text:
+            continue
+
+        if normalized_key not in envelope:
+            envelope[normalized_key] = text
+        if composite_key not in envelope and composite_key != normalized_key:
+            envelope[composite_key] = text
+
+
+def _ingest_json_fragments(message: str, envelope: dict[str, str]) -> None:
+    """Extract JSON fragments embedded within Docker diagnostic output."""
+
+    decoder = json.JSONDecoder()
+    index = 0
+    length = len(message)
+
+    while index < length:
+        char = message[index]
+        if char not in "[{":
+            index += 1
+            continue
+        try:
+            payload, end = decoder.raw_decode(message, index)
+        except ValueError:
+            index += 1
+            continue
+        _ingest_structured_envelope(envelope, payload)
+        index = end
+
+
 def _parse_docker_log_envelope(message: str) -> dict[str, str]:
     """Extract key/value pairs embedded in structured Docker log lines."""
 
@@ -208,6 +334,8 @@ def _parse_docker_log_envelope(message: str) -> dict[str, str]:
         return {}
 
     envelope: dict[str, str] = {}
+    _ingest_json_fragments(message, envelope)
+
     for match in _DOCKER_LOG_FIELD_PATTERN.finditer(message):
         key = match.group("key")
         value = match.group("double") or match.group("single") or match.group("bare") or ""
