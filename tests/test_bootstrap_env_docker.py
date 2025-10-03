@@ -159,6 +159,25 @@ def test_errcode_field_feeds_worker_error_guidance() -> None:
     assert any("wsl --update" in step.lower() for step in assessment.remediation)
 
 
+def test_inline_errcode_banner_is_not_misclassified_as_context() -> None:
+    """Inline errCode markers should not masquerade as worker context."""
+
+    message = "WARNING: worker stalled; restarting (errCode=WSL_KERNEL_OUTDATED)"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert "affected component" not in cleaned.lower()
+    assert "docker_worker_context" not in metadata
+    assert metadata["docker_worker_last_error_code"] == "WSL_KERNEL_OUTDATED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity == "error"
+    assert any("wsl kernel" in detail.lower() for detail in assessment.details)
+
+
 def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
     """vpnkit-specific error codes should surface targeted networking guidance."""
 
