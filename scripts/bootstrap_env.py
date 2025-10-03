@@ -2825,7 +2825,7 @@ class WorkerRestartTelemetry:
     backoff_hint: str | None
     last_seen: str | None
     last_error: str | None
-    last_error_original: str | None
+    last_error_original: str | None = None
     contexts: tuple[str, ...] = field(default_factory=tuple)
     restart_samples: tuple[int, ...] = field(default_factory=tuple)
     backoff_options: tuple[str, ...] = field(default_factory=tuple)
