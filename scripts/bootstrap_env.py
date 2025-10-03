@@ -2511,6 +2511,58 @@ _WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
     "delay": "backoff",
     "wait": "backoff",
     "cooldown": "backoff",
+    "next_restart": "backoff",
+    "nextrestart": "backoff",
+    "next_restart_in": "backoff",
+    "nextrestartin": "backoff",
+    "next_restart_seconds": "backoff",
+    "nextrestartseconds": "backoff",
+    "next_restart_sec": "backoff",
+    "nextrestartsec": "backoff",
+    "next_restart_secs": "backoff",
+    "nextrestartsecs": "backoff",
+    "next_restart_s": "backoff",
+    "nextrestarts": "backoff",
+    "next_restart_ms": "backoff",
+    "nextrestartms": "backoff",
+    "next_restart_millis": "backoff",
+    "nextrestartmillis": "backoff",
+    "next_restart_milliseconds": "backoff",
+    "nextrestartmilliseconds": "backoff",
+    "next_start": "backoff",
+    "nextstart": "backoff",
+    "next_start_in": "backoff",
+    "nextstartin": "backoff",
+    "next_start_ms": "backoff",
+    "nextstartms": "backoff",
+    "next_start_seconds": "backoff",
+    "nextstartseconds": "backoff",
+    "next_retry": "backoff",
+    "nextretry": "backoff",
+    "next_retry_in": "backoff",
+    "nextretryin": "backoff",
+    "next_retry_ms": "backoff",
+    "nextretryms": "backoff",
+    "next_retry_seconds": "backoff",
+    "nextretryseconds": "backoff",
+    "retry_after": "backoff",
+    "retryafter": "backoff",
+    "retry_after_ms": "backoff",
+    "retryafterms": "backoff",
+    "retry_after_seconds": "backoff",
+    "retryafterseconds": "backoff",
+    "retry_delay": "backoff",
+    "retrydelay": "backoff",
+    "retry_delay_ms": "backoff",
+    "retrydelayms": "backoff",
+    "retry_delay_seconds": "backoff",
+    "retrydelayseconds": "backoff",
+    "restart_delay": "backoff",
+    "restartdelay": "backoff",
+    "restart_delay_ms": "backoff",
+    "restartdelayms": "backoff",
+    "restart_delay_seconds": "backoff",
+    "restartdelayseconds": "backoff",
     "lasterror": "lastError",
     "last_error": "lastError",
     "last_error_message": "lastError",
@@ -2615,7 +2667,51 @@ def _normalize_backoff_metadata_value(key: str, value: str) -> str:
         return ("%g" % numeric).rstrip("0").rstrip(".") + "s"
 
     normalized = _normalise_backoff_hint(cleaned)
-    return normalized or cleaned
+    if not normalized:
+        return cleaned
+
+    prefix_render: str | None = None
+    suffix_render: str | None = None
+    body = normalized
+
+    prefix_match = _APPROX_PREFIX_PATTERN.match(body)
+    if prefix_match:
+        prefix_render = (
+            _normalise_approx_prefix(prefix_match.group("prefix"))
+            or prefix_match.group("prefix").strip()
+        )
+        body = body[prefix_match.end() :].lstrip()
+
+    suffix_match = _APPROX_SUFFIX_PATTERN.search(body)
+    if suffix_match and suffix_match.end() == len(body):
+        suffix_render = suffix_match.group(0).strip()
+        body = body[: suffix_match.start()].rstrip()
+
+    seconds = _estimate_backoff_seconds(body)
+    if seconds is not None:
+        rendered = _render_backoff_seconds(abs(seconds))
+        if seconds < 0:
+            rendered = f"-{rendered}"
+        if prefix_render:
+            if prefix_render == "~":
+                rendered = f"~{rendered}"
+            else:
+                rendered = f"{prefix_render} {rendered}".strip()
+        if suffix_render:
+            rendered = f"{rendered} {suffix_render}".strip()
+        return rendered
+
+    if prefix_render or suffix_render:
+        fragments = []
+        if prefix_render:
+            fragments.append(prefix_render)
+        if body:
+            fragments.append(body)
+        if suffix_render:
+            fragments.append(suffix_render)
+        return " ".join(fragment for fragment in fragments if fragment)
+
+    return body or normalized
 
 
 def _format_warning_metadata_token(
@@ -2796,9 +2892,18 @@ _WORKER_BACKOFF_KEYS = {
     "duration",
     "next_retry",
     "nextretry",
+    "next_retry_in",
+    "nextretryin",
     "retry_after",
+    "retryafter",
+    "retry_delay",
+    "retrydelay",
     "next_restart",
+    "nextrestart",
+    "restart_delay",
+    "restartdelay",
     "nextstart",
+    "next_start",
 }
 
 _WORKER_BACKOFF_PREFIXES = {
@@ -2810,8 +2915,11 @@ _WORKER_BACKOFF_PREFIXES = {
     "duration",
     "next_retry",
     "retry_after",
+    "retry_delay",
     "next_restart",
+    "restart_delay",
     "nextstart",
+    "next_start",
 }
 
 _WORKER_LAST_SEEN_KEYS = {
@@ -2891,9 +2999,9 @@ def _classify_worker_metadata_key(key: str) -> str | None:
         return "last_seen"
 
     if _matches(
-        _WORKER_RESTART_KEYS, _WORKER_RESTART_PREFIXES, allow_substring=True
+        _WORKER_BACKOFF_KEYS, _WORKER_BACKOFF_PREFIXES, allow_substring=True
     ):
-        return "restart"
+        return "backoff"
 
     if _matches(
         _WORKER_ERROR_KEYS, _WORKER_ERROR_PREFIXES, allow_substring=True
@@ -2912,9 +3020,9 @@ def _classify_worker_metadata_key(key: str) -> str | None:
             return "error"
 
     if _matches(
-        _WORKER_BACKOFF_KEYS, _WORKER_BACKOFF_PREFIXES, allow_substring=True
+        _WORKER_RESTART_KEYS, _WORKER_RESTART_PREFIXES, allow_substring=True
     ):
-        return "backoff"
+        return "restart"
 
     return None
 
@@ -3356,8 +3464,23 @@ def _strip_interval_clause_suffix(raw: str) -> str:
             "duration",
             "next",
             "nextretry",
-            "next_restart",
+            "next_retry",
             "nextretryin",
+            "next_retry_in",
+            "nextrestart",
+            "next_restart",
+            "nextrestartin",
+            "next_restart_in",
+            "nextstart",
+            "next_start",
+            "nextstartin",
+            "next_start_in",
+            "retry_after",
+            "retryafter",
+            "retry_delay",
+            "retrydelay",
+            "restart_delay",
+            "restartdelay",
         }:
             trimmed = value
 
@@ -3824,7 +3947,7 @@ def _extract_worker_flapping_descriptors(
 
     if restart_count is None:
         fallback_restart = re.search(
-            r"(?:attempts?|retries?|restart(?:s|_count|count)?)(?!ing)\D*(?P<count>\d+)",
+            r"(?:attempts?|retries?|restart(?:s|_count|count)?)(?![_-]?(?:delay|second|seconds|sec|secs|ms|millis|millisecond|minute|minutes|min))(?!ing)\D*(?P<count>\d+)",
             message,
             flags=re.IGNORECASE,
         )
