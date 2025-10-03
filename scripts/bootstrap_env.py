@@ -1465,6 +1465,7 @@ class DockerDiagnosticResult:
     available: bool
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
+    infos: tuple[str, ...]
     metadata: Mapping[str, str]
     skipped: bool = False
     skip_reason: str | None = None
@@ -3777,6 +3778,60 @@ def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], d
     return normalized, metadata
 
 
+def _looks_like_worker_guidance(message: str) -> bool:
+    """Return ``True`` when *message* resembles synthetic worker guidance."""
+
+    if not message:
+        return False
+
+    collapsed = re.sub(r"\s+", " ", message).strip().lower()
+    if not collapsed:
+        return False
+
+    if "docker desktop" not in collapsed:
+        return False
+    if "worker" not in collapsed:
+        return False
+
+    if not any(token in collapsed for token in ("restart", "restarted", "restarting", "stall", "stalled", "flapping")):
+        return False
+
+    return True
+
+
+def _reclassify_worker_warnings_for_info(
+    warnings: Iterable[str], metadata: Mapping[str, str]
+) -> tuple[list[str], list[str]]:
+    """Move mild worker stall warnings into informational diagnostics."""
+
+    if metadata.get("docker_worker_health") != "flapping":
+        return [], list(warnings)
+
+    severity = metadata.get("docker_worker_health_severity")
+    if severity != "info":
+        return [], list(warnings)
+
+    summary = metadata.get("docker_worker_health_summary")
+
+    info_messages: list[str] = []
+    remaining: list[str] = []
+
+    worker_messages: list[str] = []
+    for warning in warnings:
+        if _looks_like_worker_guidance(warning):
+            worker_messages.append(warning)
+        else:
+            remaining.append(warning)
+
+    if worker_messages:
+        if summary:
+            info_messages.append(summary)
+        else:
+            info_messages.extend(worker_messages)
+
+    return info_messages, remaining
+
+
 def _parse_key_value_lines(payload: str) -> dict[str, str]:
     """Return key/value mappings parsed from ``payload`` lines."""
 
@@ -5045,6 +5100,7 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
 
     cli_path, cli_warnings = _discover_docker_cli()
     warnings = list(cli_warnings)
+    info_messages: list[str] = []
     errors: list[str] = []
 
     if cli_path is None:
@@ -5056,6 +5112,7 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
                 available=False,
                 errors=(),
                 warnings=(),
+                infos=(),
                 metadata=metadata,
                 skipped=True,
                 skip_reason=skip_reason,
@@ -5069,6 +5126,7 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
             available=False,
             errors=tuple(errors),
             warnings=tuple(warnings),
+            infos=tuple(info_messages),
             metadata=metadata,
         )
 
@@ -5087,8 +5145,14 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     errors.extend(health_errors)
     metadata.update(health_metadata)
 
+    info_updates, remaining_warnings = _reclassify_worker_warnings_for_info(warnings, metadata)
+    if info_updates:
+        info_messages.extend(info_updates)
+    warnings = remaining_warnings
+
     warnings = _coalesce_iterable(warnings)
     errors = _coalesce_iterable(errors)
+    info_messages = _coalesce_iterable(info_messages)
 
     available = not errors
 
@@ -5097,6 +5161,7 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
         available=available,
         errors=tuple(errors),
         warnings=tuple(warnings),
+        infos=tuple(info_messages),
         metadata=metadata,
     )
 
@@ -5131,6 +5196,9 @@ def _verify_docker_environment() -> None:
         if extra_context:
             LOGGER.debug("Docker runtime context: %s", extra_context)
         return
+
+    for notice in diagnostics.infos:
+        LOGGER.info("Docker diagnostic notice: %s", notice)
 
     for warning in diagnostics.warnings:
         LOGGER.warning("Docker diagnostic warning: %s", warning)

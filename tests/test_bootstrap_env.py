@@ -140,6 +140,69 @@ def test_collect_docker_diagnostics_reports_server_error(
     assert result.metadata["cli_path"] == str(fake_cli)
 
 
+def test_collect_docker_diagnostics_reclassifies_worker_stall_to_info(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_cli = tmp_path / "docker"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_discover_docker_cli", lambda: (fake_cli, []))
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_detect_runtime_context",
+        lambda: bootstrap_env.RuntimeContext(
+            platform="win32",
+            is_windows=True,
+            is_wsl=False,
+            inside_container=False,
+            container_runtime=None,
+            container_indicators=(),
+            is_ci=False,
+            ci_indicators=(),
+        ),
+    )
+
+    worker_message, worker_metadata = bootstrap_env._normalise_docker_warning(
+        "WARNING: worker stalled; restarting"
+    )
+
+    def fake_probe(
+        cli_path: Path, timeout: float
+    ) -> tuple[dict[str, str], list[str], list[str]]:
+        assert cli_path == fake_cli
+        return worker_metadata.copy(), [worker_message], []
+
+    monkeypatch.setattr(bootstrap_env, "_probe_docker_environment", fake_probe)
+
+    def fake_post_process(
+        *, metadata: dict[str, str], context: bootstrap_env.RuntimeContext, timeout: float = 6.0
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        assert metadata["docker_worker_health"] == "flapping"
+        return (
+            [],
+            [],
+            {
+                "docker_worker_health_severity": "info",
+                "docker_worker_health_summary": (
+                    "Docker Desktop briefly restarted a background worker and reports it is healthy."
+                ),
+                "docker_worker_health_state": "recovered",
+            },
+        )
+
+    monkeypatch.setattr(bootstrap_env, "_post_process_docker_health", fake_post_process)
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.1)
+
+    assert result.available is True
+    assert result.warnings == ()
+    assert result.errors == ()
+    assert result.infos
+    assert any("briefly restarted" in message.lower() for message in result.infos)
+    assert result.metadata["docker_worker_health_severity"] == "info"
+
+
 def test_extract_json_document_tolerates_prefixed_warnings() -> None:
     payload = json.dumps({"Client": {"Version": "27.0"}})
     stdout = "WARNING: worker stalled; restarting\n\n" + payload
