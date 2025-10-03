@@ -718,6 +718,74 @@ def test_worker_stall_json_error_payload_enriched() -> None:
     assert metadata["docker_worker_backoff"] == "45s"
 
 
+def test_error_code_guidance_covers_hns_service_unavailable() -> None:
+    """Explicit HNS error codes should surface actionable remediation steps."""
+
+    details: list[str] = []
+    remediation: list[str] = []
+    reasons: dict[str, str] = {}
+
+    def _register(key: str, message: str) -> None:
+        reasons.setdefault(key, message)
+
+    metadata = bootstrap_env._apply_error_code_guidance(
+        ["HNS_SERVICE_UNAVAILABLE"],
+        register_reason=_register,
+        detail_collector=details,
+        remediation_collector=remediation,
+    )
+
+    assert any("host network service" in reason.lower() for reason in reasons.values())
+    assert any("hns" in detail.lower() for detail in details)
+    assert any("winsock" in step.lower() for step in remediation)
+    assert (
+        metadata["docker_worker_last_error_guidance_hns_service_unavailable"]
+        .lower()
+        .startswith("restart the host network service")
+    )
+
+
+def test_generic_error_code_guidance_handles_hns_variants() -> None:
+    """Unknown HNS-prefixed error codes should still map to HNS remediation."""
+
+    directive = bootstrap_env._derive_generic_error_code_guidance(
+        "HNS_NETWORK_STORE_CORRUPT"
+    )
+
+    assert directive is not None
+    assert "host network service" in directive.reason.lower()
+    assert any("restart-service" in step.lower() for step in directive.remediation)
+    assert "docker_worker_last_error_guidance_hns_network_store_corrupt" in directive.metadata
+
+
+def test_normalize_warnings_interprets_hns_error_codes() -> None:
+    """HNS worker stalls emitted by Docker Desktop should be rewritten."""
+
+    payload = {
+        "diagnostics": {
+            "components": [
+                {
+                    "componentDisplayName": "Host Network Service",
+                    "statusMessage": "WARNING: worker stalled; restarting (errCode=HNS_SERVICE_UNAVAILABLE)",
+                    "errCode": "HNS_SERVICE_UNAVAILABLE",
+                    "lastError": "host network service failed during start",
+                }
+            ]
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings, "expected worker stall guidance"
+    banner = warnings[0].lower()
+    assert "worker stalled; restarting" not in banner
+    assert "host network service" in banner
+    assert metadata["docker_worker_last_error_code"] == "HNS_SERVICE_UNAVAILABLE"
+    assert metadata["docker_worker_last_error"].lower().startswith(
+        "host network service failed"
+    )
+
+
 def test_worker_context_extraction_ignores_backoff_tokens() -> None:
     """Backoff metadata should not masquerade as the affected worker name."""
 

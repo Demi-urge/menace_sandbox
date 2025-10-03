@@ -354,6 +354,24 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
             ),
         },
     ),
+    "HNS_SERVICE_UNAVAILABLE": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected that the Windows Host Network Service (HNS) is unavailable"
+        ),
+        detail=(
+            "HNS brokers virtual network switches for containers; when it is unreachable Docker Desktop cannot wire container networking"
+        ),
+        remediation=(
+            "Restart the 'Host Network Service' Windows service via an elevated PowerShell session (Restart-Service hns)",
+            "Run 'netsh winsock reset' and reboot Windows if HNS fails to initialise after a service restart",
+            "After HNS is healthy, restart Docker Desktop so its networking workers can reconnect",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_hns_service_unavailable": (
+                "Restart the Host Network Service (HNS), reset Winsock if needed, then relaunch Docker Desktop"
+            ),
+        },
+    ),
 }
 
 _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
@@ -434,6 +452,27 @@ def _derive_generic_error_code_guidance(
         return _WorkerErrorCodeDirective(
             reason=(
                 "Docker Desktop flagged instability in its vpnkit networking component"
+            ),
+            detail=detail,
+            remediation=remediation,
+            metadata=_metadata(summary),
+        )
+
+    if "HNS" in token_set:
+        summary = (
+            "Repair the Windows Host Network Service (HNS) required for Docker Desktop networking"
+        )
+        remediation = (
+            "Restart the 'Host Network Service' (HNS) via 'Restart-Service hns' from an elevated PowerShell session",
+            "If HNS will not start, run 'netsh winsock reset' and reboot to rebuild the Windows networking stack",
+            "Relaunch Docker Desktop after HNS is healthy so vpnkit and other networking workers can reconnect",
+        )
+        detail = (
+            "Docker Desktop surfaced Host Network Service error code %s which typically indicates the Windows networking stack is offline."
+        ) % candidate
+        return _WorkerErrorCodeDirective(
+            reason=(
+                "Docker Desktop reported a Host Network Service (HNS) failure preventing networking workers from staying online"
             ),
             detail=detail,
             remediation=remediation,
