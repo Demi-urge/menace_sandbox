@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from scripts import bootstrap_env
@@ -16,6 +18,30 @@ def test_parse_docker_log_envelope_handles_quoted_values():
     assert envelope["restartCount"] == "7"
     assert envelope["backoff"] == "5s"
     assert envelope["error"] == "context canceled"
+
+
+def test_parse_docker_log_envelope_handles_json_structures():
+    message = json.dumps(
+        {
+            "time": "2024-08-01T08:45:00Z",
+            "level": "warning",
+            "msg": "worker stalled; restarting",
+            "details": {
+                "context": "desktop-windows",
+                "restartCount": 5,
+                "metadata": {"lastError": "context canceled"},
+            },
+            "backoff": "45s",
+        }
+    )
+
+    envelope = bootstrap_env._parse_docker_log_envelope(message)
+
+    assert envelope["msg"] == "worker stalled; restarting"
+    assert envelope["context"] == "desktop-windows"
+    assert envelope["restartCount"] == "5"
+    assert envelope["lastError"] == "context canceled"
+    assert envelope["backoff"] == "45s"
 
 
 def test_normalise_docker_warning_extracts_worker_metadata():
