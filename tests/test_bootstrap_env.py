@@ -153,6 +153,16 @@ def test_extract_json_document_tolerates_prefixed_warnings() -> None:
     assert metadata.get("docker_worker_health") == "flapping"
 
 
+def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
+    message = "WARNING[0012]: worker stalled; restarting (background-sync)"
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "docker desktop reported" in cleaned.lower()
+    assert cleaned.lower().endswith("background-sync.")
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "background-sync"
+
+
 def test_parse_docker_json_surfaces_non_json_output() -> None:
     completed = subprocess.CompletedProcess(
         ["docker", "info"],

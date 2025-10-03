@@ -964,10 +964,16 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
         yield from _iter_docker_warning_messages(item)
 
 
+_DOCKER_WARNING_PREFIX_PATTERN = re.compile(
+    r"^\s*warning(?:\[[^\]]+\])?:\s*",
+    re.IGNORECASE,
+)
+
+
 def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]:
     """Return a cleaned warning and metadata extracted from Docker output."""
 
-    cleaned = re.sub(r"^\s*warning:\s*", "", message, flags=re.IGNORECASE)
+    cleaned = _DOCKER_WARNING_PREFIX_PATTERN.sub("", message)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         return None, {}
@@ -976,11 +982,28 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     lowered = cleaned.lower()
     if "worker stalled" in lowered:
         metadata["docker_worker_health"] = "flapping"
-        cleaned = (
-            "Docker Desktop reported that an internal background worker restarted multiple times. "
-            "Restart Docker Desktop, ensure WSL 2/Hyper-V virtualization is enabled, and allocate "
-            "sufficient resources to the Docker VM before retrying."
+        context: str | None = None
+        context_match = re.search(
+            r"worker\s+stalled[\s;,:-]*"
+            r"(?:restarting|restart)"
+            r"(?:\s*(?:[:\-]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?",
+            cleaned,
+            flags=re.IGNORECASE,
         )
+        if context_match:
+            candidate = context_match.group("context")
+            if candidate:
+                context = candidate.strip().strip("()[]{}.")
+                if context:
+                    metadata["docker_worker_context"] = context
+
+        cleaned = (
+            "Docker Desktop reported repeated restarts of a background worker. "
+            "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
+            "allocate additional CPU/RAM to the Docker VM before retrying."
+        )
+        if context:
+            cleaned += f" Affected component: {context}."
 
     return cleaned, metadata
 
