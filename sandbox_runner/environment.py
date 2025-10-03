@@ -476,7 +476,7 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
     if shutil.which("docker"):
         try:
             try:
-                subprocess.run(
+                _run_subprocess_with_progress(
                     ["docker", "container", "prune", "-f"],
                     capture_output=True,
                     text=True,
@@ -495,7 +495,7 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
                 )
                 return
             try:
-                subprocess.run(
+                _run_subprocess_with_progress(
                     ["docker", "volume", "prune", "-f"],
                     capture_output=True,
                     text=True,
@@ -514,7 +514,7 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
                 )
                 return
             try:
-                proc = subprocess.run(
+                proc = _run_subprocess_with_progress(
                     ["docker", "ps", "-aq"],
                     capture_output=True,
                     text=True,
@@ -535,7 +535,7 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
                 return
             containers = proc.stdout.strip().splitlines()
             try:
-                proc = subprocess.run(
+                proc = _run_subprocess_with_progress(
                     ["docker", "volume", "ls", "-q"],
                     capture_output=True,
                     text=True,
@@ -1956,7 +1956,7 @@ def _remove_active_container(cid: str) -> None:
 def _finalize_orphan(cid: str, dir_path: str | None) -> None:
     """Attempt to remove a leaked container and associated directory."""
     try:
-        subprocess.run(
+        _run_subprocess_with_progress(
             ["docker", "rm", "-f", cid],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -2278,7 +2278,7 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
         """
     )
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             [sys.executable, "-c", script, path, str(base), str(attempts)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2301,7 +2301,7 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
         logger.debug("rmtree helper failed: %s", exc)
 
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             ["cmd", "/c", "rmdir", "/s", "/q", path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2397,7 +2397,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     else:  # pragma: no cover - fallback path
         tmp_dirs: set[str] = set()
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 ["pgrep", "-fa", "qemu-system"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2435,7 +2435,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                             arg = arg.split("=", 1)[1]
                         tmp_dirs.add(str(Path(arg).parent))
                 try:
-                    res = subprocess.run(
+                    res = _run_subprocess_with_progress(
                         ["kill", "-9", pid],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
@@ -2475,7 +2475,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
 
     if os.name == "nt":  # pragma: no cover - windows process cleanup
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 ["taskkill", "/F", "/T", "/IM", "qemu-system*"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2574,7 +2574,7 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
     removed = 0
     labeled: set[str] = set()
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             [
                 "docker",
                 "volume",
@@ -2583,13 +2583,13 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
                 "--filter",
                 f"label={_POOL_LABEL}=1",
             ],
+            progress=progress,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
-        _notify_progress(progress)
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
                 vol = vol.strip()
@@ -2600,14 +2600,14 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
                 except Exception as exc:
                     logger.debug("failed to log volume removal %s: %s", vol, exc)
                 try:
-                    subprocess.run(
+                    _run_subprocess_with_progress(
                         ["docker", "volume", "rm", "-f", vol],
+                        progress=progress,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
-                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "volume prune timed out for %s (%.1fs)",
@@ -2635,30 +2635,30 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
 
     threshold = time.time() - _CONTAINER_MAX_LIFETIME
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             ["docker", "volume", "ls", "-q"],
+            progress=progress,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
-        _notify_progress(progress)
         if proc.returncode == 0:
             for vol in proc.stdout.splitlines():
                 vol = vol.strip()
                 if not vol or vol in labeled:
                     continue
                 try:
-                    info = subprocess.run(
+                    info = _run_subprocess_with_progress(
                         ["docker", "volume", "inspect", vol],
+                        progress=progress,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
-                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "volume inspect timed out for %s (%.1fs)",
@@ -2690,14 +2690,14 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
                     except Exception as exc:
                         logger.debug("failed to log volume removal %s: %s", vol, exc)
                     try:
-                        subprocess.run(
+                        _run_subprocess_with_progress(
                             ["docker", "volume", "rm", "-f", vol],
+                            progress=progress,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
                             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
-                        _notify_progress(progress)
                     except subprocess.TimeoutExpired as exc:
                         logger.warning(
                             "volume prune timed out for %s (%.1fs)",
@@ -2712,7 +2712,6 @@ def _prune_volumes(*, progress: Callable[[], None] | None = None) -> int:
                         return removed
                     removed += 1
                     _CLEANUP_METRICS["volume"] += 1
-                    _notify_progress(progress)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "volume listing timed out (%.1fs)",
@@ -2733,7 +2732,7 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
     removed = 0
     labeled: set[str] = set()
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             [
                 "docker",
                 "network",
@@ -2742,13 +2741,13 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
                 "--filter",
                 f"label={_POOL_LABEL}=1",
             ],
+            progress=progress,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
-        _notify_progress(progress)
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
                 net = net.strip()
@@ -2759,14 +2758,14 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
                 except Exception as exc:
                     logger.debug("failed to log network removal %s: %s", net, exc)
                 try:
-                    subprocess.run(
+                    _run_subprocess_with_progress(
                         ["docker", "network", "rm", "-f", net],
+                        progress=progress,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
-                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "network prune timed out for %s (%.1fs)",
@@ -2794,30 +2793,30 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
 
     threshold = time.time() - _CONTAINER_MAX_LIFETIME
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             ["docker", "network", "ls", "-q"],
+            progress=progress,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
         )
-        _notify_progress(progress)
         if proc.returncode == 0:
             for net in proc.stdout.splitlines():
                 net = net.strip()
                 if not net or net in labeled:
                     continue
                 try:
-                    info = subprocess.run(
+                    info = _run_subprocess_with_progress(
                         ["docker", "network", "inspect", net],
+                        progress=progress,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
                         check=False,
                         timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                     )
-                    _notify_progress(progress)
                 except subprocess.TimeoutExpired as exc:
                     logger.warning(
                         "network inspect timed out for %s (%.1fs)",
@@ -2852,14 +2851,14 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
                     except Exception as exc:
                         logger.debug("failed to log network removal %s: %s", net, exc)
                     try:
-                        subprocess.run(
+                        _run_subprocess_with_progress(
                             ["docker", "network", "rm", "-f", net],
+                            progress=progress,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
                             timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
-                        _notify_progress(progress)
                     except subprocess.TimeoutExpired as exc:
                         logger.warning(
                             "network prune timed out for %s (%.1fs)",
@@ -2874,7 +2873,6 @@ def _prune_networks(*, progress: Callable[[], None] | None = None) -> int:
                         return removed
                     removed += 1
                     _CLEANUP_METRICS["network"] += 1
-                    _notify_progress(progress)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "network listing timed out (%.1fs)",
@@ -2914,7 +2912,7 @@ def purge_leftovers() -> None:
                     except Exception as exc:
                         logger.debug("failed to log container removal %s: %s", cid, exc)
                     try:
-                        subprocess.run(
+                        _run_subprocess_with_progress(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
@@ -2935,7 +2933,7 @@ def purge_leftovers() -> None:
                         continue
                     exists = False
                     try:
-                        proc = subprocess.run(
+                        proc = _run_subprocess_with_progress(
                             ["docker", "ps", "-aq", "--filter", f"id={cid}"],
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
@@ -2999,7 +2997,7 @@ def purge_leftovers() -> None:
                 logger.debug("overlay cleanup failed: %s", exc)
 
             try:
-                proc = subprocess.run(
+                proc = _run_subprocess_with_progress(
                     ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -3017,7 +3015,7 @@ def purge_leftovers() -> None:
                         except Exception as exc:
                             logger.debug("failed to log stale container %s: %s", cid, exc)
                         try:
-                            proc_rm = subprocess.run(
+                            proc_rm = _run_subprocess_with_progress(
                                 ["docker", "rm", "-f", cid],
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
@@ -3048,7 +3046,7 @@ def purge_leftovers() -> None:
 
             try:
                 threshold = time.time() - _CONTAINER_MAX_LIFETIME
-                proc = subprocess.run(
+                proc = _run_subprocess_with_progress(
                     [
                         "docker",
                         "ps",
@@ -3087,7 +3085,7 @@ def purge_leftovers() -> None:
                                     "failed to log stale container %s: %s", cid, exc
                                 )
                             try:
-                                proc_rm = subprocess.run(
+                                proc_rm = _run_subprocess_with_progress(
                                     ["docker", "rm", "-f", cid],
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL,
@@ -3670,7 +3668,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
     exists = False
     if cid:
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 ["docker", "ps", "-aq", "--filter", f"id={cid}"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -3692,7 +3690,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
 
     if cid and exists:
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 ["docker", "rm", "-f", cid],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -3704,7 +3702,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 raise RuntimeError(proc.stderr or proc.stdout)
             exists = False
             try:
-                confirm = subprocess.run(
+                confirm = _run_subprocess_with_progress(
                     ["docker", "ps", "-aq", "--filter", f"id={cid}"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -3736,7 +3734,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
 
     if cid and exists:
         try:
-            subprocess.run(
+            _run_subprocess_with_progress(
                 ["docker", "kill", cid],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -3744,7 +3742,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 check=False,
                 timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
-            subprocess.run(
+            _run_subprocess_with_progress(
                 ["docker", "rm", "-f", cid],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -3754,7 +3752,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
             )
             exists = False
             try:
-                confirm = subprocess.run(
+                confirm = _run_subprocess_with_progress(
                     ["docker", "ps", "-aq", "--filter", f"id={cid}"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -3997,7 +3995,7 @@ def _reap_orphan_containers(*, progress: Callable[[], None] | None = None) -> in
 def reconcile_active_containers() -> None:
     """Remove untracked containers labeled with :data:`_POOL_LABEL`."""
     try:
-        proc = subprocess.run(
+        proc = _run_subprocess_with_progress(
             ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -4033,7 +4031,7 @@ def reconcile_active_containers() -> None:
         except Exception as exc:
             logger.debug("failed to log untracked container removal %s: %s", cid, exc)
         try:
-            subprocess.run(
+            _run_subprocess_with_progress(
                 ["docker", "rm", "-f", cid],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -4156,14 +4154,14 @@ def retry_failed_cleanup(*, progress: Callable[[], None] | None = None) -> tuple
             _notify_progress(progress)
             continue
         try:
-            subprocess.run(
+            _run_subprocess_with_progress(
                 command,
+                progress=progress,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
                 timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
-            _notify_progress(progress)
         except subprocess.TimeoutExpired as exc:
             logger.warning(
                 "cleanup retry timed out for %s (%.1fs)",
@@ -4194,8 +4192,9 @@ def retry_failed_cleanup(*, progress: Callable[[], None] | None = None) -> tuple
             continue
 
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 verify,
+                progress=progress,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -4249,7 +4248,7 @@ def retry_failed_cleanup(*, progress: Callable[[], None] | None = None) -> tuple
             except Exception as exc:
                 logger.debug("failed to log failsafe prune: %s", exc)
             try:
-                subprocess.run(
+                _run_subprocess_with_progress(
                     ["docker", "system", "prune", "-f", "--volumes"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -4361,6 +4360,86 @@ def _notify_progress(callback: Callable[[], None] | None) -> None:
         logger.exception("cleanup progress callback failed")
 
 
+def _heartbeat_interval(timeout: float | None) -> float:
+    """Return a conservative heartbeat interval for long running commands."""
+
+    if timeout is None or timeout <= 0:
+        return 1.0
+    return min(5.0, max(0.5, timeout / 10.0))
+
+
+_PROGRESS_SCOPE = threading.local()
+
+
+@contextmanager
+def _progress_scope(callback: Callable[[], None] | None):
+    """Temporarily register ``callback`` for nested subprocess helpers."""
+
+    previous = getattr(_PROGRESS_SCOPE, "callback", None)
+    _PROGRESS_SCOPE.callback = callback
+    try:
+        yield
+    finally:
+        _PROGRESS_SCOPE.callback = previous
+
+
+def _current_progress_callback() -> Callable[[], None] | None:
+    """Return the progress callback associated with the current thread."""
+
+    return getattr(_PROGRESS_SCOPE, "callback", None)
+
+
+def _run_subprocess_with_progress(
+    args: Sequence[str] | str,
+    *,
+    progress: Callable[[], None] | None = None,
+    heartbeat_interval: float | None = None,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess:
+    """Execute ``subprocess.run`` while emitting periodic progress heartbeats.
+
+    Docker commands on Windows can hang for noticeable periods when the
+    daemon is waking up or proxying requests through Hyper-V.  During that
+    time the cleanup workers would previously stop emitting heartbeats,
+    triggering the watchdog to emit ``worker stalled`` warnings.  This helper
+    keeps the heartbeat flowing from a lightweight background thread so the
+    watchdog only reacts to genuine failures.
+    """
+
+    stop_event: threading.Event | None = None
+    hb_thread: threading.Thread | None = None
+    interval = heartbeat_interval or _heartbeat_interval(kwargs.get("timeout"))
+    callback = progress if progress is not None else _current_progress_callback()
+
+    try:
+        if callback is not None:
+            _notify_progress(callback)
+            stop_event = threading.Event()
+
+            def _beat() -> None:
+                try:
+                    while not stop_event.wait(interval):
+                        _notify_progress(callback)
+                except Exception:  # pragma: no cover - defensive guard
+                    logger.exception("heartbeat notifier failed")
+
+            hb_thread = threading.Thread(
+                target=_beat,
+                name="sandbox-subprocess-heartbeat",
+                daemon=True,
+            )
+            hb_thread.start()
+
+        return subprocess.run(args, **kwargs)
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if hb_thread is not None:
+            hb_thread.join(timeout=1.0)
+        if callback is not None:
+            _notify_progress(callback)
+
+
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
@@ -4373,13 +4452,16 @@ async def _cleanup_worker() -> None:
         while True:
             _update_worker_heartbeat("cleanup")
             try:
-                autopurge_if_needed()
+                with _progress_scope(_progress):
+                    autopurge_if_needed()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
-                ensure_docker_client()
+                with _progress_scope(_progress):
+                    ensure_docker_client()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
-                reconcile_active_containers()
+                with _progress_scope(_progress):
+                    reconcile_active_containers()
                 _notify_progress(_progress)
                 await asyncio.sleep(0)
             finally:
@@ -4404,7 +4486,8 @@ async def _cleanup_worker() -> None:
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
                 _notify_progress(_progress)
-                vm_removed = _purge_stale_vms(record_runtime=True)
+                with _progress_scope(_progress):
+                    vm_removed = _purge_stale_vms(record_runtime=True)
                 _CLEANUP_CURRENT_RUNTIME["cleanup"] = time.monotonic() - start
                 _update_worker_heartbeat("cleanup")
                 await asyncio.sleep(0)
@@ -4473,11 +4556,13 @@ async def _reaper_worker() -> None:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             _update_worker_heartbeat("reaper")
             try:
-                autopurge_if_needed()
+                with _progress_scope(_progress):
+                    autopurge_if_needed()
                 _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
-                reconcile_active_containers()
+                with _progress_scope(_progress):
+                    reconcile_active_containers()
                 _notify_progress(_progress)
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
@@ -4493,7 +4578,8 @@ async def _reaper_worker() -> None:
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
                 _notify_progress(_progress)
-                vm_removed = _purge_stale_vms(record_runtime=True)
+                with _progress_scope(_progress):
+                    vm_removed = _purge_stale_vms(record_runtime=True)
                 _CLEANUP_CURRENT_RUNTIME["reaper"] = time.monotonic() - start
                 _update_worker_heartbeat("reaper")
                 await asyncio.sleep(0)
@@ -4593,12 +4679,13 @@ def _cleanup_pools() -> None:
                     logger.exception('unexpected error')
 
         try:
-            proc = subprocess.run(
+            proc = _run_subprocess_with_progress(
                 ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
             )
             if proc.returncode == 0:
                 for cid in proc.stdout.splitlines():
@@ -4608,11 +4695,12 @@ def _cleanup_pools() -> None:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception:
                             logger.exception('unexpected error')
-                        subprocess.run(
+                        _run_subprocess_with_progress(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
+                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
                         )
                     else:
                         try:

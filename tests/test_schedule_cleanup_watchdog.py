@@ -4,6 +4,7 @@ import threading
 import time
 import types
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -114,6 +115,11 @@ def env():
     ns = _load_environment_subset()
     logger = DummyLogger()
     ns["logger"] = logger
+    @contextmanager
+    def _noop_scope(callback):
+        yield
+
+    ns["_progress_scope"] = _noop_scope
     ns["_get_metrics_module"] = lambda: types.SimpleNamespace(
         cleanup_heartbeat_gauge=GaugeStub(), cleanup_duration_gauge=GaugeStub()
     )

@@ -1,6 +1,22 @@
 import json
+import sys
 import types
-import sandbox_runner.environment as env
+import importlib.util
+import importlib.machinery
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+pkg = types.ModuleType("sandbox_runner")
+pkg.__path__ = [str(ROOT / "sandbox_runner")]
+pkg.__spec__ = importlib.machinery.ModuleSpec("sandbox_runner", loader=None, is_package=True)
+sys.modules["sandbox_runner"] = pkg
+
+_ENV_PATH = ROOT / "sandbox_runner" / "environment.py"
+_SPEC = importlib.util.spec_from_file_location("sandbox_runner.environment", _ENV_PATH)
+env = importlib.util.module_from_spec(_SPEC)
+sys.modules["sandbox_runner.environment"] = env
+assert _SPEC.loader is not None
+_SPEC.loader.exec_module(env)
 
 class DummyLock:
     def __enter__(self):
