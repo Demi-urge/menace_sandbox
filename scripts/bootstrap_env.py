@@ -3151,17 +3151,39 @@ def _post_process_docker_health(
     errors: list[str] = []
     additional_metadata: dict[str, str] = {}
 
+    virtualization_warnings: list[str] = []
+    virtualization_errors: list[str] = []
+    virtualization_metadata: dict[str, str] = {}
+
+    if context.is_wsl or context.is_windows:
+        vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(
+            timeout=timeout
+        )
+        virtualization_warnings.extend(vw_warnings)
+        virtualization_errors.extend(vw_errors)
+        virtualization_metadata.update(vw_metadata)
+
     if assessment.severity == "warning":
         warnings.append(assessment.render())
+        if virtualization_warnings:
+            warnings.extend(virtualization_warnings)
+        if virtualization_errors:
+            warnings.extend(
+                f"Virtualization issue detected: {message}"
+                for message in virtualization_errors
+            )
+        if virtualization_metadata:
+            additional_metadata.update(virtualization_metadata)
         return warnings, errors, additional_metadata
 
     errors.append(assessment.render())
 
-    if context.is_wsl or context.is_windows:
-        vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(timeout=timeout)
-        warnings.extend(vw_warnings)
-        errors.extend(vw_errors)
-        additional_metadata.update(vw_metadata)
+    if virtualization_warnings:
+        warnings.extend(virtualization_warnings)
+    if virtualization_errors:
+        errors.extend(virtualization_errors)
+    if virtualization_metadata:
+        additional_metadata.update(virtualization_metadata)
 
     return warnings, errors, additional_metadata
 
