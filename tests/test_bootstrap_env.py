@@ -285,6 +285,19 @@ def test_normalise_docker_warning_handles_bracketed_inline_context() -> None:
     assert metadata["docker_worker_context"] == "vpnkit-core"
 
 
+def test_normalise_docker_warning_extracts_context_without_delimiter() -> None:
+    message = (
+        "vpnkit background sync worker stalled; restarting in 45s due to IO pressure"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "vpnkit background sync"
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_last_error"] == "IO pressure"
+
+
 def test_worker_restart_telemetry_from_metadata_collates_samples() -> None:
     metadata = {
         "docker_worker_context": "desktop-linux",

@@ -1756,6 +1756,11 @@ _WORKER_CONTEXT_STALLED_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_WORKER_CONTEXT_LEADING_PATTERN = re.compile(
+    rf"(?P<context>{_WORKER_VALUE_PATTERN})\s+worker\s+stalled",
+    re.IGNORECASE,
+)
+
 _WORKER_CONTEXT_BRACKET_PATTERN = re.compile(
     r"\[(?P<context>[^\]\s][^\]]*?)\]\s*(?:worker\s+)?stalled",
     re.IGNORECASE,
@@ -2034,6 +2039,22 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
 
     normalized = re.sub(r"\s+", " ", cleaned).strip()
+    if not normalized:
+        return None
+
+    tokens = [token for token in re.split(r"\s+", normalized) if token]
+    if not tokens:
+        return None
+
+    filtered_tokens = [
+        token
+        for token in tokens
+        if token.strip().lower() not in _WORKER_INLINE_CONTEXT_STOPWORDS
+    ]
+    if filtered_tokens:
+        normalized = " ".join(filtered_tokens)
+        tokens = filtered_tokens
+
     if re.match(r"^[x×]\s*\d+", normalized):
         return None
     lowered_normalized = normalized.lower()
@@ -2043,6 +2064,12 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
         return None
     if " because " in lowered_normalized:
         return None
+    if not any(char.isalpha() for char in normalized):
+        return None
+
+    if all(token.lower() in _WORKER_INLINE_CONTEXT_STOPWORDS for token in tokens):
+        return None
+
     return normalized or None
 
 
@@ -2101,6 +2128,7 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         _WORKER_CONTEXT_KV_PATTERN,
         _WORKER_CONTEXT_RESTART_PATTERN,
         _WORKER_CONTEXT_STALLED_PATTERN,
+        _WORKER_CONTEXT_LEADING_PATTERN,
         _WORKER_CONTEXT_BRACKET_PATTERN,
     ):
         for source in message_sources:
