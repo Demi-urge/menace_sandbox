@@ -159,6 +159,22 @@ _DURATION_UNIT_NORMALISATION = {
 }
 
 
+_DOCKER_LOG_FIELD_PATTERN = re.compile(
+    r"""
+    (?P<key>[A-Za-z0-9_.-]+)
+    =
+    (
+        "(?P<double>(?:\\.|[^"\\])*)"
+        |
+        '(?P<single>(?:\\.|[^'\\])*)'
+        |
+        (?P<bare>[^\s]+)
+    )
+    """,
+    flags=re.VERBOSE,
+)
+
+
 def _coalesce_iterable(values: Iterable[str]) -> list[str]:
     """Return *values* with duplicates removed while preserving ordering."""
 
@@ -171,6 +187,34 @@ def _coalesce_iterable(values: Iterable[str]) -> list[str]:
         seen.add(normalized)
         unique.append(value)
     return unique
+
+
+def _decode_docker_log_value(value: str) -> str:
+    """Best-effort decoding of escaped Docker log field values."""
+
+    if not value:
+        return ""
+
+    try:
+        return bytes(value, "utf-8").decode("unicode_escape")
+    except Exception:  # pragma: no cover - extremely defensive
+        return value
+
+
+def _parse_docker_log_envelope(message: str) -> dict[str, str]:
+    """Extract key/value pairs embedded in structured Docker log lines."""
+
+    if not message:
+        return {}
+
+    envelope: dict[str, str] = {}
+    for match in _DOCKER_LOG_FIELD_PATTERN.finditer(message):
+        key = match.group("key")
+        value = match.group("double") or match.group("single") or match.group("bare") or ""
+        decoded = _decode_docker_log_value(value)
+        if key not in envelope:
+            envelope[key] = decoded
+    return envelope
 
 
 def _resolve_windows_env_fallback(name: str) -> str | None:
@@ -1678,6 +1722,28 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
     backoff_hint: str | None = None
     last_seen: str | None = None
 
+    envelope = _parse_docker_log_envelope(message)
+
+    context_fields = (
+        "context",
+        "component",
+        "module",
+        "worker",
+        "namespace",
+        "service",
+        "scope",
+        "target",
+        "name",
+    )
+    for field in context_fields:
+        candidate = envelope.get(field)
+        if not candidate:
+            continue
+        normalized = _clean_worker_metadata_value(candidate)
+        if normalized:
+            metadata["docker_worker_context"] = normalized
+            break
+
     def _set_backoff_hint(candidate: str | None) -> None:
         nonlocal backoff_hint
         if backoff_hint is not None or not candidate:
@@ -1686,34 +1752,37 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
         if normalized:
             backoff_hint = normalized
 
-    for match in _WORKER_METADATA_TOKEN_PATTERN.finditer(message):
-        key = _normalise_worker_metadata_key(match.group("key"))
-        value = _clean_worker_metadata_value(match.group("value"))
-        if not key or not value:
-            continue
-
-        category = _classify_worker_metadata_key(key)
-
+    def _ingest_metadata_candidate(key: str | None, value: str | None) -> None:
+        nonlocal restart_count, last_error, backoff_hint, last_seen
+        if not key or value is None:
+            return
+        normalized_key = _normalise_worker_metadata_key(key)
+        cleaned_value = _clean_worker_metadata_value(value)
+        if not normalized_key or not cleaned_value:
+            return
+        category = _classify_worker_metadata_key(normalized_key)
         if category == "restart" and restart_count is None:
-            number_match = re.search(r"(-?\d+)", value)
+            number_match = re.search(r"(-?\d+)", cleaned_value)
             if number_match:
                 try:
                     restart_count = int(number_match.group(1))
                 except ValueError:
                     restart_count = None
-            continue
-
+            return
         if category == "error" and last_error is None:
-            last_error = value
-            continue
-
+            last_error = cleaned_value
+            return
         if category == "backoff":
-            _set_backoff_hint(value)
-            continue
-
+            _set_backoff_hint(cleaned_value)
+            return
         if category == "last_seen" and last_seen is None:
-            last_seen = value
-            continue
+            last_seen = cleaned_value
+
+    for key, value in envelope.items():
+        _ingest_metadata_candidate(key, value)
+
+    for match in _WORKER_METADATA_TOKEN_PATTERN.finditer(message):
+        _ingest_metadata_candidate(match.group("key"), match.group("value"))
 
     if restart_count is None:
         fallback_restart = re.search(
@@ -1780,22 +1849,36 @@ def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[
         if derived_backoff:
             backoff_hint = derived_backoff
 
+    if "docker_worker_context" not in metadata:
+        cleaned_message = re.sub(r"\s+", " ", _strip_control_sequences(message)).strip()
+        context_candidate = _extract_worker_context(message, cleaned_message)
+        if context_candidate:
+            metadata["docker_worker_context"] = context_candidate
+
+    context_value = metadata.get("docker_worker_context")
+    if context_value:
+        descriptors.append(f"Affected component: {context_value}.")
+
     if restart_count is not None and restart_count >= 0:
         metadata["docker_worker_restart_count"] = str(restart_count)
         plural = "s" if restart_count != 1 else ""
-        descriptors.append(f"{restart_count} restart{plural} observed")
+        descriptors.append(
+            f"Docker reported {restart_count} restart{plural} during diagnostics."
+        )
 
     if backoff_hint:
         metadata["docker_worker_backoff"] = backoff_hint
-        descriptors.append(f"reported backoff interval: {backoff_hint}")
+        descriptors.append(
+            f"Docker advertised a restart backoff interval of {backoff_hint}."
+        )
 
     if last_seen:
         metadata["docker_worker_last_restart"] = last_seen
-        descriptors.append(f"last restart marker: {last_seen}")
+        descriptors.append(f"Last restart marker emitted by Docker: {last_seen}.")
 
     if last_error:
         metadata["docker_worker_last_error"] = last_error
-        descriptors.append(f"last reported error: {last_error}")
+        descriptors.append(f"Most recent worker error: {last_error}.")
 
     return descriptors, metadata
 
@@ -1812,27 +1895,21 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     lowered = cleaned.lower()
     if "worker stalled" in lowered:
         metadata["docker_worker_health"] = "flapping"
-        context = _extract_worker_context(message, cleaned)
-        if context:
-            metadata["docker_worker_context"] = context
-
-        cleaned = (
-            "Docker Desktop reported repeated restarts of a background worker. "
-            "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
-            "allocate additional CPU/RAM to the Docker VM before retrying."
-        )
 
         descriptors, worker_metadata = _extract_worker_flapping_descriptors(message)
         metadata.update(worker_metadata)
 
-        detail_segments: list[str] = []
-        if context:
-            detail_segments.append(f"Affected component: {context}.")
-        if descriptors:
-            detail_segments.append("Additional context: " + "; ".join(descriptors) + ".")
+        headline = "Docker Desktop reported repeated restarts of a background worker."
+        remediation = (
+            "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
+            "allocate additional CPU/RAM to the Docker VM before retrying."
+        )
 
-        if detail_segments:
-            cleaned += " " + " ".join(detail_segments)
+        segments: list[str] = [headline]
+        if descriptors:
+            segments.extend(descriptors)
+        segments.append(remediation)
+        cleaned = " ".join(segment.strip() for segment in segments if segment.strip())
 
     return cleaned, metadata
 
