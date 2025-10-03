@@ -123,3 +123,34 @@ def test_ensure_windows_compatibility_adds_docker_directory(
     updated_path = os.environ["PATH"].split(";")
     formatted = bootstrap_env._format_windows_path_entry(str(docker_dir.resolve()))
     assert formatted in updated_path
+
+
+def test_iter_windows_docker_directories_includes_programdata_and_localappdata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    program_files = tmp_path / "Program Files"
+    program_files.mkdir(parents=True)
+    program_data_root = tmp_path / "ProgramData"
+    program_data_root.mkdir(parents=True)
+    local_appdata_root = tmp_path / "Users" / "tester" / "AppData" / "Local"
+    (local_appdata_root / "Programs" / "Docker" / "Docker" / "resources" / "bin").mkdir(
+        parents=True
+    )
+    (program_data_root / "DockerDesktop" / "version-bin").mkdir(parents=True)
+
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("ProgramData", str(program_data_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(local_appdata_root))
+
+    candidates = list(bootstrap_env._iter_windows_docker_directories())
+    normalized = {os.path.normcase(str(path)) for path in candidates}
+
+    expected_local = os.path.normcase(
+        str(local_appdata_root / "Programs" / "Docker" / "Docker" / "resources" / "bin")
+    )
+    expected_program_data = os.path.normcase(
+        str(program_data_root / "DockerDesktop" / "version-bin")
+    )
+
+    assert expected_local in normalized
+    assert expected_program_data in normalized

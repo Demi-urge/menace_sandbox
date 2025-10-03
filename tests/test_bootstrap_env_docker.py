@@ -97,3 +97,23 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
     assert any("Docker Desktop WSL distribution is stopped" in warning for warning in warnings)
     assert any(error == "WSL integration is disabled" for error in errors)
     assert metadata["wsl_integration"] == "disabled"
+
+
+def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
+    """Structured worker telemetry should be extracted from the warning payload."""
+
+    message = (
+        "WARNING[0000]: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=7 backoff=\"PT45S\" last_error='context deadline exceeded'"
+        " last_restart=2024-05-01T10:15:00Z"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "vpnkit" in cleaned
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "7"
+    assert metadata["docker_worker_backoff"].lower().startswith("pt45")
+    assert metadata["docker_worker_last_error"].lower().startswith("context deadline")
+    assert metadata["docker_worker_last_restart"] == "2024-05-01T10:15:00Z"
