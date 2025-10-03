@@ -1529,8 +1529,43 @@ _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+_WORKER_CONTEXT_BASE_KEYS = (
+    "context",
+    "component",
+    "module",
+    "id",
+    "name",
+    "worker",
+    "scope",
+    "subsystem",
+    "service",
+    "pipeline",
+    "task",
+    "unit",
+    "process",
+    "engine",
+    "backend",
+    "runner",
+    "channel",
+    "queue",
+    "thread",
+    "target",
+    "namespace",
+    "project",
+    "group",
+    "agent",
+    "executor",
+    "handler",
+)
+
+_WORKER_CONTEXT_KEY_PATTERN = (
+    r"(?P<key>(?:"
+    + "|".join(_WORKER_CONTEXT_BASE_KEYS)
+    + r")(?:(?:[._-][A-Za-z0-9]+)|(?:[A-Z][a-z0-9]+)|(?:\d+))*)"
+)
+
 _WORKER_CONTEXT_KV_PATTERN = re.compile(
-    rf"(?P<key>(?:context|component|module|id|name|worker|scope|subsystem|service|pipeline|task|unit|process|engine|backend|runner|channel|queue|thread|target|namespace|project|group|agent|executor|handler)(?:[._-][A-Za-z0-9]+)*)\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
+    rf"{_WORKER_CONTEXT_KEY_PATTERN}\s*(?:=|:)\s*(?P<value>{_WORKER_VALUE_PATTERN})",
     re.IGNORECASE,
 )
 
@@ -1903,18 +1938,27 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
                 weight = 20
                 key = match.groupdict().get("key", "")
                 key_normalized = key.lower() if key else ""
-                if key_normalized and any(sep in key_normalized for sep in {".", "-"}):
-                    key_normalized = re.split(r"[._-]", key_normalized, 1)[0]
-                if key_normalized in {"worker", "id", "name"}:
+                base_key = key_normalized
+                if key_normalized:
+                    if any(sep in key_normalized for sep in {".", "-", "_"}):
+                        base_key = re.split(r"[._-]", key_normalized, 1)[0]
+                    else:
+                        for candidate in _WORKER_CONTEXT_BASE_KEYS:
+                            if key_normalized.startswith(candidate):
+                                base_key = candidate
+                                break
+                if base_key in {"worker", "id", "name"}:
                     weight = 80
-                elif key_normalized in {"context", "component"}:
+                elif base_key in {"context", "component"}:
                     weight = 60
-                elif key_normalized in {"module"}:
+                elif base_key in {"module"}:
                     weight = 50
-                elif key_normalized in {
-                    "subsystem",
+                elif base_key in {"subsystem"}:
+                    weight = 58
+                elif base_key in {"scope"}:
+                    weight = 52
+                elif base_key in {
                     "service",
-                    "scope",
                     "pipeline",
                     "task",
                     "unit",
@@ -2318,7 +2362,7 @@ def _extract_worker_flapping_descriptors(
     def _score_context_key(key: str) -> int:
         lowered = key.lower()
         base = 0
-        if lowered in {"context", "worker", "component", "module", "namespace", "service", "scope", "target", "name"}:
+        if lowered in {"context", "worker", "component", "module", "namespace", "service", "scope", "subsystem", "target", "name"}:
             base = 90
         elif lowered.endswith("context"):
             base = 85

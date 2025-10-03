@@ -248,6 +248,20 @@ def test_normalise_docker_warning_extracts_subsystem_context() -> None:
     assert metadata["docker_worker_context"] == "background sync"
 
 
+def test_normalise_docker_warning_extracts_camel_case_context() -> None:
+    message = (
+        'warning: worker stalled; restarting componentName="vpnkitCore" '
+        'restartCount=3 lastError="worker stalled; restarting"'
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "vpnkitCore"
+    assert metadata["docker_worker_restart_count"] == "3"
+    assert metadata["docker_worker_last_error_code"] == "stalled_restart"
+
+
 def test_worker_restart_telemetry_from_metadata_collates_samples() -> None:
     metadata = {
         "docker_worker_context": "desktop-linux",
