@@ -4794,6 +4794,57 @@ def _parse_docker_json(
     return decoded, collected_warnings, warning_metadata
 
 
+def _summarize_docker_command_failure(
+    proc: subprocess.CompletedProcess[str],
+    command: str,
+) -> tuple[str, list[str], dict[str, str]]:
+    """Return a sanitized failure message and extracted warning metadata."""
+
+    components = []
+    if proc.stderr:
+        components.append(proc.stderr)
+    if proc.stdout:
+        components.append(proc.stdout)
+    combined = "\n".join(components)
+
+    normalized_stream = _strip_control_sequences(combined).replace("\r", "\n")
+    raw_lines = list(_coalesce_warning_lines(normalized_stream))
+
+    raw_warnings: list[str] = []
+    residual_lines: list[str] = []
+
+    for raw_line in raw_lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        cleaned_warning, _ = _normalise_docker_warning(stripped)
+        if cleaned_warning:
+            raw_warnings.append(stripped)
+            continue
+
+        normalized = _normalise_worker_stalled_phrase(stripped)
+        if "worker stalled" in normalized.lower():
+            normalized_error, detail, _ = _normalise_worker_error_message(
+                normalized,
+                raw_original=stripped,
+            )
+            residual_lines.append(detail or normalized_error or normalized)
+        else:
+            residual_lines.append(normalized)
+
+    normalized_warnings, metadata = _normalize_warning_collection(raw_warnings)
+    residual_text = "; ".join(line for line in residual_lines if line)
+    detail_text = residual_text or "; ".join(normalized_warnings)
+
+    message = (
+        f"docker {command} returned non-zero exit code {proc.returncode}: "
+        f"{detail_text or 'no diagnostic output provided'}"
+    )
+
+    return message, normalized_warnings, metadata
+
+
 def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str, str], list[str], list[str]]:
     """Gather Docker daemon metadata and associated warnings/errors."""
 
@@ -4810,11 +4861,13 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         return metadata, warnings, errors
 
     if version_proc.returncode != 0:
-        detail = version_proc.stderr.strip() or version_proc.stdout.strip()
-        errors.append(
-            "docker version returned non-zero exit code "
-            f"{version_proc.returncode}: {detail or 'no diagnostic output provided'}"
+        message, failure_warnings, failure_metadata = _summarize_docker_command_failure(
+            version_proc,
+            "version",
         )
+        warnings.extend(failure_warnings)
+        metadata.update(failure_metadata)
+        errors.append(message)
         return metadata, warnings, errors
 
     version_data, version_warnings, version_metadata = _parse_docker_json(
@@ -4853,11 +4906,13 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
         return metadata, warnings, errors
 
     if info_proc.returncode != 0:
-        detail = info_proc.stderr.strip() or info_proc.stdout.strip()
-        errors.append(
-            "docker info returned non-zero exit code "
-            f"{info_proc.returncode}: {detail or 'no diagnostic output provided'}"
+        message, failure_warnings, failure_metadata = _summarize_docker_command_failure(
+            info_proc,
+            "info",
         )
+        warnings.extend(failure_warnings)
+        metadata.update(failure_metadata)
+        errors.append(message)
         return metadata, warnings, errors
 
     info_data, info_warnings, info_metadata = _parse_docker_json(info_proc, "info")

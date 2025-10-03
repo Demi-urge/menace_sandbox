@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import types
 
 import pytest
@@ -133,6 +134,33 @@ def test_worker_error_code_guidance_enriches_classification() -> None:
     assert any("wsl --update" in step.lower() for step in assessment.remediation)
     guidance_key = "docker_worker_last_error_guidance_wsl_kernel_outdated"
     assert assessment.metadata[guidance_key].startswith("Update the WSL kernel")
+
+
+def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
+    """Non-zero docker exit codes should surface cleaned warnings and metadata."""
+
+    payload_stdout = "WARNING: worker stalled; restarting"
+    payload_stderr = (
+        "warning: worker stalled; restarting component=\"vpnkit\" restartCount=3\n"
+        "Error: context deadline exceeded"
+    )
+
+    completed = subprocess.CompletedProcess(
+        ["docker", "info"],
+        1,
+        payload_stdout,
+        payload_stderr,
+    )
+
+    message, warnings, metadata = bootstrap_env._summarize_docker_command_failure(
+        completed,
+        "info",
+    )
+
+    assert "worker stalled; restarting" not in message.lower()
+    assert "context deadline exceeded" in message
+    assert any("docker desktop reported" in warning.lower() for warning in warnings)
+    assert metadata["docker_worker_health"] == "flapping"
 
 
 def test_errcode_field_feeds_worker_error_guidance() -> None:
