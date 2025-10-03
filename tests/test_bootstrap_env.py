@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,33 @@ def test_extract_json_document_handles_warn_prefix_without_colon() -> None:
     assert json.loads(extracted)["Server"]["Version"] == "27.1"
     assert any("docker desktop reported" in warning.lower() for warning in warnings)
     assert metadata.get("docker_worker_context") == "moby/buildkit"
+
+
+def test_extract_json_document_coalesces_multiline_worker_warning() -> None:
+    payload = json.dumps({"Client": {"Version": "27.2"}})
+    stdout = textwrap.dedent(
+        """
+        WARNING: worker stalled; restarting
+            component="vpnkit" restarts=4 backoff=45s
+            last_error="context deadline exceeded"
+        {payload}
+        """
+    ).format(payload=payload)
+
+    extracted, warnings, metadata = bootstrap_env._extract_json_document(stdout, "")
+
+    assert extracted is not None
+    assert json.loads(extracted)["Client"]["Version"] == "27.2"
+    assert len(warnings) == 1
+    normalized = warnings[0].lower()
+    assert "worker stalled" not in normalized
+    assert "vpnkit" in normalized
+    assert "45s" in normalized
+    assert "context deadline exceeded" in normalized
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "4"
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert metadata["docker_worker_last_error"] == "context deadline exceeded"
 
 
 def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
