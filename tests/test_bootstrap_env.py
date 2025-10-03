@@ -298,6 +298,23 @@ def test_normalise_docker_warning_extracts_context_without_delimiter() -> None:
     assert metadata["docker_worker_last_error"] == "IO pressure"
 
 
+def test_normalise_docker_warning_handles_worker_stall_detected_variant() -> None:
+    """Variants such as ``worker stall detected`` should be normalised cleanly."""
+
+    message = (
+        "WARNING: worker stall detected; restarting component=\"vpnkit\" "
+        "restartCount=3"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stall detected" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "3"
+
+
 def test_worker_restart_telemetry_from_metadata_collates_samples() -> None:
     metadata = {
         "docker_worker_context": "desktop-linux",

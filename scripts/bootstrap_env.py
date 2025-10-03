@@ -1685,7 +1685,46 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
         return ""
 
     normalized = _rewrite_inline_worker_contexts(message)
+    normalized = _canonicalize_worker_stall_tokens(normalized)
     return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", normalized)
+
+
+_WORKER_STALL_CANONICALISERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE),
+    re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE),
+)
+
+
+def _canonicalize_worker_stall_tokens(message: str) -> str:
+    """Rewrite ``worker stall`` and ``worker stalling`` phrases to ``worker stalled``.
+
+    Docker Desktop on Windows occasionally emits diagnostics such as
+    ``worker stall detected; restarting``.  Earlier normalisation only matched
+    the literal ``worker stalled`` token which meant these variants slipped
+    through and the raw banner leaked into user facing logs.  To keep the
+    warning handling resilient we proactively harmonise these tokens so later
+    processing can treat every variation consistently.
+    """
+
+    if not message:
+        return ""
+
+    lowered = message.casefold()
+    if "worker" not in lowered or "stall" not in lowered:
+        return message
+
+    # Restrict rewrites to situations that look like restart diagnostics so we
+    # avoid clobbering unrelated log lines that mention stalls in other
+    # contexts (for example, a "queue worker stall threshold" configuration).
+    restart_markers = ("restart", "restarting", "restart-loop", "restart loop")
+    if not any(marker in lowered for marker in restart_markers):
+        return message
+
+    canonical = message
+    for pattern in _WORKER_STALL_CANONICALISERS:
+        canonical = pattern.sub("worker stalled", canonical)
+
+    return canonical
 
 
 _DOCKER_WARNING_PREFIX_PATTERN = re.compile(

@@ -237,3 +237,26 @@ def test_normalize_warnings_handles_worker_collections() -> None:
     assert metadata["docker_worker_restart_count"] == "3"
     backoff = metadata.get("docker_worker_backoff", "")
     assert backoff.endswith("s")
+
+
+def test_normalize_warnings_handles_worker_stall_detected_banner() -> None:
+    """Structured payloads using ``worker stall`` phrasing are canonicalised."""
+
+    payload = {
+        "vpnkit": {
+            "status": "worker stall detected; restarting",
+            "restartCount": 5,
+            "backoffSeconds": 10,
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert len(warnings) == 1
+    banner = warnings[0].lower()
+    assert "worker stall" not in banner
+    assert "vpnkit" in banner
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "5"
+    assert metadata["docker_worker_backoff"] == "10s"
