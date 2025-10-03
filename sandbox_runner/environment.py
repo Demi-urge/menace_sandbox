@@ -1941,6 +1941,7 @@ def _suspend_cleanup_workers(reason: str | None = None) -> None:
                 "cleanup suspension notice failed: %s", exc,
                 exc_info=True,
             )
+    _clear_watchdog_restart_history()
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
@@ -1962,6 +1963,18 @@ _CLEANUP_CURRENT_RUNTIME = {"cleanup": 0.0, "reaper": 0.0}
 _WORKER_ACTIVITY = {"cleanup": False, "reaper": False}
 _LAST_CLEANUP_TS = time.monotonic()
 _LAST_REAPER_TS = time.monotonic()
+
+_WATCHDOG_STALL_THRESHOLD = int(os.getenv("SANDBOX_WATCHDOG_STALL_THRESHOLD", "3"))
+_WATCHDOG_STALL_WINDOW = float(os.getenv("SANDBOX_WATCHDOG_STALL_WINDOW", "180"))
+_WATCHDOG_COOLDOWN_SECONDS = float(os.getenv("SANDBOX_WATCHDOG_COOLDOWN_SECONDS", "300"))
+_WATCHDOG_RECHECK_SECONDS = float(os.getenv("SANDBOX_WATCHDOG_RECHECK_SECONDS", "60"))
+_WATCHDOG_COOLDOWN_UNTIL: float | None = None
+_WATCHDOG_COOLDOWN_REASON: str | None = None
+_WATCHDOG_COOLDOWN_LOGGED = False
+_WORKER_RESTART_HISTORY: dict[str, deque[float]] = {
+    "cleanup": deque(maxlen=max(1, _WATCHDOG_STALL_THRESHOLD or 1)),
+    "reaper": deque(maxlen=max(1, _WATCHDOG_STALL_THRESHOLD or 1)),
+}
 
 # Optional cleanup of sandbox Docker volumes and networks
 _PRUNE_VOLUMES = str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower() not in {
@@ -2000,6 +2013,64 @@ FAILED_CLEANUP_FILE = _env_path(
     "sandbox_data/failed_cleanup.json",
     create=True,
 )
+
+
+def _clear_watchdog_restart_history(worker: str | None = None) -> None:
+    """Reset recorded watchdog restarts for *worker* or all workers."""
+
+    if worker is None:
+        for history in _WORKER_RESTART_HISTORY.values():
+            history.clear()
+        return
+    history = _WORKER_RESTART_HISTORY.get(worker)
+    if history is not None:
+        history.clear()
+
+
+def _note_watchdog_restart(worker: str, *, timestamp: float | None = None) -> bool:
+    """Record a watchdog initiated restart and return ``True`` on exhaustion."""
+
+    threshold = max(0, _WATCHDOG_STALL_THRESHOLD)
+    if threshold == 0:
+        return False
+
+    window = max(0.0, _WATCHDOG_STALL_WINDOW)
+    now = time.monotonic() if timestamp is None else timestamp
+    history = _WORKER_RESTART_HISTORY.setdefault(
+        worker, deque(maxlen=max(1, threshold))
+    )
+    history.append(now)
+
+    if window > 0:
+        while history and now - history[0] > window:
+            history.popleft()
+
+    return len(history) >= threshold
+
+
+def _enter_watchdog_cooldown(worker: str, reason: str) -> None:
+    """Pause cleanup workers following repeated watchdog stalls."""
+
+    global _WATCHDOG_COOLDOWN_UNTIL, _WATCHDOG_COOLDOWN_REASON, _WATCHDOG_COOLDOWN_LOGGED
+
+    duration = max(0.0, _WATCHDOG_COOLDOWN_SECONDS)
+    _WATCHDOG_COOLDOWN_REASON = reason
+    _WATCHDOG_COOLDOWN_LOGGED = False
+    try:
+        logger.error(reason)
+    except Exception as exc:
+        _fallback_logger().error(
+            "watchdog cooldown notice failed: %s", exc,
+            exc_info=True,
+        )
+    if duration <= 0:
+        _WATCHDOG_COOLDOWN_UNTIL = None
+        _suspend_cleanup_workers(reason)
+        return
+
+    _WATCHDOG_COOLDOWN_UNTIL = time.monotonic() + duration
+    _suspend_cleanup_workers(reason)
+
 
 # timestamp of last automatic purge
 _LAST_AUTOPURGE_FILE = _env_path(
@@ -5350,10 +5421,39 @@ def stop_container_event_listener() -> None:
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
     global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
+    global _WATCHDOG_COOLDOWN_UNTIL, _WATCHDOG_COOLDOWN_REASON, _WATCHDOG_COOLDOWN_LOGGED
     if _SANDBOX_DISABLE_CLEANUP:
         _log_cleanup_disabled("cleanup worker bootstrap")
         _suspend_cleanup_workers()
         return
+    cooldown_until = _WATCHDOG_COOLDOWN_UNTIL
+    if cooldown_until is not None:
+        now = time.monotonic()
+        if now < cooldown_until:
+            if not _WATCHDOG_COOLDOWN_LOGGED and _WATCHDOG_COOLDOWN_REASON:
+                try:
+                    logger.warning(
+                        "%s (%.1fs remaining)",
+                        _WATCHDOG_COOLDOWN_REASON,
+                        cooldown_until - now,
+                    )
+                except Exception:
+                    _fallback_logger().warning(
+                        "watchdog cooldown active (logging failed)",
+                        exc_info=True,
+                    )
+                _WATCHDOG_COOLDOWN_LOGGED = True
+            return
+        if not _docker_available():
+            backoff = max(0.0, _WATCHDOG_RECHECK_SECONDS)
+            if backoff > 0:
+                _WATCHDOG_COOLDOWN_UNTIL = now + backoff
+                _WATCHDOG_COOLDOWN_LOGGED = False
+                return
+        _WATCHDOG_COOLDOWN_UNTIL = None
+        _WATCHDOG_COOLDOWN_REASON = None
+        _WATCHDOG_COOLDOWN_LOGGED = False
+        _clear_watchdog_restart_history()
     if _DOCKER_CLIENT is None:
         _suspend_cleanup_workers()
         return
@@ -5478,37 +5578,88 @@ def watchdog_check() -> None:
     cleanup_elapsed = now - _LAST_CLEANUP_TS
     reaper_elapsed = now - _LAST_REAPER_TS
 
-    if _WORKER_ACTIVITY.get("cleanup") and cleanup_elapsed > cleanup_limit:
-        logger.warning("cleanup worker stalled; restarting")
-        try:
-            if _CLEANUP_TASK is not None:
-                _CLEANUP_TASK.cancel()
-        finally:
-            budget.note_restart("cleanup")
-            _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
-            if _CLEANUP_TASK is None:
-                _run_cleanup_sync()
-            else:
-                _update_worker_heartbeat("cleanup")
-                _WORKER_ACTIVITY["cleanup"] = False
-    elif cleanup_elapsed <= cleanup_limit_base:
-        budget.reset("cleanup")
+    if _WORKER_ACTIVITY.get("cleanup"):
+        if cleanup_elapsed > cleanup_limit:
+            restart_exhausted = _note_watchdog_restart("cleanup", timestamp=now)
+            if restart_exhausted:
+                reason_parts = [
+                    "cleanup watchdog detected repeated stalls",
+                ]
+                threshold = max(0, _WATCHDOG_STALL_THRESHOLD)
+                if threshold:
+                    reason_parts.append(f"after {threshold} restarts")
+                window = max(0.0, _WATCHDOG_STALL_WINDOW)
+                if window:
+                    reason_parts.append(f"within {window:.0f}s")
+                cooldown = max(0.0, _WATCHDOG_COOLDOWN_SECONDS)
+                if cooldown:
+                    reason_parts.append(
+                        f"— pausing docker maintenance for {cooldown:.0f}s"
+                    )
+                reason_parts.append(
+                    "Ensure Docker Desktop or the remote daemon is reachable,"
+                )
+                reason_parts.append("especially when running under Docker for Windows.")
+                _enter_watchdog_cooldown("cleanup", " ".join(reason_parts))
+                return
+            logger.warning("cleanup worker stalled; restarting")
+            try:
+                if _CLEANUP_TASK is not None:
+                    _CLEANUP_TASK.cancel()
+            finally:
+                budget.note_restart("cleanup")
+                _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+                if _CLEANUP_TASK is None:
+                    _run_cleanup_sync()
+                else:
+                    _update_worker_heartbeat("cleanup")
+                    _WORKER_ACTIVITY["cleanup"] = False
+        elif cleanup_elapsed <= cleanup_limit_base:
+            budget.reset("cleanup")
+            _clear_watchdog_restart_history("cleanup")
+    else:
+        _clear_watchdog_restart_history("cleanup")
 
-    if _WORKER_ACTIVITY.get("reaper") and reaper_elapsed > reaper_limit:
-        logger.warning("reaper worker stalled; restarting")
-        try:
-            if _REAPER_TASK is not None:
-                _REAPER_TASK.cancel()
-        finally:
-            budget.note_restart("reaper")
-            _REAPER_TASK = _schedule_coroutine(_reaper_worker())
-            if _REAPER_TASK is None:
-                _run_cleanup_sync()
-            else:
-                _update_worker_heartbeat("reaper")
-                _WORKER_ACTIVITY["reaper"] = False
-    elif reaper_elapsed <= reaper_limit_base:
-        budget.reset("reaper")
+    if _WORKER_ACTIVITY.get("reaper"):
+        if reaper_elapsed > reaper_limit:
+            restart_exhausted = _note_watchdog_restart("reaper", timestamp=now)
+            if restart_exhausted:
+                reason_parts = [
+                    "reaper watchdog detected repeated stalls",
+                ]
+                threshold = max(0, _WATCHDOG_STALL_THRESHOLD)
+                if threshold:
+                    reason_parts.append(f"after {threshold} restarts")
+                window = max(0.0, _WATCHDOG_STALL_WINDOW)
+                if window:
+                    reason_parts.append(f"within {window:.0f}s")
+                cooldown = max(0.0, _WATCHDOG_COOLDOWN_SECONDS)
+                if cooldown:
+                    reason_parts.append(
+                        f"— pausing docker maintenance for {cooldown:.0f}s"
+                    )
+                reason_parts.append(
+                    "Verify Docker connectivity before resuming sandbox cleanup.",
+                )
+                _enter_watchdog_cooldown("reaper", " ".join(reason_parts))
+                return
+            logger.warning("reaper worker stalled; restarting")
+            try:
+                if _REAPER_TASK is not None:
+                    _REAPER_TASK.cancel()
+            finally:
+                budget.note_restart("reaper")
+                _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+                if _REAPER_TASK is None:
+                    _run_cleanup_sync()
+                else:
+                    _update_worker_heartbeat("reaper")
+                    _WORKER_ACTIVITY["reaper"] = False
+        elif reaper_elapsed <= reaper_limit_base:
+            budget.reset("reaper")
+            _clear_watchdog_restart_history("reaper")
+    else:
+        _clear_watchdog_restart_history("reaper")
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")
