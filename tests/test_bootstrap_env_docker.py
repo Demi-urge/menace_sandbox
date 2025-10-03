@@ -122,3 +122,20 @@ def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> Non
     assert metadata["docker_worker_backoff"].lower().startswith("pt45")
     assert metadata["docker_worker_last_error"].lower().startswith("context deadline")
     assert metadata["docker_worker_last_restart"] == "2024-05-01T10:15:00Z"
+
+
+def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
+    """Parenthetical worker telemetry should not leak closing punctuation."""
+
+    message = (
+        "WARNING: worker stalled; restarting in 5s (context=background-sync) "
+        "(lastError=EOF)"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "background-sync" in cleaned
+    assert metadata["docker_worker_context"] == "background-sync"
+    assert metadata["docker_worker_backoff"] == "5s"
+    assert metadata["docker_worker_last_error"] == "EOF"
+    assert metadata["docker_worker_last_error_raw"] == "EOF)"
