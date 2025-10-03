@@ -344,3 +344,38 @@ def test_normalize_warnings_handles_worker_stall_detected_banner() -> None:
     assert metadata["docker_worker_context"] == "vpnkit"
     assert metadata["docker_worker_restart_count"] == "5"
     assert metadata["docker_worker_backoff"] == "10s"
+
+
+def test_structured_warning_component_name_context() -> None:
+    """CamelCase component keys should still drive context detection."""
+
+    payload = {
+        "level": "warning",
+        "message": "worker stalled; restarting",
+        "componentName": "vpnkitCore",
+        "restartCount": 5,
+        "backoffSeconds": 45,
+        "lastError": "vpnkit health-check timed out",
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    assert metadata["docker_worker_context"] == "vpnkitCore"
+    assert any("vpnkitcore" in warning.lower() for warning in warnings)
+    assert "worker stalled; restarting" not in warnings[0].lower()
+
+
+def test_worker_context_extraction_ignores_backoff_tokens() -> None:
+    """Backoff metadata should not masquerade as the affected worker name."""
+
+    message = (
+        "WARNING: worker stalled; restarting backoff=45s "
+        "lastError=\"vpnkit health-check timed out\" restartCount=5"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert metadata["docker_worker_backoff"] == "45s"
+    assert "docker_worker_context" not in metadata
