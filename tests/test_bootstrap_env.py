@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -69,3 +71,41 @@ def test_ensure_windows_compatibility_injects_scripts_directory(monkeypatch: pyt
     path_entries = os.environ["PATH"].split(os.pathsep)
     assert expected in path_entries
     assert os.environ["PATHEXT"]
+
+
+def test_collect_docker_diagnostics_missing_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: False)
+    monkeypatch.setattr(bootstrap_env.shutil, "which", lambda _: None)
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.1)
+
+    assert result.cli_path is None
+    assert result.available is False
+    assert any("Docker CLI" in error for error in result.errors)
+
+
+def test_collect_docker_diagnostics_reports_server_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_cli = tmp_path / "docker"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: False)
+    monkeypatch.setattr(bootstrap_env.shutil, "which", lambda _: str(fake_cli))
+
+    def _fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if "version" in cmd:
+            payload = json.dumps({"Client": {"Version": "26.0", "ApiVersion": "1.45"}, "Server": {}})
+            return subprocess.CompletedProcess(cmd, 0, payload, "")
+        return subprocess.CompletedProcess(cmd, 1, "", "error during connect")
+
+    monkeypatch.setattr(bootstrap_env.subprocess, "run", _fake_run)
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.1)
+
+    assert result.cli_path == fake_cli
+    assert result.available is False
+    assert any("daemon" in error.lower() or "server" in error.lower() for error in result.errors)
+    assert result.metadata["cli_path"] == str(fake_cli)

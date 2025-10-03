@@ -8,16 +8,19 @@ startup verification when working offline or without Stripe credentials.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 import sysconfig
 from functools import lru_cache
 import ntpath
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Iterable, Mapping
+from pathlib import Path, PureWindowsPath
+from typing import Callable, Iterable, Mapping, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,6 +70,10 @@ LOGGER = logging.getLogger(__name__)
 
 class BootstrapError(RuntimeError):
     """Raised when the environment bootstrap process cannot proceed."""
+
+
+_DOCKER_SKIP_ENV = "MENACE_BOOTSTRAP_SKIP_DOCKER_CHECK"
+_DOCKER_REQUIRE_ENV = "MENACE_REQUIRE_DOCKER"
 
 
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
@@ -316,8 +323,83 @@ def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
         yield Path(venv_root) / "Scripts"
 
 
+def _iter_windows_docker_directories() -> Iterable[Path]:
+    """Yield directories that commonly contain Docker Desktop CLIs on Windows."""
+
+    candidates: list[Path] = []
+    for env_var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        value = os.environ.get(env_var)
+        if value:
+            candidates.append(Path(value))
+
+    if not candidates:
+        candidates.extend(
+            Path(path)
+            for path in (r"C:\\Program Files", r"C:\\Program Files (x86)")
+        )
+
+    seen: set[str] = set()
+    for root in candidates:
+        target = root / "Docker" / "Docker" / "resources" / "bin"
+        key = os.path.normcase(str(target))
+        if key in seen:
+            continue
+        seen.add(key)
+        yield target
+
+
+def _convert_windows_path_to_wsl(path: Path) -> Path | None:
+    """Return the WSL representation of ``path`` if it targets a Windows drive."""
+
+    try:
+        windows_path = PureWindowsPath(path)
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+    drive = windows_path.drive.rstrip(":")
+    if not drive:
+        return None
+
+    segments = list(windows_path.parts[1:])
+    if not segments:
+        return None
+
+    converted = Path("/mnt") / drive.lower()
+    for segment in segments:
+        converted /= segment
+    return converted
+
+
+def _iter_wsl_docker_directories() -> Iterable[Path]:
+    """Yield Docker CLI directories exposed via Windows when running inside WSL."""
+
+    for candidate in _iter_windows_docker_directories():
+        converted = _convert_windows_path_to_wsl(candidate)
+        if converted is not None:
+            yield converted
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+@lru_cache(maxsize=None)
+def _is_wsl() -> bool:
+    """Return ``True`` when executing inside the Windows Subsystem for Linux."""
+
+    if _is_windows():
+        return False
+
+    indicators = []
+    for probe in ("/proc/sys/kernel/osrelease", "/proc/version"):
+        try:
+            with open(probe, "r", encoding="utf-8", errors="ignore") as fh:
+                indicators.append(fh.read())
+        except OSError:
+            continue
+
+    signature = "\n".join(indicators)
+    return "Microsoft" in signature or "WSL" in signature
 
 
 @lru_cache(maxsize=None)
@@ -465,6 +547,8 @@ def _ensure_windows_compatibility() -> None:
 
     scripts_dirs: list[Path] = []
     normalized_updates: list[tuple[str, str]] = []
+    docker_dirs: list[Path] = []
+    docker_updates: list[tuple[str, str]] = []
     executable = Path(sys.executable)
     candidates = list(_iter_windows_script_candidates(executable))
 
@@ -504,6 +588,40 @@ def _ensure_windows_compatibility() -> None:
         normalized_updates.append((existing_entry, preferred))
         updated = True
 
+    docker_insertion_index = len(scripts_dirs)
+    docker_candidates = list(_iter_windows_docker_directories())
+    for candidate in docker_candidates:
+        try:
+            candidate_resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        if not candidate_resolved.exists():
+            continue
+        key = _format_windows_path_entry(str(candidate_resolved))
+        normalized_key = normalizer(_strip_windows_quotes(key))
+        existing_entry = seen.get(normalized_key)
+        if existing_entry is None:
+            seen[normalized_key] = key
+            ordered_entries.insert(docker_insertion_index, key)
+            docker_dirs.append(candidate_resolved)
+            docker_insertion_index += 1
+            updated = True
+            continue
+
+        preferred = _choose_preferred_path_entry(existing_entry, key, normalizer)
+        if preferred == existing_entry:
+            continue
+        try:
+            index = ordered_entries.index(existing_entry)
+        except ValueError:
+            ordered_entries.insert(docker_insertion_index, preferred)
+            docker_insertion_index += 1
+        else:
+            ordered_entries[index] = preferred
+        seen[normalized_key] = preferred
+        docker_updates.append((existing_entry, preferred))
+        updated = True
+
     if updated or deduplicated:
         new_path = os.pathsep.join(ordered_entries)
         _set_windows_path(new_path)
@@ -513,12 +631,25 @@ def _ensure_windows_compatibility() -> None:
                     "Ensured Windows PATH contains Scripts directories: %s",
                     ", ".join(str(path) for path in scripts_dirs),
                 )
+            if docker_dirs:
+                LOGGER.info(
+                    "Ensured Windows PATH contains Docker CLI directories: %s",
+                    ", ".join(str(path) for path in docker_dirs),
+                )
             if normalized_updates:
                 LOGGER.info(
                     "Normalized existing Windows PATH entries: %s",
                     ", ".join(
                         f"{original!r} -> {updated_entry!r}"
                         for original, updated_entry in normalized_updates
+                    ),
+                )
+            if docker_updates:
+                LOGGER.info(
+                    "Normalized existing Docker PATH entries: %s",
+                    ", ".join(
+                        f"{original!r} -> {updated_entry!r}"
+                        for original, updated_entry in docker_updates
                     ),
                 )
         elif deduplicated:
@@ -571,8 +702,283 @@ def _prepare_environment(config: BootstrapConfig) -> Path | None:
     return resolved_env_file
 
 
+@dataclass(frozen=True)
+class DockerDiagnosticResult:
+    """Outcome of Docker environment verification."""
+
+    cli_path: Path | None
+    available: bool
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+    metadata: Mapping[str, str]
+
+
+def _discover_docker_cli() -> tuple[Path | None, list[str]]:
+    """Locate the Docker CLI executable if available."""
+
+    warnings: list[str] = []
+    for executable in ("docker", "docker.exe", "com.docker.cli", "com.docker.cli.exe"):
+        discovered = shutil.which(executable)
+        if not discovered:
+            continue
+        path = Path(discovered)
+        if _is_windows() and path.name.lower() == "com.docker.cli.exe":
+            warnings.append(
+                "Resolved Docker CLI via com.docker.cli.exe shim; docker.exe alias was not present on PATH"
+            )
+        return path, warnings
+
+    if _is_windows():
+        for directory in _iter_windows_docker_directories():
+            for candidate in ("docker.exe", "com.docker.cli.exe"):
+                target = directory / candidate
+                if target.exists():
+                    return target, warnings
+        warnings.append(
+            "Docker Desktop installation was not discovered in standard locations. "
+            "Install Docker Desktop or ensure docker.exe is on PATH."
+        )
+    elif _is_wsl():
+        for directory in _iter_wsl_docker_directories():
+            for candidate in ("docker.exe", "com.docker.cli.exe"):
+                target = directory / candidate
+                if target.exists():
+                    warnings.append(
+                        "Using Windows Docker CLI through WSL interop. Consider enabling the "
+                        "Docker Desktop WSL integration for improved reliability."
+                    )
+                    return target, warnings
+
+    return None, warnings
+
+
+def _run_docker_command(
+    cli_path: Path,
+    args: Sequence[str],
+    *,
+    timeout: float,
+) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    """Execute a Docker CLI command and capture failures as textual diagnostics."""
+
+    command = [str(cli_path), *args]
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return completed, None
+    except FileNotFoundError:
+        return None, f"Docker executable '{cli_path}' is not accessible"
+    except subprocess.TimeoutExpired:
+        rendered = " ".join(args)
+        return None, (
+            f"Docker command '{rendered}' timed out after {timeout:.1f}s; "
+            "ensure Docker Desktop is running and responsive"
+        )
+    except OSError as exc:  # pragma: no cover - environment specific
+        rendered = " ".join(args)
+        return None, f"Failed to execute docker {rendered!s}: {exc}"
+
+
+def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str, str], list[str], list[str]]:
+    """Gather Docker daemon metadata and associated warnings/errors."""
+
+    metadata: dict[str, str] = {}
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    version_proc, failure = _run_docker_command(cli_path, ["version", "--format", "{{json .}}"], timeout=timeout)
+    if failure:
+        errors.append(failure)
+        return metadata, warnings, errors
+
+    if version_proc is None:
+        return metadata, warnings, errors
+
+    if version_proc.returncode != 0:
+        detail = version_proc.stderr.strip() or version_proc.stdout.strip()
+        errors.append(
+            "docker version returned non-zero exit code "
+            f"{version_proc.returncode}: {detail or 'no diagnostic output provided'}"
+        )
+        return metadata, warnings, errors
+
+    payload = version_proc.stdout.strip()
+    if payload:
+        try:
+            version_data = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            warnings.append(f"Failed to parse docker version payload: {exc}")
+        else:
+            client_data = version_data.get("Client", {}) if isinstance(version_data, dict) else {}
+            server_data = version_data.get("Server", {}) if isinstance(version_data, dict) else {}
+            client_version = str(client_data.get("Version", "")).strip()
+            api_version = str(client_data.get("ApiVersion", "")).strip()
+            server_version = str(server_data.get("Version", "")).strip()
+            if client_version:
+                metadata["client_version"] = client_version
+            if api_version:
+                metadata["api_version"] = api_version
+            if server_version:
+                metadata["server_version"] = server_version
+            else:
+                errors.append(
+                    "Docker daemon appears to be unavailable; version output omitted server details. "
+                    "Start Docker Desktop or connect to a reachable daemon."
+                )
+    else:
+        warnings.append("docker version produced no output")
+
+    if errors:
+        return metadata, warnings, errors
+
+    info_proc, failure = _run_docker_command(cli_path, ["info", "--format", "{{json .}}"], timeout=timeout)
+    if failure:
+        errors.append(failure)
+        return metadata, warnings, errors
+
+    if info_proc is None:
+        return metadata, warnings, errors
+
+    if info_proc.returncode != 0:
+        detail = info_proc.stderr.strip() or info_proc.stdout.strip()
+        errors.append(
+            "docker info returned non-zero exit code "
+            f"{info_proc.returncode}: {detail or 'no diagnostic output provided'}"
+        )
+        return metadata, warnings, errors
+
+    info_payload = info_proc.stdout.strip()
+    if info_payload:
+        try:
+            info_data = json.loads(info_payload)
+        except json.JSONDecodeError as exc:
+            warnings.append(f"Failed to parse docker info payload: {exc}")
+        else:
+            if isinstance(info_data, dict):
+                for key, metadata_key in (
+                    ("ServerVersion", "server_version"),
+                    ("OperatingSystem", "operating_system"),
+                    ("OSType", "os_type"),
+                    ("Architecture", "architecture"),
+                    ("DockerRootDir", "root_dir"),
+                ):
+                    value = str(info_data.get(key, "")).strip()
+                    if value and metadata_key not in metadata:
+                        metadata[metadata_key] = value
+
+                warnings_field = info_data.get("Warnings")
+                if isinstance(warnings_field, str) and warnings_field:
+                    warnings.append(warnings_field)
+                elif isinstance(warnings_field, Iterable):
+                    warnings.extend(str(item) for item in warnings_field if item)
+
+                if _is_windows() or _is_wsl():
+                    context = str(info_data.get("Name", "")).strip()
+                    if context and context.lower() not in {"docker-desktop", "desktop-linux"}:
+                        warnings.append(
+                            "Docker context '%s' is active; Docker Desktop typically uses 'docker-desktop'. "
+                            "Verify that the desired context is selected before launching sandboxes."
+                            % context
+                        )
+            else:  # pragma: no cover - unexpected payloads
+                warnings.append("docker info returned an unexpected payload structure")
+    else:
+        warnings.append("docker info produced no output")
+
+    return metadata, warnings, errors
+
+
+def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult:
+    """Inspect the Docker environment and return detailed diagnostics."""
+
+    cli_path, cli_warnings = _discover_docker_cli()
+    warnings = list(cli_warnings)
+    errors: list[str] = []
+    metadata: dict[str, str] = {}
+
+    if cli_path is None:
+        errors.append(
+            "Docker CLI executable was not found. Install Docker Desktop or ensure 'docker' is on PATH."
+        )
+        return DockerDiagnosticResult(
+            cli_path=None,
+            available=False,
+            errors=tuple(errors),
+            warnings=tuple(warnings),
+            metadata={},
+        )
+
+    metadata["cli_path"] = str(cli_path)
+
+    probe_metadata, probe_warnings, probe_errors = _probe_docker_environment(cli_path, timeout)
+    metadata.update(probe_metadata)
+    warnings.extend(probe_warnings)
+    errors.extend(probe_errors)
+
+    available = not errors
+
+    return DockerDiagnosticResult(
+        cli_path=cli_path,
+        available=available,
+        errors=tuple(errors),
+        warnings=tuple(warnings),
+        metadata=metadata,
+    )
+
+
+def _bool_env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _verify_docker_environment() -> None:
+    """Perform Docker diagnostics and surface actionable guidance to the user."""
+
+    if _bool_env_flag(_DOCKER_SKIP_ENV):
+        LOGGER.info(
+            "Skipping Docker diagnostics due to %s environment override",
+            _DOCKER_SKIP_ENV,
+        )
+        return
+
+    diagnostics = _collect_docker_diagnostics()
+
+    for warning in diagnostics.warnings:
+        LOGGER.warning("Docker diagnostic warning: %s", warning)
+
+    if diagnostics.available:
+        details = {
+            key: value
+            for key, value in diagnostics.metadata.items()
+            if key in {"server_version", "operating_system", "os_type", "architecture", "cli_path"}
+            and value
+        }
+        if details:
+            summary = ", ".join(f"{key}={value}" for key, value in sorted(details.items()))
+            LOGGER.info("Docker daemon reachable (%s)", summary)
+        return
+
+    for error in diagnostics.errors:
+        LOGGER.warning("Docker diagnostic error: %s", error)
+
+    if _bool_env_flag(_DOCKER_REQUIRE_ENV):
+        raise BootstrapError(
+            "Docker environment verification failed and %s is set. "
+            "Review the diagnostic warnings above before retrying." % _DOCKER_REQUIRE_ENV
+        )
+
+
 def _run_bootstrap(config: BootstrapConfig) -> None:
     resolved_env_file = _prepare_environment(config)
+
+    _verify_docker_environment()
 
     from menace.bootstrap_policy import PolicyLoader
     from menace.environment_bootstrap import EnvironmentBootstrapper
