@@ -2784,24 +2784,54 @@ def _stringify_structured_warning(
         if path_hint:
             context_hint = _clean_worker_metadata_value(path_hint) or path_hint
 
-    message: str | None = None
-    for candidate in _WARNING_STRUCTURED_MESSAGE_KEYS:
-        value = canonical.get(candidate)
-        if not value:
-            continue
-        cleaned = _clean_worker_metadata_value(value)
-        if cleaned:
-            message = cleaned
-            break
-    if not message:
+    def _select_preferred_warning_message() -> str | None:
+        """Return the most informative textual summary from ``canonical``."""
+
+        candidates: list[tuple[int, int, str]] = []
+
+        for field in _WARNING_STRUCTURED_MESSAGE_KEYS:
+            value = canonical.get(field)
+            if not value:
+                continue
+            cleaned = _clean_worker_metadata_value(value)
+            if not cleaned:
+                continue
+
+            normalized = cleaned.casefold()
+            score = 0
+
+            if _contains_worker_stall_signal(cleaned):
+                score += 100
+            elif "restart" in normalized or "error" in normalized:
+                score += 35
+
+            if field in {"status_message", "statusmessage", "status_text"}:
+                score += 25
+            elif field in {"message", "warning", "detail", "description", "summary"}:
+                score += 20
+            elif field == "status":
+                score -= 10
+
+            # Prefer richer narratives when scores tie so guidance includes the
+            # most context available.
+            candidates.append((score, len(cleaned), cleaned))
+
+        if candidates:
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            best = candidates[-1]
+            return best[2]
+
         for fallback in ("last_error", "last_error_message", "error"):
             value = canonical.get(fallback)
             if not value:
                 continue
             cleaned = _clean_worker_metadata_value(value)
             if cleaned:
-                message = cleaned
-                break
+                return cleaned
+
+        return None
+
+    message = _select_preferred_warning_message()
 
     token_map: dict[str, str] = {}
     for canonical_key, raw_value in canonical.items():
@@ -4153,6 +4183,11 @@ def _scrub_residual_worker_warnings(
             continue
 
         if not _contains_worker_stall_signal(message):
+            rewritten.append(message)
+            continue
+
+        lowered = message.casefold()
+        if "docker desktop reported repeated restarts" in lowered:
             rewritten.append(message)
             continue
 
