@@ -163,6 +163,26 @@ def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     assert metadata["docker_worker_context"] == "background-sync"
 
 
+def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
+    payload = (
+        "  NAME                   STATE           VERSION\n"
+        "* Ubuntu-22.04           Running         2\n"
+        "  docker-desktop         Stopped         2\n"
+        "  docker-desktop-data    Running         2\n"
+        "  Custom Distro Name     Installing      1\n"
+    )
+
+    rows = bootstrap_env._parse_wsl_distribution_table(payload)
+
+    assert any(row["is_default"] for row in rows)
+    desktop_entry = next(row for row in rows if row["name"] == "docker-desktop")
+    assert desktop_entry["state"] == "Stopped"
+    assert desktop_entry["version"] == "2"
+    custom_entry = next(row for row in rows if row["name"] == "Custom Distro Name")
+    assert custom_entry["state"] == "Installing"
+    assert custom_entry["version"] == "1"
+
+
 def test_parse_docker_json_surfaces_non_json_output() -> None:
     completed = subprocess.CompletedProcess(
         ["docker", "info"],
@@ -176,3 +196,36 @@ def test_parse_docker_json_surfaces_non_json_output() -> None:
     assert data is None
     assert any("no json" in warning.lower() for warning in warnings)
     assert metadata == {}
+
+
+def test_collect_windows_virtualization_insights_reports_inactive_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload_status = "Default Version: 2\nWSL version: 1.2.5.0"
+    payload_list = (
+        "  NAME                   STATE           VERSION\n"
+        "* Ubuntu-22.04           Stopped         2\n"
+        "  docker-desktop         Stopped         2\n"
+        "  docker-desktop-data    Running         2\n"
+    )
+
+    def _fake_run(command: list[str], *, timeout: float) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+        if command[:2] == ["wsl.exe", "--status"]:
+            return subprocess.CompletedProcess(command, 0, payload_status, ""), None
+        if command[:3] == ["wsl.exe", "-l", "-v"]:
+            return subprocess.CompletedProcess(command, 0, payload_list, ""), None
+        if "Microsoft-Hyper-V-All" in command[-1]:
+            return subprocess.CompletedProcess(command, 0, "Enabled\n", ""), None
+        if "VirtualMachinePlatform" in command[-1]:
+            return subprocess.CompletedProcess(command, 0, "Enabled\n", ""), None
+        if "vmcompute" in command[-1]:
+            return subprocess.CompletedProcess(command, 0, "Stopped\n", ""), None
+        raise AssertionError(f"Unexpected command: {command}")
+
+    monkeypatch.setattr(bootstrap_env, "_run_command", _fake_run)
+
+    warnings, errors, metadata = bootstrap_env._collect_windows_virtualization_insights(timeout=0.1)
+
+    assert any("default wsl distribution" in warning.lower() for warning in warnings)
+    assert any("docker desktop" in error.lower() for error in errors)
+    assert any("vmcompute" in error.lower() for error in errors)
+    assert metadata["wsl_distro_docker_desktop_state"] == "Stopped"
+    assert metadata["vmcompute_status"].lower() == "stopped"
