@@ -220,6 +220,71 @@ def test_normalise_docker_warning_extracts_subsystem_context() -> None:
     assert metadata["docker_worker_context"] == "background sync"
 
 
+def test_worker_restart_telemetry_from_metadata_collates_samples() -> None:
+    metadata = {
+        "docker_worker_context": "desktop-linux",
+        "docker_worker_contexts": "desktop-linux, background-sync",
+        "docker_worker_restart_count": "5",
+        "docker_worker_restart_count_samples": "3, 5, 5",
+        "docker_worker_backoff": "45s",
+        "docker_worker_backoff_options": "10s; 45s; 90s",
+        "docker_worker_last_restart": "2024-07-01T12:00:00Z",
+        "docker_worker_last_restart_samples": "2024-07-01T11:00:00Z, 2024-07-01T12:00:00Z",
+        "docker_worker_last_error": "context canceled",
+        "docker_worker_last_error_samples": "context canceled; deadline exceeded",
+    }
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+
+    assert telemetry.all_contexts == ("desktop-linux", "background-sync")
+    assert telemetry.max_restart_count == 5
+    assert telemetry.restart_samples == (3, 5)
+    assert telemetry.backoff_hint == "45s"
+    assert telemetry.backoff_options == ("10s", "45s", "90s")
+    assert telemetry.all_last_restarts == (
+        "2024-07-01T12:00:00Z",
+        "2024-07-01T11:00:00Z",
+    )
+    assert telemetry.all_last_errors == ("context canceled", "deadline exceeded")
+
+
+def test_classify_worker_flapping_surfaces_aggregated_diagnostics() -> None:
+    telemetry = bootstrap_env.WorkerRestartTelemetry(
+        context="desktop-linux",
+        restart_count=7,
+        backoff_hint="45s",
+        last_seen="2024-07-01T12:00:00Z",
+        last_error="context canceled",
+        contexts=("background-sync",),
+        restart_samples=(3, 7),
+        backoff_options=("10s", "45s", "90s"),
+        last_restart_samples=("2024-07-01T11:30:00Z",),
+        last_error_samples=("deadline exceeded", "network jitter"),
+    )
+
+    context = bootstrap_env.RuntimeContext(
+        platform="Windows",
+        is_windows=True,
+        is_wsl=False,
+        inside_container=False,
+        container_runtime=None,
+        container_indicators=(),
+        is_ci=False,
+        ci_indicators=(),
+    )
+
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
+
+    assert assessment.severity == "error"
+    joined_details = " ".join(assessment.details)
+    assert "desktop-linux" in joined_details
+    assert "background-sync" in joined_details
+    assert "up to 7" in joined_details
+    assert "Additional backoff intervals observed" in joined_details
+    assert "Restart markers captured" in joined_details
+    assert any("Hyper-V" in hint for hint in assessment.remediation)
+
+
 def test_normalise_docker_warning_strips_ansi_sequences() -> None:
     message = "\x1b[33mWARN[0032] moby/buildkit: worker stalled; restarting\x1b[0m"
 

@@ -193,6 +193,78 @@ def _coalesce_iterable(values: Iterable[str]) -> list[str]:
     return unique
 
 
+def _split_metadata_values(value: str | None) -> list[str]:
+    """Return a list of normalised entries parsed from a metadata field."""
+
+    if not value:
+        return []
+
+    if not isinstance(value, str):  # pragma: no cover - defensive guardrail
+        value = str(value)
+
+    tokens: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+    quote: str | None = None
+
+    pairing = {"(": ")", "[": "]", "{": "}"}
+    closing = {v: k for k, v in pairing.items()}
+
+    for char in value:
+        if quote:
+            buffer.append(char)
+            if char == quote and (len(buffer) < 2 or buffer[-2] != "\\"):
+                quote = None
+            continue
+
+        if char in {'"', "'"}:
+            quote = char
+            buffer.append(char)
+            continue
+
+        if char in pairing:
+            depth += 1
+            buffer.append(char)
+            continue
+
+        if char in closing and depth > 0:
+            depth = max(0, depth - 1)
+            buffer.append(char)
+            continue
+
+        if depth == 0 and char in {",", ";", "\n"}:
+            token = "".join(buffer).strip()
+            if token:
+                tokens.append(token)
+            buffer.clear()
+            continue
+
+        buffer.append(char)
+
+    tail = "".join(buffer).strip()
+    if tail:
+        tokens.append(tail)
+
+    return tokens
+
+
+def _parse_int_sequence(value: str | None) -> tuple[int, ...]:
+    """Parse a metadata field containing integer samples."""
+
+    samples: list[int] = []
+    seen: set[int] = set()
+    for token in _split_metadata_values(value):
+        try:
+            number = int(token)
+        except ValueError:
+            continue
+        if number in seen:
+            continue
+        seen.add(number)
+        samples.append(number)
+    return tuple(samples)
+
+
 def _decode_docker_log_value(value: str) -> str:
     """Best-effort decoding of escaped Docker log field values."""
 
@@ -2653,15 +2725,55 @@ class WorkerRestartTelemetry:
     backoff_hint: str | None
     last_seen: str | None
     last_error: str | None
+    contexts: tuple[str, ...] = field(default_factory=tuple)
+    restart_samples: tuple[int, ...] = field(default_factory=tuple)
+    backoff_options: tuple[str, ...] = field(default_factory=tuple)
+    last_restart_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_error_samples: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_metadata(cls, metadata: Mapping[str, str]) -> "WorkerRestartTelemetry":
+        context = metadata.get("docker_worker_context")
+        contexts = _split_metadata_values(metadata.get("docker_worker_contexts"))
+        if context:
+            contexts = _coalesce_iterable([context, *contexts])
+        restart_samples = _parse_int_sequence(
+            metadata.get("docker_worker_restart_count_samples")
+        )
+        raw_backoff_options = [
+            _normalise_backoff_hint(option)
+            for option in _split_metadata_values(
+                metadata.get("docker_worker_backoff_options")
+            )
+            if option
+        ]
+        backoff_options = _coalesce_iterable(
+            option for option in raw_backoff_options if option
+        )
+        last_restart_samples = tuple(
+            _split_metadata_values(metadata.get("docker_worker_last_restart_samples"))
+        )
+        last_error_samples = tuple(
+            _split_metadata_values(metadata.get("docker_worker_last_error_samples"))
+        )
+
+        normalized_backoff = metadata.get("docker_worker_backoff")
+        if normalized_backoff:
+            normalized_backoff = _normalise_backoff_hint(normalized_backoff)
+
         return cls(
-            context=metadata.get("docker_worker_context"),
-            restart_count=_coerce_optional_int(metadata.get("docker_worker_restart_count")),
-            backoff_hint=metadata.get("docker_worker_backoff"),
+            context=context,
+            restart_count=_coerce_optional_int(
+                metadata.get("docker_worker_restart_count")
+            ),
+            backoff_hint=normalized_backoff,
             last_seen=metadata.get("docker_worker_last_restart"),
             last_error=metadata.get("docker_worker_last_error"),
+            contexts=tuple(contexts),
+            restart_samples=restart_samples,
+            backoff_options=tuple(backoff_options),
+            last_restart_samples=last_restart_samples,
+            last_error_samples=last_error_samples,
         )
 
     @property
@@ -2669,6 +2781,70 @@ class WorkerRestartTelemetry:
         """Best-effort conversion of the Docker restart backoff to seconds."""
 
         return _estimate_backoff_seconds(self.backoff_hint)
+
+    @property
+    def max_restart_count(self) -> int | None:
+        """Return the highest restart count observed across metadata samples."""
+
+        candidates: list[int] = []
+        if self.restart_count is not None:
+            candidates.append(self.restart_count)
+        candidates.extend(self.restart_samples)
+        if not candidates:
+            return None
+        return max(candidates)
+
+    @property
+    def all_contexts(self) -> tuple[str, ...]:
+        """Return unique worker contexts with the primary context prioritised."""
+
+        contexts: list[str] = []
+        if self.context:
+            contexts.append(self.context)
+        contexts.extend(self.contexts)
+        if not contexts:
+            return ()
+        return tuple(_coalesce_iterable(contexts))
+
+    @property
+    def all_last_restarts(self) -> tuple[str, ...]:
+        """Return the set of observed restart markers."""
+
+        markers: list[str] = []
+        if self.last_seen:
+            markers.append(self.last_seen)
+        markers.extend(self.last_restart_samples)
+        if not markers:
+            return ()
+        return tuple(_coalesce_iterable(markers))
+
+    @property
+    def all_last_errors(self) -> tuple[str, ...]:
+        """Return the set of observed error messages for the worker."""
+
+        errors: list[str] = []
+        if self.last_error:
+            errors.append(self.last_error)
+        errors.extend(self.last_error_samples)
+        if not errors:
+            return ()
+        return tuple(_coalesce_iterable(errors))
+
+    @property
+    def max_backoff_seconds(self) -> float | None:
+        """Return the slowest restart backoff advertised by Docker."""
+
+        candidates: list[float] = []
+        primary = self.backoff_seconds
+        if primary is not None:
+            candidates.append(primary)
+        for option in self.backoff_options:
+            seconds = _estimate_backoff_seconds(option)
+            if seconds is not None:
+                candidates.append(seconds)
+        if not candidates:
+            return None
+        return max(candidates)
 
 
 @dataclass(frozen=True)
@@ -2720,34 +2896,80 @@ def _classify_worker_flapping(
     details: list[str] = []
     remediation: list[str] = []
 
-    if telemetry.context:
-        details.append(f"Affected component: {telemetry.context}.")
+    contexts = telemetry.all_contexts
+    if contexts:
+        if len(contexts) == 1:
+            details.append(f"Affected component: {contexts[0]}.")
+        else:
+            joined = ", ".join(contexts)
+            details.append(f"Affected components: {joined}.")
 
-    if telemetry.restart_count is not None:
-        plural = "s" if telemetry.restart_count != 1 else ""
-        details.append(f"Docker reported {telemetry.restart_count} restart{plural} in the last diagnostic window.")
+    max_restart = telemetry.max_restart_count
+    if max_restart is not None:
+        plural = "s" if max_restart != 1 else ""
+        details.append(
+            f"Docker recorded up to {max_restart} restart{plural} during diagnostics."
+        )
+        additional_samples = [
+            sample
+            for sample in telemetry.restart_samples
+            if sample != max_restart
+        ]
+        if additional_samples:
+            rendered = ", ".join(str(sample) for sample in additional_samples)
+            details.append(
+                f"Additional restart counts observed across repeated runs: {rendered}."
+            )
+    elif telemetry.restart_samples:
+        rendered = ", ".join(str(sample) for sample in telemetry.restart_samples)
+        details.append(f"Docker reported restart counts during diagnostics: {rendered}.")
 
-    if telemetry.backoff_hint:
-        details.append(f"Backoff interval advertised by Docker: {telemetry.backoff_hint}.")
+    backoff_hint = telemetry.backoff_hint
+    if backoff_hint:
+        details.append(f"Backoff interval advertised by Docker: {backoff_hint}.")
+    extra_backoff = [
+        option
+        for option in telemetry.backoff_options
+        if option and option != backoff_hint
+    ]
+    if extra_backoff:
+        rendered = ", ".join(extra_backoff)
+        details.append(f"Additional backoff intervals observed: {rendered}.")
 
-    if telemetry.last_seen:
-        details.append(f"Last restart marker: {telemetry.last_seen}.")
+    restart_markers = telemetry.all_last_restarts
+    if restart_markers:
+        if len(restart_markers) == 1:
+            details.append(f"Last restart marker: {restart_markers[0]}.")
+        else:
+            preview = restart_markers[:3]
+            rendered = ", ".join(preview)
+            if len(restart_markers) > len(preview):
+                rendered += ", …"
+            details.append(f"Restart markers captured from Docker diagnostics: {rendered}.")
 
-    if telemetry.last_error:
-        details.append(f"Most recent worker error: {telemetry.last_error}.")
+    last_errors = telemetry.all_last_errors
+    if last_errors:
+        details.append(f"Most recent worker error: {last_errors[0]}.")
+        if len(last_errors) > 1:
+            preview = last_errors[1:3]
+            rendered = ", ".join(preview)
+            if len(last_errors) > 3:
+                rendered += ", …"
+            details.append(f"Additional errors encountered: {rendered}.")
 
     severity: Literal["warning", "error"] = "warning"
 
-    if telemetry.restart_count is not None and telemetry.restart_count >= 6:
-        severity = "error"
-    elif telemetry.restart_count is not None and telemetry.restart_count >= 3:
-        # Elevated churn warrants increased attention but can often self-resolve.
-        severity = "warning"
+    if max_restart is not None:
+        if max_restart >= 6:
+            severity = "error"
+        elif max_restart >= 3:
+            severity = "warning"
 
-    if telemetry.backoff_seconds is not None and telemetry.backoff_seconds >= 60:
+    max_backoff_seconds = telemetry.max_backoff_seconds
+    if max_backoff_seconds is not None and max_backoff_seconds >= 60:
         severity = "error"
 
-    if _is_critical_worker_error(telemetry.last_error):
+    if any(_is_critical_worker_error(message) for message in last_errors):
         severity = "error"
 
     if context.is_wsl:
