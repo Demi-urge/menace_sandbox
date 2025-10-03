@@ -548,6 +548,36 @@ def test_normalise_docker_warning_processes_json_logs() -> None:
     assert "desktop-windows" in cleaned
 
 
+def test_normalise_docker_warning_handles_nested_telemetry_structures() -> None:
+    message = json.dumps(
+        {
+            "level": "warning",
+            "msg": "worker stalled; restarting",
+            "component": "desktop-windows",
+            "diagnostics": {
+                "context": "vpnkit",
+                "restart": {"total": 5},
+                "backoffIntervalMs": 45000,
+                "lastError": {
+                    "summary": "WSL integration disabled",
+                    "code": "WSL_DISABLED",
+                },
+            },
+        }
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    # Prefer the structured context over the component when provided.
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "5"
+    assert metadata["docker_worker_backoff"].startswith("45")
+    assert metadata["docker_worker_last_error"] == "WSL integration disabled"
+    assert metadata["docker_worker_last_error_code"] == "WSL_DISABLED"
+    assert "worker stalled" not in cleaned.lower()
+
+
 def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
     payload = json.dumps(
         {
