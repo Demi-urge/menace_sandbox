@@ -5,6 +5,7 @@ import time
 import types
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -79,6 +80,7 @@ def _load_environment_subset() -> dict[str, object]:
     tree = ast.parse(source)
     targets = [
         "_update_worker_heartbeat",
+        "_notify_progress",
         "_cleanup_worker",
         "_reaper_worker",
         "ensure_cleanup_worker",
@@ -99,6 +101,7 @@ def _load_environment_subset() -> dict[str, object]:
         "asyncio": asyncio,
         "time": time,
         "threading": threading,
+        "Callable": Callable,
         "_WORKER_CHECK_INTERVAL": 0.1,
         "_POOL_CLEANUP_INTERVAL": 0.1,
     }
@@ -117,11 +120,11 @@ def env():
     ns["autopurge_if_needed"] = lambda: None
     ns["ensure_docker_client"] = lambda: None
     ns["reconcile_active_containers"] = lambda: None
-    ns["retry_failed_cleanup"] = lambda: None
+    ns["retry_failed_cleanup"] = lambda progress=None: None
     ns["_cleanup_idle_containers"] = lambda: (0, 0)
     ns["_purge_stale_vms"] = lambda record_runtime=False: 0
-    ns["_prune_volumes"] = lambda: 0
-    ns["_prune_networks"] = lambda: 0
+    ns["_prune_volumes"] = lambda progress=None: 0
+    ns["_prune_networks"] = lambda progress=None: 0
     ns["report_failed_cleanup"] = lambda alert=False: {}
     ns["_schedule_coroutine"] = lambda coro: DummyTask()
     ns["_run_cleanup_sync"] = lambda: None
@@ -133,11 +136,14 @@ def env():
     ns["_POOL_CLEANUP_INTERVAL"] = 0.1
     ns["_WORKER_CHECK_INTERVAL"] = 0.1
     ns["_CLEANUP_DURATIONS"] = {"cleanup": 0.0, "reaper": 0.0}
+    ns["_CLEANUP_CURRENT_RUNTIME"] = {"cleanup": 0.0, "reaper": 0.0}
+    ns["_WORKER_ACTIVITY"] = {"cleanup": False, "reaper": False}
     ns["_LAST_CLEANUP_TS"] = time.monotonic()
     ns["_LAST_REAPER_TS"] = time.monotonic()
     ns["_WATCHDOG_METRICS"] = Counter()
     ns["_EVENT_THREAD"] = types.SimpleNamespace(is_alive=lambda: True)
     ns["_WORKER_CHECK_TIMER"] = None
+    ns["_CLEANUP_WATCHDOG_MARGIN"] = 5.0
     env = EnvProxy(ns)
     try:
         yield env
@@ -208,6 +214,9 @@ def test_watchdog_restarts_stalled_workers(env):
     env._LAST_CLEANUP_TS = time.monotonic() - 3 * env._POOL_CLEANUP_INTERVAL
     env._LAST_REAPER_TS = env._LAST_CLEANUP_TS
     env._WATCHDOG_METRICS.clear()
+    env._CLEANUP_WATCHDOG_MARGIN = 0.0
+    env._WORKER_ACTIVITY["cleanup"] = True
+    env._WORKER_ACTIVITY["reaper"] = True
 
     env.watchdog_check()
 
@@ -233,12 +242,12 @@ def test_watchdog_ignores_active_cleanup(env):
     env.autopurge_if_needed = slow_autopurge
     env._cleanup_idle_containers = lambda: (0, 0)
     env._purge_stale_vms = lambda record_runtime=False: 0
-    env._prune_volumes = lambda: 0
-    env._prune_networks = lambda: 0
+    env._prune_volumes = lambda progress=None: 0
+    env._prune_networks = lambda progress=None: 0
     env.report_failed_cleanup = lambda alert=False: {}
     env.ensure_docker_client = lambda: None
     env.reconcile_active_containers = lambda: None
-    env.retry_failed_cleanup = lambda: None
+    env.retry_failed_cleanup = lambda progress=None: None
     env._schedule_coroutine = lambda coro: DummyTask()
     env._DOCKER_CLIENT = object()
     env._REAPER_TASK = DummyTask()
@@ -295,9 +304,13 @@ def test_watchdog_accepts_midpass_heartbeats(env):
         )
     }
 
-    def slow_retry() -> None:
+    def slow_retry(progress=None) -> None:
         events["retry"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
 
     def slow_cleanup_idle_containers() -> tuple[int, int]:
         events["cleanup"].set()
@@ -309,14 +322,22 @@ def test_watchdog_accepts_midpass_heartbeats(env):
         time.sleep(delay)
         return 0
 
-    def slow_prune_volumes() -> int:
+    def slow_prune_volumes(progress=None) -> int:
         events["prune_volumes"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return 0
 
-    def slow_prune_networks() -> int:
+    def slow_prune_networks(progress=None) -> int:
         events["prune_networks"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return 0
 
     def slow_report_failed_cleanup(alert: bool = False) -> dict[str, object]:  # noqa: FBT001
@@ -345,6 +366,8 @@ def test_watchdog_accepts_midpass_heartbeats(env):
     env._schedule_coroutine = schedule
 
     stop = threading.Event()
+
+    env.ensure_cleanup_worker()
 
     def watchdog_runner() -> None:
         while not stop.is_set():
@@ -407,9 +430,13 @@ def test_watchdog_accepts_reaper_midpass_heartbeats(env):
         events["reconcile"].set()
         time.sleep(delay)
 
-    def slow_reap() -> int:
+    def slow_reap(progress=None) -> int:
         events["reap"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return 0
 
     def slow_purge_vms(record_runtime: bool = True) -> int:  # noqa: FBT001
@@ -417,14 +444,22 @@ def test_watchdog_accepts_reaper_midpass_heartbeats(env):
         time.sleep(delay)
         return 0
 
-    def slow_prune_volumes() -> int:
+    def slow_prune_volumes(progress=None) -> int:
         events["prune_volumes"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return 0
 
-    def slow_prune_networks() -> int:
+    def slow_prune_networks(progress=None) -> int:
         events["prune_networks"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return 0
 
     env.autopurge_if_needed = slow_autopurge
@@ -450,6 +485,8 @@ def test_watchdog_accepts_reaper_midpass_heartbeats(env):
     env._REAPER_TASK = schedule(env._reaper_worker())
 
     stop = threading.Event()
+
+    env.ensure_cleanup_worker()
 
     def watchdog_runner() -> None:
         while not stop.is_set():

@@ -199,7 +199,7 @@ def test_cleanup_timeout_does_not_stall_watchdog(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(env, "autopurge_if_needed", lambda: None)
     monkeypatch.setattr(env, "ensure_docker_client", lambda: None)
     monkeypatch.setattr(env, "ensure_cleanup_worker", lambda: None)
-    monkeypatch.setattr(env, "retry_failed_cleanup", lambda: (0, 0))
+    monkeypatch.setattr(env, "retry_failed_cleanup", lambda progress=None: (0, 0))
     monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     monkeypatch.setattr(env, "_PRUNE_VOLUMES", False)

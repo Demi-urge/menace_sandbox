@@ -50,7 +50,7 @@ def purge_leftovers():
         shutil.rmtree(odir)
 
 
-def retry_failed_cleanup():
+def retry_failed_cleanup(progress=None):
     with open(os.environ['OUT_FILE'], 'a') as fh:
         fh.write('retry\\n')
 """
