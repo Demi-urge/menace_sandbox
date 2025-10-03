@@ -74,6 +74,7 @@ class BootstrapError(RuntimeError):
 
 _DOCKER_SKIP_ENV = "MENACE_BOOTSTRAP_SKIP_DOCKER_CHECK"
 _DOCKER_REQUIRE_ENV = "MENACE_REQUIRE_DOCKER"
+_DOCKER_ASSUME_NO_ENV = "MENACE_BOOTSTRAP_ASSUME_NO_DOCKER"
 
 
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
@@ -402,6 +403,117 @@ def _is_wsl() -> bool:
     return "Microsoft" in signature or "WSL" in signature
 
 
+def _detect_container_indicators() -> tuple[bool, str | None, tuple[str, ...]]:
+    """Return containerisation hints discovered on the current host."""
+
+    indicators: list[str] = []
+    runtime: str | None = None
+
+    for path, label in (
+        (Path("/.dockerenv"), "dockerenv"),
+        (Path("/run/.containerenv"), "containerenv"),
+    ):
+        try:
+            exists = path.exists()
+        except OSError:
+            exists = False
+        if exists:
+            indicator = f"path:{label}"
+            indicators.append(indicator)
+            if runtime is None:
+                runtime = "docker" if label == "dockerenv" else None
+
+    for env_var in ("container", "CONTAINER", "OCI_CONTAINERS", "KUBERNETES_SERVICE_HOST"):
+        value = os.getenv(env_var)
+        if not value:
+            continue
+        indicator = f"env:{env_var.lower()}"
+        indicators.append(indicator)
+        if runtime is None and env_var.lower().startswith("oci"):
+            runtime = "oci"
+        elif runtime is None and env_var.lower().startswith("kubernetes"):
+            runtime = "kubernetes"
+
+    token_runtime_map = {
+        "docker": "docker",
+        "kubepods": "kubernetes",
+        "containerd": "containerd",
+        "crio": "cri-o",
+        "podman": "podman",
+        "libpod": "podman",
+        "lxc": "lxc",
+        "garden": "garden",
+    }
+
+    for probe in ("/proc/1/cgroup", "/proc/self/cgroup"):
+        try:
+            with open(probe, "r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    for token, token_runtime in token_runtime_map.items():
+                        if token in stripped:
+                            indicators.append(f"cgroup:{token}")
+                            if runtime is None:
+                                runtime = token_runtime
+        except OSError:
+            continue
+
+    deduped_indicators = tuple(dict.fromkeys(indicators))
+    return bool(deduped_indicators), runtime, deduped_indicators
+
+
+def _detect_ci_indicators() -> tuple[bool, tuple[str, ...]]:
+    """Detect whether execution appears to be running under CI orchestration."""
+
+    hints: list[str] = []
+    ci_markers = {
+        "CI": "ci",
+        "GITHUB_ACTIONS": "github-actions",
+        "GITLAB_CI": "gitlab-ci",
+        "BUILDKITE": "buildkite",
+        "CIRCLECI": "circleci",
+        "TRAVIS": "travis-ci",
+        "APPVEYOR": "appveyor",
+        "TF_BUILD": "azure-pipelines",
+        "TEAMCITY_VERSION": "teamcity",
+        "BITBUCKET_BUILD_NUMBER": "bitbucket-pipelines",
+        "JENKINS_URL": "jenkins",
+        "CODEBUILD_BUILD_ID": "aws-codebuild",
+        "CODESPACES": "github-codespaces",
+    }
+
+    for env_var, label in ci_markers.items():
+        raw = os.getenv(env_var)
+        if not raw:
+            continue
+        normalized = raw.strip().lower()
+        if env_var == "CI" and normalized in {"0", "false", "no", "off"}:
+            continue
+        hints.append(label)
+
+    deduped_hints = tuple(dict.fromkeys(hints))
+    return bool(deduped_hints), deduped_hints
+
+
+def _detect_runtime_context() -> RuntimeContext:
+    """Aggregate runtime heuristics for Docker diagnostics."""
+
+    inside_container, container_runtime, container_indicators = _detect_container_indicators()
+    is_ci, ci_indicators = _detect_ci_indicators()
+    return RuntimeContext(
+        platform=sys.platform,
+        is_windows=_is_windows(),
+        is_wsl=_is_wsl(),
+        inside_container=inside_container,
+        container_runtime=container_runtime,
+        container_indicators=container_indicators,
+        is_ci=is_ci,
+        ci_indicators=ci_indicators,
+    )
+
+
 @lru_cache(maxsize=None)
 def _windows_path_normalizer() -> Callable[[str], str]:
     """Return a callable that normalizes Windows paths for comparison."""
@@ -703,6 +815,38 @@ def _prepare_environment(config: BootstrapConfig) -> Path | None:
 
 
 @dataclass(frozen=True)
+class RuntimeContext:
+    """Represents key characteristics of the current execution environment."""
+
+    platform: str
+    is_windows: bool
+    is_wsl: bool
+    inside_container: bool
+    container_runtime: str | None
+    container_indicators: tuple[str, ...]
+    is_ci: bool
+    ci_indicators: tuple[str, ...]
+
+    def to_metadata(self) -> dict[str, str]:
+        """Return a serialisable representation suitable for diagnostics."""
+
+        metadata: dict[str, str] = {
+            "platform": self.platform,
+            "is_windows": str(self.is_windows).lower(),
+            "is_wsl": str(self.is_wsl).lower(),
+            "inside_container": str(self.inside_container).lower(),
+        }
+        if self.container_runtime or self.container_indicators:
+            if self.container_runtime:
+                metadata["container_runtime"] = self.container_runtime
+            if self.container_indicators:
+                metadata["container_indicators"] = ",".join(self.container_indicators)
+        if self.is_ci and self.ci_indicators:
+            metadata["ci_indicators"] = ",".join(self.ci_indicators)
+        return metadata
+
+
+@dataclass(frozen=True)
 class DockerDiagnosticResult:
     """Outcome of Docker environment verification."""
 
@@ -711,6 +855,8 @@ class DockerDiagnosticResult:
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
     metadata: Mapping[str, str]
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 def _discover_docker_cli() -> tuple[Path | None, list[str]]:
@@ -893,15 +1039,57 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
     return metadata, warnings, errors
 
 
+def _infer_missing_docker_skip_reason(context: RuntimeContext) -> str | None:
+    """Return a descriptive reason for skipping Docker verification if appropriate."""
+
+    assume_no = os.getenv(_DOCKER_ASSUME_NO_ENV)
+    if assume_no and assume_no.strip().lower() in {"1", "true", "yes", "on"}:
+        return f"Docker diagnostics disabled via {_DOCKER_ASSUME_NO_ENV}"
+
+    if context.inside_container and not context.is_windows:
+        runtime_label = context.container_runtime or "container"
+        indicators = ", ".join(context.container_indicators) or "no explicit indicators"
+        return (
+            "Detected execution inside a %s-managed environment (%s) without Docker CLI access; "
+            "assuming the host manages containers and skipping Docker diagnostics."
+            % (runtime_label, indicators)
+        )
+
+    if context.is_ci:
+        ci_label = ", ".join(context.ci_indicators) or "CI"
+        return (
+            "Detected continuous integration environment (%s) without Docker CLI access; "
+            "skipping Docker diagnostics."
+            % ci_label
+        )
+
+    return None
+
+
 def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult:
     """Inspect the Docker environment and return detailed diagnostics."""
+
+    context = _detect_runtime_context()
+    metadata: dict[str, str] = context.to_metadata()
 
     cli_path, cli_warnings = _discover_docker_cli()
     warnings = list(cli_warnings)
     errors: list[str] = []
-    metadata: dict[str, str] = {}
 
     if cli_path is None:
+        skip_reason = _infer_missing_docker_skip_reason(context)
+        if skip_reason:
+            metadata["skip_reason"] = skip_reason
+            return DockerDiagnosticResult(
+                cli_path=None,
+                available=False,
+                errors=(),
+                warnings=(),
+                metadata=metadata,
+                skipped=True,
+                skip_reason=skip_reason,
+            )
+
         errors.append(
             "Docker CLI executable was not found. Install Docker Desktop or ensure 'docker' is on PATH."
         )
@@ -910,7 +1098,7 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
             available=False,
             errors=tuple(errors),
             warnings=tuple(warnings),
-            metadata={},
+            metadata=metadata,
         )
 
     metadata["cli_path"] = str(cli_path)
@@ -949,6 +1137,18 @@ def _verify_docker_environment() -> None:
         return
 
     diagnostics = _collect_docker_diagnostics()
+
+    if diagnostics.skipped:
+        message = diagnostics.skip_reason or "Docker diagnostics skipped"
+        LOGGER.info("Skipping Docker diagnostics: %s", message)
+        extra_context = {
+            key: value
+            for key, value in diagnostics.metadata.items()
+            if key not in {"skip_reason", "cli_path"}
+        }
+        if extra_context:
+            LOGGER.debug("Docker runtime context: %s", extra_context)
+        return
 
     for warning in diagnostics.warnings:
         LOGGER.warning("Docker diagnostic warning: %s", warning)
