@@ -3837,6 +3837,36 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
     return cleaned, metadata
 
 
+def _scrub_residual_worker_warnings(
+    messages: Iterable[str],
+) -> tuple[list[str], dict[str, str]]:
+    """Rewrite lingering ``worker stalled`` banners into actionable guidance."""
+
+    rewritten: list[str] = []
+    aggregated_metadata: dict[str, str] = {}
+
+    for message in messages:
+        if not isinstance(message, str):
+            rewritten.append(message)
+            continue
+
+        lowered = message.lower()
+        if "worker stall" not in lowered:
+            rewritten.append(message)
+            continue
+
+        cleaned, metadata = _normalise_docker_warning(message)
+        if cleaned:
+            rewritten.append(cleaned)
+        else:
+            rewritten.append(message)
+
+        for key, value in metadata.items():
+            aggregated_metadata.setdefault(key, value)
+
+    return rewritten, aggregated_metadata
+
+
 @dataclass
 class _WorkerWarningRecord:
     """Capture restart telemetry for an individual Docker worker."""
@@ -5570,6 +5600,10 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     warnings.extend(health_warnings)
     errors.extend(health_errors)
     metadata.update(health_metadata)
+
+    warnings, worker_metadata = _scrub_residual_worker_warnings(warnings)
+    for key, value in worker_metadata.items():
+        metadata.setdefault(key, value)
 
     info_updates, remaining_warnings = _reclassify_worker_warnings_for_info(warnings, metadata)
     if info_updates:

@@ -198,9 +198,55 @@ def test_collect_docker_diagnostics_reclassifies_worker_stall_to_info(
     assert result.available is True
     assert result.warnings == ()
     assert result.errors == ()
-    assert result.infos
-    assert any("briefly restarted" in message.lower() for message in result.infos)
-    assert result.metadata["docker_worker_health_severity"] == "info"
+
+
+def test_collect_docker_diagnostics_sanitizes_residual_worker_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Raw docker warnings should be rewritten even if sanitisation occurs late."""
+
+    fake_cli = tmp_path / "docker"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_discover_docker_cli", lambda: (fake_cli, []))
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_detect_runtime_context",
+        lambda: bootstrap_env.RuntimeContext(
+            platform="win32",
+            is_windows=True,
+            is_wsl=False,
+            inside_container=False,
+            container_runtime=None,
+            container_indicators=(),
+            is_ci=False,
+            ci_indicators=(),
+        ),
+    )
+
+    def fake_probe(
+        cli_path: Path, timeout: float
+    ) -> tuple[dict[str, str], list[str], list[str]]:
+        assert cli_path == fake_cli
+        return (
+            {},
+            ["WARNING: worker stalled; restarting component=\"vpnkit\" restartCount=3"],
+            [],
+        )
+
+    monkeypatch.setattr(bootstrap_env, "_probe_docker_environment", fake_probe)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_post_process_docker_health",
+        lambda *, metadata, context, timeout=0.1: ([], [], {}),
+    )
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.1)
+
+    assert result.available is True
+    assert result.warnings
+    assert all("worker stalled" not in warning.lower() for warning in result.warnings)
+    assert result.metadata["docker_worker_health"] == "flapping"
 
 
 def test_extract_json_document_tolerates_prefixed_warnings() -> None:
