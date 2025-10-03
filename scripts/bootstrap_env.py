@@ -4680,21 +4680,18 @@ def _post_process_docker_health(
 
     warnings: list[str] = []
     errors: list[str] = []
-    additional_metadata: dict[str, str] = {
-        "docker_worker_health_severity": assessment.severity,
-    }
+    additional_metadata: dict[str, str] = {}
+
     summary = assessment.render()
-    if summary:
-        additional_metadata["docker_worker_health_summary"] = summary
+    severity = assessment.severity
+
+    if assessment.metadata:
+        additional_metadata.update(assessment.metadata)
+
     if assessment.reasons:
         additional_metadata["docker_worker_health_reasons"] = "; ".join(
             assessment.reasons
         )
-    if assessment.metadata:
-        additional_metadata.update(assessment.metadata)
-
-    if assessment.severity == "info":
-        return warnings, errors, additional_metadata
 
     virtualization_warnings: list[str] = []
     virtualization_errors: list[str] = []
@@ -4708,29 +4705,57 @@ def _post_process_docker_health(
         virtualization_errors.extend(vw_errors)
         virtualization_metadata.update(vw_metadata)
 
-    if assessment.severity == "warning":
-        if summary:
-            warnings.append(summary)
-        if virtualization_warnings:
-            warnings.extend(virtualization_warnings)
-        if virtualization_errors:
-            warnings.extend(
-                f"Virtualization issue detected: {message}"
-                for message in virtualization_errors
-            )
-        if virtualization_metadata:
-            additional_metadata.update(virtualization_metadata)
+    virtualization_findings_present = bool(
+        virtualization_warnings or virtualization_errors or virtualization_metadata
+    )
+
+    if severity == "info" and virtualization_findings_present:
+        severity = "warning"
+        summary = (
+            "Docker Desktop reported worker restarts and host virtualization diagnostics "
+            "flagged configuration issues that require attention. Review the warnings "
+            "below to stabilise Docker Desktop before retrying."
+        )
+
+    additional_metadata["docker_worker_health_severity"] = severity
+    if summary:
+        additional_metadata["docker_worker_health_summary"] = summary
+    if virtualization_metadata:
+        additional_metadata.update(virtualization_metadata)
+
+    message_registry: set[str] = set()
+
+    def _append_unique(collection: list[str], message: str) -> None:
+        normalized = (message or "").strip()
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in message_registry:
+            return
+        message_registry.add(key)
+        collection.append(normalized)
+
+    if severity == "info":
         return warnings, errors, additional_metadata
 
     if summary:
-        errors.append(summary)
+        target = warnings if severity == "warning" else errors
+        _append_unique(target, summary)
 
     if virtualization_warnings:
-        warnings.extend(virtualization_warnings)
+        for message in virtualization_warnings:
+            _append_unique(warnings, message)
+
     if virtualization_errors:
-        errors.extend(virtualization_errors)
-    if virtualization_metadata:
-        additional_metadata.update(virtualization_metadata)
+        if severity == "error":
+            for message in virtualization_errors:
+                _append_unique(errors, message)
+        else:
+            for message in virtualization_errors:
+                _append_unique(
+                    warnings,
+                    f"Virtualization issue detected: {message}",
+                )
 
     return warnings, errors, additional_metadata
 
