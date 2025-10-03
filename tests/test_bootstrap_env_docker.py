@@ -69,6 +69,18 @@ def test_parenthetical_plural_worker_banner_is_normalised() -> None:
     assert metadata["docker_worker_context"] == "vpnkit"
 
 
+def test_worker_has_stalled_phrase_is_sanitized() -> None:
+    """Phrases like ``worker has stalled`` should be harmonised into guidance."""
+
+    message = "WARNING: worker has stalled; restarting due to IO pressure"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Virtualization diagnostics should run even for warning level telemetry."""
 
