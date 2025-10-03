@@ -255,6 +255,34 @@ def test_normalise_docker_warning_detects_implied_backoff_interval() -> None:
     assert "30s" in cleaned
 
 
+def test_normalise_docker_warning_handles_multiplier_and_due_to_reason() -> None:
+    message = (
+        "WARN[0042] moby/buildkit: worker stalled; restarting (x3 over ~45s) due to network jitter"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby/buildkit"
+    assert metadata["docker_worker_restart_count"] == "3"
+    assert metadata["docker_worker_backoff"] == "~45s"
+    assert metadata["docker_worker_last_error"] == "network jitter"
+    assert "~45s" in cleaned
+    assert "worker stalled" not in cleaned.lower()
+
+
+def test_normalise_docker_warning_interprets_go_duration_tokens() -> None:
+    message = "WARNING: worker stalled; restarting in 1m0s because of IO pressure"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_backoff"] == "1m 0s"
+    assert metadata["docker_worker_last_error"] == "IO pressure"
+    assert "1m 0s" in cleaned
+    assert "worker stalled" not in cleaned.lower()
+
+
 def test_normalise_docker_warning_handles_bracketed_context_and_retry_tokens() -> None:
     message = (
         "WARN[0030] [background-sync] worker stalled; restarting; "
