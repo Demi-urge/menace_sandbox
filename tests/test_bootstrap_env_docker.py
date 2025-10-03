@@ -437,6 +437,32 @@ def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
     assert metadata["docker_worker_last_error_raw"] == "EOF)"
 
 
+def test_worker_warning_next_restart_metadata_is_normalised() -> None:
+    """Derived ``next restart`` fields should collapse into canonical backoff hints."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restart_delay_ms=45000 next_retry_in=30s retry_after_seconds=90 "
+        "next_restart_seconds=120"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_backoff"] == "45s"
+
+    backoff_options = metadata.get("docker_worker_backoff_options", "")
+    if backoff_options:
+        normalized_options = {option.strip() for option in backoff_options.split(",")}
+        assert "30s" in normalized_options or "about 30s" in normalized_options
+        assert any(
+            candidate in normalized_options
+            for candidate in {"90s", "1m30s"}
+        )
+
+
 def test_normalize_warning_collection_parses_iso_backoff_metadata() -> None:
     """ISO-8601 backoff tokens should be normalised to human readable durations."""
 
