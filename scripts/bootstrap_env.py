@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Iterable as IterableABC, Mapping as MappingABC
 from functools import lru_cache
 import ntpath
 from dataclasses import dataclass
@@ -930,6 +931,81 @@ def _run_docker_command(
         return None, f"Failed to execute docker {rendered!s}: {exc}"
 
 
+def _iter_docker_warning_messages(value: object) -> Iterable[str]:
+    """Yield normalized warning strings from Docker diagnostic payloads."""
+
+    if value is None:
+        return
+
+    if isinstance(value, bytes):
+        try:
+            decoded = value.decode("utf-8", "ignore")
+        except Exception:  # pragma: no cover - defensive fallback
+            return
+        yield from _iter_docker_warning_messages(decoded)
+        return
+
+    if isinstance(value, str):
+        text = value.replace("\r", "\n")
+        for line in text.split("\n"):
+            candidate = line.strip()
+            if candidate:
+                yield candidate
+        return
+
+    if isinstance(value, MappingABC):
+        iterable: IterableABC[object] = value.values()
+    elif isinstance(value, IterableABC):
+        iterable = value
+    else:
+        return
+
+    for item in iterable:
+        yield from _iter_docker_warning_messages(item)
+
+
+def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]:
+    """Return a cleaned warning and metadata extracted from Docker output."""
+
+    cleaned = re.sub(r"^\s*warning:\s*", "", message, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None, {}
+
+    metadata: dict[str, str] = {}
+    lowered = cleaned.lower()
+    if "worker stalled" in lowered:
+        metadata["docker_worker_health"] = "flapping"
+        cleaned = (
+            "Docker Desktop reported that an internal background worker restarted multiple times. "
+            "Restart Docker Desktop, ensure WSL 2/Hyper-V virtualization is enabled, and allocate "
+            "sufficient resources to the Docker VM before retrying."
+        )
+
+    return cleaned, metadata
+
+
+def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]]:
+    """Normalise Docker warnings into unique, user-friendly strings."""
+
+    normalized: list[str] = []
+    metadata: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for candidate in _iter_docker_warning_messages(value):
+        cleaned, extracted = _normalise_docker_warning(candidate)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+        metadata.update(extracted)
+
+    return normalized, metadata
+
+
 def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str, str], list[str], list[str]]:
     """Gather Docker daemon metadata and associated warnings/errors."""
 
@@ -1018,10 +1094,9 @@ def _probe_docker_environment(cli_path: Path, timeout: float) -> tuple[dict[str,
                         metadata[metadata_key] = value
 
                 warnings_field = info_data.get("Warnings")
-                if isinstance(warnings_field, str) and warnings_field:
-                    warnings.append(warnings_field)
-                elif isinstance(warnings_field, Iterable):
-                    warnings.extend(str(item) for item in warnings_field if item)
+                normalized_warnings, warning_metadata = _normalize_docker_warnings(warnings_field)
+                warnings.extend(normalized_warnings)
+                metadata.update(warning_metadata)
 
                 if _is_windows() or _is_wsl():
                     context = str(info_data.get("Name", "")).strip()
