@@ -338,6 +338,9 @@ def test_normalize_warning_collection_aggregates_worker_metadata() -> None:
     assert "5s" in metadata["docker_worker_backoff_options"]
     assert metadata["docker_worker_last_error"].lower().startswith("panic")
     assert "deadline exceeded" in metadata["docker_worker_last_error_samples"]
+    assert metadata["docker_worker_last_error_original"].lower().startswith("panic")
+    assert metadata["docker_worker_last_error_raw"].lower().startswith("panic")
+    assert "deadline exceeded" in metadata["docker_worker_last_error_raw_samples"]
     assert metadata["docker_worker_last_restart"] == "2024-07-01T11:59:00Z"
 
 
@@ -459,6 +462,32 @@ def test_normalise_docker_warning_processes_json_logs() -> None:
     assert metadata["docker_worker_last_error"] == "hypervisor unavailable"
     assert "docker desktop reported" in cleaned.lower()
     assert "desktop-windows" in cleaned
+
+
+def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
+    payload = json.dumps(
+        {
+            "level": "warning",
+            "msg": "worker stalled; restarting",
+            "component": "desktop-windows",
+            "telemetry": {
+                "restartCount": 3,
+                "backoff": "45s",
+                "lastError": "worker stalled; restarting",
+            },
+        }
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(payload)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error"] == (
+        "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_original"] == (
+        "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_raw"] == "worker stalled; restarting"
 
 
 def test_parse_wsl_distribution_table_handles_complex_rows() -> None:
