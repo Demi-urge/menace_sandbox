@@ -69,6 +69,22 @@ def test_parenthetical_plural_worker_banner_is_normalised() -> None:
     assert metadata["docker_worker_context"] == "vpnkit"
 
 
+def test_worker_stalls_variant_is_normalised() -> None:
+    """``worker stalls`` (present tense) banners should be harmonised."""
+
+    message = (
+        "WARNING: worker stalls; restarting component=\"vpnkit\" restartCount=5"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalls" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_restart_count"] == "5"
+    assert metadata["docker_worker_context"] == "vpnkit"
+
+
 def test_worker_has_stalled_phrase_is_sanitized() -> None:
     """Phrases like ``worker has stalled`` should be harmonised into guidance."""
 
