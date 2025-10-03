@@ -87,6 +87,8 @@ from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
 from collections import deque
 
+T = TypeVar("T")
+
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
 
@@ -3451,10 +3453,19 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
         raise last_exc
 
 
-def _verify_container(container: Any) -> bool:
+def _verify_container(
+    container: Any,
+    *,
+    progress: Callable[[], None] | None = None,
+) -> bool:
     """Return ``True`` if ``container`` is healthy and running."""
+    heartbeat_timeout = max(_DOCKER_CLIENT_TIMEOUT, 1.0)
     try:
-        container.reload()
+        _call_with_progress(
+            container.reload,
+            progress=progress,
+            heartbeat_timeout=heartbeat_timeout,
+        )
         if getattr(container, "status", "running") != "running":
             return False
         attrs = getattr(container, "attrs", {})
@@ -3650,7 +3661,13 @@ async def collect_metrics_async(
     return collect_metrics(prev_roi, roi, resources)
 
 
-def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> bool:
+def _stop_and_remove(
+    container: Any,
+    retries: int = 3,
+    base_delay: float = 0.1,
+    *,
+    progress: Callable[[], None] | None = None,
+) -> bool:
     """Stop and remove ``container`` with retries.
 
     Returns ``True`` when the container no longer exists after attempts.
@@ -3659,7 +3676,12 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
     cid = getattr(container, "id", "")
     for attempt in range(retries):
         try:
-            container.stop(timeout=0)
+            _call_with_progress(
+                container.stop,
+                progress=progress,
+                heartbeat_timeout=_DOCKER_CLIENT_TIMEOUT,
+                timeout=0,
+            )
             break
         except Exception as exc:
             if attempt == retries - 1:
@@ -3668,7 +3690,12 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 time.sleep(base_delay * (2**attempt))
     for attempt in range(retries):
         try:
-            container.remove(force=True)
+            _call_with_progress(
+                container.remove,
+                progress=progress,
+                heartbeat_timeout=_DOCKER_CLIENT_TIMEOUT,
+                force=True,
+            )
             break
         except Exception as exc:
             if attempt == retries - 1:
@@ -3926,7 +3953,7 @@ def _cleanup_idle_containers(
                 reason = "lifetime"
             elif now - last > _CONTAINER_IDLE_TIMEOUT:
                 reason = "idle"
-            elif not _verify_container(c):
+            elif not _verify_container(c, progress=progress):
                 reason = "unhealthy"
             if reason:
                 _notify_progress(progress)
@@ -3934,7 +3961,7 @@ def _cleanup_idle_containers(
                     actual_pool = _CONTAINER_POOLS.get(image, [])
                     if c in actual_pool:
                         actual_pool.remove(c)
-                success = _stop_and_remove(c)
+                success = _stop_and_remove(c, progress=progress)
                 _notify_progress(progress)
                 _log_cleanup_event(c.id, reason, success)
                 global _STALE_CONTAINERS_REMOVED
@@ -3968,8 +3995,12 @@ def _reap_orphan_containers(*, progress: Callable[[], None] | None = None) -> in
     if _DOCKER_CLIENT is None:
         return 0
     try:
-        containers = _DOCKER_CLIENT.containers.list(
-            all=True, filters={"label": f"{_POOL_LABEL}=1"}
+        containers = _call_with_progress(
+            _DOCKER_CLIENT.containers.list,
+            progress=progress,
+            heartbeat_timeout=_DOCKER_CLIENT_TIMEOUT,
+            all=True,
+            filters={"label": f"{_POOL_LABEL}=1"},
         )
     except DockerException as exc:
         logger.warning("orphan container listing failed: %s", exc)
@@ -3981,10 +4012,10 @@ def _reap_orphan_containers(*, progress: Callable[[], None] | None = None) -> in
         if c.id in active:
             continue
         try:
-            _verify_container(c)
+            _verify_container(c, progress=progress)
         except Exception as exc:
             logger.debug("failed to verify container %s: %s", c.id, exc)
-        success = _stop_and_remove(c)
+        success = _stop_and_remove(c, progress=progress)
         _log_cleanup_event(c.id, "orphan", success)
         removed += 1
         _notify_progress(progress)
@@ -4537,6 +4568,42 @@ def _run_subprocess_with_progress(
             hb_thread.join(timeout=1.0)
         if callback is not None:
             _notify_progress(callback)
+
+
+def _call_with_progress(
+    func: Callable[..., T],
+    *args: Any,
+    progress: Callable[[], None] | None = None,
+    heartbeat_timeout: float | None = None,
+    max_duration: float | None = None,
+    **kwargs: Any,
+) -> T:
+    """Invoke ``func`` while emitting periodic heartbeat notifications.
+
+    The helper mirrors :func:`_run_subprocess_with_progress` but targets
+    synchronous Docker SDK interactions where ``func`` blocks the calling
+    thread.  Windows installations proxy Docker requests through a named pipe
+    exposed by Docker Desktop which frequently incurs multi-second delays when
+    the daemon is resuming from sleep.  Without explicit heartbeats those
+    pauses look indistinguishable from hung workers and the watchdog eagerly
+    resets the cleanup tasks.  By funnelling blocking SDK calls through this
+    helper we guarantee that the cleanup loop continues to emit heartbeats for
+    the duration of the call while still respecting the configured watchdog
+    guard rails.
+    """
+
+    interval = _heartbeat_interval(heartbeat_timeout)
+    guard = (
+        _HEARTBEAT_GUARD_MAX_DURATION
+        if max_duration is None
+        else max(float(max_duration), 0.0)
+    )
+    with _progress_heartbeat_scope(
+        progress,
+        interval=interval,
+        max_duration=guard,
+    ):
+        return func(*args, **kwargs)
 
 
 async def _cleanup_worker() -> None:
