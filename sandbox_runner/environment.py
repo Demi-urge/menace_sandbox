@@ -1567,6 +1567,48 @@ _CLEANUP_WATCHDOG_MARGIN = float(
     os.getenv("SANDBOX_CLEANUP_WATCHDOG_MARGIN", "30")
 )
 
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    """Return ``True`` when *name* is set to a truthy value."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    candidate = str(raw).strip().lower()
+    if not candidate:
+        return default
+    if candidate in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if candidate in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
+
+
+_SANDBOX_DISABLE_CLEANUP = _env_flag("SANDBOX_DISABLE_CLEANUP")
+_CLEANUP_DISABLE_NOTICE_LOCK = threading.Lock()
+_CLEANUP_DISABLE_NOTICES: set[str] = set()
+
+
+def _log_cleanup_disabled(context: str | None = None) -> None:
+    """Log that cleanup automation has been disabled, once per context."""
+
+    if not _SANDBOX_DISABLE_CLEANUP:
+        return
+
+    key = context or "<default>"
+    with _CLEANUP_DISABLE_NOTICE_LOCK:
+        if key in _CLEANUP_DISABLE_NOTICES:
+            return
+        message = "sandbox cleanup automation disabled via SANDBOX_DISABLE_CLEANUP"
+        if context:
+            message = f"{message}; skipped {context}"
+        try:
+            logger.info(message)
+        except Exception:
+            # Logging should never be fatal for cleanup disable notices.
+            pass
+        _CLEANUP_DISABLE_NOTICES.add(key)
+
 _HEARTBEAT_GUARD_INTERVAL = float(
     os.getenv("SANDBOX_HEARTBEAT_GUARD_INTERVAL", "1.0")
 )
@@ -1605,8 +1647,6 @@ def _coerce_positive_int(value: str | None, default: int) -> int:
     if parsed <= 0:
         return default
     return parsed
-
-
 def _is_windows_platform() -> bool:
     """Return ``True`` when running on Windows or Windows Subsystem for Linux."""
 
@@ -3311,6 +3351,9 @@ def purge_leftovers() -> None:
 
 def autopurge_if_needed() -> None:
     """Run :func:`purge_leftovers` when the configured threshold has elapsed."""
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("automatic purge")
+        return
     if _SANDBOX_AUTOPURGE_THRESHOLD <= 0:
         return
     try:
@@ -3393,6 +3436,9 @@ def ensure_docker_client() -> None:
 
 def _ensure_pool_size_async(image: str) -> None:
     """Warm up pool for ``image`` asynchronously."""
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("pool warmup request")
+        return
     if _DOCKER_CLIENT is None:
         return
     with _POOL_LOCK:
@@ -5192,6 +5238,9 @@ def _run_cleanup_sync() -> None:
 def start_container_event_listener() -> None:
     """Start background thread listening for container exit events."""
     global _EVENT_THREAD, _EVENT_STOP
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("container event listener")
+        return
     if _DOCKER_CLIENT is None or (
         _EVENT_THREAD is not None and _EVENT_THREAD.is_alive()
     ):
@@ -5301,6 +5350,10 @@ def stop_container_event_listener() -> None:
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
     global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("cleanup worker bootstrap")
+        _suspend_cleanup_workers()
+        return
     if _DOCKER_CLIENT is None:
         _suspend_cleanup_workers()
         return
@@ -5379,6 +5432,10 @@ def watchdog_check() -> None:
     """Verify background workers are alive and restart if needed."""
 
     global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
+
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("watchdog cycle")
+        return
 
     if _DOCKER_CLIENT is None:
         return
@@ -5469,6 +5526,10 @@ def schedule_cleanup_check(interval: float = _WORKER_CHECK_INTERVAL) -> None:
 
     global _WORKER_CHECK_TIMER
 
+    if _SANDBOX_DISABLE_CLEANUP:
+        _log_cleanup_disabled("cleanup watchdog scheduling")
+        return
+
     def _loop() -> None:
         global _WORKER_CHECK_TIMER
         watchdog_check()
@@ -5493,15 +5554,17 @@ def cancel_cleanup_check() -> None:
 
 import atexit
 
-if (
+if not _SANDBOX_DISABLE_CLEANUP and (
     time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD
     or _read_active_containers()
     or _read_active_overlays()
 ):
     purge_leftovers()
     retry_failed_cleanup()
+elif _SANDBOX_DISABLE_CLEANUP:
+    _log_cleanup_disabled("startup purge")
 
-if _DOCKER_CLIENT is not None:
+if _DOCKER_CLIENT is not None and not _SANDBOX_DISABLE_CLEANUP:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
     _ensure_pool_size_async(default_img)
     if _CLEANUP_TASK is None:
@@ -5517,10 +5580,15 @@ if _DOCKER_CLIENT is not None:
     atexit.register(_await_reaper_task)
     atexit.register(cancel_cleanup_check)
     atexit.register(stop_container_event_listener)
+elif _SANDBOX_DISABLE_CLEANUP:
+    _log_cleanup_disabled("cleanup worker bootstrap")
 
 atexit.register(_release_pool_lock)
-atexit.register(_cleanup_pools)
-atexit.register(purge_leftovers)
+if _SANDBOX_DISABLE_CLEANUP:
+    _log_cleanup_disabled("atexit cleanup")
+else:
+    atexit.register(_cleanup_pools)
+    atexit.register(purge_leftovers)
 atexit.register(stop_background_loop)
 
 

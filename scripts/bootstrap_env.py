@@ -559,6 +559,7 @@ def _prepare_environment(config: BootstrapConfig) -> Path | None:
     overrides: dict[str, str] = {
         "MENACE_SAFE": "0",
         "MENACE_SUPPRESS_PROMETHEUS_FALLBACK_NOTICE": "1",
+        "SANDBOX_DISABLE_CLEANUP": "1",
     }
     if config.skip_stripe_router:
         overrides["MENACE_SKIP_STRIPE_ROUTER"] = "1"
