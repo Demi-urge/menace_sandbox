@@ -125,7 +125,9 @@ def test_cleanup_worker_logs_stats(monkeypatch, caplog):
         with contextlib.suppress(asyncio.CancelledError):
             await task
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: calls.append(1) or (2, 1))
+    monkeypatch.setattr(
+        env, "_cleanup_idle_containers", lambda *_, **__: calls.append(1) or (2, 1)
+    )
     caplog.set_level("INFO")
     asyncio.run(run_worker())
     assert calls
@@ -141,7 +143,7 @@ def test_cleanup_worker_purges_vms(monkeypatch):
         with contextlib.suppress(asyncio.CancelledError):
             await task
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: (0, 0))
     def fake_purge(*, record_runtime=False):
         calls.append(record_runtime)
         env._RUNTIME_VMS_REMOVED += 1
@@ -169,7 +171,7 @@ def test_cleanup_worker_calls_retry(monkeypatch):
     monkeypatch.setattr(
         env, "retry_failed_cleanup", lambda progress=None: called.append(True) or (0, 0)
     )
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
 
     asyncio.run(run_worker())
@@ -399,7 +401,7 @@ def test_cleanup_worker_records_duration(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
 
     monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: (0, 0))
     monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
 
     async def run_worker():

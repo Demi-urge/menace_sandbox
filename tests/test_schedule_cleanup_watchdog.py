@@ -121,7 +121,7 @@ def env():
     ns["ensure_docker_client"] = lambda: None
     ns["reconcile_active_containers"] = lambda: None
     ns["retry_failed_cleanup"] = lambda progress=None: None
-    ns["_cleanup_idle_containers"] = lambda: (0, 0)
+    ns["_cleanup_idle_containers"] = lambda *_, **__: (0, 0)
     ns["_purge_stale_vms"] = lambda record_runtime=False: 0
     ns["_prune_volumes"] = lambda progress=None: 0
     ns["_prune_networks"] = lambda progress=None: 0
@@ -240,7 +240,7 @@ def test_watchdog_ignores_active_cleanup(env):
         autopurge_finished.set()
 
     env.autopurge_if_needed = slow_autopurge
-    env._cleanup_idle_containers = lambda: (0, 0)
+    env._cleanup_idle_containers = lambda *_, **__: (0, 0)
     env._purge_stale_vms = lambda record_runtime=False: 0
     env._prune_volumes = lambda progress=None: 0
     env._prune_networks = lambda progress=None: 0
@@ -312,9 +312,13 @@ def test_watchdog_accepts_midpass_heartbeats(env):
         if progress is not None:
             progress()
 
-    def slow_cleanup_idle_containers() -> tuple[int, int]:
+    def slow_cleanup_idle_containers(*, progress=None) -> tuple[int, int]:
         events["cleanup"].set()
+        if progress is not None:
+            progress()
         time.sleep(delay)
+        if progress is not None:
+            progress()
         return (0, 0)
 
     def slow_purge_vms(record_runtime: bool = False) -> int:  # noqa: FBT001

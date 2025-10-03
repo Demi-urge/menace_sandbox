@@ -140,7 +140,7 @@ def test_warmup_respects_container_limit(monkeypatch):
     monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
     env._CONTAINER_POOLS.clear()
     env._WARMUP_TASKS.clear()
-    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: None)
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda *_, **__: None)
     monkeypatch.setattr(env, "_MAX_CONTAINER_COUNT", 1)
     monkeypatch.setattr(env, "_read_active_containers", lambda: ["x"])
     env._ACTIVE_CONTAINER_LIMIT_REACHED = 0
