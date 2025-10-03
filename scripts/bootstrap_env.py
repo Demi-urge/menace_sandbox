@@ -1762,11 +1762,15 @@ def _normalise_worker_error_message(
         return None, None, {}
 
     lowered = collapsed.lower()
-    metadata: dict[str, str] = {"docker_worker_last_error_original": collapsed}
+    metadata: dict[str, str] = {
+        "docker_worker_last_error_original": collapsed,
+        "docker_worker_last_error_raw": collapsed,
+    }
 
     for pattern, code, narrative in _WORKER_ERROR_NORMALISERS:
         if pattern.search(lowered):
             metadata["docker_worker_last_error_code"] = code
+            metadata["docker_worker_last_error_original"] = narrative
             detail = f"{narrative}."
             return narrative, detail, metadata
 
@@ -2261,11 +2265,13 @@ class _WorkerWarningRecord:
     last_seen: str | None = None
     last_error: str | None = None
     last_error_original: str | None = None
+    last_error_raw: str | None = None
     restart_samples: list[int] = field(default_factory=list)
     backoff_hints: list[str] = field(default_factory=list)
     last_seen_samples: list[str] = field(default_factory=list)
     last_error_samples: list[str] = field(default_factory=list)
     last_error_original_samples: list[str] = field(default_factory=list)
+    last_error_raw_samples: list[str] = field(default_factory=list)
     error_codes: list[str] = field(default_factory=list)
 
     def update(self, metadata: Mapping[str, str]) -> None:
@@ -2322,6 +2328,13 @@ class _WorkerWarningRecord:
             if cleaned_original:
                 self.last_error_original_samples.append(cleaned_original)
                 self.last_error_original = cleaned_original
+
+        raw_error = metadata.get("docker_worker_last_error_raw")
+        if raw_error:
+            cleaned_raw = raw_error.strip()
+            if cleaned_raw:
+                self.last_error_raw_samples.append(cleaned_raw)
+                self.last_error_raw = cleaned_raw
 
         error_code = metadata.get("docker_worker_last_error_code")
         if error_code:
@@ -2461,6 +2474,20 @@ class _WorkerWarningAggregator:
             result["docker_worker_last_error_original_samples"] = "; ".join(
                 original_errors
             )
+
+        raw_errors = _coalesce_iterable(
+            [
+                error
+                for record in records
+                for error in record.last_error_raw_samples
+            ]
+        )
+        if primary and primary.last_error_raw:
+            result["docker_worker_last_error_raw"] = primary.last_error_raw
+        elif raw_errors:
+            result["docker_worker_last_error_raw"] = raw_errors[-1]
+        if len(raw_errors) > 1:
+            result["docker_worker_last_error_raw_samples"] = "; ".join(raw_errors)
 
         error_codes = _coalesce_iterable(
             [code for record in records for code in record.error_codes]
@@ -2826,12 +2853,14 @@ class WorkerRestartTelemetry:
     last_seen: str | None
     last_error: str | None
     last_error_original: str | None = None
+    last_error_raw: str | None = None
     contexts: tuple[str, ...] = field(default_factory=tuple)
     restart_samples: tuple[int, ...] = field(default_factory=tuple)
     backoff_options: tuple[str, ...] = field(default_factory=tuple)
     last_restart_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_original_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_error_raw_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_codes: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -2865,6 +2894,12 @@ class WorkerRestartTelemetry:
                 metadata.get("docker_worker_last_error_original_samples")
             )
         )
+        last_error_raw = metadata.get("docker_worker_last_error_raw")
+        last_error_raw_samples = tuple(
+            _split_metadata_values(
+                metadata.get("docker_worker_last_error_raw_samples")
+            )
+        )
         error_codes = _split_metadata_values(
             metadata.get("docker_worker_last_error_codes")
         )
@@ -2887,12 +2922,14 @@ class WorkerRestartTelemetry:
             last_seen=metadata.get("docker_worker_last_restart"),
             last_error=metadata.get("docker_worker_last_error"),
             last_error_original=last_error_original,
+            last_error_raw=last_error_raw,
             contexts=tuple(contexts),
             restart_samples=restart_samples,
             backoff_options=tuple(backoff_options),
             last_restart_samples=last_restart_samples,
             last_error_samples=last_error_samples,
             last_error_original_samples=tuple(last_error_original_samples),
+            last_error_raw_samples=tuple(last_error_raw_samples),
             last_error_codes=tuple(error_codes),
         )
 
