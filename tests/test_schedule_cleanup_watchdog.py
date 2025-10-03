@@ -115,6 +115,9 @@ def _load_environment_subset() -> dict[str, object]:
         "_HEARTBEAT_GUARD_MAX_DURATION": 1.0,
         "nullcontext": nullcontext,
         "_PROGRESS_SCOPE": threading.local(),
+        "_SANDBOX_DISABLE_CLEANUP": False,
+        "_log_cleanup_disabled": lambda context=None: None,
+        "_suspend_cleanup_workers": lambda reason=None: None,
     }
     exec(compile(subset, str(path), "exec"), namespace)  # noqa: S102
     return namespace
@@ -306,6 +309,15 @@ def test_watchdog_ignores_active_cleanup(env):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=1.0)
         loop.close()
+
+
+def test_cleanup_disabled_short_circuits(env):
+    env._ns["_SANDBOX_DISABLE_CLEANUP"] = True
+    env.ensure_cleanup_worker()
+    assert env._ns["_CLEANUP_TASK"] is None
+    assert env._ns["_REAPER_TASK"] is None
+    env.watchdog_check()
+    assert env.logger.messages == []
 
 
 def test_watchdog_handles_extended_docker_startup(env):
