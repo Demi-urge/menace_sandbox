@@ -326,6 +326,111 @@ _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
 )
 
 
+def _sanitize_error_code_suffix(code: str) -> str:
+    """Return a filesystem-safe suffix derived from ``code``."""
+
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", code.upper()).strip("_")
+    return normalized.lower() or "unknown"
+
+
+def _derive_generic_error_code_guidance(
+    code: str,
+) -> _WorkerErrorCodeDirective | None:
+    """Heuristically derive remediation guidance for unrecognised *code*.
+
+    Docker Desktop regularly introduces additional worker error codes without
+    updating public documentation.  When the bootstrapper encounters an
+    unfamiliar ``errCode`` value we still want to surface actionable guidance
+    instead of emitting a bland "unknown code" notice.  This helper maps broad
+    classes of error codes to production-ready remediation guidance by
+    inspecting key substrings.
+    """
+
+    candidate = code.strip().upper()
+    if not candidate:
+        return None
+
+    tokens = [token for token in re.split(r"[^A-Z0-9]+", candidate) if token]
+    token_set = {token for token in tokens}
+
+    def _metadata(summary: str) -> Mapping[str, str]:
+        suffix = _sanitize_error_code_suffix(candidate)
+        key = f"docker_worker_last_error_guidance_{suffix}"
+        return {key: summary}
+
+    if "WSL" in token_set:
+        summary = (
+            "Investigate the Docker Desktop WSL distributions and restart the "
+            "virtualisation backend"
+        )
+        remediation = (
+            "Run 'wsl --status' to verify the docker-desktop distributions are registered and healthy",
+            "Execute 'wsl --update' to install the latest WSL kernel and apply any pending fixes",
+            "Run 'wsl --shutdown' followed by restarting Docker Desktop to relaunch the WSL backend",
+        )
+        detail = (
+            "Docker Desktop surfaced Windows Subsystem for Linux error code %s "
+            "which typically indicates the docker-desktop WSL distributions "
+            "are stopped, outdated, or unreachable."
+        ) % candidate
+        return _WorkerErrorCodeDirective(
+            reason=(
+                "Docker Desktop emitted a Windows Subsystem for Linux worker "
+                f"error ({candidate})"
+            ),
+            detail=detail,
+            remediation=remediation,
+            metadata=_metadata(summary),
+        )
+
+    if any(token.startswith("VPNKIT") for token in token_set):
+        summary = (
+            "Stabilise the vpnkit networking service used by Docker Desktop"
+        )
+        remediation = (
+            "Restart Docker Desktop to relaunch the vpnkit networking proxy",
+            "Allow 'com.docker.backend' and 'vpnkit.exe' through local firewalls, antivirus suites, and VPN clients",
+            "If corporate VPNs are required, enable the Docker Desktop > Settings > Resources > Network > 'Enable integration with my VPN' option or equivalent",
+        )
+        detail = (
+            "Docker Desktop reported vpnkit-specific worker error code %s, "
+            "indicating its networking proxy is restarting repeatedly."
+        ) % candidate
+        return _WorkerErrorCodeDirective(
+            reason=(
+                "Docker Desktop flagged instability in its vpnkit networking component"
+            ),
+            detail=detail,
+            remediation=remediation,
+            metadata=_metadata(summary),
+        )
+
+    virtualization_tokens = {"HYPERV", "VIRTUAL", "VIRT", "VMM", "HCS"}
+    if any(any(token.startswith(prefix) for prefix in virtualization_tokens) for token in token_set):
+        summary = (
+            "Re-enable Windows virtualization features required by Docker Desktop"
+        )
+        remediation = (
+            "Enable 'Hyper-V', 'Virtual Machine Platform', and virtualization support in firmware if they are disabled",
+            "Close conflicting hypervisors such as VMware, VirtualBox, or WSL distributions consuming the same resources",
+            "Reboot Windows after changing virtualization settings and relaunch Docker Desktop",
+        )
+        detail = (
+            "Docker Desktop emitted virtualization-oriented worker error code %s, "
+            "suggesting the Hyper-V/Host Compute Service stack cannot manage the virtual machine backing Docker Desktop."
+        ) % candidate
+        return _WorkerErrorCodeDirective(
+            reason=(
+                "Docker Desktop detected that required Windows virtualization services are misconfigured"
+            ),
+            detail=detail,
+            remediation=remediation,
+            metadata=_metadata(summary),
+        )
+
+    return None
+
+
 _WORKER_INLINE_CONTEXT_STOPWORDS = {
     "a",
     "an",
@@ -4784,6 +4889,8 @@ def _apply_error_code_guidance(
         seen.add(normalized)
 
         directive = _WORKER_ERROR_CODE_GUIDANCE.get(normalized)
+        if directive is None:
+            directive = _derive_generic_error_code_guidance(normalized)
         if directive is None:
             continue
 
