@@ -202,6 +202,10 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "healthcheck_failure": "a health-check failure",
 }
 
+_WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
+    normaliser[2] for normaliser in _WORKER_ERROR_NORMALISERS
+)
+
 
 _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
     r"""
@@ -1707,7 +1711,6 @@ _WORKER_LAST_SEEN_KEYS = {
     "since",
     "last_restart",
     "lastrestart",
-    "last",
     "last_start",
     "laststart",
     "last_seen",
@@ -1723,23 +1726,77 @@ _WORKER_LAST_SEEN_PREFIXES = {
 }
 
 
+def _tokenize_metadata_key(key: str) -> tuple[str, ...]:
+    """Return normalized token segments extracted from a metadata key."""
+
+    normalized = key.strip("_")
+    if not normalized:
+        return ()
+
+    segments: list[str] = []
+    seen: set[str] = set()
+
+    for candidate in (normalized, *normalized.split("_")):
+        if not candidate:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        segments.append(candidate)
+
+    return tuple(segments)
+
+
 def _classify_worker_metadata_key(key: str) -> str | None:
     """Return a semantic category for a worker telemetry key."""
 
     if not key:
         return None
 
-    if key in _WORKER_RESTART_KEYS or any(key.startswith(prefix) for prefix in _WORKER_RESTART_PREFIXES):
+    tokens = _tokenize_metadata_key(key)
+    if not tokens:
+        return None
+
+    def _matches(
+        category_keys: set[str],
+        category_prefixes: set[str],
+        *,
+        allow_substring: bool,
+    ) -> bool:
+        if any(token in category_keys for token in tokens):
+            return True
+        for prefix in category_prefixes:
+            if any(token.startswith(prefix) for token in tokens):
+                return True
+            if allow_substring and prefix in tokens[0]:
+                return True
+        return False
+
+    last_seen_match = _matches(
+        _WORKER_LAST_SEEN_KEYS, _WORKER_LAST_SEEN_PREFIXES, allow_substring=False
+    )
+    if last_seen_match and not any(
+        token in {"error", "err", "failure", "reason"}
+        or "error" in token
+        or "fail" in token
+        for token in tokens
+    ):
+        return "last_seen"
+
+    if _matches(
+        _WORKER_RESTART_KEYS, _WORKER_RESTART_PREFIXES, allow_substring=True
+    ):
         return "restart"
 
-    if key in _WORKER_ERROR_KEYS or any(key.startswith(prefix) for prefix in _WORKER_ERROR_PREFIXES):
+    if _matches(
+        _WORKER_ERROR_KEYS, _WORKER_ERROR_PREFIXES, allow_substring=True
+    ):
         return "error"
 
-    if key in _WORKER_BACKOFF_KEYS or any(key.startswith(prefix) for prefix in _WORKER_BACKOFF_PREFIXES):
+    if _matches(
+        _WORKER_BACKOFF_KEYS, _WORKER_BACKOFF_PREFIXES, allow_substring=True
+    ):
         return "backoff"
-
-    if key in _WORKER_LAST_SEEN_KEYS or any(key.startswith(prefix) for prefix in _WORKER_LAST_SEEN_PREFIXES):
-        return "last_seen"
 
     return None
 
@@ -2258,26 +2315,52 @@ def _extract_worker_flapping_descriptors(
 
     envelope = _parse_docker_log_envelope(message)
 
-    context_fields = (
-        "context",
-        "component",
-        "subsystem",
-        "worker",
-        "module",
-        "namespace",
-        "service",
-        "scope",
-        "target",
-        "name",
-    )
-    for field in context_fields:
-        candidate = envelope.get(field)
-        if not candidate:
+    def _score_context_key(key: str) -> int:
+        lowered = key.lower()
+        base = 0
+        if lowered in {"context", "worker", "component", "module", "namespace", "service", "scope", "target", "name"}:
+            base = 90
+        elif lowered.endswith("context"):
+            base = 85
+        elif "context" in lowered:
+            base = 80
+        elif lowered.endswith("component"):
+            base = 70
+        elif "component" in lowered:
+            base = 60
+        elif any(token in lowered for token in {"worker", "module", "service", "scope", "target", "namespace", "name"}):
+            base = 55
+        if not base:
+            return 0
+        if "diagnostic" in lowered or "telemetry" in lowered:
+            base += 5
+        base += lowered.count("_")
+        return base
+
+    context_scores: dict[str, int] = {}
+    for key, value in envelope.items():
+        score = _score_context_key(key)
+        if not score:
             continue
-        normalized = _clean_worker_metadata_value(candidate)
-        if normalized:
-            metadata["docker_worker_context"] = normalized
-            break
+        normalized = _clean_worker_metadata_value(value)
+        if not normalized:
+            continue
+        penalty = 0
+        lowered_value = normalized.lower()
+        if lowered_value in {"docker-desktop", "desktop-linux"}:
+            penalty -= 6
+        elif lowered_value in {"desktop-windows", "desktop"}:
+            penalty -= 3
+        current = context_scores.get(normalized)
+        candidate_score = score + penalty
+        if current is None or candidate_score > current:
+            context_scores[normalized] = candidate_score
+
+    if context_scores:
+        best_context = max(
+            context_scores.items(), key=lambda item: (item[1], len(item[0]))
+        )[0]
+        metadata["docker_worker_context"] = best_context
 
     def _set_backoff_hint(candidate: str | None) -> None:
         nonlocal backoff_hint
@@ -2304,15 +2387,54 @@ def _extract_worker_flapping_descriptors(
                 except ValueError:
                     restart_count = None
             return
-        if category == "error" and last_error is None:
-            last_error = cleaned_value
-            if isinstance(value, str):
-                last_error_raw_value = value.strip()
-            else:
-                last_error_raw_value = str(value).strip()
+        if category == "error":
+            key_suffix = normalized_key.rsplit("_", 1)[-1]
+            if key_suffix.endswith("code") or normalized_key.endswith("code"):
+                metadata.setdefault("docker_worker_last_error_code", cleaned_value)
+                return
+
+            def _should_accept_error(existing: str | None) -> bool:
+                if existing is None:
+                    return True
+                if existing in _WORKER_ERROR_NARRATIVES:
+                    return True
+                return False
+
+            message_suffixes = {
+                "error",
+                "err",
+                "message",
+                "summary",
+                "detail",
+                "reason",
+                "failure",
+                "failreason",
+                "cause",
+                "description",
+            }
+
+            if any(key_suffix.endswith(token) for token in message_suffixes):
+                if _should_accept_error(last_error):
+                    last_error = cleaned_value
+                    if isinstance(value, str):
+                        last_error_raw_value = value.strip()
+                    else:
+                        last_error_raw_value = str(value).strip()
+                return
+
+            if _should_accept_error(last_error):
+                last_error = cleaned_value
+                if isinstance(value, str):
+                    last_error_raw_value = value.strip()
+                else:
+                    last_error_raw_value = str(value).strip()
             return
         if category == "backoff":
-            _set_backoff_hint(cleaned_value)
+            numeric_hint = _derive_numeric_backoff_hint(normalized_key, cleaned_value)
+            if numeric_hint:
+                _set_backoff_hint(numeric_hint)
+            else:
+                _set_backoff_hint(cleaned_value)
             return
         if category == "last_seen" and last_seen is None:
             last_seen = cleaned_value
@@ -3118,6 +3240,74 @@ def _estimate_backoff_seconds(value: str | None) -> float | None:
     if unit in {"h", "hr", "hrs", "hours"}:
         return numeric * 3600.0
     return None
+
+
+def _render_backoff_seconds(seconds: float) -> str:
+    """Convert a numeric duration in seconds into a compact textual hint."""
+
+    if seconds <= 0:
+        return "0s"
+
+    remaining = float(seconds)
+    parts: list[str] = []
+
+    for label, factor in (("d", 86400.0), ("h", 3600.0), ("m", 60.0)):
+        if remaining >= factor - 1e-9:
+            units = int(remaining // factor)
+            if units:
+                parts.append(f"{units}{label}")
+                remaining -= units * factor
+
+    if remaining > 0:
+        if remaining < 1.0 and not parts:
+            millis = int(round(remaining * 1000.0))
+            if millis:
+                parts.append(f"{millis}ms")
+            else:
+                parts.append("0s")
+        else:
+            if abs(remaining - round(remaining)) < 1e-6:
+                parts.append(f"{int(round(remaining))}s")
+            else:
+                precise = ("%0.3f" % remaining).rstrip("0").rstrip(".")
+                parts.append(f"{precise}s")
+    elif not parts:
+        parts.append("0s")
+
+    return " ".join(parts)
+
+
+def _derive_numeric_backoff_hint(key: str, value: str) -> str | None:
+    """Derive a human-readable backoff hint from numeric telemetry fields."""
+
+    candidate = value.strip()
+    if not candidate:
+        return None
+
+    normalized = candidate.replace(",", "")
+    try:
+        numeric = float(normalized)
+    except ValueError:
+        return None
+
+    key_lower = key.lower()
+
+    def _matches(tokens: Iterable[str]) -> bool:
+        return any(token in key_lower for token in tokens)
+
+    seconds: float
+    if _matches({"millisecond", "_ms", "ms"}):
+        seconds = numeric / 1000.0
+    elif _matches({"second", "_sec", "_s"}):
+        seconds = numeric
+    elif _matches({"minute", "_min", "_m"}):
+        seconds = numeric * 60.0
+    elif _matches({"hour", "_hr", "_h"}):
+        seconds = numeric * 3600.0
+    else:
+        return None
+
+    return _render_backoff_seconds(seconds)
 
 
 @dataclass(frozen=True)
