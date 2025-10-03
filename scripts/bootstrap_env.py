@@ -1069,6 +1069,48 @@ def _parse_key_value_lines(payload: str) -> dict[str, str]:
     return parsed
 
 
+def _parse_wsl_distribution_table(payload: str) -> list[dict[str, str | bool]]:
+    """Return WSL distribution metadata parsed from ``wsl.exe -l -v`` output."""
+
+    distributions: list[dict[str, str | bool]] = []
+
+    header_consumed = False
+    for raw_line in payload.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        if not header_consumed:
+            header_consumed = True
+            columns = [column.upper() for column in re.split(r"\s{2,}", line.strip())[:3]]
+            if columns == ["NAME", "STATE", "VERSION"]:
+                continue
+        is_default = line.lstrip().startswith("*")
+        normalized = line.lstrip("*").strip()
+        if not normalized:
+            continue
+        parts = re.split(r"\s{2,}", normalized)
+        if len(parts) < 3:
+            collapsed = re.sub(r"\s+", " ", normalized)
+            parts = collapsed.split(" ")
+            if len(parts) < 3:
+                continue
+            name = " ".join(parts[:-2])
+            state, version = parts[-2:]
+        else:
+            name, state, version = parts[0], parts[1], parts[2]
+
+        distributions.append(
+            {
+                "name": name.strip(),
+                "state": state.strip(),
+                "version": version.strip(),
+                "is_default": is_default,
+            }
+        )
+
+    return distributions
+
+
 def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list[str], list[str], dict[str, str]]:
     """Gather virtualization diagnostics relevant to Docker Desktop on Windows."""
 
@@ -1101,6 +1143,57 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
                 errors.append(
                     "Windows Subsystem for Linux is not fully enabled. Enable the 'Virtual Machine Platform' and 'Windows Subsystem for Linux' optional features and restart."
                 )
+
+    list_proc, failure = _run_command(["wsl.exe", "-l", "-v"], timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to enumerate WSL distributions: {failure}")
+    elif list_proc is not None and list_proc.stdout:
+        metadata["wsl_list_raw"] = list_proc.stdout.strip()
+        distributions = _parse_wsl_distribution_table(list_proc.stdout)
+        default_distro: str | None = None
+        docker_states: dict[str, str] = {}
+        for item in distributions:
+            name = str(item.get("name", "")).strip()
+            state = str(item.get("state", "")).strip()
+            version = str(item.get("version", "")).strip()
+            if not name:
+                continue
+            key_prefix = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower()
+            if key_prefix:
+                if state:
+                    metadata[f"wsl_distro_{key_prefix}_state"] = state
+                if version:
+                    metadata[f"wsl_distro_{key_prefix}_version"] = version
+            if bool(item.get("is_default")):
+                metadata["wsl_default_distribution"] = name
+                default_distro = name
+                if state.lower() not in {"running", "starting"}:
+                    warnings.append(
+                        "Default WSL distribution '%s' is %s. Start the distribution or switch Docker Desktop to a running distribution via Settings > Resources > WSL Integration."
+                        % (name, state or "stopped")
+                    )
+            normalized_name = name.lower()
+            if normalized_name in {"docker-desktop", "docker-desktop-data"}:
+                docker_states[normalized_name] = state
+                if state.lower() not in {"running", "starting"}:
+                    errors.append(
+                        "WSL distribution '%s' is %s. Start Docker Desktop and ensure its WSL integration is healthy."
+                        % (name, state or "stopped")
+                    )
+        if not distributions:
+            warnings.append(
+                "WSL reported no installed distributions; Docker Desktop cannot operate without the 'docker-desktop' distribution."
+            )
+        elif {"docker-desktop", "docker-desktop-data"} - set(docker_states):
+            missing = sorted({"docker-desktop", "docker-desktop-data"} - set(docker_states))
+            errors.append(
+                "Required Docker Desktop WSL distributions are missing: %s. Re-run 'wsl --install' or reinstall Docker Desktop."
+                % ", ".join(missing)
+            )
+        if default_distro is None and distributions:
+            warnings.append(
+                "No default WSL distribution detected. Assign one with 'wsl --set-default <distro>' to avoid Docker context issues."
+            )
 
     hyperv_cmd = [
         "powershell.exe",
@@ -1144,6 +1237,28 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
                 errors.append(
                     "Windows 'Virtual Machine Platform' feature is %s. Enable it via 'OptionalFeatures.exe', reboot, and restart Docker Desktop."
                     % vmp_state
+                )
+
+    vmcompute_cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "(Get-Service -Name vmcompute).Status",
+    ]
+    vmcompute_proc, failure = _run_command(vmcompute_cmd, timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to inspect Hyper-V compute service state: {failure}")
+    elif vmcompute_proc is not None:
+        lines = [line.strip() for line in vmcompute_proc.stdout.splitlines() if line.strip()]
+        vmcompute_state = lines[-1] if lines else ""
+        if vmcompute_state:
+            metadata["vmcompute_status"] = vmcompute_state
+            if vmcompute_state.lower() not in {"running", "startpending"}:
+                errors.append(
+                    "Hyper-V compute service (vmcompute) is %s. Start the service from an elevated PowerShell session with 'Start-Service vmcompute'."
+                    % vmcompute_state
                 )
 
     return warnings, errors, metadata
