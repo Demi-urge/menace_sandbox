@@ -1826,9 +1826,15 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
     return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", normalized)
 
 
-_WORKER_STALL_CANONICALISERS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE),
-    re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE),
+_WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
+    (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
+)
+
+
+_WORKER_STALLED_DETECTION_PATTERN = re.compile(
+    r"(\bworker\s+stalled)(?:\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?)?\s+(?:detected|detection)\b",
+    re.IGNORECASE,
 )
 
 
@@ -1858,8 +1864,10 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
         return message
 
     canonical = message
-    for pattern in _WORKER_STALL_CANONICALISERS:
-        canonical = pattern.sub("worker stalled", canonical)
+    for pattern, replacement in _WORKER_STALL_CANONICALISERS:
+        canonical = pattern.sub(replacement, canonical)
+
+    canonical = _WORKER_STALLED_DETECTION_PATTERN.sub(r"\1", canonical)
 
     return canonical
 
