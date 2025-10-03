@@ -1025,6 +1025,57 @@ _WORKER_CONTEXT_STALLED_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_WORKER_METADATA_TOKEN_PATTERN = re.compile(
+    r"(?P<key>[A-Za-z0-9_.-]+)\s*(?:=|:)\s*(?P<value>\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.:/\\-]+)",
+    re.IGNORECASE,
+)
+
+_WORKER_RESTART_KEYS = {
+    "restart",
+    "restarts",
+    "restart_count",
+    "restartcounts",
+    "restartattempt",
+    "restartattempts",
+    "attempt",
+    "attempts",
+    "retry",
+    "retries",
+    "tries",
+    "trycount",
+}
+
+_WORKER_ERROR_KEYS = {
+    "error",
+    "err",
+    "last_error",
+    "lasterror",
+    "error_message",
+    "failure",
+    "failreason",
+    "reason",
+}
+
+_WORKER_BACKOFF_KEYS = {
+    "backoff",
+    "delay",
+    "wait",
+    "cooldown",
+    "interval",
+    "duration",
+}
+
+_WORKER_LAST_SEEN_KEYS = {
+    "since",
+    "last_restart",
+    "lastrestart",
+    "last",
+    "last_start",
+    "laststart",
+    "last_seen",
+    "lastseen",
+}
+
 
 def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
     """Return a cleaned worker context string if *candidate* is meaningful."""
@@ -1051,7 +1102,7 @@ def _normalize_worker_context_candidate(candidate: str | None) -> str | None:
 def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     """Extract the most meaningful worker context descriptor from *message*."""
 
-    candidates: list[str] = []
+    candidates: list[tuple[str, int]] = []
 
     context_match = re.search(
         r"worker\s+stalled[\s;,:-]*(?:restarting|restart)"
@@ -1062,7 +1113,7 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
     if context_match:
         candidate = _normalize_worker_context_candidate(context_match.group("context"))
         if candidate:
-            candidates.append(candidate)
+            candidates.append((candidate, 90))
 
     for pattern in (
         _WORKER_CONTEXT_KV_PATTERN,
@@ -1070,21 +1121,143 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         _WORKER_CONTEXT_STALLED_PATTERN,
     ):
         for match in pattern.finditer(message):
-            candidate = match.group("value") if "value" in match.groupdict() else match.group("context")
-            normalized = _normalize_worker_context_candidate(candidate)
+            raw_candidate = match.group("value") if "value" in match.groupdict() else match.group("context")
+            normalized = _normalize_worker_context_candidate(raw_candidate)
             if normalized:
-                candidates.append(normalized)
+                weight = 20
+                key = match.groupdict().get("key", "")
+                key_normalized = key.lower() if key else ""
+                if key_normalized in {"worker", "id", "name"}:
+                    weight = 80
+                elif key_normalized in {"context", "component"}:
+                    weight = 60
+                elif key_normalized in {"module"}:
+                    weight = 50
+                elif pattern is _WORKER_CONTEXT_RESTART_PATTERN:
+                    weight = 70
+                candidates.append((normalized, weight))
 
     if not candidates:
         return None
 
-    for candidate in candidates:
-        lowered = candidate.lower()
-        if lowered.startswith("worker "):
-            continue
-        return candidate
+    best_candidate, _ = max(
+        candidates,
+        key=lambda item: (item[1], len(item[0])),
+    )
 
-    return candidates[0]
+    if best_candidate.lower().startswith("worker "):
+        for option, _ in sorted(candidates, key=lambda item: (-item[1], -len(item[0]))):
+            if not option.lower().startswith("worker "):
+                return option
+        return None
+
+    return best_candidate
+
+
+def _clean_worker_metadata_value(raw_value: str) -> str:
+    """Return a sanitised token extracted from worker diagnostic payloads."""
+
+    cleaned = raw_value.strip()
+    if cleaned and cleaned[0] in {'"', "'"} and cleaned[-1] == cleaned[0]:
+        cleaned = cleaned[1:-1]
+    return cleaned.strip()
+
+
+def _normalise_worker_metadata_key(raw_key: str) -> str:
+    """Return a canonical lowercase key for worker diagnostic attributes."""
+
+    normalised = raw_key.strip().lower()
+    if not normalised:
+        return normalised
+    return re.sub(r"[^a-z0-9]+", "_", normalised)
+
+
+def _extract_worker_flapping_descriptors(message: str) -> tuple[list[str], dict[str, str]]:
+    """Derive human friendly descriptors for flapping Docker workers."""
+
+    descriptors: list[str] = []
+    metadata: dict[str, str] = {}
+
+    restart_count: int | None = None
+    last_error: str | None = None
+    backoff_hint: str | None = None
+    last_seen: str | None = None
+
+    for match in _WORKER_METADATA_TOKEN_PATTERN.finditer(message):
+        key = _normalise_worker_metadata_key(match.group("key"))
+        value = _clean_worker_metadata_value(match.group("value"))
+        if not key or not value:
+            continue
+
+        if key in _WORKER_RESTART_KEYS and restart_count is None:
+            number_match = re.search(r"(-?\d+)", value)
+            if number_match:
+                try:
+                    restart_count = int(number_match.group(1))
+                except ValueError:
+                    restart_count = None
+            continue
+
+        if key in _WORKER_ERROR_KEYS and last_error is None:
+            last_error = value
+            continue
+
+        if key in _WORKER_BACKOFF_KEYS and backoff_hint is None:
+            backoff_hint = value
+            continue
+
+        if key in _WORKER_LAST_SEEN_KEYS and last_seen is None:
+            last_seen = value
+            continue
+
+    if restart_count is None:
+        fallback_restart = re.search(
+            r"(?:attempt|retry|restart)[^0-9]*?(?P<count>\d+)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if fallback_restart:
+            try:
+                restart_count = int(fallback_restart.group("count"))
+            except ValueError:
+                restart_count = None
+
+    if last_error is None:
+        fallback_error = re.search(
+            r"error\s*[=:]\s*(?P<value>\"[^\"]+\"|'[^']+'|[^;\n]+)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if fallback_error:
+            last_error = _clean_worker_metadata_value(fallback_error.group("value"))
+
+    if backoff_hint is None:
+        fallback_backoff = re.search(
+            r"backoff\s*[=:]\s*(?P<value>\"[^\"]+\"|'[^']+'|[^;\n]+)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if fallback_backoff:
+            backoff_hint = _clean_worker_metadata_value(fallback_backoff.group("value"))
+
+    if restart_count is not None and restart_count >= 0:
+        metadata["docker_worker_restart_count"] = str(restart_count)
+        plural = "s" if restart_count != 1 else ""
+        descriptors.append(f"{restart_count} restart{plural} observed")
+
+    if backoff_hint:
+        metadata["docker_worker_backoff"] = backoff_hint
+        descriptors.append(f"reported backoff interval: {backoff_hint}")
+
+    if last_seen:
+        metadata["docker_worker_last_restart"] = last_seen
+        descriptors.append(f"last restart marker: {last_seen}")
+
+    if last_error:
+        metadata["docker_worker_last_error"] = last_error
+        descriptors.append(f"last reported error: {last_error}")
+
+    return descriptors, metadata
 
 
 def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]:
@@ -1108,8 +1281,18 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
             "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
             "allocate additional CPU/RAM to the Docker VM before retrying."
         )
+
+        descriptors, worker_metadata = _extract_worker_flapping_descriptors(message)
+        metadata.update(worker_metadata)
+
+        detail_segments: list[str] = []
         if context:
-            cleaned += f" Affected component: {context}."
+            detail_segments.append(f"Affected component: {context}.")
+        if descriptors:
+            detail_segments.append("Additional context: " + "; ".join(descriptors) + ".")
+
+        if detail_segments:
+            cleaned += " " + " ".join(detail_segments)
 
     return cleaned, metadata
 
