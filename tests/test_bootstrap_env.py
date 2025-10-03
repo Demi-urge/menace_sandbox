@@ -641,7 +641,11 @@ def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
     assert metadata["docker_worker_last_error_raw"] == (
         "Docker Desktop automatically restarted a background worker after it stalled"
     )
-    assert metadata["docker_worker_last_error_banner"] == "worker stalled; restarting"
+    assert (
+        metadata["docker_worker_last_error_banner"]
+        == "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_banner_raw"] == "worker stalled; restarting"
 
 
 def test_normalise_docker_warning_extracts_last_error_code() -> None:
