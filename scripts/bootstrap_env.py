@@ -5822,14 +5822,34 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
                 skip_reason=skip_reason,
             )
 
+        virtualization_warnings: list[str] = []
+        virtualization_errors: list[str] = []
+        virtualization_metadata: dict[str, str] = {}
+
+        if context.is_windows or context.is_wsl:
+            vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(
+                timeout=timeout
+            )
+            virtualization_warnings.extend(vw_warnings)
+            virtualization_errors.extend(vw_errors)
+            virtualization_metadata.update(vw_metadata)
+
         errors.append(
             "Docker CLI executable was not found. Install Docker Desktop or ensure 'docker' is on PATH."
         )
+
+        if virtualization_warnings:
+            warnings.extend(virtualization_warnings)
+        if virtualization_errors:
+            errors.extend(virtualization_errors)
+        if virtualization_metadata:
+            metadata.update(virtualization_metadata)
+
         return DockerDiagnosticResult(
             cli_path=None,
             available=False,
-            errors=tuple(errors),
-            warnings=tuple(warnings),
+            errors=tuple(_coalesce_iterable(errors)),
+            warnings=tuple(_coalesce_iterable(warnings)),
             infos=tuple(info_messages),
             metadata=metadata,
         )

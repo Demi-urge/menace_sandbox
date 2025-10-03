@@ -144,6 +144,53 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
     assert summary in errors
 
 
+def test_collect_docker_diagnostics_virtualization_without_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Virtualization diagnostics should surface when the Docker CLI is missing."""
+
+    context = _windows_context()
+
+    monkeypatch.setattr(bootstrap_env, "_detect_runtime_context", lambda: context)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_discover_docker_cli",
+        lambda: (None, []),
+    )
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_infer_missing_docker_skip_reason",
+        lambda ctx: None,
+    )
+
+    calls = types.SimpleNamespace(count=0)
+
+    def fake_virtualization(timeout: float) -> tuple[list[str], list[str], dict[str, str]]:
+        calls.count += 1
+        return (
+            ["Hyper-V optional feature is disabled"],
+            ["Virtual Machine Platform is disabled"],
+            {"hyper_v_state": "Disabled"},
+        )
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_collect_windows_virtualization_insights",
+        fake_virtualization,
+    )
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.25)
+
+    assert calls.count == 1
+    assert result.cli_path is None
+    assert not result.available
+    assert any("hyper-v" in warning.lower() for warning in result.warnings)
+    assert any("virtual machine platform" in error.lower() for error in result.errors)
+    assert "hyper_v_state" in result.metadata
+    assert all("worker stalled" not in warning.lower() for warning in result.warnings)
+    assert all("worker stalled" not in error.lower() for error in result.errors)
+
+
 def test_worker_error_code_guidance_enriches_classification() -> None:
     """Known worker error codes should drive actionable remediation guidance."""
 
