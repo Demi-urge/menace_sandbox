@@ -27,7 +27,16 @@ from functools import lru_cache
 import ntpath
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable, Iterable, Mapping, Sequence, Literal
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+    Literal,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -4414,6 +4423,60 @@ def _reclassify_worker_warnings_for_info(
     return info_messages, remaining
 
 
+def _reclassify_worker_guidance_messages(
+    *,
+    warnings: MutableSequence[str],
+    errors: MutableSequence[str],
+    infos: MutableSequence[str],
+    metadata: MutableMapping[str, str],
+) -> None:
+    """Promote worker guidance derived from errors or notices into warnings.
+
+    Docker Desktop occasionally surfaces the ``worker stalled`` banner through
+    stderr (which we classify as an error) or as part of general notices.
+    After normalisation those payloads are rendered as high level remediation
+    messages.  Presenting the same banner across multiple severities dilutes its
+    usefulness and makes it harder for Windows developers to distinguish
+    legitimate Docker failures from recoverable worker churn.  This helper moves
+    any synthetic worker guidance into the warnings channel while retaining
+    non-worker diagnostics in their original severity buckets.
+    """
+
+    def _extract(collection: MutableSequence[str]) -> tuple[list[str], list[str]]:
+        retained: list[str] = []
+        reclassified: list[str] = []
+        for message in list(collection):
+            if _looks_like_worker_guidance(message):
+                reclassified.append(message)
+            else:
+                retained.append(message)
+        return retained, reclassified
+
+    retained_errors, promoted_from_errors = _extract(errors)
+    retained_infos, promoted_from_infos = _extract(infos)
+
+    if promoted_from_errors or promoted_from_infos:
+        # Extend warnings in-place to preserve any later callers that keep the
+        # list reference.  Normalisation via ``_coalesce_iterable`` occurs after
+        # this helper executes so ordering remains deterministic while removing
+        # duplicates.
+        warnings.extend(promoted_from_errors)
+        warnings.extend(promoted_from_infos)
+
+        if promoted_from_errors:
+            metadata.setdefault(
+                "docker_worker_guidance_promoted_from_errors",
+                str(len(promoted_from_errors)),
+            )
+        if promoted_from_infos:
+            metadata.setdefault(
+                "docker_worker_guidance_promoted_from_infos",
+                str(len(promoted_from_infos)),
+            )
+
+    errors[:] = retained_errors
+    infos[:] = retained_infos
+
 def _parse_key_value_lines(payload: str) -> dict[str, str]:
     """Return key/value mappings parsed from ``payload`` lines."""
 
@@ -5769,6 +5832,21 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     warnings, worker_metadata = _scrub_residual_worker_warnings(warnings)
     for key, value in worker_metadata.items():
         metadata.setdefault(key, value)
+
+    errors, error_worker_metadata = _scrub_residual_worker_warnings(errors)
+    for key, value in error_worker_metadata.items():
+        metadata.setdefault(key, value)
+
+    info_messages, info_worker_metadata = _scrub_residual_worker_warnings(info_messages)
+    for key, value in info_worker_metadata.items():
+        metadata.setdefault(key, value)
+
+    _reclassify_worker_guidance_messages(
+        warnings=warnings,
+        errors=errors,
+        infos=info_messages,
+        metadata=metadata,
+    )
 
     info_updates, remaining_warnings = _reclassify_worker_warnings_for_info(warnings, metadata)
     if info_updates:
