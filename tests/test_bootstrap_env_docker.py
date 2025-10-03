@@ -127,6 +127,29 @@ def test_worker_error_code_guidance_enriches_classification() -> None:
     assert assessment.metadata[guidance_key].startswith("Update the WSL kernel")
 
 
+def test_errcode_field_feeds_worker_error_guidance() -> None:
+    """errCode metadata should be interpreted as an actionable worker error code."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=6 errCode=WSL_KERNEL_OUTDATED "
+        "lastError=\"WSL kernel outdated\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_last_error_code"] == "WSL_KERNEL_OUTDATED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    context = _windows_context()
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
+
+    assert assessment.severity == "error"
+    assert any("wsl kernel" in detail.lower() for detail in assessment.details)
+    assert any("wsl --update" in step.lower() for step in assessment.remediation)
+
 def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
     """Structured worker telemetry should be extracted from the warning payload."""
 
