@@ -931,6 +931,32 @@ def _run_docker_command(
         return None, f"Failed to execute docker {rendered!s}: {exc}"
 
 
+def _run_command(command: Sequence[str], *, timeout: float) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    """Execute an arbitrary command and capture failures as diagnostics."""
+
+    try:
+        completed = subprocess.run(
+            list(command),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return completed, None
+    except FileNotFoundError:
+        return None, f"Executable '{command[0]}' is not available on PATH"
+    except subprocess.TimeoutExpired:
+        rendered_args = " ".join(command[1:])
+        if rendered_args:
+            command_preview = f"{command[0]} {rendered_args}"
+        else:
+            command_preview = command[0]
+        return None, f"Command '{command_preview}' timed out after {timeout:.1f}s"
+    except OSError as exc:  # pragma: no cover - environment specific
+        return None, f"Failed to execute {command[0]!s}: {exc}"
+
+
 def _iter_docker_warning_messages(value: object) -> Iterable[str]:
     """Yield normalized warning strings from Docker diagnostic payloads."""
 
@@ -1027,6 +1053,142 @@ def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], d
         metadata.update(extracted)
 
     return normalized, metadata
+
+
+def _parse_key_value_lines(payload: str) -> dict[str, str]:
+    """Return key/value mappings parsed from ``payload`` lines."""
+
+    parsed: dict[str, str] = {}
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        normalized_key = re.sub(r"[^A-Za-z0-9]+", "_", key).strip("_").lower()
+        parsed[normalized_key] = value.strip()
+    return parsed
+
+
+def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list[str], list[str], dict[str, str]]:
+    """Gather virtualization diagnostics relevant to Docker Desktop on Windows."""
+
+    warnings: list[str] = []
+    errors: list[str] = []
+    metadata: dict[str, str] = {}
+
+    status_proc, failure = _run_command(["wsl.exe", "--status"], timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to query WSL status: {failure}")
+    elif status_proc is not None:
+        if status_proc.stdout.strip():
+            metadata["wsl_status_raw"] = status_proc.stdout.strip()
+        parsed = _parse_key_value_lines(status_proc.stdout)
+        default_version = parsed.get("default_version")
+        if default_version:
+            metadata["wsl_default_version"] = default_version
+            if default_version and not default_version.startswith("2"):
+                errors.append(
+                    "WSL default version is set to %s. Docker Desktop requires WSL 2 for stable operation. "
+                    "Run 'wsl --set-default-version 2' from an elevated PowerShell session and reboot."
+                    % default_version
+                )
+        wsl_version = parsed.get("wsl_version")
+        if wsl_version:
+            metadata["wsl_version"] = wsl_version
+        if not parsed and status_proc.stdout:
+            lower = status_proc.stdout.lower()
+            if "not installed" in lower or "not enabled" in lower:
+                errors.append(
+                    "Windows Subsystem for Linux is not fully enabled. Enable the 'Virtual Machine Platform' and 'Windows Subsystem for Linux' optional features and restart."
+                )
+
+    hyperv_cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All).State",
+    ]
+    hyperv_proc, failure = _run_command(hyperv_cmd, timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to inspect Hyper-V feature state: {failure}")
+    elif hyperv_proc is not None:
+        lines = [line.strip() for line in hyperv_proc.stdout.splitlines() if line.strip()]
+        hyperv_state = lines[-1] if lines else ""
+        if hyperv_state:
+            metadata["hyper_v_state"] = hyperv_state
+            if hyperv_state.lower() not in {"enabled", "enablepending"}:
+                errors.append(
+                    "Hyper-V is %s. Enable Hyper-V (and its management tools) from Windows Features, reboot, and relaunch Docker Desktop."
+                    % hyperv_state
+                )
+
+    vmp_cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "(Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform).State",
+    ]
+    vmp_proc, failure = _run_command(vmp_cmd, timeout=timeout)
+    if failure:
+        warnings.append(f"Unable to inspect Virtual Machine Platform state: {failure}")
+    elif vmp_proc is not None:
+        lines = [line.strip() for line in vmp_proc.stdout.splitlines() if line.strip()]
+        vmp_state = lines[-1] if lines else ""
+        if vmp_state:
+            metadata["virtual_machine_platform_state"] = vmp_state
+            if vmp_state.lower() not in {"enabled", "enablepending"}:
+                errors.append(
+                    "Windows 'Virtual Machine Platform' feature is %s. Enable it via 'OptionalFeatures.exe', reboot, and restart Docker Desktop."
+                    % vmp_state
+                )
+
+    return warnings, errors, metadata
+
+
+def _post_process_docker_health(
+    *,
+    metadata: dict[str, str],
+    context: RuntimeContext,
+    timeout: float = 6.0,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Augment diagnostics when Docker reports unhealthy background workers."""
+
+    worker_health = metadata.get("docker_worker_health")
+    if worker_health != "flapping":
+        return [], [], {}
+
+    warnings: list[str] = []
+    errors: list[str] = []
+    additional_metadata: dict[str, str] = {}
+
+    base_error = (
+        "Docker Desktop reported that internal worker processes are repeatedly restarting. "
+        "The Docker VM is likely starved of resources or the Windows virtualization stack is misconfigured."
+    )
+
+    if context.is_wsl or context.is_windows:
+        vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(timeout=timeout)
+        warnings.extend(vw_warnings)
+        errors.extend(vw_errors)
+        additional_metadata.update(vw_metadata)
+        if context.is_wsl:
+            base_error += (
+                " Verify that WSL 2 is enabled for the current distribution, the WSL kernel is up to date, "
+                "and that Docker Desktop's WSL integration is enabled for this distribution."
+            )
+        else:
+            base_error += (
+                " Confirm that Hyper-V and the Virtual Machine Platform features are enabled, allocate sufficient CPU/RAM to Docker Desktop, and restart Docker Desktop after making changes."
+            )
+    else:
+        base_error += " Restart the Docker daemon and inspect the host virtualization tooling for faults."
+
+    errors.insert(0, base_error)
+    return warnings, errors, additional_metadata
 
 
 def _normalize_docker_warnings(value: object) -> tuple[list[str], dict[str, str]]:
@@ -1292,6 +1454,14 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     metadata.update(probe_metadata)
     warnings.extend(probe_warnings)
     errors.extend(probe_errors)
+
+    health_warnings, health_errors, health_metadata = _post_process_docker_health(
+        metadata=metadata,
+        context=context,
+    )
+    warnings.extend(health_warnings)
+    errors.extend(health_errors)
+    metadata.update(health_metadata)
 
     available = not errors
 
