@@ -2298,6 +2298,19 @@ def _extract_worker_flapping_descriptors(
                 error_detail
                 or f"Most recent worker error: {normalized_error}."
             )
+    else:
+        fallback_source = normalized_source or message
+        fallback_error, fallback_detail, fallback_metadata = (
+            _normalise_worker_error_message(fallback_source)
+            if fallback_source
+            else (None, None, {})
+        )
+        if fallback_error:
+            metadata.setdefault("docker_worker_last_error", fallback_error)
+            for key, value in fallback_metadata.items():
+                metadata.setdefault(key, value)
+            if fallback_detail and fallback_detail not in context_details:
+                context_details.append(fallback_detail)
 
     descriptors: list[str] = []
     if context_descriptor:
@@ -2359,6 +2372,7 @@ class _WorkerWarningRecord:
     last_error: str | None = None
     last_error_original: str | None = None
     last_error_raw: str | None = None
+    occurrences: int = 0
     restart_samples: list[int] = field(default_factory=list)
     backoff_hints: list[str] = field(default_factory=list)
     last_seen_samples: list[str] = field(default_factory=list)
@@ -2369,6 +2383,8 @@ class _WorkerWarningRecord:
 
     def update(self, metadata: Mapping[str, str]) -> None:
         """Merge ``metadata`` gleaned from a worker warning into the record."""
+
+        self.occurrences += 1
 
         context = metadata.get("docker_worker_context")
         if context and not self.context:
@@ -2481,6 +2497,20 @@ class _WorkerWarningAggregator:
             return result
 
         primary = self._select_primary_record(records)
+
+        total_occurrences = sum(record.occurrences for record in records)
+        if total_occurrences:
+            result["docker_worker_warning_occurrences"] = str(total_occurrences)
+
+        context_occurrence_entries = [
+            f"{record.context}:{record.occurrences}"
+            for record in records
+            if record.context and record.occurrences
+        ]
+        if context_occurrence_entries:
+            result["docker_worker_context_occurrences"] = ", ".join(
+                context_occurrence_entries
+            )
 
         contexts = _coalesce_iterable(
             [record.context for record in records if record.context]
@@ -2947,6 +2977,8 @@ class WorkerRestartTelemetry:
     last_error: str | None
     last_error_original: str | None = None
     last_error_raw: str | None = None
+    warning_occurrences: int = 0
+    context_occurrences: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     contexts: tuple[str, ...] = field(default_factory=tuple)
     restart_samples: tuple[int, ...] = field(default_factory=tuple)
     backoff_options: tuple[str, ...] = field(default_factory=tuple)
@@ -3006,6 +3038,25 @@ class WorkerRestartTelemetry:
         if normalized_backoff:
             normalized_backoff = _normalise_backoff_hint(normalized_backoff)
 
+        warning_occurrences = _coerce_optional_int(
+            metadata.get("docker_worker_warning_occurrences")
+        ) or 0
+
+        raw_context_occurrences = metadata.get("docker_worker_context_occurrences")
+        context_occurrence_pairs: list[tuple[str, int]] = []
+        for token in _split_metadata_values(raw_context_occurrences):
+            if ":" not in token:
+                continue
+            name, raw_count = token.split(":", 1)
+            cleaned_name = _clean_worker_metadata_value(name)
+            if not cleaned_name:
+                continue
+            try:
+                count_value = int(raw_count.strip())
+            except ValueError:
+                continue
+            context_occurrence_pairs.append((cleaned_name, count_value))
+
         return cls(
             context=context,
             restart_count=_coerce_optional_int(
@@ -3016,6 +3067,8 @@ class WorkerRestartTelemetry:
             last_error=metadata.get("docker_worker_last_error"),
             last_error_original=last_error_original,
             last_error_raw=last_error_raw,
+            warning_occurrences=warning_occurrences,
+            context_occurrences=tuple(context_occurrence_pairs),
             contexts=tuple(contexts),
             restart_samples=restart_samples,
             backoff_options=tuple(backoff_options),
@@ -3154,6 +3207,21 @@ def _classify_worker_flapping(
             joined = ", ".join(contexts)
             details.append(f"Affected components: {joined}.")
 
+    occurrence_count = telemetry.warning_occurrences
+    if occurrence_count:
+        plural = "s" if occurrence_count != 1 else ""
+        details.append(
+            f"Docker emitted {occurrence_count} worker stall warning{plural} during diagnostics."
+        )
+
+    if telemetry.context_occurrences:
+        rendered_context_occurrences = ", ".join(
+            f"{name} ({count})" for name, count in telemetry.context_occurrences
+        )
+        details.append(
+            f"Warning frequency by component: {rendered_context_occurrences}."
+        )
+
     max_restart = telemetry.max_restart_count
     if max_restart is not None:
         plural = "s" if max_restart != 1 else ""
@@ -3230,6 +3298,9 @@ def _classify_worker_flapping(
         severity = "error"
 
     if any(_is_critical_worker_error(message) for message in last_errors):
+        severity = "error"
+
+    if occurrence_count >= 4:
         severity = "error"
 
     if context.is_wsl:
