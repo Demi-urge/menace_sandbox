@@ -992,7 +992,7 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
         return
 
     if isinstance(value, str):
-        text = value.replace("\r", "\n")
+        text = _strip_control_sequences(value).replace("\r", "\n")
         for line in text.split("\n"):
             candidate = line.strip()
             if candidate:
@@ -1008,6 +1008,101 @@ def _iter_docker_warning_messages(value: object) -> Iterable[str]:
 
     for item in iterable:
         yield from _iter_docker_warning_messages(item)
+
+
+_ANSI_ESCAPE_PATTERN = re.compile(
+    r"""
+    (?:
+        \x1B[@-Z\\-_]
+        |
+        \x1B\[[0-?]*[ -/]*[@-~]
+        |
+        \x1B\][^\x1B]*\x1B\\
+        |
+        \x9B[0-?]*[ -/]*[@-~]
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+def _strip_control_sequences(text: str) -> str:
+    """Remove ANSI escapes and non-printable control characters from *text*."""
+
+    if not text:
+        return ""
+
+    cleaned = _ANSI_ESCAPE_PATTERN.sub("", text)
+    cleaned = cleaned.replace("\ufeff", "")
+    cleaned = cleaned.translate({
+        0x00: None,
+        0x01: None,
+        0x02: None,
+        0x03: None,
+        0x04: None,
+        0x05: None,
+        0x06: None,
+        0x07: None,
+        0x08: None,
+        0x0B: None,
+        0x0C: None,
+        0x0E: None,
+        0x0F: None,
+        0x10: None,
+        0x11: None,
+        0x12: None,
+        0x13: None,
+        0x14: None,
+        0x15: None,
+        0x16: None,
+        0x17: None,
+        0x18: None,
+        0x19: None,
+        0x1A: None,
+        0x1B: None,
+        0x1C: None,
+        0x1D: None,
+        0x1E: None,
+        0x1F: None,
+        0x7F: None,
+        0x80: None,
+        0x81: None,
+        0x82: None,
+        0x83: None,
+        0x84: None,
+        0x85: None,
+        0x86: None,
+        0x87: None,
+        0x88: None,
+        0x89: None,
+        0x8A: None,
+        0x8B: None,
+        0x8C: None,
+        0x8D: None,
+        0x8E: None,
+        0x8F: None,
+        0x90: None,
+        0x91: None,
+        0x92: None,
+        0x93: None,
+        0x94: None,
+        0x95: None,
+        0x96: None,
+        0x97: None,
+        0x98: None,
+        0x99: None,
+        0x9A: None,
+        0x9B: None,
+        0x9C: None,
+        0x9D: None,
+        0x9E: None,
+        0x9F: None,
+        0x200B: None,
+        0x200C: None,
+        0x200D: None,
+        0x2060: None,
+    })
+    return cleaned
 
 
 _DOCKER_WARNING_PREFIX_PATTERN = re.compile(

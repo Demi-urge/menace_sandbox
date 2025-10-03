@@ -218,6 +218,16 @@ def test_normalise_docker_warning_extracts_subsystem_context() -> None:
     assert metadata["docker_worker_context"] == "background sync"
 
 
+def test_normalise_docker_warning_strips_ansi_sequences() -> None:
+    message = "\x1b[33mWARN[0032] moby/buildkit: worker stalled; restarting\x1b[0m"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "docker desktop reported" in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby/buildkit"
+
+
 def test_normalise_docker_warning_enriches_restart_metadata() -> None:
     message = (
         "time=\"2024-05-05T00:01:02Z\" level=warning msg=\"worker stalled; restarting\" "
