@@ -685,25 +685,50 @@ def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
 def _iter_windows_docker_directories() -> Iterable[Path]:
     """Yield directories that commonly contain Docker Desktop CLIs on Windows."""
 
-    candidates: list[Path] = []
+    def _unique(paths: Iterable[Path]) -> Iterable[Path]:
+        seen: set[str] = set()
+        for candidate in paths:
+            normalized = os.path.normcase(str(candidate))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            yield candidate
+
+    program_roots: list[Path] = []
     for env_var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
         value = os.environ.get(env_var)
         if value:
-            candidates.append(Path(value))
+            program_roots.append(Path(value))
 
-    if not candidates:
-        candidates.extend(
+    if not program_roots:
+        program_roots.extend(
             Path(path)
             for path in (r"C:\\Program Files", r"C:\\Program Files (x86)")
         )
 
-    seen: set[str] = set()
-    for root in candidates:
-        target = root / "Docker" / "Docker" / "resources" / "bin"
-        key = os.path.normcase(str(target))
-        if key in seen:
-            continue
-        seen.add(key)
+    default_targets = [
+        root / "Docker" / "Docker" / "resources" / "bin" for root in program_roots
+    ]
+
+    program_data = os.environ.get("ProgramData")
+    if program_data:
+        default_targets.append(Path(program_data) / "DockerDesktop" / "version-bin")
+    else:
+        default_targets.append(Path(r"C:\\ProgramData") / "DockerDesktop" / "version-bin")
+
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        user_root = Path(local_appdata)
+        default_targets.append(
+            user_root / "Programs" / "Docker" / "Docker" / "resources" / "bin"
+        )
+        default_targets.append(user_root / "Docker" / "resources" / "bin")
+    else:
+        default_targets.append(
+            Path.home() / "AppData" / "Local" / "Programs" / "Docker" / "Docker" / "resources" / "bin"
+        )
+
+    for target in _unique(default_targets):
         yield target
 
 
