@@ -2566,6 +2566,13 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalls\b", re.IGNORECASE), "worker stalled"),
+    (
+        re.compile(
+            r"\bworker\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?stall(?:ed|ing)?\b",
+            re.IGNORECASE,
+        ),
+        "worker stalled",
+    ),
 )
 
 
@@ -2603,6 +2610,10 @@ _WORKER_STALLED_BANNER_PATTERN = re.compile(
     r"""
     worker                          # canonical worker token
     (?:\s+|[-_]\s*)                # whitespace or common separators
+    (?:
+        (?:has|have|had|is|are|was|were)\s+ # optional auxiliary verbs
+        (?:been\s+)?                # optional ``been`` filler token
+    )?
     stall(?:ed|ing)?                 # stall/stalled/stalling variations
     \s*
     [;:,\u2013\u2014-]               # punctuation banner separator (;, :, -, –, —)
