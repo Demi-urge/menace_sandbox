@@ -257,6 +257,21 @@ def test_worker_has_stalled_phrase_is_sanitized() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_worker_warning_extracts_last_healthy_marker() -> None:
+    """Docker worker warnings should surface the last healthy timestamp."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "lastHealthy=2024-10-03T17:45:00Z restartCount=2"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert metadata["docker_worker_last_healthy"] == "2024-10-03T17:45:00Z"
+    assert "Docker Desktop reported" in cleaned
+
+
 def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Virtualization diagnostics should run even for warning level telemetry."""
 
@@ -841,6 +856,24 @@ def test_worker_warning_next_restart_metadata_is_normalised() -> None:
             candidate in normalized_options
             for candidate in {"90s", "1m30s"}
         )
+
+
+def test_normalize_warning_collection_aggregates_last_healthy_markers() -> None:
+    """Aggregated worker metadata should retain last healthy timestamps."""
+
+    warnings = [
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "lastHealthy=2024-10-03T17:40:00Z restartCount=2",
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "lastHealthy=2024-10-03T17:45:00Z restartCount=3",
+    ]
+
+    normalized, metadata = bootstrap_env._normalize_warning_collection(warnings)
+
+    assert normalized
+    assert metadata["docker_worker_last_healthy"] == "2024-10-03T17:45:00Z"
+    samples = metadata.get("docker_worker_last_healthy_samples", "")
+    assert "2024-10-03T17:40:00Z" in samples
 
 
 def test_normalize_warning_collection_parses_iso_backoff_metadata() -> None:
