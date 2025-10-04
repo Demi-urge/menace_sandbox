@@ -3223,10 +3223,29 @@ def _extract_structured_error_details(payload: Any) -> tuple[str | None, dict[st
         return candidates[0] if candidates else None
 
     message = _select_message(prioritized_messages) or _select_message(fallback_messages)
-    if message:
-        metadata.setdefault("docker_worker_last_error_structured_message", message)
+    if not message:
+        return None, metadata
 
-    return message, metadata
+    compact_raw = re.sub(r"\s+", " ", message).strip()
+    if not compact_raw:
+        return None, metadata
+
+    sanitised = _sanitize_worker_banner_text(compact_raw)
+    metadata.setdefault("docker_worker_last_error_structured_message", sanitised)
+
+    if sanitised != compact_raw:
+        metadata.setdefault(
+            "docker_worker_last_error_structured_message_raw",
+            compact_raw,
+        )
+        fingerprint = _fingerprint_worker_banner(compact_raw)
+        if fingerprint:
+            metadata.setdefault(
+                "docker_worker_last_error_structured_message_fingerprint",
+                fingerprint,
+            )
+
+    return sanitised, metadata
 
 
 def _looks_like_worker_metadata_line(line: str) -> bool:
@@ -5893,6 +5912,7 @@ _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], .
     ("docker_worker_last_error_interpreted", "single"),
     ("docker_worker_last_error_details", "single"),
     ("docker_worker_last_error_remediation", "single"),
+    ("docker_worker_last_error_structured_message", "single"),
     ("docker_worker_last_error_samples", "multi"),
     ("docker_worker_last_error_original_samples", "multi"),
     ("docker_worker_last_error_raw_samples", "multi"),
@@ -5901,6 +5921,7 @@ _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], .
     ("docker_worker_last_error_summary_samples", "multi"),
     ("docker_worker_last_error_details_samples", "multi"),
     ("docker_worker_last_error_remediation_samples", "multi"),
+    ("docker_worker_last_error_structured_message_samples", "multi"),
 )
 
 
@@ -5928,11 +5949,14 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
         "docker_worker_last_error_banner_raw_samples",
         "docker_worker_last_error_banner_preserved_raw",
         "docker_worker_last_error_banner_preserved_raw_samples",
+        "docker_worker_last_error_structured_message_raw",
     ]
 
     sanitized_primary_keys: set[str] = {
         "docker_worker_last_error_banner_preserved",
         "docker_worker_last_error_banner_preserved_samples",
+        "docker_worker_last_error_structured_message",
+        "docker_worker_last_error_structured_message_raw",
     }
     sanitized_primary_keys.update(candidate_keys)
     sanitized_primary_keys.update(key for key, _ in _WORKER_METADATA_SANITIZE_RULES)
