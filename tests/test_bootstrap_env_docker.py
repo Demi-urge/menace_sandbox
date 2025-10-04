@@ -210,6 +210,50 @@ def test_post_process_virtualization_insights_for_error(monkeypatch: pytest.Monk
     assert summary in errors
 
 
+def test_transient_worker_flaps_downgraded_to_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Benign worker stalls should be reported as informational guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=3 backoff=PT30S "
+        "errCode=VPNKIT_BACKGROUND_SYNC_STALLED "
+        "lastError=\"vpnkit background sync stalled\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    metadata["docker_worker_warning_occurrences"] = "2"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity == "info"
+    assert "transient worker stalls" in assessment.headline.lower()
+    assert assessment.metadata.get("docker_worker_health_state") == "stabilising"
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_collect_windows_virtualization_insights",
+        lambda timeout: ([], [], {}),
+    )
+
+    warnings, errors, extra_metadata = bootstrap_env._post_process_docker_health(
+        metadata=dict(metadata),
+        context=_windows_context(),
+        timeout=0.01,
+    )
+
+    assert warnings == []
+    assert errors == []
+    assert extra_metadata["docker_worker_health_severity"] == "info"
+    summary = extra_metadata["docker_worker_health_summary"].lower()
+    assert "worker stalled" not in summary
+    assert "recovered" in summary or "transient" in summary
+
+
 def test_collect_docker_diagnostics_virtualization_without_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
