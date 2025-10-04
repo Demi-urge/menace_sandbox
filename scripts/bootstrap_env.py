@@ -2835,7 +2835,42 @@ _WARNING_STRUCTURED_CONTEXT_KEYS = (
     "origin",
 )
 
-_WARNING_STRUCTURED_MESSAGE_KEYS = (
+def _augment_with_localized_variants(keys: tuple[str, ...]) -> tuple[str, ...]:
+    """Extend ``keys`` with ``localized``/``localised`` prefixed variants."""
+
+    variants: list[str] = list(dict.fromkeys(keys))
+    seen: set[str] = set(variants)
+
+    for key in keys:
+        lowered = key.lower()
+        if lowered.startswith("localized") or lowered.startswith("localised"):
+            continue
+
+        normalized = key.strip()
+        if not normalized:
+            continue
+
+        compact = normalized.replace("_", "")
+        has_separator = "_" in normalized
+
+        for prefix in ("localized", "localised"):
+            with_separator = (
+                f"{prefix}_{normalized}" if has_separator else f"{prefix}_{normalized}"
+            )
+            if with_separator not in seen:
+                variants.append(with_separator)
+                seen.add(with_separator)
+
+            compact_value = compact if has_separator else normalized
+            without_separator = f"{prefix}{compact_value}"
+            if without_separator not in seen:
+                variants.append(without_separator)
+                seen.add(without_separator)
+
+    return tuple(variants)
+
+
+_WARNING_STRUCTURED_MESSAGE_KEYS_BASE = (
     "status",
     "msg",
     "message",
@@ -2874,7 +2909,11 @@ _WARNING_STRUCTURED_MESSAGE_KEYS = (
     "body",
 )
 
-_WARNING_PAYLOAD_FIELD_MARKERS = {
+_WARNING_STRUCTURED_MESSAGE_KEYS = _augment_with_localized_variants(
+    _WARNING_STRUCTURED_MESSAGE_KEYS_BASE
+)
+
+_WARNING_PAYLOAD_FIELD_MARKERS_BASE = {
     "status",
     "msg",
     "message",
@@ -2925,6 +2964,10 @@ _WARNING_PAYLOAD_FIELD_MARKERS = {
     "backoff_milliseconds",
     "backoff_duration",
 }
+
+_WARNING_PAYLOAD_FIELD_MARKERS = set(
+    _augment_with_localized_variants(tuple(_WARNING_PAYLOAD_FIELD_MARKERS_BASE))
+)
 
 _WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
     "restart": "restartCount",
