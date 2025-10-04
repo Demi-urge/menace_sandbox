@@ -2454,6 +2454,28 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
     return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", normalized)
 
 
+_WORKER_STALL_CAMELCASE_PATTERN = re.compile(
+    r"(?i)\b(workers?)(?=stall)",
+)
+
+
+def _normalize_worker_token_case(token: str) -> str:
+    """Return a ``worker`` token that preserves the source capitalisation."""
+
+    if token.endswith(("s", "S")):
+        base = token[:-1]
+    else:
+        base = token
+
+    if token.isupper():
+        return base.upper() + " "
+
+    if token[0].isupper():
+        return base[0].upper() + base[1:].lower() + " "
+
+    return base.lower() + " "
+
+
 _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
@@ -2518,6 +2540,11 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
     # Restrict rewrites to situations that look like restart diagnostics so we
     # avoid clobbering unrelated log lines that mention stalls in other
     # contexts (for example, a "queue worker stall threshold" configuration).
+
+    message = _WORKER_STALL_CAMELCASE_PATTERN.sub(
+        lambda match: _normalize_worker_token_case(match.group(1)),
+        message,
+    )
     restart_markers = ("restart", "restarting", "restart-loop", "restart loop")
     if not any(marker in lowered for marker in restart_markers):
         return message
