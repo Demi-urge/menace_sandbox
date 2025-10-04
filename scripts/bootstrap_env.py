@@ -2638,16 +2638,14 @@ _WORKER_STALL_CONTEXT_HINTS: tuple[str, ...] = (
 
 _WORKER_STALLED_BANNER_PATTERN = re.compile(
     r"""
-    worker                          # canonical worker token
-    (?:\s+|[-_]\s*)                # whitespace or common separators
+    workers?                        # worker or workers tokens
+    (?:\s+|[-_]\s*)?               # whitespace or common separators
     (?:
         (?:has|have|had|is|are|was|were)\s+ # optional auxiliary verbs
         (?:been\s+)?                # optional ``been`` filler token
     )?
-    stall(?:ed|ing)?                 # stall/stalled/stalling variations
-    \s*
-    [;:,\.\u2013\u2014\u2026\u00b7\u2022=><\u2190-\u21ff\u27f5-\u27ff-]+  # punctuation, arrows and separators
-    \s*
+    stall(?:ed|ing|s)?               # stall/stalled/stalling variations
+    (?:\s+|[^\w\s])*              # permissive punctuation/spacing between clauses
     re[-\s]*start(?:ed|ing)?        # restart/restarting/re-starting variations
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -5609,19 +5607,41 @@ def _enforce_worker_banner_sanitization(
             continue
 
         normalized = _normalise_worker_stalled_phrase(message)
-        if not _WORKER_STALLED_BANNER_PATTERN.search(normalized):
+        banner_detected = bool(_WORKER_STALLED_BANNER_PATTERN.search(normalized))
+        signal_detected = banner_detected or _contains_worker_stall_signal(normalized)
+
+        if not signal_detected:
             harmonised.append(message)
             continue
 
         cleaned, extracted = _normalise_docker_warning(message)
         if cleaned:
             harmonised.append(cleaned)
-            for key, value in extracted.items():
-                metadata.setdefault(key, value)
-            continue
+        else:
+            harmonised.append(_WORKER_STALLED_PRIMARY_NARRATIVE)
 
-        harmonised.append(_WORKER_STALLED_PRIMARY_NARRATIVE)
+        if not extracted:
+            extracted = {}
+        for key, value in extracted.items():
+            metadata.setdefault(key, value)
+
         metadata.setdefault("docker_worker_health", "flapping")
+
+        # ``_normalise_docker_warning`` may emit the canonical guidance without
+        # an explicit context when the raw banner lacked structured metadata.
+        # Ensure we always retain the original banner for diagnostics so future
+        # enrichment stages can infer error codes or restart telemetry.
+        preserved = extracted.get("docker_worker_last_error_banner_preserved")
+        if not preserved:
+            candidate = normalized.strip()
+            if candidate and _contains_worker_stall_signal(candidate):
+                preserved = candidate
+
+        if preserved:
+            metadata.setdefault("docker_worker_last_error_banner_preserved", preserved)
+            metadata.setdefault(
+                "docker_worker_last_error_banner_preserved_samples", preserved
+            )
 
     return harmonised
 
