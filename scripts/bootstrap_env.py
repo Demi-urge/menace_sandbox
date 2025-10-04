@@ -7261,7 +7261,11 @@ def _classify_worker_flapping(
             )
     else:
         headline = (
-            "Docker Desktop worker processes are repeatedly restarting and may not stabilize without intervention."
+            "Docker Desktop reported that worker processes are repeatedly restarting and may not stabilize without intervention."
+        )
+        details.insert(
+            0,
+            "Docker Desktop reported persistent background worker restarts that are not recovering automatically.",
         )
         if context.is_wsl:
             remediation.append(
