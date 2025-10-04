@@ -2646,7 +2646,7 @@ _WORKER_STALLED_BANNER_PATTERN = re.compile(
     )?
     stall(?:ed|ing)?                 # stall/stalled/stalling variations
     \s*
-    [;:,\.\u2013\u2014\u2026\u00b7\u2022-]+  # punctuation separators including ellipses/bullets
+    [;:,\.\u2013\u2014\u2026\u00b7\u2022=><\u2190-\u21ff\u27f5-\u27ff-]+  # punctuation, arrows and separators
     \s*
     re[-\s]*start(?:ed|ing)?        # restart/restarting/re-starting variations
     """,

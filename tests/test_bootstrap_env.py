@@ -729,6 +729,20 @@ def test_normalise_docker_warning_handles_unicode_separators() -> None:
     assert "~45s" in cleaned
 
 
+def test_normalise_docker_warning_handles_ascii_arrow_separator() -> None:
+    message = (
+        "WARN[0033] moby/buildkit: worker stalled -> restarting due to disk pressure"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby/buildkit"
+    assert metadata["docker_worker_last_error"] == "disk pressure"
+    assert "worker stalled" not in cleaned.lower()
+    assert "disk pressure" in cleaned
+
+
 def test_normalise_docker_warning_interprets_go_duration_tokens() -> None:
     message = "WARNING: worker stalled; restarting in 1m0s because of IO pressure"
 
