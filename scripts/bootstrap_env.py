@@ -2534,6 +2534,8 @@ _WARNING_STRUCTURED_CONTEXT_KEYS = (
     "pipeline",
     "channel",
     "namespace",
+    "source",
+    "origin",
 )
 
 _WARNING_STRUCTURED_MESSAGE_KEYS = (
@@ -2547,6 +2549,12 @@ _WARNING_STRUCTURED_MESSAGE_KEYS = (
     "status_text",
     "status_message",
     "statusmessage",
+    "text",
+    "status_detail",
+    "statusdetail",
+    "title",
+    "headline",
+    "body",
 )
 
 _WARNING_PAYLOAD_FIELD_MARKERS = {
@@ -2558,6 +2566,13 @@ _WARNING_PAYLOAD_FIELD_MARKERS = {
     "description",
     "summary",
     "status_message",
+    "text",
+    "status_text",
+    "status_detail",
+    "statusdetail",
+    "title",
+    "headline",
+    "body",
     "last_error",
     "last_error_message",
     "last_error_code",
