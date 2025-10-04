@@ -1449,38 +1449,42 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
         )
     )
 
+    def _extend_user_targets(root: Path) -> None:
+        """Add Docker Desktop user-level installation directories."""
+
+        candidate_bases = (root,)  # LOCALAPPDATA (e.g. C:\Users\name\AppData\Local)
+
+        # Modern Docker Desktop installers prefer ``%LOCALAPPDATA%\Programs``
+        # to avoid collisions with legacy resources placed directly under
+        # ``%LOCALAPPDATA%``.  Older builds (and some manual installs) still use
+        # the original layout.  Probe both aggressively so the bootstrap logic
+        # continues to work when users upgrade from older releases or move
+        # between insider/beta channels that experiment with the directory
+        # layout.
+        programs_dir = root / "Programs"
+        candidate_bases += (programs_dir,)
+
+        for base in candidate_bases:
+            for suffix in resource_suffixes:
+                default_targets.append(base.joinpath(*suffix))
+            default_targets.append(base / "Docker" / "resources" / "cli")
+            default_targets.extend(
+                base / "DockerDesktop" / variant
+                for variant in (
+                    "version-bin",
+                    "cli",
+                    "cli-bin",
+                    "cli-tools",
+                )
+            )
+
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         user_root = Path(_strip_windows_quotes(local_appdata))
-        default_targets.extend(
-            user_root.joinpath(*suffix) for suffix in resource_suffixes
-        )
-        default_targets.append(user_root / "Docker" / "resources" / "cli")
-        default_targets.extend(
-            user_root / "DockerDesktop" / variant
-            for variant in (
-                "version-bin",
-                "cli",
-                "cli-bin",
-                "cli-tools",
-            )
-        )
+        _extend_user_targets(user_root)
     else:
         home_root = Path.home() / "AppData" / "Local"
-        default_targets.extend(
-            home_root.joinpath("Programs", *suffix)
-            for suffix in resource_suffixes
-        )
-        default_targets.append(home_root / "Docker" / "resources" / "cli")
-        default_targets.extend(
-            home_root / "DockerDesktop" / variant
-            for variant in (
-                "version-bin",
-                "cli",
-                "cli-bin",
-                "cli-tools",
-            )
-        )
+        _extend_user_targets(home_root)
 
     for target in _unique(default_targets):
         yield target
