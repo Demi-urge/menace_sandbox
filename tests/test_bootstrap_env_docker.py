@@ -1162,7 +1162,7 @@ def test_worker_error_fallback_sanitizes_worker_stalls(
     assert all(
         "worker stalled; restarting" not in str(value).lower()
         for key, value in metadata.items()
-        if "banner_raw" not in key
+        if "banner_raw" not in key and "banner_preserved" not in key
     )
 
 
@@ -1392,6 +1392,9 @@ def test_structured_notifications_with_text_field() -> None:
     assert metadata.get("docker_worker_last_error_code") == "VPNKIT_SYNC_TIMEOUT"
     assert "worker stalled" not in metadata.get("docker_worker_last_error", "").lower()
     assert "vpnkit background sync" in metadata.get(
+        "docker_worker_last_error_banner_preserved", ""
+    ).lower()
+    assert "worker stalled; restarting" not in metadata.get(
         "docker_worker_last_error_banner_raw", ""
     ).lower()
 
