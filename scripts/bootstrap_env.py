@@ -2600,8 +2600,16 @@ _WORKER_STALL_CONTEXT_HINTS: tuple[str, ...] = (
 
 
 _WORKER_STALLED_BANNER_PATTERN = re.compile(
-    r"worker\s+stalled\s*;\s*restart",
-    re.IGNORECASE,
+    r"""
+    worker                          # canonical worker token
+    (?:\s+|[-_]\s*)                # whitespace or common separators
+    stall(?:ed|ing)?                 # stall/stalled/stalling variations
+    \s*
+    [;:,\u2013\u2014-]               # punctuation banner separator (;, :, -, –, —)
+    \s*
+    re[-\s]*start(?:ed|ing)?        # restart/restarting/re-starting variations
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
