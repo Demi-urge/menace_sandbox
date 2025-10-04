@@ -803,6 +803,28 @@ def test_worker_primary_metadata_is_redacted() -> None:
         assert metadata.get(fingerprint_key), f"expected fingerprint for {key}"
 
 
+def test_worker_banner_unknown_metadata_is_redacted() -> None:
+    """Previously unseen metadata keys should be sanitized proactively."""
+
+    metadata = {
+        "customTelemetry": (
+            "WARNING: worker stalled; restarting component=\"vpnkit\" "
+            "restartCount=2"
+        )
+    }
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)
+
+    sanitized = metadata.get("customTelemetry", "")
+    assert sanitized, "sanitized metadata should retain guidance"
+    assert "worker stalled" not in sanitized.lower()
+
+    fingerprint_key = "customTelemetry_fingerprint"
+    fingerprint = metadata.get(fingerprint_key)
+    assert fingerprint, "sanitized metadata should emit a fingerprint"
+    assert fingerprint.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
+
+
 def test_enforce_worker_banner_sanitization_handles_period_separator() -> None:
     """Worker stall banners that use periods as separators should be rewritten."""
 

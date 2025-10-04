@@ -5929,6 +5929,13 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
         "docker_worker_last_error_banner_preserved_raw_samples",
     ]
 
+    sanitized_primary_keys: set[str] = {
+        "docker_worker_last_error_banner_preserved",
+        "docker_worker_last_error_banner_preserved_samples",
+    }
+    sanitized_primary_keys.update(candidate_keys)
+    sanitized_primary_keys.update(key for key, _ in _WORKER_METADATA_SANITIZE_RULES)
+
     for key in candidate_keys:
         raw_value = metadata.get(key)
         if not raw_value or not isinstance(raw_value, str):
@@ -5965,6 +5972,28 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
             if sanitized_value and sanitized_value != raw_value:
                 metadata[key] = sanitized_value
 
+        if digest and not metadata.get(fingerprint_key):
+            metadata[fingerprint_key] = digest
+
+    for key, raw_value in list(metadata.items()):
+        if not isinstance(raw_value, str):
+            continue
+        if key in sanitized_primary_keys:
+            continue
+        if key.endswith("_fingerprint"):
+            continue
+
+        normalized = _normalise_worker_stalled_phrase(raw_value)
+        if not _contains_worker_stall_signal(normalized):
+            continue
+
+        sanitized_value = _sanitize_worker_banner_text(raw_value)
+        digest = _fingerprint_worker_banner(raw_value)
+
+        if sanitized_value and sanitized_value != raw_value:
+            metadata[key] = sanitized_value
+
+        fingerprint_key = f"{key}_fingerprint"
         if digest and not metadata.get(fingerprint_key):
             metadata[fingerprint_key] = digest
 
