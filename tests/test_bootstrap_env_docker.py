@@ -832,6 +832,40 @@ def test_worker_warning_explicit_vsock_guidance() -> None:
     assert "vsock" in assessment.metadata[guidance_key].lower()
 
 
+def test_worker_warning_vpnkit_io_pressure_guidance() -> None:
+    """Host I/O pressure codes should translate into actionable vpnkit guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=6 backoff=PT90S errCode=VPNKIT_BACKGROUND_SYNC_IO_PRESSURE "
+        "lastError=\"vpnkit background sync worker stalled; restarting due to IO pressure\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_IO_PRESSURE"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_background_sync_io_pressure"
+    assert guidance_key in assessment.metadata
+    assert "pressure" in assessment.metadata[guidance_key].lower()
+    assert any("pressure" in segment.lower() for segment in assessment.details)
+
+
+def test_generic_pressure_error_guidance() -> None:
+    """Unrecognised pressure-oriented error codes should still provide guidance."""
+
+    directive = bootstrap_env._derive_generic_error_code_guidance("host_disk_pressure_alert")
+
+    assert directive is not None
+    assert "pressure" in directive.reason.lower()
+    assert "pressure" in (directive.detail or "").lower()
+    assert any("pressure" in hint.lower() for hint in directive.remediation)
+
+
 def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
     """Parenthetical worker telemetry should not leak closing punctuation."""
 
