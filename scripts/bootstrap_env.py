@@ -244,6 +244,31 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
 }
 
 
+#
+# ``Docker Desktop`` occasionally emits benign ``worker stalled`` banners while a
+# background component is recovering from transient state (for example after the
+# host wakes from sleep).  Those incidents usually surface ``stalled_restart``
+# style error codes and low restart counters.  Treating every occurrence as a
+# warning generates noise for Windows developers and obscures genuine
+# virtualization faults.  The codes below are categorised as "benign" when they
+# appear alongside low restart counts and short backoff windows, allowing the
+# diagnostics pipeline to downgrade the health assessment to informational
+# guidance instead of a warning.
+_BENIGN_WORKER_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "STALLED_RESTART",
+        "VPNKIT_BACKGROUND_SYNC_STALLED",
+        "VPNKIT_SYNC_TIMEOUT",
+    }
+)
+
+# Docker Desktop exponentially increases the restart backoff when a worker keeps
+# flapping.  Once the delay grows beyond roughly a minute the worker is unlikely
+# to stabilise without intervention.  Values below this threshold are treated as
+# transient churn and therefore eligible for informational guidance.
+_SUSTAINED_BACKOFF_THRESHOLD = 45.0
+
+
 @dataclass(frozen=True)
 class _WorkerErrorCodeDirective:
     """Guidance describing how to remediate a specific worker error code."""
@@ -5680,17 +5705,15 @@ def _classify_worker_flapping(
 
     details: list[str] = []
     remediation: list[str] = []
-    severity_reasons: list[str] = []
-    severity_reason_keys: set[str] = set()
+    severity_reasons: dict[str, str] = {}
 
     def _register_reason(key: str, message: str) -> None:
-        if key in severity_reason_keys:
+        if key in severity_reasons:
             return
-        severity_reason_keys.add(key)
         normalized = message.rstrip()
         if not normalized.endswith("."):
             normalized += "."
-        severity_reasons.append(normalized)
+        severity_reasons[key] = normalized
 
     contexts = telemetry.all_contexts
     if contexts:
@@ -5806,6 +5829,11 @@ def _classify_worker_flapping(
         )
 
     error_codes = tuple(_coalesce_iterable(telemetry.last_error_codes))
+    normalized_codes = {
+        code.upper()
+        for code in error_codes
+        if isinstance(code, str) and code.strip()
+    }
     if error_codes:
         primary_code = error_codes[0]
         label = _WORKER_ERROR_CODE_LABELS.get(
@@ -5825,7 +5853,10 @@ def _classify_worker_flapping(
             if reason:
                 _register_reason(f"code:{code}", reason)
 
-        sustained_backoff = max_backoff_seconds is not None and max_backoff_seconds >= 30
+        sustained_backoff = (
+            max_backoff_seconds is not None
+            and max_backoff_seconds >= _SUSTAINED_BACKOFF_THRESHOLD
+        )
         if "stalled_restart" in error_codes and (
             (max_restart is not None and max_restart >= 3)
             or occurrence_count >= 2
@@ -5843,29 +5874,48 @@ def _classify_worker_flapping(
         remediation_collector=remediation,
     )
 
-    sustained_backoff = max_backoff_seconds is not None and max_backoff_seconds >= 30
+    sustained_backoff = (
+        max_backoff_seconds is not None
+        and max_backoff_seconds >= _SUSTAINED_BACKOFF_THRESHOLD
+    )
 
     severity: Literal["info", "warning", "error"]
+    benign_codes_only = not normalized_codes or normalized_codes <= _BENIGN_WORKER_ERROR_CODES
+    if benign_codes_only and normalized_codes:
+        for code in normalized_codes:
+            severity_reasons.pop(f"error_code_{code.lower()}", None)
+
     if severity_reasons:
         severity = "error"
     else:
         mild_recovery = (
-            occurrence_count <= 1
-            and (max_restart is None or max_restart <= 1)
+            occurrence_count <= 2
+            and (max_restart is None or max_restart <= 3)
             and not sustained_backoff
-            and not error_codes
+            and benign_codes_only
             and not critical_errors
         )
         severity = "info" if mild_recovery else "warning"
 
     if severity == "info":
-        headline = (
-            "Docker Desktop briefly restarted a background worker and reports it is healthy."
-        )
+        if (
+            occurrence_count > 1
+            or (max_restart is not None and max_restart > 1)
+            or (normalized_codes & _BENIGN_WORKER_ERROR_CODES)
+        ):
+            headline = (
+                "Docker Desktop recovered from transient worker stalls and reports the background worker is stable."
+            )
+            guidance_metadata.setdefault("docker_worker_health_state", "stabilising")
+        else:
+            headline = (
+                "Docker Desktop briefly restarted a background worker and reports it is healthy."
+            )
+            guidance_metadata.setdefault("docker_worker_health_state", "recovered")
+
         remediation.append(
             "No immediate action is required, but monitor Docker Desktop if the message reappears."
         )
-        guidance_metadata.setdefault("docker_worker_health_state", "recovered")
     elif severity == "warning":
         headline = (
             "Docker Desktop observed worker restarts but reported they are recovering automatically. Monitor Docker Desktop and re-run bootstrap if instability persists."
@@ -5904,7 +5954,7 @@ def _classify_worker_flapping(
         headline=headline,
         details=tuple(details),
         remediation=tuple(remediation),
-        reasons=tuple(severity_reasons),
+        reasons=tuple(severity_reasons.values()),
         metadata=guidance_metadata,
     )
 
