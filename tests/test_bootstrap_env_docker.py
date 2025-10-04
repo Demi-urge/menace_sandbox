@@ -1740,6 +1740,39 @@ def test_worker_stall_json_error_payload_enriched() -> None:
     assert metadata["docker_worker_backoff"] == "45s"
 
 
+def test_structured_worker_message_sanitised_when_only_banner() -> None:
+    """Structured ``lastError`` payloads should not leak the raw banner."""
+
+    payload = json.dumps(
+        {
+            "code": "VPNKIT_BACKGROUND_SYNC_STALLED",
+            "message": "worker stalled; restarting",
+            "detail": "worker stalled; restarting due to IO pressure",
+        }
+    )
+
+    message = (
+        "WARN[0042] moby/buildkit: worker stalled; restarting "
+        f"component=\"vpnkit\" lastError={payload}"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    structured = metadata["docker_worker_last_error_structured_message"]
+    assert structured
+    assert structured == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+    assert "worker stalled" not in structured.lower()
+    fingerprint = metadata.get(
+        "docker_worker_last_error_structured_message_fingerprint"
+    )
+    assert fingerprint
+    assert fingerprint.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
+    raw_value = metadata.get("docker_worker_last_error_structured_message_raw")
+    assert raw_value
+    assert "worker stalled" not in raw_value.lower()
+
+
 def test_error_code_guidance_covers_hns_service_unavailable() -> None:
     """Explicit HNS error codes should surface actionable remediation steps."""
 
