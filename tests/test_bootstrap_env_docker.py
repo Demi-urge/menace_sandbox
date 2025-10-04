@@ -654,6 +654,35 @@ def test_enforce_worker_banner_sanitization_removes_literal_banner() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_enforce_worker_banner_sanitization_handles_colon_separator() -> None:
+    """Windows Docker builds occasionally surface colon separated worker stalls."""
+
+    metadata: dict[str, str] = {}
+    warnings = ["WARNING worker stalled : restarting (errCode=VPNKIT_VSOCK_TIMEOUT)"]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_VSOCK_TIMEOUT"
+
+
+def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
+    """Unicode dash separators from Docker Desktop logs should be normalised."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARNING worker stalled – re-starting component=\"vpnkit\" restartCount=3",
+    ]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_errcode_field_feeds_worker_error_guidance() -> None:
     """errCode metadata should be interpreted as an actionable worker error code."""
 
