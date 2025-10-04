@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import types
 from pathlib import Path
@@ -53,6 +54,60 @@ def test_windows_path_translates_to_wsl_mount_root(
     )
 
     assert translated == expected
+
+
+def test_resolve_command_path_discovers_windows_cli_from_wsl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_resolve_command_path`` should locate Windows CLIs exposed to WSL."""
+
+    bootstrap_env._resolve_command_path.cache_clear()
+
+    mount_root = tmp_path / "wsl-root"
+    system32 = mount_root / "c" / "Windows" / "System32"
+    system32.mkdir(parents=True)
+
+    shim = system32 / "wsl.exe"
+    shim.write_text("#!/bin/sh\necho status\n", encoding="utf-8")
+    shim.chmod(0o755)
+
+    monkeypatch.setenv("WSL_HOST_MOUNT_ROOT", str(mount_root))
+    monkeypatch.setenv("SystemRoot", r"C:\\Windows")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+
+    resolved = bootstrap_env._resolve_command_path("wsl.exe")
+
+    assert resolved == str(shim)
+
+
+def test_run_command_executes_resolved_windows_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_run_command`` should execute CLIs discovered via Windows fallbacks."""
+
+    bootstrap_env._resolve_command_path.cache_clear()
+
+    mount_root = tmp_path / "wsl-root"
+    system32 = mount_root / "c" / "Windows" / "System32"
+    system32.mkdir(parents=True)
+
+    shim = system32 / "bcdedit.exe"
+    shim.write_text("#!/bin/sh\necho run-ok\n", encoding="utf-8")
+    shim.chmod(0o755)
+
+    monkeypatch.setenv("WSL_HOST_MOUNT_ROOT", str(mount_root))
+    monkeypatch.setenv("SystemRoot", r"C:\\Windows")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+
+    completed, failure = bootstrap_env._run_command(["bcdedit.exe"], timeout=2.0)
+
+    assert failure is None
+    assert completed is not None
+    assert "run-ok" in completed.stdout
 
 
 def test_docker_cli_discovery_uses_wsl_translation(
