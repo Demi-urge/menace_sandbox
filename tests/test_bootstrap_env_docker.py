@@ -718,6 +718,34 @@ def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_worker_banner_raw_metadata_is_redacted() -> None:
+    """Raw banner metadata should be rewritten and fingerprinted."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=2 lastError=\"worker stalled; restarting\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+
+    sensitive_keys = [
+        "docker_worker_last_error_banner_preserved_raw",
+        "docker_worker_last_error_banner_preserved_raw_samples",
+        "docker_worker_last_error_banner_raw",
+        "docker_worker_last_error_banner_raw_samples",
+    ]
+
+    for key in sensitive_keys:
+        value = metadata.get(key, "")
+        if value:
+            assert "worker stalled" not in value.lower()
+            fingerprint_key = f"{key}_fingerprint"
+            assert metadata.get(fingerprint_key), f"missing fingerprint for {key}"
+
+
 def test_enforce_worker_banner_sanitization_handles_period_separator() -> None:
     """Worker stall banners that use periods as separators should be rewritten."""
 
