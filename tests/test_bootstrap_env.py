@@ -874,8 +874,11 @@ def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
     )
     assert (
         metadata["docker_worker_last_error_banner_preserved"]
-        == "worker stalled; restarting"
+        == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
     )
+    signature = metadata.get("docker_worker_last_error_banner_signature")
+    assert signature is not None
+    assert signature.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
 
 
 def test_normalise_docker_warning_extracts_last_error_code() -> None:
@@ -916,8 +919,12 @@ def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
     assert metadata["docker_worker_last_error_raw"].endswith(
         "background worker after it stalled"
     )
-    assert metadata["docker_worker_last_error_banner_preserved"].endswith(
-        "docker worker experienced a stall; restarting"
+    assert (
+        metadata["docker_worker_last_error_banner_preserved"]
+        == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+    )
+    assert metadata["docker_worker_last_error_banner_signature"].startswith(
+        bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX
     )
 
 

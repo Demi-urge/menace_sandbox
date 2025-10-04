@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import logging
 import math
@@ -247,6 +248,7 @@ _WORKER_ERROR_NORMALISERS: tuple[tuple[re.Pattern[str], str, str], ...] = (
 
 _WORKER_STALLED_PRIMARY_CODE = _WORKER_ERROR_NORMALISERS[0][1]
 _WORKER_STALLED_PRIMARY_NARRATIVE = _WORKER_ERROR_NORMALISERS[0][2]
+_WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
 
 _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
@@ -2582,6 +2584,21 @@ def _strip_control_sequences(text: str) -> str:
     return cleaned
 
 
+def _fingerprint_worker_banner(raw_value: str | None) -> str | None:
+    """Return a deterministic fingerprint for raw worker stall banners."""
+
+    if not raw_value:
+        return None
+
+    cleaned = _strip_control_sequences(str(raw_value))
+    collapsed = re.sub(r"\s+", " ", cleaned).strip()
+    if not collapsed:
+        return None
+
+    digest = hashlib.sha256(collapsed.encode("utf-8")).hexdigest()
+    return f"{_WORKER_STALLED_SIGNATURE_PREFIX}{digest}"
+
+
 def _normalise_worker_stalled_phrase(message: str) -> str:
     """Collapse phrasing variants of ``worker has stalled`` into ``worker stalled``."""
 
@@ -4500,18 +4517,18 @@ def _synthesise_worker_stall_error_detail(
         metadata["docker_worker_last_error_banner_raw"] = narrative
     metadata["docker_worker_last_error_banner_raw_samples"] = narrative
 
-    if not metadata.get("docker_worker_last_error_banner_preserved"):
-        source = original_token or message or canonical_error
-        if source:
-            preserved = source.strip()
-            if preserved:
-                metadata["docker_worker_last_error_banner_preserved"] = preserved
-    if metadata.get("docker_worker_last_error_banner_preserved") and not metadata.get(
-        "docker_worker_last_error_banner_preserved_samples"
-    ):
-        metadata["docker_worker_last_error_banner_preserved_samples"] = metadata[
-            "docker_worker_last_error_banner_preserved"
-        ]
+    signature_source = original_token or message or canonical_error
+    signature = _fingerprint_worker_banner(signature_source)
+    if signature:
+        metadata.setdefault("docker_worker_last_error_banner_signature", signature)
+
+    preserved_banner = metadata.get("docker_worker_last_error_banner")
+    if preserved_banner and preserved_banner.strip():
+        metadata.setdefault("docker_worker_last_error_banner_preserved", preserved_banner)
+        metadata.setdefault(
+            "docker_worker_last_error_banner_preserved_samples",
+            preserved_banner,
+        )
 
     unique_codes: list[str] = []
     seen: set[str] = set()
@@ -4646,9 +4663,18 @@ def _normalise_worker_error_message(
         "docker_worker_last_error_banner": canonical_error,
         "docker_worker_last_error_banner_raw": canonical_error,
     }
-    if preserved_banner:
-        metadata["docker_worker_last_error_banner_preserved"] = preserved_banner
-        metadata["docker_worker_last_error_banner_preserved_samples"] = preserved_banner
+    preserved_signature = _fingerprint_worker_banner(
+        preserved_banner or original_token or raw_value
+    )
+    if preserved_signature:
+        metadata["docker_worker_last_error_banner_signature"] = preserved_signature
+
+    preserved_banner_text = metadata.get("docker_worker_last_error_banner")
+    if preserved_banner_text:
+        metadata["docker_worker_last_error_banner_preserved"] = preserved_banner_text
+        metadata["docker_worker_last_error_banner_preserved_samples"] = (
+            preserved_banner_text
+        )
 
     codes: list[str] = []
 
@@ -5669,13 +5695,19 @@ def _enforce_worker_banner_sanitization(
         if not preserved:
             candidate = normalized.strip()
             if candidate and _contains_worker_stall_signal(candidate):
-                preserved = candidate
+                preserved = _WORKER_STALLED_PRIMARY_NARRATIVE
 
         if preserved:
             metadata.setdefault("docker_worker_last_error_banner_preserved", preserved)
             metadata.setdefault(
                 "docker_worker_last_error_banner_preserved_samples", preserved
             )
+
+        signature = extracted.get("docker_worker_last_error_banner_signature")
+        if not signature:
+            signature = _fingerprint_worker_banner(normalized)
+        if signature:
+            metadata.setdefault("docker_worker_last_error_banner_signature", signature)
 
     return harmonised
 
@@ -5696,6 +5728,7 @@ class _WorkerWarningRecord:
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
     last_error_banner_preserved: str | None = None
+    last_error_banner_signature: str | None = None
     occurrences: int = 0
     restart_samples: list[int] = field(default_factory=list)
     backoff_hints: list[str] = field(default_factory=list)
@@ -5707,6 +5740,7 @@ class _WorkerWarningRecord:
     last_error_banner_samples: list[str] = field(default_factory=list)
     last_error_banner_raw_samples: list[str] = field(default_factory=list)
     last_error_banner_preserved_samples: list[str] = field(default_factory=list)
+    last_error_banner_signature_samples: list[str] = field(default_factory=list)
     error_codes: list[str] = field(default_factory=list)
 
     def update(self, metadata: Mapping[str, str]) -> None:
@@ -5802,6 +5836,14 @@ class _WorkerWarningRecord:
                     cleaned_banner_preserved
                 )
                 self.last_error_banner_preserved = cleaned_banner_preserved
+
+        banner_signature = metadata.get("docker_worker_last_error_banner_signature")
+        if banner_signature:
+            cleaned_signature = banner_signature.strip()
+            if cleaned_signature:
+                self.last_error_banner_signature_samples.append(cleaned_signature)
+                if not self.last_error_banner_signature:
+                    self.last_error_banner_signature = cleaned_signature
 
         error_code = metadata.get("docker_worker_last_error_code")
         if error_code:
@@ -6034,6 +6076,24 @@ class _WorkerWarningAggregator:
         if len(preserved_banner_errors) > 1:
             result["docker_worker_last_error_banner_preserved_samples"] = "; ".join(
                 preserved_banner_errors
+            )
+
+        signature_errors = _coalesce_iterable(
+            [
+                signature
+                for record in records
+                for signature in record.last_error_banner_signature_samples
+            ]
+        )
+        if primary and primary.last_error_banner_signature:
+            result["docker_worker_last_error_banner_signature"] = (
+                primary.last_error_banner_signature
+            )
+        elif signature_errors:
+            result["docker_worker_last_error_banner_signature"] = signature_errors[-1]
+        if len(signature_errors) > 1:
+            result["docker_worker_last_error_banner_signature_samples"] = "; ".join(
+                signature_errors
             )
 
         error_codes = _coalesce_iterable(
@@ -6734,6 +6794,7 @@ class WorkerRestartTelemetry:
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
     last_error_banner_preserved: str | None = None
+    last_error_banner_signature: str | None = None
     warning_occurrences: int = 0
     context_occurrences: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     contexts: tuple[str, ...] = field(default_factory=tuple)
@@ -6747,6 +6808,7 @@ class WorkerRestartTelemetry:
     last_error_banner_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_raw_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_preserved_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_error_banner_signature_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_codes: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -6809,6 +6871,14 @@ class WorkerRestartTelemetry:
                 metadata.get("docker_worker_last_error_banner_preserved_samples")
             )
         )
+        last_error_banner_signature = metadata.get(
+            "docker_worker_last_error_banner_signature"
+        )
+        last_error_banner_signature_samples = tuple(
+            _split_metadata_values(
+                metadata.get("docker_worker_last_error_banner_signature_samples")
+            )
+        )
         error_codes = _split_metadata_values(
             metadata.get("docker_worker_last_error_codes")
         )
@@ -6855,6 +6925,7 @@ class WorkerRestartTelemetry:
             last_error_banner=last_error_banner,
             last_error_banner_raw=last_error_banner_raw,
             last_error_banner_preserved=last_error_banner_preserved,
+            last_error_banner_signature=last_error_banner_signature,
             warning_occurrences=warning_occurrences,
             context_occurrences=tuple(context_occurrence_pairs),
             contexts=tuple(contexts),
@@ -6869,6 +6940,9 @@ class WorkerRestartTelemetry:
             last_error_banner_raw_samples=tuple(last_error_banner_raw_samples),
             last_error_banner_preserved_samples=tuple(
                 last_error_banner_preserved_samples
+            ),
+            last_error_banner_signature_samples=tuple(
+                last_error_banner_signature_samples
             ),
             last_error_codes=tuple(error_codes),
         )
