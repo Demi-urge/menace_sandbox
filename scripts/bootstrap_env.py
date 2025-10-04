@@ -864,26 +864,24 @@ _WORKER_INLINE_CONTEXT_STOPWORDS = {
 
 _WORKER_INLINE_CONTEXT_PATTERN = re.compile(
     r"""
-    worker
+    \bworker
     (?P<context_block>
-        (?:
-            \s+
+        (?:(?:\s+
             (?:
-                \[[^\]]+\]
+                \[[^\]]{0,80}\]
                 |
-                \([^\)]+\)
+                \([^\)\n]{0,80}\)
                 |
-                \{[^\}]+\}
+                \{[^\}\n]{0,80}\}
                 |
-                [\"'`]
-                [^\"'`]+?
-                [\"'`]
+                [\"'`][^\"'`\n]{0,80}[\"'`]
                 |
-                [A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*
+                [A-Za-z0-9_.:/\\-]{1,64}
+                (?:\s+[A-Za-z0-9_.:/\\-]{1,64}){0,3}
             )
-        )+
+        )){1,6}
     )
-    \s+stalled
+    \s+stalled\b
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -895,28 +893,50 @@ def _rewrite_inline_worker_contexts(message: str) -> str:
     if not message:
         return ""
 
-    def _replacement(match: re.Match[str]) -> str:
+    lowered = message.casefold()
+    if "worker" not in lowered or "stall" not in lowered:
+        return message
+
+    segments: list[str] = []
+    last_end = 0
+    search_from = 0
+
+    while True:
+        position = lowered.find("worker", search_from)
+        if position == -1:
+            break
+
+        match = _WORKER_INLINE_CONTEXT_PATTERN.match(message, position)
+        if not match:
+            search_from = position + len("worker")
+            continue
+
         block = match.group("context_block")
-        if not block:
-            return match.group(0)
+        replacement = match.group(0)
 
-        candidate = _clean_worker_metadata_value(block)
-        if not candidate:
-            return match.group(0)
+        if block:
+            candidate = _clean_worker_metadata_value(block)
+            if candidate:
+                tokens = [
+                    token
+                    for token in re.split(r"\s+", candidate)
+                    if token
+                    and token.strip().lower() not in _WORKER_INLINE_CONTEXT_STOPWORDS
+                ]
+                if tokens:
+                    context = " ".join(tokens)
+                    replacement = f"worker stalled (context={context})"
 
-        tokens = [
-            token
-            for token in re.split(r"\s+", candidate)
-            if token and token.strip().lower() not in _WORKER_INLINE_CONTEXT_STOPWORDS
-        ]
+        segments.append(message[last_end : match.start()])
+        segments.append(replacement)
+        last_end = match.end()
+        search_from = match.end()
 
-        if not tokens:
-            return match.group(0)
+    if not segments:
+        return message
 
-        context = " ".join(tokens)
-        return f"worker stalled (context={context})"
-
-    return _WORKER_INLINE_CONTEXT_PATTERN.sub(_replacement, message)
+    segments.append(message[last_end:])
+    return "".join(segments)
 
 
 _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
@@ -936,6 +956,13 @@ _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+_WORKER_GUIDANCE_SENTINELS: tuple[str, ...] = (
+    "docker desktop worker processes are repeatedly restarting",
+    "docker desktop reported worker restarts but indicated they are recovering automatically",
+    "docker desktop reported it recovered from transient worker stalls and the background worker is stable",
+    "docker desktop reported it briefly restarted a background worker and it is healthy",
+)
+
 
 def _contains_worker_stall_signal(message: str) -> bool:
     """Return ``True`` when *message* resembles a Docker worker stall banner."""
@@ -944,6 +971,9 @@ def _contains_worker_stall_signal(message: str) -> bool:
         return False
 
     lowered = message.casefold()
+    if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
+        return False
+
     if "worker" not in lowered or "stall" not in lowered:
         return False
 
@@ -5529,11 +5559,15 @@ def _scrub_residual_worker_warnings(
             rewritten.append(message)
             continue
 
+        lowered = message.casefold()
+        if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
+            rewritten.append(message)
+            continue
+
         if not _contains_worker_stall_signal(message):
             rewritten.append(message)
             continue
 
-        lowered = message.casefold()
         if "docker desktop reported repeated restarts" in lowered:
             rewritten.append(message)
             continue
@@ -7227,7 +7261,7 @@ def _classify_worker_flapping(
             )
     else:
         headline = (
-            "Docker Desktop reported worker processes are repeatedly restarting and may not stabilize without intervention."
+            "Docker Desktop worker processes are repeatedly restarting and may not stabilize without intervention."
         )
         if context.is_wsl:
             remediation.append(
