@@ -683,6 +683,19 @@ def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_enforce_worker_banner_sanitization_handles_period_separator() -> None:
+    """Worker stall banners that use periods as separators should be rewritten."""
+
+    metadata: dict[str, str] = {}
+    warnings = ["WARNING: worker stalled. restarting component=\"vpnkit\" backoff=\"5s\""]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_errcode_field_feeds_worker_error_guidance() -> None:
     """errCode metadata should be interpreted as an actionable worker error code."""
 
