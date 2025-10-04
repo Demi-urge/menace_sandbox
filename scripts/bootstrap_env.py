@@ -5819,6 +5819,28 @@ class _WorkerWarningAggregator:
         if len(error_codes) > 1:
             result["docker_worker_last_error_codes"] = ", ".join(error_codes)
 
+        # Enrich the aggregate with a synthesised health narrative so callers can
+        # consistently reason about severity without re-implementing the
+        # classification pipeline that ``_normalise_docker_warning`` uses for
+        # single warnings.  ``_compose_worker_flapping_guidance`` mutates the
+        # mapping in-place and returns the rendered summary which ensures follow
+        # up consumers receive the same canonical guidance for both individual
+        # and aggregated worker diagnostics.  Defensive guards prevent the
+        # aggregation step from ever masking the original metadata when the
+        # classifier cannot derive additional context.
+        if result.get("docker_worker_health"):
+            try:
+                summary = _compose_worker_flapping_guidance(result)
+            except Exception as exc:  # pragma: no cover - defensive safety net
+                LOGGER.debug(
+                    "Failed to synthesise aggregated worker guidance: %s",
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                if summary and "docker_worker_health_summary" not in result:
+                    result["docker_worker_health_summary"] = summary
+
         return result
 
     @staticmethod
