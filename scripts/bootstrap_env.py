@@ -280,6 +280,23 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
 }
 
 
+_VIRTUALIZATION_ERROR_CODE_PREFIXES: tuple[str, ...] = (
+    "WSL_",
+    "WSL2_",
+    "HYPERV",
+    "VIRTUALIZATION",
+)
+
+
+_VIRTUALIZATION_ERROR_CODE_EXACT_MATCHES: frozenset[str] = frozenset(
+    {
+        "HCS_E_ACCESS_DENIED",
+        "HCS_E_HYPERV_NOT_PRESENT",
+        "HCS_E_HYPERV_NOT_RUNNING",
+    }
+)
+
+
 #
 # ``Docker Desktop`` occasionally emits benign ``worker stalled`` banners while a
 # background component is recovering from transient state (for example after the
@@ -6193,6 +6210,100 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
     return warnings, errors, metadata
 
 
+def _extract_worker_error_codes_from_metadata(
+    metadata: Mapping[str, str]
+) -> set[str]:
+    """Return the set of worker error codes recorded in ``metadata``."""
+
+    codes: set[str] = set()
+
+    primary = metadata.get("docker_worker_last_error_code")
+    if isinstance(primary, str):
+        normalized = primary.strip().upper()
+        if normalized:
+            codes.add(normalized)
+
+    for token in _split_metadata_values(metadata.get("docker_worker_last_error_codes")):
+        normalized = token.strip().upper()
+        if normalized:
+            codes.add(normalized)
+
+    return codes
+
+
+def _is_virtualization_error_code(code: str) -> bool:
+    """Return ``True`` when *code* signals a virtualization issue on Windows."""
+
+    if not code:
+        return False
+
+    normalized = code.strip().upper()
+    if not normalized:
+        return False
+
+    if normalized in _VIRTUALIZATION_ERROR_CODE_EXACT_MATCHES:
+        return True
+
+    return normalized.startswith(_VIRTUALIZATION_ERROR_CODE_PREFIXES)
+
+
+def _should_collect_windows_virtualization_followups(
+    metadata: Mapping[str, str], context: RuntimeContext
+) -> bool:
+    """Return ``True`` when Docker diagnostics warrant virtualization checks."""
+
+    if not (context.is_windows or context.is_wsl):
+        return False
+
+    if any(
+        key in metadata
+        for key in ("wsl_status_raw", "hyper_v_state", "virtual_machine_platform_state")
+    ):
+        # Virtualization telemetry has already been collected; avoid duplicate work.
+        return False
+
+    severity = metadata.get("docker_worker_health_severity", "").strip().lower()
+
+    error_codes = _extract_worker_error_codes_from_metadata(metadata)
+    virtualization_codes = {
+        code for code in error_codes if _is_virtualization_error_code(code)
+    }
+    if virtualization_codes:
+        return True
+
+    # Only fall back to textual heuristics when diagnostics consider the worker
+    # unstable.  This avoids running expensive Windows commands for benign,
+    # transient worker churn that already recovered.
+    if severity and severity not in {"warning", "error"}:
+        return False
+
+    textual_hints: list[str] = []
+    for key in (
+        "docker_worker_last_error",
+        "docker_worker_last_error_original",
+        "docker_worker_last_error_raw",
+        "docker_worker_health_summary",
+    ):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            textual_hints.append(value)
+
+    if not textual_hints:
+        return False
+
+    combined = " ".join(textual_hints).lower()
+    virtualization_tokens = (
+        "wsl",
+        "hyper-v",
+        "hyperv",
+        "virtualization",
+        "vmcompute",
+        "hypervisor",
+    )
+
+    return any(token in combined for token in virtualization_tokens)
+
+
 def _coerce_optional_int(value: object) -> int | None:
     """Convert *value* to ``int`` when possible."""
 
@@ -7384,6 +7495,17 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     warnings.extend(health_warnings)
     errors.extend(health_errors)
     metadata.update(health_metadata)
+
+    if _should_collect_windows_virtualization_followups(metadata, context):
+        vw_warnings, vw_errors, vw_metadata = _collect_windows_virtualization_insights(
+            timeout=timeout
+        )
+        if vw_warnings:
+            warnings.extend(vw_warnings)
+        if vw_errors:
+            errors.extend(vw_errors)
+        for key, value in vw_metadata.items():
+            metadata.setdefault(key, value)
 
     warnings, worker_metadata = _scrub_residual_worker_warnings(warnings)
     for key, value in worker_metadata.items():
