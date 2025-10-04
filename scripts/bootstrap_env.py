@@ -258,6 +258,8 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_SYNC_TIMEOUT": "a vpnkit background sync timeout",
     "VPNKIT_HNS_UNAVAILABLE": "vpnkit losing contact with the Host Network Service",
     "VPNKIT_HNS_UNREACHABLE": "vpnkit losing contact with the Host Network Service",
+    "VPNKIT_VSOCK_UNRESPONSIVE": "a stalled vsock channel between Windows and the Docker VM",
+    "VPNKIT_VSOCK_TIMEOUT": "a vsock connection timeout between Windows and the Docker VM",
     "WSL_VM_STOPPED": "a stopped WSL virtual machine",
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
     "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
@@ -499,6 +501,45 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
             "docker_worker_last_error_guidance_vpnkit_hns_unreachable": (
                 "Restore HNS connectivity and then restart Docker Desktop so vpnkit can reattach container networking"
             ),
+        },
+    ),
+    "VPNKIT_VSOCK_UNRESPONSIVE": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected the vsock channel between Windows and the Docker VM became unresponsive"
+        ),
+        detail=(
+            "vpnkit relies on the Hyper-V/WSL virtio-socket (vsock) transport to communicate with the Linux virtual machine. "
+            "When that channel hangs, background workers stall and Docker restarts them in a loop."
+        ),
+        remediation=(
+            "Restart Docker Desktop to rebuild the vsock connection to the docker-desktop WSL/Hyper-V VM",
+            "Temporarily disable third-party VPN or firewall software that may intercept Hyper-V socket traffic",
+            "If the issue recurs, reset Docker Desktop's networking stack or reinstall the WSL integration",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_vsock_unresponsive": (
+                "Restart Docker Desktop and stabilise the Hyper-V vsock channel before retrying"
+            ),
+            "docker_worker_last_error_category": "vpnkit_vsock",
+        },
+    ),
+    "VPNKIT_VSOCK_TIMEOUT": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported timeouts while establishing the vsock channel to the Docker VM"
+        ),
+        detail=(
+            "Repeated vsock handshakes timing out indicate the virtualization stack is overloaded or blocked, causing worker stalls."
+        ),
+        remediation=(
+            "Restart Docker Desktop and allow the docker-desktop VM to boot cleanly",
+            "Ensure Hyper-V or WSL 2 virtualization has sufficient CPU and memory allocations",
+            "Review Windows event logs for Hyper-V socket errors and reinstall Docker Desktop if corruption is detected",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_vsock_timeout": (
+                "Restart Docker Desktop, verify virtualization resources, and repair the vsock channel if timeouts persist"
+            ),
+            "docker_worker_last_error_category": "vpnkit_vsock",
         },
     ),
     "WSL_VM_STOPPED": _WorkerErrorCodeDirective(
@@ -4150,6 +4191,40 @@ def _extract_worker_error_code_hint(text: str | None) -> str | None:
     return None
 
 
+def _infer_worker_error_code_from_context(*values: str | None) -> str | None:
+    """Infer a worker error code from contextual hints when ``errCode`` is absent."""
+
+    tokens: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        cleaned = _clean_worker_metadata_value(value)
+        if not cleaned:
+            continue
+        tokens.append(cleaned)
+
+    if not tokens:
+        return None
+
+    corpus = " ".join(tokens).casefold()
+    if "vsock" in corpus or "hyper-v socket" in corpus or "hvsock" in corpus:
+        timeout_markers = (
+            "timeout",
+            "timed out",
+            "deadline",
+            "hang",
+            "stuck",
+        )
+        if any(marker in corpus for marker in timeout_markers):
+            return "VPNKIT_VSOCK_TIMEOUT"
+        degraded_markers = ("refused", "unresponsive", "reset", "closed", "broken")
+        if any(marker in corpus for marker in degraded_markers):
+            return "VPNKIT_VSOCK_UNRESPONSIVE"
+        return "VPNKIT_VSOCK_UNRESPONSIVE"
+
+    return None
+
+
 def _synthesise_worker_stall_error_detail(
     *,
     message: str | None,
@@ -4202,8 +4277,28 @@ def _synthesise_worker_stall_error_detail(
         metadata.setdefault("docker_worker_last_error_code", unique_codes[0])
         if len(unique_codes) > 1:
             metadata.setdefault("docker_worker_last_error_codes", ", ".join(unique_codes))
+
+        primary_code = metadata.get("docker_worker_last_error_code", "")
+        if primary_code.upper() == _WORKER_STALLED_PRIMARY_CODE.upper():
+            inferred = _infer_worker_error_code_from_context(
+                message,
+                canonical_error,
+                original_token,
+            )
+            if inferred and inferred.upper() != primary_code.upper():
+                metadata["docker_worker_last_error_code"] = inferred
+                unique_codes = [inferred]
     else:
-        metadata.setdefault("docker_worker_last_error_code", _WORKER_STALLED_PRIMARY_CODE)
+        inferred = _infer_worker_error_code_from_context(
+            message,
+            canonical_error,
+            original_token,
+        )
+        if inferred:
+            metadata.setdefault("docker_worker_last_error_code", inferred)
+            unique_codes = [inferred]
+        else:
+            metadata.setdefault("docker_worker_last_error_code", _WORKER_STALLED_PRIMARY_CODE)
 
     sentences: list[str] = []
 
@@ -4335,6 +4430,22 @@ def _normalise_worker_error_message(
             unique_codes = _unique_codes(codes)
             if len(unique_codes) > 1:
                 metadata["docker_worker_last_error_codes"] = ", ".join(unique_codes)
+            if code.upper() == _WORKER_STALLED_PRIMARY_CODE.upper():
+                inferred = _infer_worker_error_code_from_context(
+                    raw_value,
+                    raw_original,
+                    metadata.get("docker_worker_last_error_banner_raw"),
+                    metadata.get("docker_worker_last_error_raw"),
+                )
+                if inferred and inferred.upper() != code.upper():
+                    metadata["docker_worker_last_error_code"] = inferred
+                    metadata.setdefault(
+                        "docker_worker_last_error_code_inferred", inferred
+                    )
+                    inferred_codes = _unique_codes([*codes, inferred])
+                    metadata["docker_worker_last_error_codes"] = ", ".join(
+                        inferred_codes
+                    )
             return narrative, detail, metadata
 
     
@@ -4360,6 +4471,24 @@ def _normalise_worker_error_message(
             codes=codes,
         )
         return narrative, detail, metadata
+
+    inferred = _infer_worker_error_code_from_context(
+        raw_value,
+        raw_original,
+        canonical_error,
+        original_token,
+    )
+    if inferred:
+        metadata.setdefault("docker_worker_last_error_code", inferred)
+        existing_multi = metadata.get("docker_worker_last_error_codes")
+        if existing_multi:
+            tokens = _split_metadata_values(existing_multi)
+            if inferred not in tokens:
+                tokens.append(inferred)
+                metadata["docker_worker_last_error_codes"] = ", ".join(tokens)
+        else:
+            metadata.setdefault("docker_worker_last_error_codes", inferred)
+        metadata.setdefault("docker_worker_last_error_code_inferred", inferred)
 
     fallback_detail = (
         "Docker Desktop reported the worker error '%s'." % collapsed

@@ -753,6 +753,53 @@ def test_vpnkit_hns_guidance_mentions_hns() -> None:
     assert "hns" in assessment.metadata[guidance_key].lower()
 
 
+def test_worker_warning_infers_vsock_timeout_guidance() -> None:
+    """vsock timeouts without explicit codes should map to actionable guidance."""
+
+    message = (
+        "WARN[0039] moby/buildkit: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 lastError=\"vsock handshake timed out after 30s\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_VSOCK_TIMEOUT"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("vsock" in detail.lower() for detail in assessment.details)
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_vsock_timeout"
+    assert guidance_key in assessment.metadata
+    assert "vsock" in assessment.metadata[guidance_key].lower()
+
+
+def test_worker_warning_explicit_vsock_guidance() -> None:
+    """Explicit vsock error codes should surface dedicated remediation steps."""
+
+    message = (
+        "WARN[0032] moby/buildkit: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=5 errCode=VPNKIT_VSOCK_UNRESPONSIVE "
+        "lastError=\"vsock connection to com.docker.backend refused\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_VSOCK_UNRESPONSIVE"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("vsock" in detail.lower() for detail in assessment.details)
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_vsock_unresponsive"
+    assert guidance_key in assessment.metadata
+    assert "vsock" in assessment.metadata[guidance_key].lower()
+
+
 def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
     """Parenthetical worker telemetry should not leak closing punctuation."""
 
