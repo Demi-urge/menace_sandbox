@@ -264,6 +264,7 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": "disk pressure impacting the vpnkit background sync worker",
     "WSL_VM_STOPPED": "a stopped WSL virtual machine",
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
+    "WSL_VM_SUSPENDED": "a suspended WSL virtual machine",
     "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
     "HCS_E_ACCESS_DENIED": "an access-denied error from the Host Compute Service",
 }
@@ -391,6 +392,24 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_wsl_vm_paused": (
                 "Resume WSL by running 'wsl --shutdown' and restarting Docker Desktop"
+            ),
+        },
+    ),
+    "WSL_VM_SUSPENDED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected the WSL virtualization environment was suspended"
+        ),
+        detail=(
+            "Windows sleep or hibernation left the docker-desktop WSL VM suspended, preventing worker recovery"
+        ),
+        remediation=(
+            "Run 'wsl --shutdown' from an elevated PowerShell session and relaunch Docker Desktop",
+            "Disable Windows Fast Startup or configure the machine to perform a full shutdown instead of hibernating",
+            "Ensure security or endpoint management agents are not suspending the docker-desktop WSL VM",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_vm_suspended": (
+                "Shut down WSL using 'wsl --shutdown', restart Docker Desktop, and avoid suspending the docker-desktop VM"
             ),
         },
     ),
@@ -662,6 +681,10 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         },
     ),
 }
+
+_WORKER_ERROR_CODE_GUIDANCE.setdefault(
+    "WSL2_VM_SUSPENDED", _WORKER_ERROR_CODE_GUIDANCE["WSL_VM_SUSPENDED"]
+)
 
 _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
     normaliser[2] for normaliser in _WORKER_ERROR_NORMALISERS
@@ -4421,6 +4444,17 @@ def _infer_worker_error_code_from_context(*values: str | None) -> str | None:
         return None
 
     corpus = " ".join(tokens).casefold()
+
+    virtualization_markers = ("wsl", "virtual machine", "vm", "docker-desktop")
+    suspension_markers = ("suspend", "suspended", "hibernat", "sleep")
+    pause_markers = ("pause", "paused", "standby")
+
+    if any(marker in corpus for marker in virtualization_markers):
+        if any(marker in corpus for marker in suspension_markers):
+            return "WSL_VM_SUSPENDED"
+        if any(marker in corpus for marker in pause_markers):
+            return "WSL_VM_PAUSED"
+
     if "vsock" in corpus or "hyper-v socket" in corpus or "hvsock" in corpus:
         timeout_markers = (
             "timeout",

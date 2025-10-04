@@ -405,6 +405,41 @@ def test_transient_worker_flaps_downgraded_to_info(
     assert "recovered" in summary or "transient" in summary
 
 
+def test_worker_warning_wsl_vm_suspended_errcode() -> None:
+    """Explicit WSL suspension error codes should produce virtualization guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vm\" "
+        "restartCount=5 backoff=PT90S "
+        "errCode=WSL_VM_SUSPENDED "
+        "lastError=\"WSL virtual machine suspended during host sleep\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL_VM_SUSPENDED"
+    summary = metadata["docker_worker_health_summary"].lower()
+    assert "suspend" in summary or "wsl" in summary
+    guidance = metadata["docker_worker_health_remediation"]
+    assert "wsl --shutdown" in guidance
+
+
+def test_worker_warning_wsl_vm_suspended_inferred() -> None:
+    """Suspension phrasing without explicit codes should infer WSL suspension faults."""
+
+    message = (
+        "WARN[0042] moby/buildkit: worker stalled; restarting due to WSL "
+        "virtual machine suspended after hibernation"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL_VM_SUSPENDED"
+    details = metadata["docker_worker_health_details"].lower()
+    assert "suspend" in details or "hibern" in details
+
 def test_collect_docker_diagnostics_virtualization_without_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
