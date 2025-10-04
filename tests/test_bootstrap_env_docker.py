@@ -503,10 +503,34 @@ def test_wsl_kernel_missing_guidance() -> None:
 
     assert any("kernel" in detail.lower() for detail in assessment.details)
     assert any("wsl" in step.lower() for step in assessment.remediation)
-
     guidance_key = "docker_worker_last_error_guidance_wsl_kernel_missing"
     assert guidance_key in assessment.metadata
     assert "wsl" in assessment.metadata[guidance_key].lower()
+
+
+def test_wsl2_prefixed_errcode_surfaces_wsl_guidance() -> None:
+    """WSL2-prefixed error codes should be treated as WSL guidance triggers."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 backoff=120s errCode=WSL2_KERNEL_OUTDATED "
+        "lastError=\"WSL2 kernel requires an update\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL2_KERNEL_OUTDATED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity == "error"
+    guidance_key = "docker_worker_last_error_guidance_wsl2_kernel_outdated"
+    assert guidance_key in assessment.metadata
+    assert "wsl 2" in assessment.metadata[guidance_key].lower()
+    assert any("wsl 2" in detail.lower() or "windows subsystem for linux" in detail.lower() for detail in assessment.details)
+    assert any("wsl --update" in step.lower() for step in assessment.remediation)
 
 
 def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
