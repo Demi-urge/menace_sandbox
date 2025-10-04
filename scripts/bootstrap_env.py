@@ -241,6 +241,14 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "healthcheck_failure": "a health-check failure",
     "VPNKIT_HEALTHCHECK_FAILED": "a vpnkit health-check failure",
     "VPNKIT_UNRESPONSIVE": "an unresponsive vpnkit service",
+    "VPNKIT_BACKGROUND_SYNC_STALLED": "a stalled vpnkit background sync worker",
+    "VPNKIT_SYNC_TIMEOUT": "a vpnkit background sync timeout",
+    "VPNKIT_HNS_UNAVAILABLE": "vpnkit losing contact with the Host Network Service",
+    "VPNKIT_HNS_UNREACHABLE": "vpnkit losing contact with the Host Network Service",
+    "WSL_VM_STOPPED": "a stopped WSL virtual machine",
+    "WSL_VM_CRASHED": "a crashed WSL virtual machine",
+    "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
+    "HCS_E_ACCESS_DENIED": "an access-denied error from the Host Compute Service",
 }
 
 
@@ -382,6 +390,41 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
             ),
         },
     ),
+    "VPNKIT_BACKGROUND_SYNC_STALLED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported that the vpnkit background sync worker stopped making progress"
+        ),
+        detail=(
+            "The vpnkit background sync process keeps port forwarding and DNS configuration aligned between Windows and the Docker VM. "
+            "When the worker stalls, container networking gradually degrades until vpnkit is restarted."
+        ),
+        remediation=(
+            "Restart Docker Desktop to relaunch the vpnkit background sync worker",
+            "Temporarily disable VPN, firewall, or endpoint protection agents that intercept Hyper-V loopback traffic",
+            "If stalls persist, reset Docker Desktop networking from Settings > Troubleshooting and reboot Windows",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_background_sync_stalled": (
+                "Restart Docker Desktop and relax VPN/firewall inspection so the vpnkit background sync worker can recover"
+            ),
+        },
+    ),
+    "VPNKIT_SYNC_TIMEOUT": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that the vpnkit background sync worker timed out",
+        detail=(
+            "vpnkit background sync timed out while replicating networking state between Windows and Linux. Containers may miss port or DNS updates until the worker is restarted."
+        ),
+        remediation=(
+            "Restart Docker Desktop to restart the vpnkit background sync worker",
+            "Pause VPN clients or local security software that inspects Docker's virtual adapters",
+            "Run 'wsl --shutdown' and start Docker Desktop again to rebuild the networking integration",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_sync_timeout": (
+                "Restart Docker Desktop and reduce VPN/firewall interference so vpnkit background sync completes"
+            ),
+        },
+    ),
     "HNS_SERVICE_UNAVAILABLE": _WorkerErrorCodeDirective(
         reason=(
             "Docker Desktop detected that the Windows Host Network Service (HNS) is unavailable"
@@ -397,6 +440,104 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_hns_service_unavailable": (
                 "Restart the Host Network Service (HNS), reset Winsock if needed, then relaunch Docker Desktop"
+            ),
+        },
+    ),
+    "VPNKIT_HNS_UNAVAILABLE": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported that vpnkit cannot reach the Windows Host Network Service (HNS)"
+        ),
+        detail=(
+            "HNS provisions the virtual switches vpnkit relies on. When it is unavailable the vpnkit workers restart continuously and container networking breaks."
+        ),
+        remediation=(
+            "Restart the 'Host Network Service' (HNS) from an elevated PowerShell session (Restart-Service hns)",
+            "Run 'netsh winsock reset' and reboot Windows if HNS refuses to start",
+            "Restart Docker Desktop after HNS connectivity is restored",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_hns_unavailable": (
+                "Restart HNS, reset Winsock if necessary, then relaunch Docker Desktop so vpnkit can reconnect"
+            ),
+        },
+    ),
+    "VPNKIT_HNS_UNREACHABLE": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that vpnkit lost connectivity with the Windows Host Network Service",
+        detail=(
+            "vpnkit needs a stable channel to HNS to attach container network adapters. Connectivity failures often stem from HNS crashes or aggressive security software."
+        ),
+        remediation=(
+            "Restart the 'Host Network Service' (HNS) and verify it remains running",
+            "Temporarily disable VPN or firewall tooling that could block Hyper-V networking",
+            "After restoring connectivity, restart Docker Desktop to rebuild the vpnkit networking stack",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_hns_unreachable": (
+                "Restore HNS connectivity and then restart Docker Desktop so vpnkit can reattach container networking"
+            ),
+        },
+    ),
+    "WSL_VM_STOPPED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop observed that the docker-desktop WSL virtual machine stopped",
+        detail=(
+            "Docker Desktop runs inside the docker-desktop WSL distribution. When the VM stops, background workers restart in a loop until WSL is brought back online."
+        ),
+        remediation=(
+            "Run 'wsl --status' to confirm the docker-desktop distributions are registered and running",
+            "Execute 'wsl --update' followed by 'wsl --shutdown' to refresh the WSL kernel",
+            "Restart Docker Desktop once WSL reports a healthy state",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_vm_stopped": (
+                "Restart the docker-desktop WSL distributions and relaunch Docker Desktop after updating WSL"
+            ),
+        },
+    ),
+    "WSL_VM_CRASHED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop reported that the docker-desktop WSL virtual machine crashed",
+        detail=(
+            "Crashes in the docker-desktop WSL VM interrupt virtualization and force Docker Desktop to restart its workers until the VM boots successfully."
+        ),
+        remediation=(
+            "Inspect 'wsl --status' and Windows Event Viewer for virtualization or driver failures",
+            "Apply the latest Windows and WSL updates, then run 'wsl --shutdown' to rebuild the VM",
+            "Restart Docker Desktop after confirming the WSL VM starts cleanly",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_vm_crashed": (
+                "Update WSL, review virtualization crash logs, and restart Docker Desktop once the WSL VM is stable"
+            ),
+        },
+    ),
+    "WSL_KERNEL_MISSING": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that the Windows Subsystem for Linux kernel is missing",
+        detail=(
+            "Without the Microsoft-provided WSL kernel Docker Desktop cannot start its Linux VM, leaving workers stuck in a restart loop."
+        ),
+        remediation=(
+            "Install the latest WSL kernel by running 'wsl --update' from an elevated PowerShell session",
+            "Reboot Windows to finalise the kernel installation",
+            "Launch Docker Desktop after the reboot so it can rebuild its WSL integration",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_kernel_missing": (
+                "Install the WSL kernel with 'wsl --update', reboot, then restart Docker Desktop"
+            ),
+        },
+    ),
+    "HCS_E_ACCESS_DENIED": _WorkerErrorCodeDirective(
+        reason="Docker Desktop was blocked by the Windows Host Compute Service (HCS) because virtualization access was denied",
+        detail=(
+            "The Host Compute Service provisions the Hyper-V virtual machine that powers Docker Desktop. Access denied responses usually indicate virtualization features are disabled or group policy is preventing Hyper-V from launching."
+        ),
+        remediation=(
+            "Enable 'Hyper-V' and 'Virtual Machine Platform' Windows features and reboot",
+            "Ensure no group policy or third-party hypervisor is preventing the Host Compute Service from creating virtual machines",
+            "Relaunch Docker Desktop after confirming the Host Compute Service starts without errors",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_hcs_e_access_denied": (
+                "Re-enable Hyper-V/Virtual Machine Platform and remove restrictions blocking the Host Compute Service"
             ),
         },
     ),
