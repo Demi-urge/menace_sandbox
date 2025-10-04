@@ -1037,6 +1037,50 @@ def test_structured_notifications_with_text_field() -> None:
     ).lower()
 
 
+def test_structured_notifications_with_localized_messages() -> None:
+    """Localized Docker Desktop payloads should sanitise worker stall banners."""
+
+    payload = {
+        "diagnostics": {
+            "notifications": [
+                {
+                    "source": "VPNKit Background Sync",
+                    "localizedMessage": (
+                        "WARNING: worker stalled; restarting component=\"vpnkit\" restartCount=3"
+                    ),
+                    "localizedShortMessage": "worker stalled; restarting component=\"vpnkit\"",
+                    "localizedStatusMessage": (
+                        "worker stalled; restarting (errCode=VPNKIT_UNRESPONSIVE)"
+                    ),
+                    "metadata": {
+                        "restartCount": 3,
+                        "backoffSeconds": 45,
+                        "context": "vpnkit",
+                        "lastErrorCode": "VPNKIT_UNRESPONSIVE",
+                        "lastErrorMessage": (
+                            "vpnkit background sync worker stalled; restarting due to IO pressure"
+                        ),
+                    },
+                }
+            ]
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    banner = " ".join(warnings).lower()
+    assert "worker stalled; restarting" not in banner
+    assert "docker desktop reported" in banner
+
+    context = metadata.get("docker_worker_context", "").lower()
+    assert "vpnkit" in context
+    assert metadata.get("docker_worker_restart_count") == "3"
+    assert metadata.get("docker_worker_backoff") == "45s"
+    assert metadata.get("docker_worker_last_error_code") == "VPNKIT_UNRESPONSIVE"
+    assert metadata.get("docker_worker_health") == "flapping"
+
+
 def test_worker_stall_json_error_payload_enriched() -> None:
     """JSON ``lastError`` payloads should surface actionable metadata."""
 
