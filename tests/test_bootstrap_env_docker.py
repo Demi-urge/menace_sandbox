@@ -816,6 +816,38 @@ def test_worker_banner_raw_metadata_is_redacted() -> None:
             assert metadata.get(fingerprint_key), f"missing fingerprint for {key}"
 
 
+def test_worker_metadata_value_collapses_restart_suffix() -> None:
+    """Metadata sanitiser should strip ``; restarting`` fragments."""
+
+    value = (
+        "Docker Desktop automatically restarted a background worker after it stalled; restarting"
+    )
+
+    sanitized, digest = bootstrap_env._sanitize_worker_metadata_value(value)
+
+    assert sanitized == (
+        "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert digest
+    assert "stalled; restarting" not in sanitized.lower()
+
+
+def test_worker_metadata_value_preserves_context_while_collapsing_restart_suffix() -> None:
+    """Composite metadata keeps auxiliary fields when trimming restart suffixes."""
+
+    value = (
+        'context="background-sync"; restartCount=3; '
+        "Docker Desktop automatically restarted a background worker after it stalled; restarting in 45s"
+    )
+
+    sanitized, _ = bootstrap_env._sanitize_worker_metadata_value(value)
+
+    assert "context=\"background-sync\"" in sanitized
+    assert "restartcount=3" in sanitized.lower()
+    assert "restart in 45s" in sanitized.lower()
+    assert "stalled; restarting" not in sanitized.lower()
+
+
 def test_worker_primary_metadata_is_redacted() -> None:
     """Primary worker error metadata should not leak the raw stall banner."""
 

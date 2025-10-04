@@ -5925,6 +5925,68 @@ _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], .
 )
 
 
+_WORKER_RESTART_SUFFIX_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:worker\s+)?stall(?:ed|ing|s)?)\s*;\s*re[-\s]?start(?:ed|ing)?(?P<tail>\s+[^;]*)?",
+    re.IGNORECASE,
+)
+
+
+def _collapse_worker_restart_sequences(value: str) -> str:
+    """Rewrite ``stalled; restarting`` phrases into natural language."""
+
+    if not value:
+        return value
+
+    def _canonicalize_prefix(prefix: str) -> str:
+        token = prefix.strip()
+        if not token:
+            return "stalled"
+
+        lowered = token.lower()
+        if lowered.startswith("worker"):
+            canonical = "worker stalled"
+        else:
+            canonical = "stalled"
+
+        if token.isupper():
+            return canonical.upper()
+        if token[0].isupper():
+            return canonical.title() if canonical != "worker stalled" else "Worker stalled"
+        return canonical
+
+    def _normalise_tail(prefix: str, tail: str) -> str:
+        cleaned = tail.strip()
+        if not cleaned:
+            return ""
+
+        lowered = cleaned.lower()
+        scheduling_tokens = ("in ", "within ", "after ", "before ", "pending", "again", "backoff", "once ")
+        contextual_tokens = ("due to", "because", "as ", "when ", "while ", "from ")
+
+        if lowered.startswith(contextual_tokens):
+            return cleaned
+        if lowered.startswith(scheduling_tokens):
+            return f"(restart {cleaned})"
+        if cleaned.startswith(("(", "[")):
+            return cleaned
+        if prefix.lower().startswith("worker ") and not cleaned.lower().startswith("worker"):
+            return cleaned
+        return cleaned
+
+    def _rewrite(match: re.Match[str]) -> str:
+        prefix = _canonicalize_prefix(match.group("prefix") or "")
+        tail = match.group("tail") or ""
+        normalised_tail = _normalise_tail(prefix, tail)
+        if normalised_tail:
+            combined = f"{prefix} {normalised_tail}".strip()
+        else:
+            combined = prefix
+        return re.sub(r"\s{2,}", " ", combined)
+
+    collapsed = _WORKER_RESTART_SUFFIX_PATTERN.sub(_rewrite, value)
+    return re.sub(r"\s{2,}", " ", collapsed).strip()
+
+
 def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
     """Scrub lingering worker stall phrases from metadata artefacts.
 
@@ -6055,6 +6117,9 @@ def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]
             sanitized_parts.append(segment)
 
     if not mutated:
+        collapsed_value = _collapse_worker_restart_sequences(value)
+        if collapsed_value != value:
+            return collapsed_value, digest
         return None, digest
 
     unique_parts: list[str] = []
@@ -6069,7 +6134,8 @@ def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]
         seen.add(key)
         unique_parts.append(collapsed)
 
-    sanitised_value = "; ".join(unique_parts) if unique_parts else _WORKER_STALLED_PRIMARY_NARRATIVE
+    joined = "; ".join(unique_parts) if unique_parts else _WORKER_STALLED_PRIMARY_NARRATIVE
+    sanitised_value = _collapse_worker_restart_sequences(joined)
 
     return sanitised_value, digest
 
