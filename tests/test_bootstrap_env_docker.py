@@ -777,6 +777,21 @@ def test_enforce_worker_banner_sanitization_handles_fullwidth_punctuation() -> N
     assert metadata["docker_worker_last_error_code"] == "VPNKIT_VSOCK_TIMEOUT"
 
 
+def test_enforce_worker_banner_sanitization_strips_invisible_characters() -> None:
+    """Zero-width characters from Windows consoles should not leak raw banners."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARNING\u200b: worker\u202fstalled;\u2060 restarting component=\"vpnkit\" restartCount=2",
+    ]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_errcode_field_feeds_worker_error_guidance() -> None:
     """errCode metadata should be interpreted as an actionable worker error code."""
 

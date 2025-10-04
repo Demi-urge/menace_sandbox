@@ -195,7 +195,7 @@ _CLOCK_DURATION_SYMBOLS = {
 }
 
 
-_FULLWIDTH_ASCII_TRANSLATION: dict[int, str] = {
+_FULLWIDTH_ASCII_TRANSLATION: dict[int, str | None] = {
     **{code: chr(code - 0xFEE0) for code in range(0xFF01, 0xFF5F)},
     0x3000: " ",
     ord("﹔"): ";",
@@ -217,6 +217,31 @@ _FULLWIDTH_ASCII_TRANSLATION: dict[int, str] = {
     ord("—"): "-",
     ord("―"): "-",
     ord("−"): "-",
+}
+
+_NON_BREAKING_WHITESPACE_CODEPOINTS: tuple[int, ...] = (
+    0x00A0,  # NO-BREAK SPACE
+    0x2007,  # FIGURE SPACE
+    0x202F,  # NARROW NO-BREAK SPACE
+)
+
+_INVISIBLE_WORKER_BANNER_CODEPOINTS: tuple[int, ...] = (
+    0x200B,  # ZERO WIDTH SPACE
+    0x200C,  # ZERO WIDTH NON-JOINER
+    0x200D,  # ZERO WIDTH JOINER
+    0x2060,  # WORD JOINER
+    0xFEFF,  # ZERO WIDTH NO-BREAK SPACE / BOM
+    0x202A,  # LEFT-TO-RIGHT EMBEDDING
+    0x202B,  # RIGHT-TO-LEFT EMBEDDING
+    0x202C,  # POP DIRECTIONAL FORMATTING
+    0x202D,  # LEFT-TO-RIGHT OVERRIDE
+    0x202E,  # RIGHT-TO-LEFT OVERRIDE
+)
+
+_WORKER_BANNER_CHARACTER_TRANSLATION: dict[int, str | None] = {
+    **_FULLWIDTH_ASCII_TRANSLATION,
+    **{code: " " for code in _NON_BREAKING_WHITESPACE_CODEPOINTS},
+    **{code: None for code in _INVISIBLE_WORKER_BANNER_CODEPOINTS},
 }
 
 _DURATION_UNIT_NORMALISATION = {
@@ -2634,7 +2659,7 @@ def _normalize_worker_banner_characters(message: str) -> str:
     # characters when the host locale is configured for East Asian languages.
     # The worker stall detectors rely on ASCII separators, so normalise these
     # variants to their half-width counterparts before applying the heuristics.
-    normalized = message.translate(_FULLWIDTH_ASCII_TRANSLATION)
+    normalized = message.translate(_WORKER_BANNER_CHARACTER_TRANSLATION)
     return normalized
 
 
@@ -4712,9 +4737,29 @@ def _normalise_worker_error_message(
     preserved_banner_text = preserved_banner or metadata.get(
         "docker_worker_last_error_banner"
     )
-    if preserved_banner_text:
-        metadata["docker_worker_last_error_banner_preserved"] = preserved_banner_text
+    sanitized_preserved_banner = (
+        _sanitize_worker_banner_text(preserved_banner_text)
+        if preserved_banner_text
+        else None
+    )
+
+    if sanitized_preserved_banner:
+        metadata["docker_worker_last_error_banner_preserved"] = (
+            sanitized_preserved_banner
+        )
         metadata["docker_worker_last_error_banner_preserved_samples"] = (
+            sanitized_preserved_banner
+        )
+
+    if (
+        preserved_banner_text
+        and sanitized_preserved_banner
+        and preserved_banner_text != sanitized_preserved_banner
+    ):
+        metadata["docker_worker_last_error_banner_preserved_raw"] = (
+            preserved_banner_text
+        )
+        metadata["docker_worker_last_error_banner_preserved_raw_samples"] = (
             preserved_banner_text
         )
 
@@ -5684,6 +5729,35 @@ def _scrub_residual_worker_warnings(
     return rewritten, aggregated_metadata
 
 
+def _sanitize_worker_banner_text(raw_text: str | None) -> str:
+    """Return a banner with ``worker stalled`` phrasing rewritten for humans."""
+
+    if not raw_text:
+        return _WORKER_STALLED_PRIMARY_NARRATIVE
+
+    normalized = _normalise_worker_stalled_phrase(raw_text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return _WORKER_STALLED_PRIMARY_NARRATIVE
+
+    lowered = normalized.casefold()
+    if "worker stalled" in lowered:
+        rewritten = _WORKER_STALLED_BANNER_PATTERN.sub(
+            _WORKER_STALLED_PRIMARY_NARRATIVE,
+            normalized,
+        )
+        rewritten = re.sub(r"\s+", " ", rewritten).strip()
+        lowered_rewritten = rewritten.casefold()
+        if "worker stalled" in lowered_rewritten:
+            return _WORKER_STALLED_PRIMARY_NARRATIVE
+        return rewritten
+
+    if "stall" in lowered and "restart" in lowered:
+        return _WORKER_STALLED_PRIMARY_NARRATIVE
+
+    return normalized
+
+
 def _enforce_worker_banner_sanitization(
     messages: Iterable[str], metadata: MutableMapping[str, str]
 ) -> list[str]:
@@ -5733,17 +5807,53 @@ def _enforce_worker_banner_sanitization(
         # an explicit context when the raw banner lacked structured metadata.
         # Ensure we always retain the original banner for diagnostics so future
         # enrichment stages can infer error codes or restart telemetry.
+        preserved_raw: str | None = None
         preserved = extracted.get("docker_worker_last_error_banner_preserved")
-        if not preserved:
-            candidate = normalized.strip()
-            if candidate and _contains_worker_stall_signal(candidate):
-                preserved = _WORKER_STALLED_PRIMARY_NARRATIVE
+        sanitized_preserved: str | None = None
 
         if preserved:
-            metadata.setdefault("docker_worker_last_error_banner_preserved", preserved)
-            metadata.setdefault(
-                "docker_worker_last_error_banner_preserved_samples", preserved
+            preserved_raw = preserved
+            sanitized_preserved = _sanitize_worker_banner_text(preserved)
+
+        if not sanitized_preserved:
+            candidate = normalized.strip()
+            if candidate and _contains_worker_stall_signal(candidate):
+                preserved_raw = preserved_raw or candidate
+                sanitized_preserved = _sanitize_worker_banner_text(candidate)
+
+        if sanitized_preserved:
+            existing_preserved = metadata.get(
+                "docker_worker_last_error_banner_preserved"
             )
+            if not existing_preserved or _contains_worker_stall_signal(
+                existing_preserved
+            ):
+                metadata[
+                    "docker_worker_last_error_banner_preserved"
+                ] = sanitized_preserved
+
+            preserved_samples = metadata.get(
+                "docker_worker_last_error_banner_preserved_samples"
+            )
+            if (
+                not preserved_samples
+                or _contains_worker_stall_signal(preserved_samples)
+            ):
+                metadata[
+                    "docker_worker_last_error_banner_preserved_samples"
+                ] = sanitized_preserved
+
+        if preserved_raw:
+            raw_candidate = re.sub(r"\s+", " ", preserved_raw).strip()
+            if raw_candidate:
+                metadata.setdefault(
+                    "docker_worker_last_error_banner_preserved_raw",
+                    raw_candidate,
+                )
+                metadata.setdefault(
+                    "docker_worker_last_error_banner_preserved_raw_samples",
+                    raw_candidate,
+                )
 
         signature = extracted.get("docker_worker_last_error_banner_signature")
         if not signature:
@@ -5770,6 +5880,7 @@ class _WorkerWarningRecord:
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
     last_error_banner_preserved: str | None = None
+    last_error_banner_preserved_raw: str | None = None
     last_error_banner_signature: str | None = None
     occurrences: int = 0
     restart_samples: list[int] = field(default_factory=list)
@@ -5782,6 +5893,7 @@ class _WorkerWarningRecord:
     last_error_banner_samples: list[str] = field(default_factory=list)
     last_error_banner_raw_samples: list[str] = field(default_factory=list)
     last_error_banner_preserved_samples: list[str] = field(default_factory=list)
+    last_error_banner_preserved_raw_samples: list[str] = field(default_factory=list)
     last_error_banner_signature_samples: list[str] = field(default_factory=list)
     error_codes: list[str] = field(default_factory=list)
 
@@ -5878,6 +5990,17 @@ class _WorkerWarningRecord:
                     cleaned_banner_preserved
                 )
                 self.last_error_banner_preserved = cleaned_banner_preserved
+
+        banner_preserved_raw = metadata.get(
+            "docker_worker_last_error_banner_preserved_raw"
+        )
+        if banner_preserved_raw:
+            cleaned_banner_preserved_raw = banner_preserved_raw.strip()
+            if cleaned_banner_preserved_raw:
+                self.last_error_banner_preserved_raw_samples.append(
+                    cleaned_banner_preserved_raw
+                )
+                self.last_error_banner_preserved_raw = cleaned_banner_preserved_raw
 
         banner_signature = metadata.get("docker_worker_last_error_banner_signature")
         if banner_signature:
@@ -6119,6 +6242,26 @@ class _WorkerWarningAggregator:
             result["docker_worker_last_error_banner_preserved_samples"] = "; ".join(
                 preserved_banner_errors
             )
+
+        preserved_raw_banner_errors = _coalesce_iterable(
+            [
+                error
+                for record in records
+                for error in record.last_error_banner_preserved_raw_samples
+            ]
+        )
+        if primary and primary.last_error_banner_preserved_raw:
+            result["docker_worker_last_error_banner_preserved_raw"] = (
+                primary.last_error_banner_preserved_raw
+            )
+        elif preserved_raw_banner_errors:
+            result["docker_worker_last_error_banner_preserved_raw"] = (
+                preserved_raw_banner_errors[-1]
+            )
+        if len(preserved_raw_banner_errors) > 1:
+            result[
+                "docker_worker_last_error_banner_preserved_raw_samples"
+            ] = "; ".join(preserved_raw_banner_errors)
 
         signature_errors = _coalesce_iterable(
             [
@@ -6836,6 +6979,7 @@ class WorkerRestartTelemetry:
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
     last_error_banner_preserved: str | None = None
+    last_error_banner_preserved_raw: str | None = None
     last_error_banner_signature: str | None = None
     warning_occurrences: int = 0
     context_occurrences: tuple[tuple[str, int], ...] = field(default_factory=tuple)
@@ -6850,6 +6994,7 @@ class WorkerRestartTelemetry:
     last_error_banner_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_raw_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_preserved_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_error_banner_preserved_raw_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_signature_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_codes: tuple[str, ...] = field(default_factory=tuple)
 
@@ -6913,6 +7058,14 @@ class WorkerRestartTelemetry:
                 metadata.get("docker_worker_last_error_banner_preserved_samples")
             )
         )
+        last_error_banner_preserved_raw = metadata.get(
+            "docker_worker_last_error_banner_preserved_raw"
+        )
+        last_error_banner_preserved_raw_samples = tuple(
+            _split_metadata_values(
+                metadata.get("docker_worker_last_error_banner_preserved_raw_samples")
+            )
+        )
         last_error_banner_signature = metadata.get(
             "docker_worker_last_error_banner_signature"
         )
@@ -6967,6 +7120,7 @@ class WorkerRestartTelemetry:
             last_error_banner=last_error_banner,
             last_error_banner_raw=last_error_banner_raw,
             last_error_banner_preserved=last_error_banner_preserved,
+            last_error_banner_preserved_raw=last_error_banner_preserved_raw,
             last_error_banner_signature=last_error_banner_signature,
             warning_occurrences=warning_occurrences,
             context_occurrences=tuple(context_occurrence_pairs),
@@ -6982,6 +7136,9 @@ class WorkerRestartTelemetry:
             last_error_banner_raw_samples=tuple(last_error_banner_raw_samples),
             last_error_banner_preserved_samples=tuple(
                 last_error_banner_preserved_samples
+            ),
+            last_error_banner_preserved_raw_samples=tuple(
+                last_error_banner_preserved_raw_samples
             ),
             last_error_banner_signature_samples=tuple(
                 last_error_banner_signature_samples
