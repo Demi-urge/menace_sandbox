@@ -315,6 +315,15 @@ def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     assert metadata["docker_worker_context"] == "background-sync"
 
 
+def test_normalise_docker_warning_handles_auxiliary_worker_stall_banner() -> None:
+    message = "WARNING: worker has stalled; restarting (context=\"background sync\")"
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "background sync"
+
+
 def test_normalise_docker_warning_extracts_key_value_context() -> None:
     message = (
         'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting" '
@@ -890,7 +899,7 @@ def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
         "Docker Desktop automatically restarted a background worker after it stalled"
     )
     assert metadata["docker_worker_last_error_interpreted"] == "worker_stalled"
-    assert metadata["docker_worker_last_error_banner_raw"].endswith(
+    assert metadata["docker_worker_last_error_raw"].endswith(
         "background worker after it stalled"
     )
     assert metadata["docker_worker_last_error_banner_preserved"].endswith(
