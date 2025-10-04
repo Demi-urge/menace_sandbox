@@ -260,6 +260,8 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_HNS_UNREACHABLE": "vpnkit losing contact with the Host Network Service",
     "VPNKIT_VSOCK_UNRESPONSIVE": "a stalled vsock channel between Windows and the Docker VM",
     "VPNKIT_VSOCK_TIMEOUT": "a vsock connection timeout between Windows and the Docker VM",
+    "VPNKIT_BACKGROUND_SYNC_IO_PRESSURE": "I/O pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": "disk pressure impacting the vpnkit background sync worker",
     "WSL_VM_STOPPED": "a stopped WSL virtual machine",
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
     "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
@@ -448,6 +450,42 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_vpnkit_sync_timeout": (
                 "Restart Docker Desktop and reduce VPN/firewall interference so vpnkit background sync completes"
+            ),
+        },
+    ),
+    "VPNKIT_BACKGROUND_SYNC_IO_PRESSURE": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected that the vpnkit background sync worker is throttled by host I/O pressure"
+        ),
+        detail=(
+            "Heavy disk or network activity on Windows can starve vpnkit's background sync loop, forcing repeated restarts while the worker waits for bandwidth."
+        ),
+        remediation=(
+            "Pause or reschedule antivirus scans, backup jobs, and file synchronisation tools that saturate disk or network throughput",
+            "Ensure the Docker Desktop virtual disk resides on fast local storage with several gigabytes of free space",
+            "Restart Docker Desktop after the host I/O pressure subsides so vpnkit can rebuild its synchronization state",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_background_sync_io_pressure": (
+                "Reduce host I/O pressure so Docker Desktop's vpnkit background sync worker can stabilise"
+            ),
+        },
+    ),
+    "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported that the vpnkit background sync worker is blocked by disk pressure on the Windows host"
+        ),
+        detail=(
+            "When the Windows volume hosting Docker Desktop's data is nearly full or slow to respond, vpnkit fails to persist synchronization checkpoints and continually restarts."
+        ),
+        remediation=(
+            "Free disk space on the drive that stores Docker Desktop data (typically %LOCALAPPDATA% or ProgramData)",
+            "Move large container images or volumes off the affected disk and rerun 'docker system prune' if appropriate",
+            "Restart Docker Desktop after reclaiming space so the vpnkit background sync worker can resume",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_background_sync_disk_pressure": (
+                "Free disk space so Docker Desktop's vpnkit background sync worker is no longer blocked by storage pressure"
             ),
         },
     ),
@@ -737,6 +775,36 @@ def _derive_generic_error_code_guidance(
             reason=(
                 "Docker Desktop detected that required Windows virtualization services are misconfigured"
             ),
+            detail=detail,
+            remediation=remediation,
+            metadata=_metadata(summary),
+        )
+
+    if "PRESSURE" in token_set:
+        io_related = {token for token in token_set if token in {"IO", "DISK", "STORAGE", "I"}}
+        summary = "Reduce host resource pressure impacting Docker Desktop background workers"
+        base_detail = (
+            "Host resource pressure (disk or I/O saturation) can starve Docker Desktop services and trigger worker restarts."
+        )
+        remediation = (
+            "Close or reschedule disk-intensive tools (antivirus, backup, file sync) competing with Docker Desktop",
+            "Ensure the drive hosting Docker Desktop data has adequate free space and performance headroom",
+            "Restart Docker Desktop after reducing host resource pressure",
+        )
+
+        if io_related and "DISK" in io_related:
+            detail = (
+                "Windows reported disk pressure on the drive backing Docker Desktop. Clearing space and reducing heavy disk usage stabilises vpnkit and other workers."
+            )
+        elif io_related:
+            detail = (
+                "Windows reported I/O pressure affecting Docker Desktop. Relieving sustained bandwidth contention allows background workers to recover."
+            )
+        else:
+            detail = base_detail
+
+        return _WorkerErrorCodeDirective(
+            reason="Docker Desktop observed host resource pressure throttling worker health",
             detail=detail,
             remediation=remediation,
             metadata=_metadata(summary),
