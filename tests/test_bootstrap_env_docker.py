@@ -763,6 +763,48 @@ def test_structured_warning_prefers_status_message_over_status() -> None:
     assert aggregated == {}
 
 
+def test_structured_warning_friendly_name_and_long_message() -> None:
+    """Docker Desktop friendly names and long-form messages should drive guidance."""
+
+    payload = {
+        "diagnostics": {
+            "components": [
+                {
+                    "componentFriendlyName": "VPNKit Background Sync",
+                    "componentName": "vpnkitSync",
+                    "statusShortMessage": "worker stalled; restarting",
+                    "statusLongMessage": (
+                        "worker stalled; restarting due to errCode=VPNKIT_BACKGROUND_SYNC_STALLED"
+                    ),
+                    "metadata": {
+                        "restartAttemptsTotal": 5,
+                        "backoffIntervalSeconds": 75,
+                        "lastErrorMessage": (
+                            "vpnkit background sync worker stalled; restarting because of IO pressure"
+                        ),
+                        "lastErrorCode": "VPNKIT_BACKGROUND_SYNC_STALLED",
+                    },
+                }
+            ]
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    banner = " ".join(warnings).lower()
+    assert "worker stalled; restarting" not in banner
+    assert "vpnkit" in banner
+
+    context = metadata.get("docker_worker_context", "").lower()
+    assert "vpnkit" in context
+    assert metadata.get("docker_worker_restart_count") == "5"
+    assert metadata.get("docker_worker_backoff") in {"75s", "1m15s"}
+    assert metadata.get("docker_worker_last_error_code") == "VPNKIT_BACKGROUND_SYNC_STALLED"
+    last_error = metadata.get("docker_worker_last_error", "").lower()
+    assert last_error
+    assert "worker stalled" not in last_error
+
 def test_structured_notifications_with_text_field() -> None:
     """Docker Desktop notifications using ``text`` should become actionable."""
 

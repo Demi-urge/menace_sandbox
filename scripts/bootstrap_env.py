@@ -2538,15 +2538,23 @@ _WARNING_CONTEXT_PATH_IGNORED_TOKENS = {
 
 _WARNING_STRUCTURED_CONTEXT_KEYS = (
     "context",
+    "component_display_name",
+    "componentdisplayname",
+    "component_friendly_name",
+    "componentfriendlyname",
+    "friendly_name",
+    "friendlyname",
+    "component_title",
+    "componenttitle",
+    "component_label",
+    "componentlabel",
+    "display_name",
+    "displayname",
     "component",
     "component_name",
     "componentname",
-    "component_display_name",
-    "componentdisplayname",
     "component_id",
     "componentid",
-    "display_name",
-    "displayname",
     "name",
     "worker",
     "module",
@@ -2571,17 +2579,29 @@ _WARNING_STRUCTURED_MESSAGE_KEYS = (
     "detail",
     "description",
     "summary",
+    "status_long_message",
+    "statuslongmessage",
+    "status_long_text",
+    "statuslongtext",
     "status_text",
     "status_message",
     "statusmessage",
     "status_short_message",
     "statusshortmessage",
+    "status_detail_text",
+    "statusdetailtext",
+    "status_body",
+    "statusbody",
     "short_message",
     "shortmessage",
     "short_text",
     "shorttext",
     "short_error_message",
     "shorterrormessage",
+    "long_message",
+    "longmessage",
+    "long_text",
+    "longtext",
     "text",
     "status_detail",
     "statusdetail",
@@ -2598,8 +2618,14 @@ _WARNING_PAYLOAD_FIELD_MARKERS = {
     "detail",
     "description",
     "summary",
+    "status_long_message",
+    "status_long_text",
     "status_message",
     "status_short_message",
+    "status_detail_text",
+    "status_body",
+    "long_message",
+    "long_text",
     "text",
     "status_text",
     "status_detail",
@@ -2622,9 +2648,14 @@ _WARNING_PAYLOAD_FIELD_MARKERS = {
     "restart_count",
     "restartcounts",
     "restartattempt",
+    "restart_attempts_total",
+    "restart_total",
+    "total_restart_attempts",
+    "total_restart",
     "backoff",
     "backoff_interval",
     "backoffseconds",
+    "backoff_interval_seconds",
     "backoff_ms",
     "backoff_millis",
     "backoff_milliseconds",
@@ -2641,6 +2672,14 @@ _WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
     "restartattempt": "restartCount",
     "restartattempts": "restartCount",
     "restart_attempts": "restartCount",
+    "restart_attempts_total": "restartCount",
+    "restartattemptstotal": "restartCount",
+    "restart_total": "restartCount",
+    "restarttotal": "restartCount",
+    "total_restart_attempts": "restartCount",
+    "total_restart": "restartCount",
+    "totalrestartattempts": "restartCount",
+    "totalrestart": "restartCount",
     "attempt": "restartCount",
     "attempts": "restartCount",
     "retry": "restartCount",
@@ -2654,6 +2693,8 @@ _WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
     "backoffinterval": "backoff",
     "backoff_interval_ms": "backoff",
     "backoffintervalms": "backoff",
+    "backoff_interval_seconds": "backoff",
+    "backoffintervalseconds": "backoff",
     "backoff_ms": "backoff",
     "backoff_millis": "backoff",
     "backoff_milliseconds": "backoff",
@@ -2741,6 +2782,20 @@ _WARNING_METADATA_TOKEN_ALIASES: Mapping[str, str] = {
     "last_success": "lastRestart",
     "lastsuccess": "lastRestart",
 }
+
+_STRUCTURED_METADATA_PREFIXES = (
+    "metadata_",
+    "meta_",
+    "details_",
+    "detail_",
+    "diagnostic_",
+    "diagnostics_",
+    "info_",
+    "information_",
+    "telemetry_",
+    "payload_",
+    "data_",
+)
 
 
 def _canonicalize_warning_key(key: str) -> str:
@@ -2871,13 +2926,27 @@ def _format_warning_metadata_token(
 ) -> tuple[str, str] | None:
     """Return a normalized ``(key, value)`` pair for structured warning metadata."""
 
-    alias = _WARNING_METADATA_TOKEN_ALIASES.get(canonical_key)
     cleaned = _clean_worker_metadata_value(value)
-    if not alias or not cleaned:
-        if canonical_key.endswith("code") and cleaned:
-            alias = "errCode"
-        else:
-            return None
+    if not cleaned:
+        return None
+
+    alias = _WARNING_METADATA_TOKEN_ALIASES.get(canonical_key)
+    effective_key = canonical_key
+
+    if alias is None:
+        for prefix in _STRUCTURED_METADATA_PREFIXES:
+            if canonical_key.startswith(prefix):
+                candidate = canonical_key[len(prefix) :]
+                alias = _WARNING_METADATA_TOKEN_ALIASES.get(candidate)
+                if alias is not None:
+                    effective_key = candidate
+                    break
+
+    if alias is None and effective_key.endswith("code"):
+        alias = "errCode"
+
+    if alias is None:
+        return None
 
     normalized_value = cleaned
     lowered_alias = alias.lower()
@@ -2888,7 +2957,7 @@ def _format_warning_metadata_token(
             return None
         normalized_value = match.group(0)
     elif lowered_alias == "backoff":
-        normalized_value = _normalize_backoff_metadata_value(canonical_key, cleaned)
+        normalized_value = _normalize_backoff_metadata_value(effective_key, cleaned)
     return alias, normalized_value
 
 
@@ -2957,9 +3026,35 @@ def _stringify_structured_warning(
             elif "restart" in normalized or "error" in normalized:
                 score += 35
 
-            if field in {"status_message", "statusmessage", "status_text"}:
+            if field in {
+                "status_long_message",
+                "statuslongmessage",
+                "status_long_text",
+                "statuslongtext",
+                "long_message",
+                "longmessage",
+                "long_text",
+                "longtext",
+            }:
+                score += 40
+            elif field in {
+                "status_message",
+                "statusmessage",
+                "status_text",
+                "status_detail_text",
+                "statusdetailtext",
+                "status_body",
+                "statusbody",
+            }:
                 score += 25
-            elif field in {"message", "warning", "detail", "description", "summary"}:
+            elif field in {
+                "message",
+                "warning",
+                "detail",
+                "description",
+                "summary",
+                "text",
+            }:
                 score += 20
             elif field == "status":
                 score -= 10
