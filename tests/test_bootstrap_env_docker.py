@@ -641,6 +641,19 @@ def test_worker_warning_without_explicit_restart_is_detected() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_enforce_worker_banner_sanitization_removes_literal_banner() -> None:
+    """A final sanitisation pass should eliminate raw worker stall banners."""
+
+    metadata: dict[str, str] = {}
+    warnings = ["WARNING: worker stalled; restarting"]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled; restarting" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_errcode_field_feeds_worker_error_guidance() -> None:
     """errCode metadata should be interpreted as an actionable worker error code."""
 
