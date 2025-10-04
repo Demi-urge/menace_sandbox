@@ -5239,6 +5239,51 @@ def _extract_worker_flapping_descriptors(
     return descriptors, metadata
 
 
+def _compose_worker_flapping_guidance(metadata: MutableMapping[str, str]) -> str | None:
+    """Render a narrative for worker stall diagnostics using structured metadata."""
+
+    try:
+        telemetry = WorkerRestartTelemetry.from_metadata(metadata)
+        context = _detect_runtime_context()
+        assessment = _classify_worker_flapping(telemetry, context)
+    except Exception as exc:  # pragma: no cover - defensive safety net
+        LOGGER.debug(
+            "Failed to synthesise worker flapping guidance: %s", exc, exc_info=True
+        )
+        fallback_sources = (
+            metadata.get("docker_worker_last_error"),
+            metadata.get("docker_worker_last_error_original"),
+            metadata.get("docker_worker_last_error_raw"),
+            _WORKER_STALLED_PRIMARY_NARRATIVE,
+        )
+        for candidate in fallback_sources:
+            if candidate:
+                return candidate
+        return None
+
+    summary = assessment.render().strip()
+    severity = assessment.severity
+
+    if summary:
+        metadata.setdefault("docker_worker_health_summary", summary)
+    metadata.setdefault("docker_worker_health_severity", severity)
+
+    if assessment.reasons and "docker_worker_health_reasons" not in metadata:
+        metadata["docker_worker_health_reasons"] = "; ".join(assessment.reasons)
+    if assessment.details and "docker_worker_health_details" not in metadata:
+        metadata["docker_worker_health_details"] = "; ".join(assessment.details)
+    if assessment.remediation and "docker_worker_health_remediation" not in metadata:
+        metadata["docker_worker_health_remediation"] = "; ".join(
+            assessment.remediation
+        )
+
+    if assessment.metadata:
+        for key, value in assessment.metadata.items():
+            metadata.setdefault(key, value)
+
+    return summary or _WORKER_STALLED_PRIMARY_NARRATIVE
+
+
 def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]:
     """Return a cleaned warning and metadata extracted from Docker output."""
 
@@ -5249,7 +5294,6 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
 
     metadata: dict[str, str] = {}
     if _contains_worker_stall_signal(cleaned):
-        normalized_cleaned = _normalise_worker_stalled_phrase(cleaned)
         metadata["docker_worker_health"] = "flapping"
 
         normalized_original = _normalise_worker_stalled_phrase(message)
@@ -5258,17 +5302,24 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
         )
         metadata.update(worker_metadata)
 
-        headline = "Docker Desktop reported repeated restarts of a background worker."
-        remediation = (
-            "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
-            "allocate additional CPU/RAM to the Docker VM before retrying."
-        )
+        cleaned = _compose_worker_flapping_guidance(metadata)
 
-        segments: list[str] = [headline]
-        if descriptors:
-            segments.extend(descriptors)
-        segments.append(remediation)
-        cleaned = " ".join(segment.strip() for segment in segments if segment.strip())
+        if not cleaned:
+            headline = (
+                "Docker Desktop reported repeated restarts of a background worker."
+            )
+            remediation = (
+                "Restart Docker Desktop, ensure Hyper-V or WSL 2 virtualization is enabled, and "
+                "allocate additional CPU/RAM to the Docker VM before retrying."
+            )
+
+            segments: list[str] = [headline]
+            if descriptors:
+                segments.extend(descriptors)
+            segments.append(remediation)
+            cleaned = " ".join(
+                segment.strip() for segment in segments if segment.strip()
+            )
 
     return cleaned, metadata
 
