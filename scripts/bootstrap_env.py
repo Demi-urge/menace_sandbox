@@ -91,6 +91,7 @@ class BootstrapError(RuntimeError):
 _DOCKER_SKIP_ENV = "MENACE_BOOTSTRAP_SKIP_DOCKER_CHECK"
 _DOCKER_REQUIRE_ENV = "MENACE_REQUIRE_DOCKER"
 _DOCKER_ASSUME_NO_ENV = "MENACE_BOOTSTRAP_ASSUME_NO_DOCKER"
+_WSL_HOST_MOUNT_ROOT_ENV = "WSL_HOST_MOUNT_ROOT"
 
 
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
@@ -1309,6 +1310,71 @@ def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
         yield Path(venv_root) / "Scripts"
 
 
+def _get_wsl_host_mount_root() -> Path:
+    """Return the root directory where Windows drives are mounted inside WSL."""
+
+    override = os.environ.get(_WSL_HOST_MOUNT_ROOT_ENV)
+    if override:
+        return Path(override)
+    return Path("/mnt")
+
+
+def _translate_windows_host_path(path: Path) -> Path | None:
+    """Translate a Windows host path into its WSL-accessible counterpart."""
+
+    if _is_windows():
+        return None
+
+    raw = str(path).strip()
+    if not raw:
+        return None
+
+    if raw.startswith("/") or raw.startswith("\\\\wsl$"):
+        return None
+
+    if ":" not in raw and not raw.startswith("\\\\"):
+        return None
+
+    normalized = raw.replace("/", "\\")
+    try:
+        windows_path = PureWindowsPath(normalized)
+    except Exception:
+        return None
+
+    drive = windows_path.drive
+    mount_root = _get_wsl_host_mount_root()
+
+    if drive:
+        drive_letter = drive.rstrip(":").lower()
+        if not drive_letter:
+            return None
+
+        relative_parts = [
+            part
+            for part in windows_path.parts
+            if part
+            and part not in {drive, windows_path.root, windows_path.anchor}
+        ]
+
+        target = mount_root / drive_letter
+        if relative_parts:
+            target = target.joinpath(*relative_parts)
+        return target
+
+    if windows_path.anchor.startswith("\\\\"):
+        host_share = windows_path.parts[0].strip("\\")
+        if not host_share or "\\" not in host_share:
+            return None
+        server, share = host_share.split("\\", 1)
+        relative = list(windows_path.parts[1:])
+        base = mount_root / "unc" / server / share
+        if relative:
+            base = base.joinpath(*relative)
+        return base
+
+    return None
+
+
 def _iter_windows_docker_directories() -> Iterable[Path]:
     """Yield directories that commonly contain Docker Desktop CLIs on Windows."""
 
@@ -1325,7 +1391,7 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
     for env_var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
         value = os.environ.get(env_var)
         if value:
-            program_roots.append(Path(value))
+            program_roots.append(Path(_strip_windows_quotes(value)))
 
     if not program_roots:
         program_roots.extend(
@@ -1357,7 +1423,7 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
 
     program_data = os.environ.get("ProgramData")
     if program_data:
-        program_data_root = Path(program_data) / "DockerDesktop"
+        program_data_root = Path(_strip_windows_quotes(program_data)) / "DockerDesktop"
     else:
         program_data_root = Path(r"C:\\ProgramData") / "DockerDesktop"
 
@@ -1373,7 +1439,7 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
-        user_root = Path(local_appdata)
+        user_root = Path(_strip_windows_quotes(local_appdata))
         default_targets.extend(
             user_root.joinpath(*suffix) for suffix in resource_suffixes
         )
@@ -1409,34 +1475,38 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
 
 
 def _convert_windows_path_to_wsl(path: Path) -> Path | None:
-    """Return the WSL representation of ``path`` if it targets a Windows drive."""
+    """Return a WSL-accessible representation of *path* when possible."""
 
+    translated = _translate_windows_host_path(path)
+    if translated is not None:
+        return translated
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return None
+
+    mount_root = _get_wsl_host_mount_root()
     try:
-        windows_path = PureWindowsPath(path)
-    except Exception:  # pragma: no cover - defensive
+        candidate.relative_to(mount_root)
+    except ValueError:
         return None
 
-    drive = windows_path.drive.rstrip(":")
-    if not drive:
-        return None
-
-    segments = list(windows_path.parts[1:])
-    if not segments:
-        return None
-
-    converted = Path("/mnt") / drive.lower()
-    for segment in segments:
-        converted /= segment
-    return converted
+    return candidate
 
 
 def _iter_wsl_docker_directories() -> Iterable[Path]:
     """Yield Docker CLI directories exposed via Windows when running inside WSL."""
 
+    seen: set[str] = set()
     for candidate in _iter_windows_docker_directories():
         converted = _convert_windows_path_to_wsl(candidate)
-        if converted is not None:
-            yield converted
+        if converted is None:
+            continue
+        normalized = os.path.normcase(str(converted))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        yield converted
 
 
 def _is_windows() -> bool:

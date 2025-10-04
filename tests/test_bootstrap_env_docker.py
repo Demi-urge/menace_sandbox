@@ -27,6 +27,73 @@ def _windows_context() -> bootstrap_env.RuntimeContext:
     )
 
 
+def test_windows_path_translates_to_wsl_mount_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows drive paths should translate into the configured WSL mount root."""
+
+    mount_root = tmp_path / "wsl-root"
+    mount_root.mkdir()
+
+    monkeypatch.setenv("WSL_HOST_MOUNT_ROOT", str(mount_root))
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+
+    windows_path = Path(r"C:\Program Files\Docker\Docker\resources\cli")
+    translated = bootstrap_env._translate_windows_host_path(windows_path)
+
+    expected = (
+        mount_root
+        / "c"
+        / "Program Files"
+        / "Docker"
+        / "Docker"
+        / "resources"
+        / "cli"
+    )
+
+    assert translated == expected
+
+
+def test_docker_cli_discovery_uses_wsl_translation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLI discovery should resolve Windows paths via WSL mount translations."""
+
+    mount_root = tmp_path / "wsl-root"
+    target_dir = (
+        mount_root
+        / "c"
+        / "Program Files"
+        / "Docker"
+        / "Docker"
+        / "resources"
+        / "cli"
+    )
+    target_dir.mkdir(parents=True)
+
+    cli_path = target_dir / "docker.exe"
+    cli_path.write_text("@echo off\n")
+    cli_path.chmod(0o755)
+
+    monkeypatch.setenv("WSL_HOST_MOUNT_ROOT", str(mount_root))
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.delenv("ProgramData", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+    monkeypatch.setattr(bootstrap_env.shutil, "which", lambda executable: None)
+
+    resolved, warnings = bootstrap_env._discover_docker_cli()
+
+    assert resolved == cli_path
+    assert warnings
+    assert any("WSL interop" in warning for warning in warnings)
+
+
 def test_windows_docker_directory_variants(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
