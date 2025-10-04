@@ -640,6 +640,36 @@ def test_structured_warning_infers_context_from_display_name() -> None:
     )
 
 
+def test_component_statuses_payloads_are_interpreted() -> None:
+    """Docker Desktop component status feeds should yield cleaned warnings."""
+
+    payload = {
+        "componentStatuses": [
+            {
+                "displayName": "VPNKit Background Sync",
+                "statusShortMessage": "worker stalled; restarting (errCode=VPNKIT_HNS_UNAVAILABLE)",
+                "shortErrorMessage": "worker stalled; restarting",
+                "errCode": "VPNKIT_HNS_UNAVAILABLE",
+                "restartCount": 6,
+                "backoffSeconds": 75,
+                "lastError": "vpnkit lost connectivity with the Windows Host Network Service",
+            }
+        ]
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings, "expected synthesized warning output"
+    message = warnings[0]
+    assert "worker stalled; restarting" not in message.lower()
+    assert "vpnkit" in message.lower()
+    assert metadata["docker_worker_context"].lower().startswith("vpnkit")
+    assert metadata["docker_worker_restart_count"] == "6"
+    assert metadata["docker_worker_backoff"].endswith("s")
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_HNS_UNAVAILABLE"
+    assert "lost connectivity" in metadata["docker_worker_last_error"].lower()
+
+
 def test_normalize_warnings_handles_worker_stall_detected_banner() -> None:
     """Structured payloads using ``worker stall`` phrasing are canonicalised."""
 
