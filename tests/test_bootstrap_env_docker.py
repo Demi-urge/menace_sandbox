@@ -351,6 +351,35 @@ def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_worker_warning_with_hyphenated_restart_is_normalised() -> None:
+    """Hyphenated restart tokens should still be detected as worker stall banners."""
+
+    message = (
+        "WARNING: worker stalled; re-starting component=\"vpnkit\" "
+        "restartCount=2 lastError=\"worker stalled; re-starting\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; re-starting" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_worker_warning_without_explicit_restart_is_detected() -> None:
+    """Worker stall diagnostics lacking the word restart should still be sanitised."""
+
+    message = (
+        "WARN[0032] moby/buildkit: worker stalled (component=\"vpnkitCore\") "
+        "status=stalled background=sync"
+    )
+
+    normalized, metadata = bootstrap_env._normalize_warning_collection([message])
+
+    assert normalized, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in normalized)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_errcode_field_feeds_worker_error_guidance() -> None:
     """errCode metadata should be interpreted as an actionable worker error code."""
 
