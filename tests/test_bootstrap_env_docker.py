@@ -475,6 +475,113 @@ def test_worker_error_code_guidance_enriches_classification() -> None:
     assert assessment.metadata[guidance_key].startswith("Update the WSL kernel")
 
 
+def test_virtualization_followups_triggered_by_worker_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """WSL/Hyper-V worker errors should trigger deeper virtualization diagnostics."""
+
+    fake_cli = tmp_path / "docker.exe"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_discover_docker_cli", lambda: (fake_cli, []))
+    monkeypatch.setattr(bootstrap_env, "_detect_runtime_context", lambda: _windows_context())
+
+    def fake_probe(
+        cli_path: Path, timeout: float
+    ) -> tuple[dict[str, str], list[str], list[str]]:
+        assert cli_path == fake_cli
+        return ({"server_version": "26.0.0"}, [], [])
+
+    monkeypatch.setattr(bootstrap_env, "_probe_docker_environment", fake_probe)
+
+    def fake_post_process(
+        *, metadata: dict[str, str], context: bootstrap_env.RuntimeContext, timeout: float = 6.0
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        metadata.update(
+            {
+                "docker_worker_last_error_code": "WSL_VM_CRASHED",
+                "docker_worker_health_severity": "error",
+                "docker_worker_health_summary": "Docker Desktop reported its WSL VM crashed.",
+            }
+        )
+        return [], [], {}
+
+    monkeypatch.setattr(bootstrap_env, "_post_process_docker_health", fake_post_process)
+
+    calls: dict[str, float] = {}
+
+    def fake_virtualization(timeout: float) -> tuple[list[str], list[str], dict[str, str]]:
+        calls["timeout"] = timeout
+        return (
+            ["WSL virtualization check warning"],
+            ["WSL virtualization check error"],
+            {"wsl_status_raw": "Status: Running"},
+        )
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_collect_windows_virtualization_insights",
+        fake_virtualization,
+    )
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.5)
+
+    assert calls["timeout"] == pytest.approx(0.5, rel=1e-6)
+    assert result.cli_path == fake_cli
+    assert not result.available
+    assert any("virtualization check warning" in warning.lower() for warning in result.warnings)
+    assert any("virtualization check error" in error.lower() for error in result.errors)
+    assert result.metadata["wsl_status_raw"].startswith("Status:")
+
+
+def test_virtualization_followups_skipped_for_non_virtualization_issue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-virtualization worker issues should not trigger Windows diagnostics."""
+
+    fake_cli = tmp_path / "docker.exe"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_discover_docker_cli", lambda: (fake_cli, []))
+    monkeypatch.setattr(bootstrap_env, "_detect_runtime_context", lambda: _windows_context())
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_probe_docker_environment",
+        lambda cli_path, timeout: ({"server_version": "26.0.0"}, [], []),
+    )
+
+    def fake_post_process(
+        *, metadata: dict[str, str], context: bootstrap_env.RuntimeContext, timeout: float = 6.0
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        metadata.update(
+            {
+                "docker_worker_last_error_code": "VPNKIT_UNRESPONSIVE",
+                "docker_worker_health_severity": "warning",
+                "docker_worker_health_summary": "Docker Desktop reported networking restarts.",
+            }
+        )
+        return [], [], {}
+
+    monkeypatch.setattr(bootstrap_env, "_post_process_docker_health", fake_post_process)
+
+    def virtualization_not_expected(timeout: float) -> tuple[list[str], list[str], dict[str, str]]:
+        raise AssertionError("Virtualization diagnostics should not run for networking stalls")
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_collect_windows_virtualization_insights",
+        virtualization_not_expected,
+    )
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.5)
+
+    assert result.cli_path == fake_cli
+    assert result.available
+    assert result.warnings == ()
+    assert result.errors == ()
+
+
 def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
     """Non-zero docker exit codes should surface cleaned warnings and metadata."""
 
