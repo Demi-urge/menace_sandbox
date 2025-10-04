@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import hashlib
 import json
 import logging
@@ -6671,6 +6672,239 @@ def _parse_key_value_lines(payload: str) -> dict[str, str]:
     return parsed
 
 
+@dataclass(frozen=True)
+class _WindowsServiceSpec:
+    """Describe a Windows service that Docker Desktop relies on."""
+
+    name: str
+    friendly_name: str
+    severity: Literal["error", "warning"]
+
+
+_WINDOWS_VIRTUALIZATION_SERVICES: tuple[_WindowsServiceSpec, ...] = (
+    _WindowsServiceSpec(
+        name="vmcompute",
+        friendly_name="Hyper-V Host Compute Service",
+        severity="error",
+    ),
+    _WindowsServiceSpec(
+        name="hns",
+        friendly_name="Windows Host Network Service",
+        severity="error",
+    ),
+    _WindowsServiceSpec(
+        name="LxssManager",
+        friendly_name="WSL Session Manager Service",
+        severity="error",
+    ),
+    _WindowsServiceSpec(
+        name="vmms",
+        friendly_name="Hyper-V Virtual Machine Management Service",
+        severity="warning",
+    ),
+    _WindowsServiceSpec(
+        name="com.docker.service",
+        friendly_name="Docker Desktop Service",
+        severity="error",
+    ),
+)
+
+
+def _build_powershell_encoded_command(script: str) -> list[str]:
+    """Return a PowerShell invocation that executes *script* via ``-EncodedCommand``."""
+
+    if not script:
+        raise ValueError("PowerShell script payload must not be empty")
+
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encoded,
+    ]
+
+
+def _parse_windows_service_payload(payload: str) -> list[dict[str, str]]:
+    """Return structured service metadata parsed from PowerShell JSON."""
+
+    if not payload:
+        return []
+
+    sanitized = _strip_control_sequences(payload).strip()
+    if not sanitized:
+        return []
+
+    try:
+        decoded = json.loads(sanitized)
+    except json.JSONDecodeError:
+        LOGGER.debug("Failed to decode Windows service probe payload: %s", sanitized)
+        return []
+
+    entries: list[dict[str, str]] = []
+    if isinstance(decoded, MappingABC):
+        decoded = [decoded]
+
+    if not isinstance(decoded, IterableABC):
+        return []
+
+    for item in decoded:
+        if not isinstance(item, MappingABC):
+            continue
+        name = str(
+            item.get("Name")
+            or item.get("name")
+            or item.get("ServiceName")
+            or ""
+        ).strip()
+        status = str(item.get("Status") or item.get("status") or "").strip()
+        start_type = str(
+            item.get("StartType")
+            or item.get("startType")
+            or item.get("start_type")
+            or ""
+        ).strip()
+        if not name:
+            continue
+        entries.append({
+            "name": name,
+            "status": status,
+            "start_type": start_type,
+        })
+
+    return entries
+
+
+def _collect_windows_service_health(
+    timeout: float,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Inspect critical Windows services that influence Docker Desktop stability."""
+
+    warnings: list[str] = []
+    errors: list[str] = []
+    metadata: dict[str, str] = {}
+
+    service_literals = ", ".join(f"'{spec.name}'" for spec in _WINDOWS_VIRTUALIZATION_SERVICES)
+    script = f"""
+Set-StrictMode -Version 3
+$ErrorActionPreference = 'Stop'
+$serviceNames = @({service_literals})
+$results = foreach ($serviceName in $serviceNames) {{
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($null -eq $service) {{
+        [PSCustomObject]@{{ Name = $serviceName; Status = 'Missing'; StartType = 'Unknown' }}
+    }} else {{
+        $startType = try {{ $service.StartType.ToString() }} catch {{ 'Unknown' }}
+        [PSCustomObject]@{{
+            Name = $service.Name
+            Status = $service.Status.ToString()
+            StartType = $startType
+        }}
+    }}
+}}
+$results | ConvertTo-Json -Compress
+""".strip()
+
+    command = _build_powershell_encoded_command(script)
+    proc, failure = _run_command(command, timeout=timeout)
+
+    if failure:
+        warnings.append(f"Unable to inspect Windows service health: {failure}")
+        return warnings, errors, metadata
+
+    if proc is None:
+        return warnings, errors, metadata
+
+    if proc.stderr:
+        stderr_message = proc.stderr.strip()
+        if stderr_message:
+            warnings.append(
+                "PowerShell reported issues while probing Docker Desktop services: %s"
+                % stderr_message
+            )
+
+    if proc.returncode not in {0, None}:
+        warnings.append(
+            "PowerShell exited with code %s while probing Docker Desktop services"
+            % proc.returncode
+        )
+
+    if proc.stdout:
+        metadata["windows_service_probe_raw"] = _strip_control_sequences(proc.stdout).strip()
+
+    parsed_entries = _parse_windows_service_payload(proc.stdout or "")
+    if not parsed_entries:
+        warnings.append(
+            "Unable to parse Windows service status output; run 'Get-Service' manually to verify Docker dependencies."
+        )
+        return warnings, errors, metadata
+
+    seen_services: dict[str, dict[str, str]] = {}
+    for entry in parsed_entries:
+        name = entry.get("name", "")
+        if not name:
+            continue
+        normalized_key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower()
+        status = entry.get("status", "")
+        start_type = entry.get("start_type", "")
+        metadata[f"windows_service_{normalized_key}_status"] = status
+        metadata[f"windows_service_{normalized_key}_start_type"] = start_type
+        if normalized_key == "vmcompute" and status:
+            metadata.setdefault("vmcompute_status", status)
+        seen_services[name.lower()] = entry
+
+    message_registry: set[str] = set()
+
+    def _append_message(collection: list[str], message: str) -> None:
+        normalized = (message or "").strip()
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in message_registry:
+            return
+        message_registry.add(key)
+        collection.append(normalized)
+
+    for spec in _WINDOWS_VIRTUALIZATION_SERVICES:
+        entry = seen_services.get(spec.name.lower())
+        if entry is None:
+            message = (
+                f"{spec.friendly_name} ({spec.name}) is not installed. "
+                "Enable the component via Windows Features and restart Docker Desktop."
+            )
+            target = errors if spec.severity == "error" else warnings
+            _append_message(target, message)
+            continue
+
+        status = entry.get("status", "")
+        start_type = entry.get("start_type", "")
+        status_lower = status.strip().lower()
+        start_lower = start_type.strip().lower()
+
+        unhealthy = status_lower not in {"running", "startpending", "starting"}
+        disabled = start_lower == "disabled" or (
+            spec.name.lower() == "com.docker.service" and start_lower == "manual"
+        )
+
+        if unhealthy or disabled:
+            message_parts = [
+                f"{spec.friendly_name} ({spec.name}) is {status or 'unavailable'}.",
+            ]
+            if start_type:
+                message_parts.append(f"Start type: {start_type}.")
+            message_parts.append(
+                "Restart the service from an elevated PowerShell session using 'Start-Service %s' "
+                "and reboot if the issue persists." % spec.name
+            )
+            message = " ".join(message_parts)
+            target = errors if spec.severity == "error" else warnings
+            _append_message(target, message)
+
+    return warnings, errors, metadata
+
+
 def _parse_bcdedit_configuration(payload: str) -> dict[str, str]:
     """Return boot configuration entries extracted from ``bcdedit`` output."""
 
@@ -6862,27 +7096,15 @@ def _collect_windows_virtualization_insights(timeout: float = 6.0) -> tuple[list
                     % vmp_state
                 )
 
-    vmcompute_cmd = [
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "(Get-Service -Name vmcompute).Status",
-    ]
-    vmcompute_proc, failure = _run_command(vmcompute_cmd, timeout=timeout)
-    if failure:
-        warnings.append(f"Unable to inspect Hyper-V compute service state: {failure}")
-    elif vmcompute_proc is not None:
-        lines = [line.strip() for line in vmcompute_proc.stdout.splitlines() if line.strip()]
-        vmcompute_state = lines[-1] if lines else ""
-        if vmcompute_state:
-            metadata["vmcompute_status"] = vmcompute_state
-            if vmcompute_state.lower() not in {"running", "startpending"}:
-                errors.append(
-                    "Hyper-V compute service (vmcompute) is %s. Start the service from an elevated PowerShell session with 'Start-Service vmcompute'."
-                    % vmcompute_state
-                )
+    service_warnings, service_errors, service_metadata = _collect_windows_service_health(
+        timeout
+    )
+    if service_warnings:
+        warnings.extend(service_warnings)
+    if service_errors:
+        errors.extend(service_errors)
+    if service_metadata:
+        metadata.update(service_metadata)
 
     bcdedit_cmd = ["bcdedit.exe", "/enum", "{current}"]
     bcdedit_proc, failure = _run_command(bcdedit_cmd, timeout=timeout)
