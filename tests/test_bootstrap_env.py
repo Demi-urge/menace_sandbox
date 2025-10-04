@@ -307,9 +307,10 @@ def test_normalise_docker_warning_handles_worker_stall_variants() -> None:
     cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
 
     normalized = cleaned.lower()
-    assert "docker desktop reported" in normalized
+    assert "docker desktop" in normalized
+    assert any(token in normalized for token in ("reported", "recovered"))
     assert "background-sync" in normalized
-    assert normalized.endswith("retrying.")
+    assert normalized.endswith("reappears.")
     assert metadata["docker_worker_health"] == "flapping"
     assert metadata["docker_worker_context"] == "background-sync"
 
@@ -657,6 +658,20 @@ def test_normalise_docker_warning_handles_clock_style_backoff() -> None:
     assert metadata["docker_worker_backoff"] == "45m 30s"
     assert metadata["docker_worker_last_error"] == "transient network starvation"
     assert "45m 30s" in cleaned
+    assert "worker stalled" not in cleaned.lower()
+
+
+def test_normalise_docker_warning_handles_ellipsis_separator() -> None:
+    message = (
+        "WARN[0042] moby/buildkit: worker stalled… restarting due to persistent IO pressure"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_context"] == "moby/buildkit"
+    assert metadata["docker_worker_last_error"] == "persistent IO pressure"
+    assert "persistent IO pressure" in cleaned
     assert "worker stalled" not in cleaned.lower()
 
 

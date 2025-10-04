@@ -855,6 +855,7 @@ _WORKER_INLINE_CONTEXT_STOPWORDS = {
     "that",
     "the",
     "this",
+    "to",
     "virtually",
     "was",
     "were",
@@ -2687,7 +2688,7 @@ _WORKER_CONTEXT_PREFIX_PATTERN = re.compile(
     (?P<context>[A-Za-z0-9_.:/\\-]+(?:\s+[A-Za-z0-9_.:/\\-]+)*)
     \s*
     (?:
-        [:\-]|::|->|=>|—|–|→|⇒
+        [:\-…]|::|->|=>|—|–|→|⇒
     )
     \s*
     worker\s+stalled
@@ -2752,6 +2753,18 @@ _WORKER_CONTEXT_NOISE_TOKENS = {
 }
 
 _WORKER_CONTEXT_NOISE_LEADING = {"next", "pending", "upcoming", "future"}
+_WORKER_CONTEXT_CAUSAL_LEADING = {
+    "after",
+    "as",
+    "because",
+    "caused",
+    "causing",
+    "due",
+    "from",
+    "owing",
+    "since",
+    "thanks",
+}
 
 _WORKER_CONTEXT_DURATION_PATTERN = re.compile(
     r"^(?:\d+(?:\.\d+)?)(?:ms|msec|milliseconds|s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?$",
@@ -4053,6 +4066,9 @@ def _is_worker_context_noise(candidate: str) -> bool:
     if all(token in _WORKER_CONTEXT_NOISE_TOKENS for token in tokens):
         return True
 
+    if tokens[0] in _WORKER_CONTEXT_CAUSAL_LEADING:
+        return True
+
     if tokens[0] in _WORKER_CONTEXT_NOISE_LEADING and len(tokens) > 1:
         remaining = [token for token in tokens[1:] if token not in _WORKER_INLINE_CONTEXT_STOPWORDS]
         if remaining and all(token in _WORKER_CONTEXT_NOISE_TOKENS for token in remaining):
@@ -4092,7 +4108,7 @@ def _extract_worker_context(message: str, cleaned_message: str) -> str | None:
         context_match = re.search(
             r"""
             worker\s+stalled
-            (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
+            (?:(?:\s*(?:[;:,.\-–—…]|->|=>|→|⇒)\s*)*)
             restart(?:ing)?
             (?:\s+(?:in|after)\s+[^()]+)?
             (?:\s*(?:[:\-–—]\s*|\(\s*)(?P<context>[^)]+?)(?:\s*\)|$))?
@@ -5222,7 +5238,7 @@ def _extract_worker_flapping_descriptors(
         interval_match = re.search(
             r"""
             worker\s+stalled
-            (?:(?:\s*(?:[;:,.\-–—]|->|=>|→|⇒)\s*)*)
+            (?:(?:\s*(?:[;:,.\-–—…]|->|=>|→|⇒)\s*)*)
             restart(?:ing)?
             \s+(?:in|after)\s+
             (?P<interval>[^;.,()\n]+)
