@@ -195,7 +195,7 @@ def test_worker_warning_sanitization_removes_raw_banner() -> None:
 
     assert cleaned  # sanity check that a message is produced
     assert "worker stalled; restarting" not in cleaned.lower()
-    assert "Docker Desktop reported repeated restarts" in cleaned
+    assert "Docker Desktop recovered from transient worker stalls" in cleaned
     assert metadata["docker_worker_health"] == "flapping"
 
 
@@ -269,7 +269,7 @@ def test_worker_warning_extracts_last_healthy_marker() -> None:
 
     assert cleaned
     assert metadata["docker_worker_last_healthy"] == "2024-10-03T17:45:00Z"
-    assert "Docker Desktop reported" in cleaned
+    assert "Docker Desktop recovered from transient worker stalls" in cleaned
 
 
 def test_post_process_virtualization_insights_for_warning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -484,7 +484,10 @@ def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
 
     assert "worker stalled; restarting" not in message.lower()
     assert "context deadline exceeded" in message
-    assert any("docker desktop reported" in warning.lower() for warning in warnings)
+    assert any(
+        "docker desktop recovered from transient worker stalls" in warning.lower()
+        for warning in warnings
+    )
     assert metadata["docker_worker_health"] == "flapping"
 
 
@@ -1069,7 +1072,7 @@ def test_structured_warning_prefers_status_message_over_status() -> None:
 
     assert warnings
     assert any(
-        "docker desktop reported repeated restarts" in warning.lower()
+        "docker desktop worker processes are repeatedly restarting" in warning.lower()
         for warning in warnings
     )
     assert all(
