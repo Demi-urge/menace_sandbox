@@ -545,6 +545,35 @@ def test_classify_worker_flapping_escalates_persistent_stalls() -> None:
     assert any("restarted the worker after stalls" in reason for reason in assessment.reasons)
 
 
+def test_classify_worker_flapping_rewrites_experienced_stall_error() -> None:
+    telemetry = bootstrap_env.WorkerRestartTelemetry(
+        context="vpnkit",
+        restart_count=3,
+        backoff_hint="45s",
+        last_seen="2024-09-01T00:00:00Z",
+        last_error="docker worker experienced a stall; restarting",
+        warning_occurrences=2,
+        last_error_codes=(),
+    )
+
+    context = bootstrap_env.RuntimeContext(
+        platform="Windows",
+        is_windows=True,
+        is_wsl=False,
+        inside_container=False,
+        container_runtime=None,
+        container_indicators=(),
+        is_ci=False,
+        ci_indicators=(),
+    )
+
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
+
+    summary = assessment.render().lower()
+    assert "experienced a stall" not in summary
+    assert any("restart" in detail.lower() for detail in assessment.details)
+
+
 def test_normalise_docker_warning_strips_ansi_sequences() -> None:
     message = "\x1b[33mWARN[0032] moby/buildkit: worker stalled; restarting\x1b[0m"
 
@@ -824,6 +853,21 @@ def test_normalise_docker_warning_handles_has_stalled_phrase() -> None:
     assert metadata["docker_worker_last_error"] == "host sleep"
     assert "worker has stalled" not in cleaned.lower()
     assert "Docker Desktop reported" in cleaned
+
+
+def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
+    message = "WARN[0032] docker worker experienced a stall; restarting"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "experienced a stall; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error"] == (
+        "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_interpreted"] == "worker_stalled"
+    assert metadata["docker_worker_last_error_banner_raw"].endswith(
+        "docker worker experienced a stall; restarting"
+    )
 
 
 def test_normalise_docker_warning_extracts_context_from_has_stalled_variant() -> None:

@@ -232,6 +232,9 @@ _WORKER_ERROR_NORMALISERS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
 )
 
+_WORKER_STALLED_PRIMARY_CODE = _WORKER_ERROR_NORMALISERS[0][1]
+_WORKER_STALLED_PRIMARY_NARRATIVE = _WORKER_ERROR_NORMALISERS[0][2]
+
 _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
     "restart_loop": "a restart loop",
@@ -624,6 +627,9 @@ def _contains_worker_stall_signal(message: str) -> bool:
     normalized = _normalise_worker_stalled_phrase(message)
     collapsed = re.sub(r"\s+", " ", normalized).strip().casefold()
     if "worker stalled" in collapsed:
+        return True
+
+    if "restart" in lowered and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(message):
         return True
 
     return False
@@ -1971,6 +1977,12 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalls\b", re.IGNORECASE), "worker stalled"),
+)
+
+
+_WORKER_STALL_FUZZY_RESTART_PATTERN = re.compile(
+    r"\bworkers?\b.{0,200}?\bstall\w*\b",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -3481,6 +3493,145 @@ def _normalise_worker_original_token(
     return token, None
 
 
+
+_WORKER_ERRCODE_HINT_PATTERN = re.compile(
+    r'\b(?:err(?:or)?code|code)\b\s*(?:[:=]\s*|\s+)(?:"(?P<double>[^"]+)"|\'(?P<single>[^\']+)\'|(?P<bare>[A-Za-z0-9_./-]+))',
+    re.IGNORECASE,
+)
+
+
+def _extract_worker_error_code_hint(text: str | None) -> str | None:
+    """Return a canonical worker error code extracted from free-form text."""
+
+    if not text:
+        return None
+
+    for match in _WORKER_ERRCODE_HINT_PATTERN.finditer(text):
+        candidate = match.group('double') or match.group('single') or match.group('bare')
+        if not candidate:
+            continue
+        cleaned = _clean_worker_metadata_value(str(candidate))
+        if not cleaned:
+            continue
+        normalized = re.sub(r"[^A-Za-z0-9_./-]+", "", cleaned).strip()
+        if not normalized:
+            continue
+        return normalized.upper()
+
+    return None
+
+
+def _synthesise_worker_stall_error_detail(
+    *,
+    message: str | None,
+    canonical_error: str,
+    original_token: str,
+    metadata: dict[str, str],
+    codes: Sequence[str],
+) -> tuple[str, str]:
+    """Return a narrative and detail summary for worker stall diagnostics."""
+
+    narrative = _WORKER_STALLED_PRIMARY_NARRATIVE
+    metadata["docker_worker_last_error"] = narrative
+    metadata["docker_worker_last_error_original"] = narrative
+    metadata["docker_worker_last_error_raw"] = narrative
+    metadata["docker_worker_last_error_banner"] = narrative
+    metadata["docker_worker_last_error_samples"] = narrative
+    metadata["docker_worker_last_error_original_samples"] = narrative
+    metadata["docker_worker_last_error_raw_samples"] = narrative
+    metadata["docker_worker_last_error_banner_samples"] = narrative
+    metadata.setdefault("docker_worker_last_error_category", "worker_stalled")
+    metadata.setdefault("docker_worker_last_error_interpreted", "worker_stalled")
+    metadata.setdefault("docker_worker_last_error_narrative", narrative)
+
+    if not metadata.get("docker_worker_last_error_banner_raw"):
+        source = original_token or message or canonical_error
+        if source:
+            metadata["docker_worker_last_error_banner_raw"] = source.strip()
+    metadata["docker_worker_last_error_banner_raw_samples"] = narrative
+
+    unique_codes: list[str] = []
+    seen: set[str] = set()
+    for code in codes:
+        if not code:
+            continue
+        normalized = code.strip()
+        if not normalized:
+            continue
+        canonical = normalized.upper()
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        unique_codes.append(normalized)
+
+    if not unique_codes:
+        hint = _extract_worker_error_code_hint(original_token or message)
+        if hint:
+            unique_codes.append(hint)
+
+    if unique_codes:
+        metadata.setdefault("docker_worker_last_error_code", unique_codes[0])
+        if len(unique_codes) > 1:
+            metadata.setdefault("docker_worker_last_error_codes", ", ".join(unique_codes))
+    else:
+        metadata.setdefault("docker_worker_last_error_code", _WORKER_STALLED_PRIMARY_CODE)
+
+    sentences: list[str] = []
+
+    def _append(sentence: str) -> None:
+        normalized_sentence = sentence.strip()
+        if not normalized_sentence:
+            return
+        if not normalized_sentence.endswith("."):
+            normalized_sentence += "."
+        sentences.append(normalized_sentence)
+
+    _append(narrative)
+
+    context = metadata.get("docker_worker_context")
+    context_source = original_token or canonical_error or (message or "")
+    if not context and context_source:
+        normalized_source = _normalise_worker_stalled_phrase(context_source)
+        cleaned_source = re.sub(r"\s+", " ", normalized_source).strip()
+        candidate = _extract_worker_context(context_source, cleaned_source)
+        if candidate:
+            metadata.setdefault("docker_worker_context", candidate)
+            context = candidate
+
+    if context:
+        _append(f"Affected component: {context}")
+
+    code_value = metadata.get("docker_worker_last_error_code")
+    if code_value:
+        label = _WORKER_ERROR_CODE_LABELS.get(code_value.upper())
+        if label:
+            _append(f"Diagnostic code {code_value} indicates {label}")
+        else:
+            _append(f"Docker reported diagnostic code {code_value}")
+
+    restart_count = metadata.get("docker_worker_restart_count")
+    if restart_count:
+        try:
+            count = int(restart_count)
+        except (TypeError, ValueError):
+            count = None
+        if count is not None and count >= 0:
+            plural = "restart" if count == 1 else "restarts"
+            _append(f"The worker restarted {count} time{'s' if count != 1 else ''} during diagnostics")
+        else:
+            _append(f"Docker reported {restart_count} worker restarts during diagnostics")
+
+    backoff = metadata.get("docker_worker_backoff")
+    if backoff:
+        _append(f"Docker is applying a restart backoff of {backoff}")
+
+    detail = " ".join(sentences)
+    if detail:
+        metadata.setdefault("docker_worker_last_error_summary", detail)
+
+    return narrative, detail or narrative
+
+
 def _normalise_worker_error_message(
     raw_value: str,
     *,
@@ -3513,6 +3664,23 @@ def _normalise_worker_error_message(
         metadata["docker_worker_last_error_banner_raw"] = preserved_banner
 
     codes: list[str] = []
+
+    def _unique_codes(values: Iterable[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not value:
+                continue
+            normalized = value.strip()
+            if not normalized:
+                continue
+            canonical = normalized.upper()
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            unique.append(normalized)
+        return unique
+
     if existing_code:
         normalized_existing = existing_code.strip()
         if normalized_existing:
@@ -3535,16 +3703,40 @@ def _normalise_worker_error_message(
                     "docker_worker_last_error_code_inferred", code
                 )
             detail = f"{narrative}."
-            if len(codes) > 1:
-                metadata["docker_worker_last_error_codes"] = ", ".join(codes)
+            unique_codes = _unique_codes(codes)
+            if len(unique_codes) > 1:
+                metadata["docker_worker_last_error_codes"] = ", ".join(unique_codes)
             return narrative, detail, metadata
+
+    
+    codes = _unique_codes(codes)
+    if codes:
+        metadata.setdefault("docker_worker_last_error_code", codes[0])
+        if len(codes) > 1:
+            metadata.setdefault("docker_worker_last_error_codes", ", ".join(codes))
+
+    detection_sources = [collapsed, canonical_error, original_token]
+    has_worker_signal = any(
+        _contains_worker_stall_signal(source) for source in detection_sources if source
+    )
+    if not has_worker_signal and raw_original:
+        has_worker_signal = _contains_worker_stall_signal(raw_original)
+
+    if has_worker_signal:
+        narrative, detail = _synthesise_worker_stall_error_detail(
+            message=raw_original or raw_value,
+            canonical_error=canonical_error,
+            original_token=original_token,
+            metadata=metadata,
+            codes=codes,
+        )
+        return narrative, detail, metadata
 
     fallback_detail = (
         "Docker Desktop reported the worker error '%s'." % collapsed
     )
-    if len(codes) > 1:
-        metadata["docker_worker_last_error_codes"] = ", ".join(codes)
     return collapsed, fallback_detail, metadata
+
 
 
 def _normalise_worker_metadata_key(raw_key: str) -> str:
@@ -4187,8 +4379,11 @@ def _extract_worker_flapping_descriptors(
         if normalized_error:
             metadata["docker_worker_last_error"] = normalized_error
             metadata.update(error_metadata)
+            detail_override = error_detail or metadata.get(
+                "docker_worker_last_error_summary"
+            )
             context_details.append(
-                error_detail
+                detail_override
                 or f"Most recent worker error: {normalized_error}."
             )
     else:
@@ -5568,7 +5763,17 @@ def _classify_worker_flapping(
                 rendered += ", …"
             details.append(f"Restart markers captured from Docker diagnostics: {rendered}.")
 
-    last_errors = telemetry.all_last_errors
+    raw_last_errors = telemetry.all_last_errors
+    if raw_last_errors:
+        sanitized_errors: list[str] = []
+        for message in raw_last_errors:
+            if _contains_worker_stall_signal(message):
+                sanitized_errors.append(_WORKER_STALLED_PRIMARY_NARRATIVE)
+            else:
+                sanitized_errors.append(message)
+        last_errors = tuple(_coalesce_iterable(sanitized_errors))
+    else:
+        last_errors = ()
     if last_errors:
         details.append(f"Most recent worker error: {last_errors[0]}.")
         if len(last_errors) > 1:
