@@ -5868,6 +5868,27 @@ def _enforce_worker_banner_sanitization(
     return harmonised
 
 
+_WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], ...] = (
+    ("docker_worker_last_error", "single"),
+    ("docker_worker_last_error_original", "single"),
+    ("docker_worker_last_error_raw", "single"),
+    ("docker_worker_last_error_banner", "single"),
+    ("docker_worker_last_error_narrative", "single"),
+    ("docker_worker_last_error_summary", "single"),
+    ("docker_worker_last_error_interpreted", "single"),
+    ("docker_worker_last_error_details", "single"),
+    ("docker_worker_last_error_remediation", "single"),
+    ("docker_worker_last_error_samples", "multi"),
+    ("docker_worker_last_error_original_samples", "multi"),
+    ("docker_worker_last_error_raw_samples", "multi"),
+    ("docker_worker_last_error_banner_samples", "multi"),
+    ("docker_worker_last_error_narrative_samples", "multi"),
+    ("docker_worker_last_error_summary_samples", "multi"),
+    ("docker_worker_last_error_details_samples", "multi"),
+    ("docker_worker_last_error_remediation_samples", "multi"),
+)
+
+
 def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
     """Scrub lingering worker stall phrases from metadata artefacts.
 
@@ -5907,6 +5928,31 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
             metadata[f"{key}_fingerprint"] = digest
 
         metadata[key] = sanitized
+
+    for key, mode in _WORKER_METADATA_SANITIZE_RULES:
+        raw_value = metadata.get(key)
+        if not raw_value or not isinstance(raw_value, str):
+            continue
+
+        normalized = _normalise_worker_stalled_phrase(raw_value)
+        if not _contains_worker_stall_signal(normalized):
+            continue
+
+        fingerprint_key = f"{key}_fingerprint"
+        if mode == "multi":
+            sanitized_value, digest = _sanitize_worker_metadata_value(raw_value)
+            if sanitized_value is None:
+                continue
+            if sanitized_value != raw_value:
+                metadata[key] = sanitized_value
+        else:
+            digest = _fingerprint_worker_banner(raw_value)
+            sanitized_value = _sanitize_worker_banner_text(raw_value)
+            if sanitized_value and sanitized_value != raw_value:
+                metadata[key] = sanitized_value
+
+        if digest and not metadata.get(fingerprint_key):
+            metadata[fingerprint_key] = digest
 
 
 def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]:

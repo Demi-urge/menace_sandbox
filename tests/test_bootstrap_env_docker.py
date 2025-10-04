@@ -746,6 +746,45 @@ def test_worker_banner_raw_metadata_is_redacted() -> None:
             assert metadata.get(fingerprint_key), f"missing fingerprint for {key}"
 
 
+def test_worker_primary_metadata_is_redacted() -> None:
+    """Primary worker error metadata should not leak the raw stall banner."""
+
+    narrative = "vpnkit background sync worker stalled; restarting due to IO pressure"
+    metadata: dict[str, str] = {
+        "docker_worker_last_error": narrative,
+        "docker_worker_last_error_original": narrative,
+        "docker_worker_last_error_raw": narrative,
+        "docker_worker_last_error_banner": narrative,
+        "docker_worker_last_error_samples": "; ".join([narrative, "Recovered automatically"]),
+        "docker_worker_last_error_original_samples": narrative,
+        "docker_worker_last_error_raw_samples": narrative,
+        "docker_worker_last_error_banner_samples": narrative,
+    }
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)
+
+    expected = bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE.lower()
+    sanitized_keys = [
+        "docker_worker_last_error",
+        "docker_worker_last_error_original",
+        "docker_worker_last_error_raw",
+        "docker_worker_last_error_banner",
+        "docker_worker_last_error_samples",
+        "docker_worker_last_error_original_samples",
+        "docker_worker_last_error_raw_samples",
+        "docker_worker_last_error_banner_samples",
+    ]
+
+    for key in sanitized_keys:
+        value = metadata.get(key, "")
+        if not value:
+            continue
+        assert "worker stalled" not in value.lower()
+        assert expected in value.lower()
+        fingerprint_key = f"{key}_fingerprint"
+        assert metadata.get(fingerprint_key), f"expected fingerprint for {key}"
+
+
 def test_enforce_worker_banner_sanitization_handles_period_separator() -> None:
     """Worker stall banners that use periods as separators should be rewritten."""
 
