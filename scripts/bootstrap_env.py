@@ -235,7 +235,7 @@ _WORKER_ERROR_NORMALISERS: tuple[tuple[re.Pattern[str], str, str], ...] = (
 _WORKER_STALLED_PRIMARY_CODE = _WORKER_ERROR_NORMALISERS[0][1]
 _WORKER_STALLED_PRIMARY_NARRATIVE = _WORKER_ERROR_NORMALISERS[0][2]
 
-_WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
+_BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
     "restart_loop": "a restart loop",
     "healthcheck_failure": "a health-check failure",
@@ -249,6 +249,17 @@ _WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
     "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
     "HCS_E_ACCESS_DENIED": "an access-denied error from the Host Compute Service",
+}
+
+_WSL_ERROR_CODE_LABEL_ALIASES = {
+    code.replace("WSL_", "WSL2_", 1): label
+    for code, label in _BASE_WORKER_ERROR_CODE_LABELS.items()
+    if code.startswith("WSL_")
+}
+
+_WORKER_ERROR_CODE_LABELS: Mapping[str, str] = {
+    **_BASE_WORKER_ERROR_CODE_LABELS,
+    **_WSL_ERROR_CODE_LABEL_ALIASES,
 }
 
 
@@ -580,25 +591,31 @@ def _derive_generic_error_code_guidance(
         key = f"docker_worker_last_error_guidance_{suffix}"
         return {key: summary}
 
-    if "WSL" in token_set:
-        summary = (
-            "Investigate the Docker Desktop WSL distributions and restart the "
-            "virtualisation backend"
+    wsl_tokens = [token for token in token_set if token.startswith("WSL")]
+    if wsl_tokens:
+        is_wsl2 = any(token.startswith("WSL2") for token in wsl_tokens)
+        variant_label = "WSL 2" if is_wsl2 else "WSL"
+        platform_label = (
+            "Windows Subsystem for Linux 2" if is_wsl2 else "Windows Subsystem for Linux"
         )
+        summary = (
+            "Investigate the Docker Desktop %s distributions and restart the "
+            "virtualisation backend"
+        ) % variant_label
         remediation = (
             "Run 'wsl --status' to verify the docker-desktop distributions are registered and healthy",
             "Execute 'wsl --update' to install the latest WSL kernel and apply any pending fixes",
             "Run 'wsl --shutdown' followed by restarting Docker Desktop to relaunch the WSL backend",
         )
         detail = (
-            "Docker Desktop surfaced Windows Subsystem for Linux error code %s "
-            "which typically indicates the docker-desktop WSL distributions "
-            "are stopped, outdated, or unreachable."
-        ) % candidate
+            "Docker Desktop surfaced %s worker error code %s which typically "
+            "indicates the docker-desktop WSL distributions are stopped, "
+            "outdated, or unreachable."
+        ) % (platform_label, candidate)
         return _WorkerErrorCodeDirective(
             reason=(
-                "Docker Desktop emitted a Windows Subsystem for Linux worker "
-                f"error ({candidate})"
+                "Docker Desktop emitted a %s worker error (%s)"
+                % (platform_label, candidate)
             ),
             detail=detail,
             remediation=remediation,
