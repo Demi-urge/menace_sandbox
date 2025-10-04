@@ -650,12 +650,24 @@ def _contains_worker_stall_signal(message: str) -> bool:
         return False
 
     normalized = _normalise_worker_stalled_phrase(message)
-    collapsed = re.sub(r"\s+", " ", normalized).strip().casefold()
-    if "worker stalled" in collapsed:
+    collapsed = re.sub(r"[\s_-]+", " ", normalized).strip()
+    collapsed_lower = collapsed.casefold()
+    if "worker stalled" in collapsed_lower:
         return True
 
-    if "restart" in lowered and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(message):
+    condensed = re.sub(r"[\s_-]+", "", normalized).casefold()
+    if (
+        ("restart" in lowered or "restart" in condensed)
+        and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(normalized)
+    ):
         return True
+
+    if _WORKER_STALL_CONTEXT_PATTERN.search(normalized):
+        context_match = any(hint in collapsed_lower for hint in _WORKER_STALL_CONTEXT_HINTS)
+        if not context_match:
+            context_match = any(hint in condensed for hint in _WORKER_STALL_CONTEXT_HINTS)
+        if context_match:
+            return True
 
     return False
 
@@ -2008,6 +2020,30 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
 _WORKER_STALL_FUZZY_RESTART_PATTERN = re.compile(
     r"\bworkers?\b.{0,200}?\bstall\w*\b",
     re.IGNORECASE | re.DOTALL,
+)
+
+
+_WORKER_STALL_CONTEXT_PATTERN = re.compile(
+    r"\bworker\b.{0,240}?\bstall\w*\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+_WORKER_STALL_CONTEXT_HINTS: tuple[str, ...] = (
+    "docker",
+    "desktop",
+    "vpnkit",
+    "moby",
+    "buildkit",
+    "hyper-v",
+    "hyperv",
+    "wsl",
+    "errcode",
+    "component",
+    "restartcount",
+    "status",
+    "background",
+    "context=",
 )
 
 
