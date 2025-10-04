@@ -4654,6 +4654,28 @@ def _normalise_worker_error_message(
     fallback_detail = (
         "Docker Desktop reported the worker error '%s'." % collapsed
     )
+
+    fallback_sources = (
+        raw_value,
+        canonical_error,
+        normalized_original,
+        collapsed,
+    )
+    for source in fallback_sources:
+        if not source:
+            continue
+        harmonised = _normalise_worker_stalled_phrase(str(source))
+        if "worker stalled" in harmonised.casefold():
+            narrative, detail = _synthesise_worker_stall_error_detail(
+                message=raw_value,
+                canonical_error=canonical_error,
+                original_token=original_token,
+                metadata=metadata,
+                codes=codes,
+            )
+            metadata.setdefault("docker_worker_last_error", narrative)
+            return narrative, detail, metadata
+
     return collapsed, fallback_detail, metadata
 
 
