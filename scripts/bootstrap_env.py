@@ -100,6 +100,18 @@ _POSIX_ENV_VAR_PATTERN = re.compile(
 )
 
 
+_WINDOWS_SYSTEM_DIRECTORY_SUFFIXES: tuple[tuple[str, ...], ...] = (
+    ("System32",),
+    ("System32", "WindowsPowerShell", "v1.0"),
+    ("System32", "wbem"),
+    ("System32", "WindowsPowerShell", "v1.0", "Modules"),
+    ("Sysnative",),
+    ("Sysnative", "WindowsPowerShell", "v1.0"),
+    ("SysWOW64",),
+    ("SysWOW64", "WindowsPowerShell", "v1.0"),
+)
+
+
 _APPROX_PREFIX_PATTERN = re.compile(
     r"^(?P<prefix>about|approx(?:\.|imately)?|approximately|around|roughly|near(?:ly)?|~|≈)\s*",
     flags=re.IGNORECASE,
@@ -1509,6 +1521,149 @@ def _iter_wsl_docker_directories() -> Iterable[Path]:
         yield converted
 
 
+def _iter_windows_system_roots() -> Iterable[Path]:
+    """Yield Windows system roots accessible from the current execution host."""
+
+    raw_roots: list[Path] = []
+
+    for env_var in ("SystemRoot", "windir", "WINDIR"):
+        raw = os.environ.get(env_var)
+        if raw:
+            raw_roots.append(Path(_strip_windows_quotes(raw)))
+
+    if not raw_roots:
+        raw_roots.append(Path(r"C:\\Windows"))
+
+    if _is_wsl():
+        mount_root = _get_wsl_host_mount_root()
+        for drive_letter in ("c", "C"):
+            raw_roots.append(mount_root / drive_letter / "Windows")
+
+    seen: set[str] = set()
+    for root in raw_roots:
+        variants = [root]
+        if _is_wsl():
+            translated = _convert_windows_path_to_wsl(root)
+            if translated is not None:
+                variants.append(translated)
+
+        for variant in variants:
+            if variant is None:
+                continue
+            key = os.path.normcase(str(variant))
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                exists = variant.exists()
+            except OSError:
+                exists = False
+            if exists:
+                yield variant
+
+
+def _iter_windows_system_directories() -> Iterable[Path]:
+    """Yield directories that typically contain core Windows executables."""
+
+    seen: set[str] = set()
+    directories: list[Path] = []
+
+    def _register(path: Path | None) -> None:
+        if path is None:
+            return
+        key = os.path.normcase(str(path))
+        if key in seen:
+            return
+        try:
+            exists = path.exists()
+        except OSError:
+            exists = False
+        if not exists:
+            return
+        seen.add(key)
+        directories.append(path)
+
+    for root in _iter_windows_system_roots():
+        _register(root)
+        for suffix in _WINDOWS_SYSTEM_DIRECTORY_SUFFIXES:
+            _register(root.joinpath(*suffix))
+
+    path_value = os.environ.get("PATH")
+    if path_value:
+        separators = {os.pathsep}
+        if ";" in path_value:
+            separators.add(";")
+        for separator in separators:
+            for entry in path_value.split(separator):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                raw_entry = _strip_windows_quotes(entry)
+                candidate = Path(raw_entry)
+                _register(candidate)
+                if _is_wsl():
+                    _register(_convert_windows_path_to_wsl(candidate))
+
+    for directory in directories:
+        yield directory
+
+
+@lru_cache(maxsize=None)
+def _resolve_command_path(executable: str) -> str | None:
+    """Resolve *executable* into an absolute path when possible."""
+
+    if not executable:
+        return None
+
+    if os.path.isabs(executable):
+        if os.path.exists(executable):
+            return executable
+        if _is_wsl():
+            translated = _convert_windows_path_to_wsl(Path(executable))
+            if translated is not None and translated.exists():
+                return os.fspath(translated)
+
+    if _is_wsl() and (":" in executable or executable.startswith("\\")):
+        translated = _convert_windows_path_to_wsl(Path(executable))
+        if translated is not None and translated.exists():
+            return os.fspath(translated)
+
+    discovered = shutil.which(executable)
+    if discovered:
+        return discovered
+
+    if not (_is_windows() or _is_wsl()):
+        return None
+
+    name = Path(executable).name
+    if name != executable:
+        return None
+
+    candidate_names: list[str] = []
+    if not name.lower().endswith(".exe"):
+        candidate_names.append(f"{name}.exe")
+    candidate_names.append(name)
+
+    inspected: set[str] = set()
+    for directory in _iter_windows_system_directories():
+        for candidate_name in candidate_names:
+            candidate_path = directory / candidate_name
+            key = os.path.normcase(str(candidate_path))
+            if key in inspected:
+                continue
+            inspected.add(key)
+            try:
+                exists = candidate_path.exists()
+            except OSError:
+                exists = False
+            if not exists:
+                continue
+            if os.access(candidate_path, os.X_OK):
+                return os.fspath(candidate_path)
+
+    return None
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
 
@@ -2063,9 +2218,18 @@ def _run_docker_command(
 def _run_command(command: Sequence[str], *, timeout: float) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
     """Execute an arbitrary command and capture failures as diagnostics."""
 
+    if not command:
+        return None, "No command specified"
+
+    vector = [os.fspath(part) for part in command]
+    original_executable = vector[0]
+    resolved_executable = _resolve_command_path(original_executable)
+    if resolved_executable:
+        vector[0] = resolved_executable
+
     try:
         completed = subprocess.run(
-            list(command),
+            vector,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -2074,16 +2238,23 @@ def _run_command(command: Sequence[str], *, timeout: float) -> tuple[subprocess.
         )
         return completed, None
     except FileNotFoundError:
-        return None, f"Executable '{command[0]}' is not available on PATH"
-    except subprocess.TimeoutExpired:
-        rendered_args = " ".join(command[1:])
-        if rendered_args:
-            command_preview = f"{command[0]} {rendered_args}"
+        if resolved_executable and resolved_executable != original_executable:
+            detail = (
+                f"Executable '{original_executable}' resolved to '{resolved_executable}' "
+                "but is not accessible"
+            )
         else:
-            command_preview = command[0]
+            detail = f"Executable '{original_executable}' is not available on PATH"
+        return None, detail
+    except subprocess.TimeoutExpired:
+        rendered_args = " ".join(vector[1:])
+        if rendered_args:
+            command_preview = f"{vector[0]} {rendered_args}"
+        else:
+            command_preview = vector[0]
         return None, f"Command '{command_preview}' timed out after {timeout:.1f}s"
     except OSError as exc:  # pragma: no cover - environment specific
-        return None, f"Failed to execute {command[0]!s}: {exc}"
+        return None, f"Failed to execute {vector[0]!s}: {exc}"
 
 
 def _iter_docker_warning_messages(
