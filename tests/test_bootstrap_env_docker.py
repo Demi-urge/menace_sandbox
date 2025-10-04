@@ -617,6 +617,58 @@ def test_virtualization_followups_skipped_for_non_virtualization_issue(
     assert result.errors == ()
 
 
+def test_collect_windows_service_health_flags_service_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Critical Docker Desktop services should raise actionable findings."""
+
+    payload = json.dumps(
+        [
+            {"Name": "vmcompute", "Status": "Stopped", "StartType": "Automatic"},
+            {"Name": "hns", "Status": "Running", "StartType": "Automatic"},
+            {"Name": "LxssManager", "Status": "Running", "StartType": "Automatic"},
+            {"Name": "vmms", "Status": "Stopped", "StartType": "Manual"},
+            {"Name": "com.docker.service", "Status": "Missing", "StartType": "Unknown"},
+        ]
+    )
+
+    def fake_run_command(
+        command: list[str], *, timeout: float
+    ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+        assert command[0].lower().endswith("powershell.exe")
+        return subprocess.CompletedProcess(command, 0, payload, ""), None
+
+    monkeypatch.setattr(bootstrap_env, "_run_command", fake_run_command)
+
+    warnings, errors, metadata = bootstrap_env._collect_windows_service_health(timeout=0.25)
+
+    assert any("hyper-v host compute service" in message.lower() for message in errors)
+    assert any("docker desktop service" in message.lower() for message in errors)
+    assert any("virtual machine management service" in message.lower() for message in warnings)
+    assert metadata["windows_service_vmcompute_status"] == "Stopped"
+    assert metadata["windows_service_com_docker_service_status"] == "Missing"
+    assert metadata["vmcompute_status"] == "Stopped"
+
+
+def test_collect_windows_service_health_handles_command_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failures to execute PowerShell should downgrade into warnings."""
+
+    def fake_run_command(
+        command: list[str], *, timeout: float
+    ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+        return None, "Executable 'powershell.exe' is not available on PATH"
+
+    monkeypatch.setattr(bootstrap_env, "_run_command", fake_run_command)
+
+    warnings, errors, metadata = bootstrap_env._collect_windows_service_health(timeout=0.25)
+
+    assert warnings and "powershell.exe" in warnings[0].lower()
+    assert errors == []
+    assert metadata == {}
+
+
 def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
     """Non-zero docker exit codes should surface cleaned warnings and metadata."""
 
