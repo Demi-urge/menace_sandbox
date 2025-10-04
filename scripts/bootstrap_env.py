@@ -194,6 +194,31 @@ _CLOCK_DURATION_SYMBOLS = {
     "days": "d",
 }
 
+
+_FULLWIDTH_ASCII_TRANSLATION: dict[int, str] = {
+    **{code: chr(code - 0xFEE0) for code in range(0xFF01, 0xFF5F)},
+    0x3000: " ",
+    ord("﹔"): ";",
+    ord("﹕"): ":",
+    ord("﹖"): "?",
+    ord("﹗"): "!",
+    ord("﹑"): ",",
+    ord("﹘"): "-",
+    ord("﹣"): "-",
+    ord("﹦"): "=",
+    ord("﹨"): "\\",
+    ord("﹩"): "$",
+    ord("﹪"): "%",
+    ord("﹫"): "@",
+    ord("〜"): "~",
+    ord("〰"): "~",
+    ord("‒"): "-",
+    ord("–"): "-",
+    ord("—"): "-",
+    ord("―"): "-",
+    ord("−"): "-",
+}
+
 _DURATION_UNIT_NORMALISATION = {
     "ms": "ms",
     "msec": "ms",
@@ -2599,13 +2624,28 @@ def _fingerprint_worker_banner(raw_value: str | None) -> str | None:
     return f"{_WORKER_STALLED_SIGNATURE_PREFIX}{digest}"
 
 
+def _normalize_worker_banner_characters(message: str) -> str:
+    """Normalise banner punctuation emitted by Windows-localised Docker builds."""
+
+    if not message:
+        return ""
+
+    # ``docker.exe`` on Windows may emit full-width or compatibility punctuation
+    # characters when the host locale is configured for East Asian languages.
+    # The worker stall detectors rely on ASCII separators, so normalise these
+    # variants to their half-width counterparts before applying the heuristics.
+    normalized = message.translate(_FULLWIDTH_ASCII_TRANSLATION)
+    return normalized
+
+
 def _normalise_worker_stalled_phrase(message: str) -> str:
     """Collapse phrasing variants of ``worker has stalled`` into ``worker stalled``."""
 
     if not message:
         return ""
 
-    normalized = _rewrite_inline_worker_contexts(message)
+    normalized = _normalize_worker_banner_characters(message)
+    normalized = _rewrite_inline_worker_contexts(normalized)
     normalized = _canonicalize_worker_stall_tokens(normalized)
     return _WORKER_STALLED_VARIATIONS_PATTERN.sub("worker stalled", normalized)
 
