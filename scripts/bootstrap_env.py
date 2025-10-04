@@ -3740,6 +3740,30 @@ _WORKER_LAST_SEEN_PREFIXES = {
     "previous",
 }
 
+_WORKER_LAST_HEALTHY_KEYS = {
+    "last_healthy",
+    "lasthealthy",
+    "last_healthy_at",
+    "lasthealthyat",
+    "last_health",
+    "lasthealth",
+    "last_healthy_timestamp",
+    "lasthealthytimestamp",
+    "last_healthy_time",
+    "lasthealthytime",
+    "last_healthy_check",
+    "lasthealthcheck",
+}
+
+_WORKER_LAST_HEALTHY_PREFIXES = {
+    "last_healthy",
+    "lasthealthy",
+    "last_health",
+    "lasthealth",
+    "last_good",
+    "lastgood",
+}
+
 
 def _tokenize_metadata_key(key: str) -> tuple[str, ...]:
     """Return normalized token segments extracted from a metadata key."""
@@ -3787,11 +3811,20 @@ def _classify_worker_metadata_key(key: str) -> str | None:
                 return True
         return False
 
+    last_healthy_match = _matches(
+        _WORKER_LAST_HEALTHY_KEYS,
+        _WORKER_LAST_HEALTHY_PREFIXES,
+        allow_substring=True,
+    )
+    if last_healthy_match:
+        return "last_healthy"
+
     last_seen_match = _matches(
         _WORKER_LAST_SEEN_KEYS, _WORKER_LAST_SEEN_PREFIXES, allow_substring=False
     )
     if last_seen_match and not any(
-        token in {"error", "err", "failure", "reason"}
+        "healthy" in token
+        or token in {"error", "err", "failure", "reason"}
         or "error" in token
         or "fail" in token
         for token in tokens
@@ -4842,6 +4875,7 @@ def _extract_worker_flapping_descriptors(
     last_error_raw_value: str | None = None
     backoff_hint: str | None = None
     last_seen: str | None = None
+    last_healthy: str | None = None
 
     normalized_source = normalized_message or _normalise_worker_stalled_phrase(message)
 
@@ -4918,7 +4952,7 @@ def _extract_worker_flapping_descriptors(
             backoff_hint = normalized
 
     def _ingest_metadata_candidate(key: str | None, value: str | None) -> None:
-        nonlocal restart_count, last_error, backoff_hint, last_seen, last_error_raw_value
+        nonlocal restart_count, last_error, backoff_hint, last_seen, last_error_raw_value, last_healthy
         if not key or value is None:
             return
         normalized_key = _normalise_worker_metadata_key(key)
@@ -5001,8 +5035,14 @@ def _extract_worker_flapping_descriptors(
             else:
                 _set_backoff_hint(cleaned_value)
             return
-        if category == "last_seen" and last_seen is None:
-            last_seen = cleaned_value
+        if category == "last_seen":
+            if last_seen is None:
+                last_seen = cleaned_value
+            return
+        if category == "last_healthy":
+            if last_healthy is None:
+                last_healthy = cleaned_value
+            return
 
     for key, value in envelope.items():
         _ingest_metadata_candidate(key, value)
@@ -5096,6 +5136,23 @@ def _extract_worker_flapping_descriptors(
         if derived_backoff:
             backoff_hint = derived_backoff
 
+    if last_healthy is None:
+        healthy_match = re.search(
+            r"""
+            (?:last\s+(?:known\s+)?)
+            healthy
+            (?:\s+(?:time|at|timestamp|check|state)?)?
+            \s*(?:=|:)?\s*
+            (?P<value>[^;.,()\n]+)
+            """,
+            normalized_source,
+            flags=re.IGNORECASE | re.VERBOSE,
+        )
+        if healthy_match:
+            candidate = _clean_worker_metadata_value(healthy_match.group("value"))
+            if candidate:
+                last_healthy = candidate
+
     if "docker_worker_context" not in metadata:
         cleaned_message = re.sub(
             r"\s+", " ", _strip_control_sequences(normalized_source)
@@ -5125,6 +5182,12 @@ def _extract_worker_flapping_descriptors(
         metadata["docker_worker_last_restart"] = last_seen
         context_details.append(
             f"Last restart marker emitted by Docker: {last_seen}."
+        )
+
+    if last_healthy:
+        metadata["docker_worker_last_healthy"] = last_healthy
+        context_details.append(
+            f"Docker last reported the worker as healthy at {last_healthy}."
         )
 
     if last_error:
@@ -5253,6 +5316,7 @@ class _WorkerWarningRecord:
     backoff_hint: str | None = None
     backoff_seconds: float | None = None
     last_seen: str | None = None
+    last_healthy: str | None = None
     last_error: str | None = None
     last_error_original: str | None = None
     last_error_raw: str | None = None
@@ -5262,6 +5326,7 @@ class _WorkerWarningRecord:
     restart_samples: list[int] = field(default_factory=list)
     backoff_hints: list[str] = field(default_factory=list)
     last_seen_samples: list[str] = field(default_factory=list)
+    last_healthy_samples: list[str] = field(default_factory=list)
     last_error_samples: list[str] = field(default_factory=list)
     last_error_original_samples: list[str] = field(default_factory=list)
     last_error_raw_samples: list[str] = field(default_factory=list)
@@ -5311,6 +5376,13 @@ class _WorkerWarningRecord:
             if cleaned_restart:
                 self.last_seen_samples.append(cleaned_restart)
                 self.last_seen = cleaned_restart
+
+        healthy_marker = metadata.get("docker_worker_last_healthy")
+        if healthy_marker:
+            cleaned_healthy = healthy_marker.strip()
+            if cleaned_healthy:
+                self.last_healthy_samples.append(cleaned_healthy)
+                self.last_healthy = cleaned_healthy
 
         last_error = metadata.get("docker_worker_last_error")
         if last_error:
@@ -5472,6 +5544,18 @@ class _WorkerWarningAggregator:
         if len(last_restart_markers) > 1:
             result["docker_worker_last_restart_samples"] = ", ".join(
                 last_restart_markers
+            )
+
+        healthy_markers = _coalesce_iterable(
+            [marker for record in records for marker in record.last_healthy_samples]
+        )
+        if primary and primary.last_healthy:
+            result["docker_worker_last_healthy"] = primary.last_healthy
+        elif healthy_markers:
+            result["docker_worker_last_healthy"] = healthy_markers[-1]
+        if len(healthy_markers) > 1:
+            result["docker_worker_last_healthy_samples"] = "; ".join(
+                healthy_markers
             )
 
         last_errors = _coalesce_iterable(
@@ -6123,6 +6207,7 @@ class WorkerRestartTelemetry:
     restart_count: int | None
     backoff_hint: str | None
     last_seen: str | None
+    last_healthy: str | None
     last_error: str | None
     last_error_original: str | None = None
     last_error_raw: str | None = None
@@ -6134,6 +6219,7 @@ class WorkerRestartTelemetry:
     restart_samples: tuple[int, ...] = field(default_factory=tuple)
     backoff_options: tuple[str, ...] = field(default_factory=tuple)
     last_restart_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_healthy_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_original_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_raw_samples: tuple[str, ...] = field(default_factory=tuple)
@@ -6162,6 +6248,9 @@ class WorkerRestartTelemetry:
         )
         last_restart_samples = tuple(
             _split_metadata_values(metadata.get("docker_worker_last_restart_samples"))
+        )
+        last_healthy_samples = tuple(
+            _split_metadata_values(metadata.get("docker_worker_last_healthy_samples"))
         )
         last_error_samples = tuple(
             _split_metadata_values(metadata.get("docker_worker_last_error_samples"))
@@ -6229,6 +6318,7 @@ class WorkerRestartTelemetry:
             ),
             backoff_hint=normalized_backoff,
             last_seen=metadata.get("docker_worker_last_restart"),
+            last_healthy=metadata.get("docker_worker_last_healthy"),
             last_error=metadata.get("docker_worker_last_error"),
             last_error_original=last_error_original,
             last_error_raw=last_error_raw,
@@ -6240,6 +6330,7 @@ class WorkerRestartTelemetry:
             restart_samples=restart_samples,
             backoff_options=tuple(backoff_options),
             last_restart_samples=last_restart_samples,
+            last_healthy_samples=last_healthy_samples,
             last_error_samples=last_error_samples,
             last_error_original_samples=tuple(last_error_original_samples),
             last_error_raw_samples=tuple(last_error_raw_samples),
@@ -6286,6 +6377,18 @@ class WorkerRestartTelemetry:
         if self.last_seen:
             markers.append(self.last_seen)
         markers.extend(self.last_restart_samples)
+        if not markers:
+            return ()
+        return tuple(_coalesce_iterable(markers))
+
+    @property
+    def all_last_healthy(self) -> tuple[str, ...]:
+        """Return the set of timestamps when Docker reported the worker healthy."""
+
+        markers: list[str] = []
+        if self.last_healthy:
+            markers.append(self.last_healthy)
+        markers.extend(self.last_healthy_samples)
         if not markers:
             return ()
         return tuple(_coalesce_iterable(markers))
@@ -6518,6 +6621,18 @@ def _classify_worker_flapping(
             if len(restart_markers) > len(preview):
                 rendered += ", …"
             details.append(f"Restart markers captured from Docker diagnostics: {rendered}.")
+
+    healthy_markers = telemetry.all_last_healthy
+    if healthy_markers:
+        details.append(
+            f"Docker last reported the worker as healthy at {healthy_markers[0]}."
+        )
+        if len(healthy_markers) > 1:
+            preview = healthy_markers[1:3]
+            rendered = ", ".join(preview)
+            if len(healthy_markers) > 3:
+                rendered += ", …"
+            details.append(f"Additional healthy timestamps observed: {rendered}.")
 
     raw_last_errors = telemetry.all_last_errors
     if raw_last_errors:
