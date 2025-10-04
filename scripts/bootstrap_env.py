@@ -6754,15 +6754,18 @@ class WorkerHealthAssessment:
         """Compose a human readable message from the assessment components."""
 
         segments = [self.headline]
-        detail_segments: list[str] = []
-        if self.details:
-            detail_segments.extend(detail.strip() for detail in self.details if detail)
-        if self.reasons:
-            detail_segments.extend(reason.strip() for reason in self.reasons if reason)
+
+        detail_segments = [detail.strip() for detail in self.details if detail]
         if detail_segments:
-            segments.append(" ".join(detail_segments))
+            segments.append("Additional context: " + " ".join(detail_segments))
+
+        reason_segments = [reason.strip() for reason in self.reasons if reason]
+        if reason_segments:
+            segments.append("Diagnostic signals: " + " ".join(reason_segments))
+
         if self.remediation:
             segments.append(" ".join(hint.strip() for hint in self.remediation if hint))
+
         return " ".join(segment for segment in segments if segment)
 
 
@@ -7054,12 +7057,20 @@ def _classify_worker_flapping(
             or (normalized_codes & _BENIGN_WORKER_ERROR_CODES)
         ):
             headline = (
-                "Docker Desktop recovered from transient worker stalls and reports the background worker is stable."
+                "Docker Desktop reported it recovered from transient worker stalls and the background worker is stable."
+            )
+            details.insert(
+                0,
+                "Docker Desktop recovered from transient worker stalls and reports the background worker is stable.",
             )
             guidance_metadata.setdefault("docker_worker_health_state", "stabilising")
         else:
             headline = (
-                "Docker Desktop briefly restarted a background worker and reports it is healthy."
+                "Docker Desktop reported it briefly restarted a background worker and it is healthy."
+            )
+            details.insert(
+                0,
+                "Docker Desktop recovered from a brief background worker restart and reports it is healthy.",
             )
             guidance_metadata.setdefault("docker_worker_health_state", "recovered")
 
@@ -7068,7 +7079,10 @@ def _classify_worker_flapping(
         )
     elif severity == "warning":
         headline = (
-            "Docker Desktop observed worker restarts but reported they are recovering automatically. Monitor Docker Desktop and re-run bootstrap if instability persists."
+            "Docker Desktop reported worker restarts but indicated they are recovering automatically."
+        )
+        remediation.append(
+            "Monitor Docker Desktop and re-run bootstrap if instability persists."
         )
         if context.is_wsl:
             remediation.append(
@@ -7084,7 +7098,7 @@ def _classify_worker_flapping(
             )
     else:
         headline = (
-            "Docker Desktop worker processes are repeatedly restarting and may not stabilize without intervention."
+            "Docker Desktop reported worker processes are repeatedly restarting and may not stabilize without intervention."
         )
         if context.is_wsl:
             remediation.append(
