@@ -1100,6 +1100,30 @@ def test_normalize_warnings_handles_worker_collections() -> None:
     assert backoff.endswith("s")
 
 
+def test_worker_error_fallback_sanitizes_worker_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback worker error handling should still purge stall banners."""
+
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_contains_worker_stall_signal",
+        lambda message: False,
+    )
+
+    narrative, detail, metadata = bootstrap_env._normalise_worker_error_message(
+        "WARNING: worker stalled; restarting"
+    )
+
+    assert narrative == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+    assert "worker stalled; restarting" not in detail.lower()
+    assert all(
+        "worker stalled; restarting" not in str(value).lower()
+        for key, value in metadata.items()
+        if "banner_raw" not in key
+    )
+
+
 def test_structured_warning_infers_context_from_display_name() -> None:
     """Display name and status message fields should map to actionable guidance."""
 
