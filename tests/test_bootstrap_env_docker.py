@@ -689,6 +689,42 @@ def test_structured_warning_prefers_status_message_over_status() -> None:
     assert aggregated == {}
 
 
+def test_structured_notifications_with_text_field() -> None:
+    """Docker Desktop notifications using ``text`` should become actionable."""
+
+    payload = {
+        "diagnostics": {
+            "notifications": [
+                {
+                    "source": "VPNKit Background Sync",
+                    "title": "Background worker restart",
+                    "text": "WARNING: worker stalled; restarting component=\"vpnkit\"",
+                    "metadata": {
+                        "restartCount": 4,
+                        "backoff": "PT45S",
+                        "lastErrorCode": "VPNKIT_SYNC_TIMEOUT",
+                        "lastErrorMessage": "vpnkit background sync worker stalled; restarting",
+                    },
+                }
+            ]
+        }
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    banner = " ".join(warnings).lower()
+    assert "worker stalled; restarting" not in banner
+    assert "vpnkit" in metadata.get("docker_worker_context", "").lower()
+    assert metadata.get("docker_worker_restart_count") == "4"
+    assert metadata.get("docker_worker_backoff") == "45s"
+    assert metadata.get("docker_worker_last_error_code") == "VPNKIT_SYNC_TIMEOUT"
+    assert "worker stalled" not in metadata.get("docker_worker_last_error", "").lower()
+    assert "vpnkit background sync" in metadata.get(
+        "docker_worker_last_error_banner_raw", ""
+    ).lower()
+
+
 def test_worker_stall_json_error_payload_enriched() -> None:
     """JSON ``lastError`` payloads should surface actionable metadata."""
 
