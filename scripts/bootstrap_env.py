@@ -4669,7 +4669,9 @@ def _normalise_worker_error_message(
     if preserved_signature:
         metadata["docker_worker_last_error_banner_signature"] = preserved_signature
 
-    preserved_banner_text = metadata.get("docker_worker_last_error_banner")
+    preserved_banner_text = preserved_banner or metadata.get(
+        "docker_worker_last_error_banner"
+    )
     if preserved_banner_text:
         metadata["docker_worker_last_error_banner_preserved"] = preserved_banner_text
         metadata["docker_worker_last_error_banner_preserved_samples"] = (
