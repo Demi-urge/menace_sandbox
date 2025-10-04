@@ -718,6 +718,24 @@ def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_enforce_worker_banner_sanitization_handles_resetting_variants() -> None:
+    """Resetting phrasing should be harmonised like restart diagnostics."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARNING worker stall detection triggered; resetting component=\"vpnkit\" "
+        "errCode=VPNKIT_VSOCK_TIMEOUT",
+    ]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in harmonised)
+    assert all("resetting" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata.get("docker_worker_last_error_code") == "VPNKIT_VSOCK_TIMEOUT"
+
+
 def test_worker_banner_raw_metadata_is_redacted() -> None:
     """Raw banner metadata should be rewritten and fingerprinted."""
 

@@ -1059,9 +1059,12 @@ def _contains_worker_stall_signal(message: str) -> bool:
         return True
 
     condensed = re.sub(r"[\s_-]+", "", normalized).casefold()
-    if (
-        ("restart" in lowered or "restart" in condensed)
-        and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(normalized)
+    recovery_tokens = tuple(marker.replace(" ", "") for marker in _WORKER_RECOVERY_MARKERS)
+    recovery_in_lowered = any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS)
+    recovery_in_condensed = any(token in condensed for token in recovery_tokens)
+
+    if (recovery_in_lowered or recovery_in_condensed) and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(
+        normalized
     ):
         return True
 
@@ -2680,6 +2683,18 @@ _WORKER_STALL_CAMELCASE_PATTERN = re.compile(
 )
 
 
+_WORKER_RECOVERY_MARKERS: tuple[str, ...] = (
+    "restart",
+    "restarting",
+    "restart-loop",
+    "restart loop",
+    "reset",
+    "resetting",
+    "reset-loop",
+    "reset loop",
+)
+
+
 def _normalize_worker_token_case(token: str) -> str:
     """Return a ``worker`` token that preserves the source capitalisation."""
 
@@ -2751,7 +2766,7 @@ _WORKER_STALLED_BANNER_PATTERN = re.compile(
     )?
     stall(?:ed|ing|s)?               # stall/stalled/stalling variations
     (?:\s+|[^\w\s])*              # permissive punctuation/spacing between clauses
-    re[-\s]*start(?:ed|ing)?        # restart/restarting/re-starting variations
+    re[-\s]*(?:start|set)(?:ed|ing)? # restart/restarting/re-starting and reset/resetting variants
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -2789,8 +2804,7 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
         lambda match: _normalize_worker_token_case(match.group(1)),
         message,
     )
-    restart_markers = ("restart", "restarting", "restart-loop", "restart loop")
-    if not any(marker in lowered for marker in restart_markers):
+    if not any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS):
         return message
 
     canonical = message
