@@ -846,7 +846,13 @@ def test_normalise_docker_warning_masks_worker_restart_error_banner() -> None:
         metadata["docker_worker_last_error_banner"]
         == "Docker Desktop automatically restarted a background worker after it stalled"
     )
-    assert metadata["docker_worker_last_error_banner_raw"] == "worker stalled; restarting"
+    assert metadata["docker_worker_last_error_banner_raw"] == (
+        "Docker Desktop automatically restarted a background worker after it stalled"
+    )
+    assert (
+        metadata["docker_worker_last_error_banner_preserved"]
+        == "worker stalled; restarting"
+    )
 
 
 def test_normalise_docker_warning_extracts_last_error_code() -> None:
@@ -885,6 +891,9 @@ def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
     )
     assert metadata["docker_worker_last_error_interpreted"] == "worker_stalled"
     assert metadata["docker_worker_last_error_banner_raw"].endswith(
+        "background worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_banner_preserved"].endswith(
         "docker worker experienced a stall; restarting"
     )
 

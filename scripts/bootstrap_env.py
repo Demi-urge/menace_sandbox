@@ -4424,10 +4424,21 @@ def _synthesise_worker_stall_error_detail(
     metadata.setdefault("docker_worker_last_error_narrative", narrative)
 
     if not metadata.get("docker_worker_last_error_banner_raw"):
+        metadata["docker_worker_last_error_banner_raw"] = narrative
+    metadata["docker_worker_last_error_banner_raw_samples"] = narrative
+
+    if not metadata.get("docker_worker_last_error_banner_preserved"):
         source = original_token or message or canonical_error
         if source:
-            metadata["docker_worker_last_error_banner_raw"] = source.strip()
-    metadata["docker_worker_last_error_banner_raw_samples"] = narrative
+            preserved = source.strip()
+            if preserved:
+                metadata["docker_worker_last_error_banner_preserved"] = preserved
+    if metadata.get("docker_worker_last_error_banner_preserved") and not metadata.get(
+        "docker_worker_last_error_banner_preserved_samples"
+    ):
+        metadata["docker_worker_last_error_banner_preserved_samples"] = metadata[
+            "docker_worker_last_error_banner_preserved"
+        ]
 
     unique_codes: list[str] = []
     seen: set[str] = set()
@@ -4459,6 +4470,7 @@ def _synthesise_worker_stall_error_detail(
                 message,
                 canonical_error,
                 original_token,
+                metadata.get("docker_worker_last_error_banner_preserved"),
             )
             if inferred and inferred.upper() != primary_code.upper():
                 metadata["docker_worker_last_error_code"] = inferred
@@ -4468,6 +4480,7 @@ def _synthesise_worker_stall_error_detail(
             message,
             canonical_error,
             original_token,
+            metadata.get("docker_worker_last_error_banner_preserved"),
         )
         if inferred:
             metadata.setdefault("docker_worker_last_error_code", inferred)
@@ -4558,9 +4571,11 @@ def _normalise_worker_error_message(
         "docker_worker_last_error_original": collapsed,
         "docker_worker_last_error_raw": canonical_error,
         "docker_worker_last_error_banner": canonical_error,
+        "docker_worker_last_error_banner_raw": canonical_error,
     }
     if preserved_banner:
-        metadata["docker_worker_last_error_banner_raw"] = preserved_banner
+        metadata["docker_worker_last_error_banner_preserved"] = preserved_banner
+        metadata["docker_worker_last_error_banner_preserved_samples"] = preserved_banner
 
     codes: list[str] = []
 
@@ -4610,6 +4625,7 @@ def _normalise_worker_error_message(
                     raw_value,
                     raw_original,
                     metadata.get("docker_worker_last_error_banner_raw"),
+                    metadata.get("docker_worker_last_error_banner_preserved"),
                     metadata.get("docker_worker_last_error_raw"),
                 )
                 if inferred and inferred.upper() != code.upper():
@@ -4652,6 +4668,7 @@ def _normalise_worker_error_message(
         raw_original,
         canonical_error,
         original_token,
+        metadata.get("docker_worker_last_error_banner_preserved"),
     )
     if inferred:
         metadata.setdefault("docker_worker_last_error_code", inferred)
@@ -5579,6 +5596,7 @@ class _WorkerWarningRecord:
     last_error_raw: str | None = None
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
+    last_error_banner_preserved: str | None = None
     occurrences: int = 0
     restart_samples: list[int] = field(default_factory=list)
     backoff_hints: list[str] = field(default_factory=list)
@@ -5589,6 +5607,7 @@ class _WorkerWarningRecord:
     last_error_raw_samples: list[str] = field(default_factory=list)
     last_error_banner_samples: list[str] = field(default_factory=list)
     last_error_banner_raw_samples: list[str] = field(default_factory=list)
+    last_error_banner_preserved_samples: list[str] = field(default_factory=list)
     error_codes: list[str] = field(default_factory=list)
 
     def update(self, metadata: Mapping[str, str]) -> None:
@@ -5675,6 +5694,15 @@ class _WorkerWarningRecord:
             if cleaned_banner_raw:
                 self.last_error_banner_raw_samples.append(cleaned_banner_raw)
                 self.last_error_banner_raw = cleaned_banner_raw
+
+        banner_preserved = metadata.get("docker_worker_last_error_banner_preserved")
+        if banner_preserved:
+            cleaned_banner_preserved = banner_preserved.strip()
+            if cleaned_banner_preserved:
+                self.last_error_banner_preserved_samples.append(
+                    cleaned_banner_preserved
+                )
+                self.last_error_banner_preserved = cleaned_banner_preserved
 
         error_code = metadata.get("docker_worker_last_error_code")
         if error_code:
@@ -5887,6 +5915,26 @@ class _WorkerWarningAggregator:
         if len(raw_banner_errors) > 1:
             result["docker_worker_last_error_banner_raw_samples"] = "; ".join(
                 raw_banner_errors
+            )
+
+        preserved_banner_errors = _coalesce_iterable(
+            [
+                error
+                for record in records
+                for error in record.last_error_banner_preserved_samples
+            ]
+        )
+        if primary and primary.last_error_banner_preserved:
+            result["docker_worker_last_error_banner_preserved"] = (
+                primary.last_error_banner_preserved
+            )
+        elif preserved_banner_errors:
+            result["docker_worker_last_error_banner_preserved"] = (
+                preserved_banner_errors[-1]
+            )
+        if len(preserved_banner_errors) > 1:
+            result["docker_worker_last_error_banner_preserved_samples"] = "; ".join(
+                preserved_banner_errors
             )
 
         error_codes = _coalesce_iterable(
@@ -6586,6 +6634,7 @@ class WorkerRestartTelemetry:
     last_error_raw: str | None = None
     last_error_banner: str | None = None
     last_error_banner_raw: str | None = None
+    last_error_banner_preserved: str | None = None
     warning_occurrences: int = 0
     context_occurrences: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     contexts: tuple[str, ...] = field(default_factory=tuple)
@@ -6598,6 +6647,7 @@ class WorkerRestartTelemetry:
     last_error_raw_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_banner_raw_samples: tuple[str, ...] = field(default_factory=tuple)
+    last_error_banner_preserved_samples: tuple[str, ...] = field(default_factory=tuple)
     last_error_codes: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -6652,6 +6702,14 @@ class WorkerRestartTelemetry:
                 metadata.get("docker_worker_last_error_banner_raw_samples")
             )
         )
+        last_error_banner_preserved = metadata.get(
+            "docker_worker_last_error_banner_preserved"
+        )
+        last_error_banner_preserved_samples = tuple(
+            _split_metadata_values(
+                metadata.get("docker_worker_last_error_banner_preserved_samples")
+            )
+        )
         error_codes = _split_metadata_values(
             metadata.get("docker_worker_last_error_codes")
         )
@@ -6697,6 +6755,7 @@ class WorkerRestartTelemetry:
             last_error_raw=last_error_raw,
             last_error_banner=last_error_banner,
             last_error_banner_raw=last_error_banner_raw,
+            last_error_banner_preserved=last_error_banner_preserved,
             warning_occurrences=warning_occurrences,
             context_occurrences=tuple(context_occurrence_pairs),
             contexts=tuple(contexts),
@@ -6709,6 +6768,9 @@ class WorkerRestartTelemetry:
             last_error_raw_samples=tuple(last_error_raw_samples),
             last_error_banner_samples=tuple(last_error_banner_samples),
             last_error_banner_raw_samples=tuple(last_error_banner_raw_samples),
+            last_error_banner_preserved_samples=tuple(
+                last_error_banner_preserved_samples
+            ),
             last_error_codes=tuple(error_codes),
         )
 
