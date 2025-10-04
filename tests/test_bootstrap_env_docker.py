@@ -480,7 +480,33 @@ def test_virtualization_errcode_generic_guidance() -> None:
 
     guidance_key = "docker_worker_last_error_guidance_hcs_e_access_denied"
     assert guidance_key in assessment.metadata
-    assert "virtualization" in assessment.metadata[guidance_key].lower()
+    summary = assessment.metadata[guidance_key].lower()
+    assert "virtual" in summary or "hyper-v" in summary
+
+
+def test_wsl_kernel_missing_guidance() -> None:
+    """Missing WSL kernel codes should surface installation guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vm\" "
+        "restartCount=2 errCode=WSL_KERNEL_MISSING "
+        "lastError=\"WSL kernel not installed\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "WSL_KERNEL_MISSING"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("kernel" in detail.lower() for detail in assessment.details)
+    assert any("wsl" in step.lower() for step in assessment.remediation)
+
+    guidance_key = "docker_worker_last_error_guidance_wsl_kernel_missing"
+    assert guidance_key in assessment.metadata
+    assert "wsl" in assessment.metadata[guidance_key].lower()
 
 
 def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
@@ -511,6 +537,31 @@ def test_vpnkit_errcode_guidance_addresses_network_stalls() -> None:
     assert assessment.metadata[guidance_key].startswith("Restart Docker Desktop")
 
 
+def test_vpnkit_background_sync_guidance() -> None:
+    """Background sync stalls should surface vpnkit-specific remediation."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 errCode=VPNKIT_BACKGROUND_SYNC_STALLED "
+        "lastError=\"vpnkit background sync worker stalled; restarting\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_STALLED"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("background sync" in detail.lower() for detail in assessment.details)
+    assert any("vpnkit" in step.lower() for step in assessment.remediation)
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_background_sync_stalled"
+    assert guidance_key in assessment.metadata
+    assert "background sync" in assessment.metadata[guidance_key].lower()
+
+
 def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
     """Structured worker telemetry should be extracted from the warning payload."""
 
@@ -529,6 +580,31 @@ def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> Non
     assert metadata["docker_worker_backoff"] == "45s"
     assert metadata["docker_worker_last_error"].lower().startswith("context deadline")
     assert metadata["docker_worker_last_restart"] == "2024-05-01T10:15:00Z"
+
+
+def test_vpnkit_hns_guidance_mentions_hns() -> None:
+    """vpnkit HNS error codes should highlight Host Network Service remediation."""
+
+    message = (
+        "WARN[0045] moby/buildkit: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=6 errCode=VPNKIT_HNS_UNAVAILABLE backoff=45s "
+        "lastError=\"vpnkit lost connectivity with HNS\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_HNS_UNAVAILABLE"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("hns" in detail.lower() for detail in assessment.details)
+    assert any("hns" in step.lower() for step in assessment.remediation)
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_hns_unavailable"
+    assert guidance_key in assessment.metadata
+    assert "hns" in assessment.metadata[guidance_key].lower()
 
 
 def test_worker_warning_parenthetical_metadata_is_normalised() -> None:
