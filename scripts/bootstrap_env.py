@@ -6942,12 +6942,6 @@ _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], .
 )
 
 
-_WORKER_RESTART_SUFFIX_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:worker\s+)?stall(?:ed|ing|s)?)\s*;\s*re[-\s]?start(?:ed|ing)?(?P<tail>\s+[^;]*)?",
-    re.IGNORECASE,
-)
-
-
 _WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = (
     ";",
     ":",
@@ -6968,6 +6962,24 @@ _WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = (
     "·",
     "•",
 )
+
+_WORKER_RESTART_CONNECTOR_PATTERN = "|".join(
+    re.escape(token)
+    for token in sorted(_WORKER_LITERAL_RESTART_CONNECTORS, key=len, reverse=True)
+)
+
+_WORKER_RESTART_CONNECTOR_STRIPPER = re.compile(
+    rf"^(?:{_WORKER_RESTART_CONNECTOR_PATTERN})\s*",
+    re.IGNORECASE,
+)
+
+_WORKER_RESTART_SUFFIX_PATTERN = re.compile(
+    rf"(?P<prefix>\b(?:worker\s+)?{_WORKER_STALL_ROOT_PATTERN})"
+    rf"\s*(?:{_WORKER_RESTART_CONNECTOR_PATTERN})\s*"
+    r"re[-\s]?start(?:ed|ing)?(?P<tail>[^\r\n]*)",
+    re.IGNORECASE,
+)
+
 
 _WORKER_STALLED_FRAGMENT_PATTERN = re.compile(
     r"""
@@ -7072,6 +7084,9 @@ def _collapse_worker_restart_sequences(value: str) -> str:
 
     def _normalise_tail(prefix: str, tail: str) -> str:
         cleaned = tail.strip()
+        if cleaned:
+            cleaned = _WORKER_RESTART_CONNECTOR_STRIPPER.sub("", cleaned, count=1)
+            cleaned = cleaned.strip()
         if not cleaned:
             return ""
 

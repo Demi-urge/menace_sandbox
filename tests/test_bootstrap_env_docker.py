@@ -938,6 +938,21 @@ def test_guarantee_worker_banner_suppression_handles_arrow_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_guarantee_worker_banner_suppression_handles_comma_separator() -> None:
+    """Comma-separated worker restarts should be rewritten into guidance."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARN[0015] moby/buildkit: worker stalled, restarting component=\"vpnkit\" restartCount=2",
+    ]
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression(warnings, metadata)
+
+    assert safeguarded, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in safeguarded)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_guarantee_worker_banner_suppression_preserves_guidance() -> None:
     """Guidance messages should flow through untouched."""
 
