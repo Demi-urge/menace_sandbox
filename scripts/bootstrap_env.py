@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import codecs
 import hashlib
 import html
 import json
@@ -2836,6 +2837,55 @@ def _strip_control_sequences(text: str) -> str:
     return cleaned
 
 
+def _decode_worker_payload_bytes(payload: bytes) -> str:
+    """Return a best-effort textual decoding for Docker telemetry payloads."""
+
+    if not payload:
+        return ""
+
+    candidates: list[str] = []
+
+    def _register(encoding: str) -> None:
+        if encoding not in candidates:
+            candidates.append(encoding)
+
+    if payload.startswith(codecs.BOM_UTF16_LE):
+        _register("utf-16")
+        _register("utf-16-le")
+    elif payload.startswith(codecs.BOM_UTF16_BE):
+        _register("utf-16")
+        _register("utf-16-be")
+    else:
+        even_slice = payload[0::2]
+        odd_slice = payload[1::2]
+        even_null_fraction = (even_slice.count(0) / len(even_slice)) if even_slice else 0.0
+        odd_null_fraction = (odd_slice.count(0) / len(odd_slice)) if odd_slice else 0.0
+
+        utf16_bias = 0.30
+        if odd_null_fraction >= utf16_bias and even_null_fraction < utf16_bias / 2:
+            _register("utf-16-le")
+            _register("utf-16")
+        elif even_null_fraction >= utf16_bias and odd_null_fraction < utf16_bias / 2:
+            _register("utf-16-be")
+            _register("utf-16")
+        elif odd_null_fraction >= utf16_bias or even_null_fraction >= utf16_bias:
+            _register("utf-16")
+
+    if payload.startswith(codecs.BOM_UTF8):
+        _register("utf-8-sig")
+
+    _register("utf-8")
+    _register("latin-1")
+
+    for encoding in candidates:
+        try:
+            return payload.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    return payload.decode("utf-8", "replace")
+
+
 def _coerce_textual_value(value: object) -> str | None:
     """Return a textual representation of ``value`` when possible."""
 
@@ -2847,12 +2897,7 @@ def _coerce_textual_value(value: object) -> str | None:
 
     if isinstance(value, (bytes, bytearray, memoryview)):
         payload = bytes(value)
-        if not payload:
-            return ""
-        try:
-            return payload.decode("utf-8")
-        except UnicodeDecodeError:
-            return payload.decode("utf-8", "replace")
+        return _decode_worker_payload_bytes(payload)
 
     return None
 
