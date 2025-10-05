@@ -5767,31 +5767,188 @@ def _scrub_residual_worker_warnings(
     return rewritten, aggregated_metadata
 
 
+_WORKER_BANNER_CONTEXT_FIELDS: tuple[str, ...] = (
+    "context",
+    "component",
+    "component_name",
+    "componentname",
+    "component_display_name",
+    "componentdisplayname",
+    "component_friendly_name",
+    "componentfriendlyname",
+    "display_name",
+    "displayname",
+    "source",
+    "origin",
+    "worker",
+    "module",
+    "service",
+    "scope",
+    "subsystem",
+    "target",
+    "unit",
+    "pipeline",
+    "channel",
+    "namespace",
+)
+
+
+_WORKER_BANNER_FIELD_PATTERN = re.compile(
+    r"""
+    (?P<key>[A-Za-z0-9_.-]+)
+    \s*(?:=|:)\s*
+    (?P<value>
+        "(?P<double>(?:\\.|[^"\\])*)"
+        |
+        '(?P<single>(?:\\.|[^'\\])*)'
+        |
+        (?P<bare>[^\s;,]+)
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+_WORKER_BANNER_CAUSE_PATTERN = re.compile(
+    r"(?:due\s+to|because(?:\s+of)?)\s+(?P<reason>[^;.,()]+)",
+    re.IGNORECASE,
+)
+
+
+def _derive_worker_banner_subject(raw_text: str, normalized: str) -> tuple[str | None, str | None]:
+    """Return a ``(subject, reason)`` tuple extracted from worker stall banners."""
+
+    contexts: list[str] = []
+    reason: str | None = None
+
+    def _register_context(candidate: str | None) -> None:
+        if not candidate:
+            return
+        cleaned = _clean_worker_metadata_value(candidate)
+        if not cleaned:
+            return
+        collapsed = _collapse_worker_restart_sequences(cleaned)
+        collapsed = re.sub(
+            r"\bworker\s+stall(?:ed|ing|s)?\b",
+            "",
+            collapsed,
+            flags=re.IGNORECASE,
+        )
+        collapsed = re.sub(r"\s+", " ", collapsed).strip(" -:;,")
+        if not collapsed:
+            return
+        if _is_worker_context_noise(collapsed):
+            return
+        lowered = collapsed.lower()
+        if lowered in {"component", "context"}:
+            return
+        contexts.append(collapsed)
+
+    for match in _WORKER_BANNER_FIELD_PATTERN.finditer(raw_text):
+        key = match.group("key")
+        if not key:
+            continue
+        canonical_key = _canonicalize_warning_key(key)
+        if canonical_key in {"lasterror", "last_error", "lasterrormessage", "last_error_message"}:
+            value = match.group("double") or match.group("single") or match.group("bare") or ""
+            _register_context(value)
+            continue
+        if canonical_key not in _WORKER_BANNER_CONTEXT_FIELDS:
+            continue
+        value = match.group("double") or match.group("single") or match.group("bare") or ""
+        _register_context(value)
+
+    if not contexts:
+        prefix_match = re.search(
+            r"(?P<prefix>[^;.,()]{1,160})\bworker\s+stall(?:ed|ing|s)?",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if prefix_match:
+            candidate = prefix_match.group("prefix")
+            _register_context(candidate)
+
+    if not contexts:
+        for token in normalized.split():
+            if token.lower().startswith("worker"):
+                break
+            tentative = re.sub(r"[\s_-]+", " ", token).strip()
+            if tentative and not _is_worker_context_noise(tentative):
+                contexts.append(tentative)
+                break
+
+    if not reason:
+        cause_match = _WORKER_BANNER_CAUSE_PATTERN.search(normalized)
+        if cause_match:
+            raw_reason = _clean_worker_metadata_value(cause_match.group("reason"))
+            if raw_reason and not _contains_worker_stall_signal(raw_reason):
+                reason = raw_reason
+
+    subject = contexts[0] if contexts else None
+    if subject:
+        subject = re.sub(r"^(?:the|an|a)\s+", "", subject, flags=re.IGNORECASE).strip()
+        if subject:
+            subject = re.sub(r"\s+", " ", subject)
+
+    return subject or None, reason
+
+
+def _render_worker_banner_narrative(
+    subject: str | None, reason: str | None
+) -> str:
+    """Return a natural language description for a worker restart banner."""
+
+    base = _WORKER_STALLED_PRIMARY_NARRATIVE
+    if subject:
+        normalized_subject = subject
+        if not re.search(r"\bworker\b", normalized_subject, re.IGNORECASE):
+            normalized_subject = f"{normalized_subject} worker"
+        normalized_subject = re.sub(r"\s+", " ", normalized_subject).strip()
+        base = (
+            f"Docker Desktop automatically restarted the {normalized_subject} after it stalled"
+        )
+
+    return base
+
+
+def _canonicalize_worker_narrative(value: str) -> str:
+    """Collapse contextual worker narratives into the canonical guidance."""
+
+    collapsed = re.sub(r"\s+", " ", value).strip()
+    lowered = collapsed.casefold()
+    prefix = "docker desktop automatically restarted the "
+    if lowered.startswith(prefix) and " a background worker " not in lowered:
+        return _WORKER_STALLED_PRIMARY_NARRATIVE
+    return collapsed
+
+
 def _sanitize_worker_banner_text(raw_text: str | None) -> str:
     """Return a banner with ``worker stalled`` phrasing rewritten for humans."""
 
     if not raw_text:
         return _WORKER_STALLED_PRIMARY_NARRATIVE
 
+    canonical_prefix = "docker desktop automatically restarted"
+    raw_collapsed = re.sub(r"\s+", " ", raw_text).strip()
+    if raw_collapsed.casefold().startswith(canonical_prefix):
+        return raw_collapsed
+
     normalized = _normalise_worker_stalled_phrase(raw_text)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if not normalized:
         return _WORKER_STALLED_PRIMARY_NARRATIVE
 
-    lowered = normalized.casefold()
-    if "worker stalled" in lowered:
-        rewritten = _WORKER_STALLED_BANNER_PATTERN.sub(
-            _WORKER_STALLED_PRIMARY_NARRATIVE,
-            normalized,
-        )
-        rewritten = re.sub(r"\s+", " ", rewritten).strip()
-        lowered_rewritten = rewritten.casefold()
-        if "worker stalled" in lowered_rewritten:
-            return _WORKER_STALLED_PRIMARY_NARRATIVE
-        return rewritten
+    if normalized.casefold().startswith(canonical_prefix):
+        return normalized
 
-    if "stall" in lowered and "restart" in lowered:
-        return _WORKER_STALLED_PRIMARY_NARRATIVE
+    subject, reason = _derive_worker_banner_subject(raw_text, normalized)
+
+    lowered = normalized.casefold()
+    if "worker stalled" in lowered or ("stall" in lowered and "restart" in lowered):
+        narrative = _render_worker_banner_narrative(subject, reason)
+        if "worker stalled" in narrative.casefold():
+            return _WORKER_STALLED_PRIMARY_NARRATIVE
+        return narrative
 
     return normalized
 
@@ -6224,7 +6381,9 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
 
         fingerprint_key = f"{key}_fingerprint"
         if mode == "multi":
-            sanitized_value, digest = _sanitize_worker_metadata_value(raw_value)
+            sanitized_value, digest = _sanitize_worker_metadata_value(
+                raw_value, prefer_canonical=True
+            )
             if sanitized_value is None:
                 continue
             if sanitized_value != raw_value:
@@ -6233,7 +6392,7 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
             digest = _fingerprint_worker_banner(raw_value)
             sanitized_value = _sanitize_worker_banner_text(raw_value)
             if sanitized_value and sanitized_value != raw_value:
-                metadata[key] = sanitized_value
+                metadata[key] = _canonicalize_worker_narrative(sanitized_value)
 
         if digest and not metadata.get(fingerprint_key):
             metadata[fingerprint_key] = digest
@@ -6283,7 +6442,9 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
             metadata["docker_worker_nested_banner_fingerprints"] = merged
 
 
-def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]:
+def _sanitize_worker_metadata_value(
+    value: str, *, prefer_canonical: bool = False
+) -> tuple[str | None, str | None]:
     """Return a sanitised worker metadata payload and its fingerprint.
 
     The helper preserves non-worker content while aggressively rewriting any
@@ -6334,6 +6495,9 @@ def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]
 
     joined = "; ".join(unique_parts) if unique_parts else _WORKER_STALLED_PRIMARY_NARRATIVE
     sanitised_value = _collapse_worker_restart_sequences(joined)
+
+    if prefer_canonical and sanitised_value:
+        sanitised_value = _canonicalize_worker_narrative(sanitised_value)
 
     return sanitised_value, digest
 
