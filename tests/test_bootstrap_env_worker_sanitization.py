@@ -430,3 +430,20 @@ def test_worker_banner_whitespace_separator_is_sanitized() -> None:
         if isinstance(entry, str)
     )
     assert metadata.get("docker_worker_health") == "flapping"
+
+
+def test_finalize_sequences_strip_carriage_return_variants() -> None:
+    """Final sanitisation should catch carriage-return variants of the banner."""
+
+    message = "WARNING: worker stalled;\r restarting component=\"vpnkit\""
+    metadata: dict[str, str] = {}
+
+    sanitized = bootstrap_env._finalize_worker_banner_sequences([message], metadata)  # type: ignore[attr-defined]
+
+    assert sanitized
+    assert all(
+        "worker stalled" not in entry.lower()
+        for entry in sanitized
+        if isinstance(entry, str)
+    )
+    assert metadata.get("docker_worker_health") == "flapping"
