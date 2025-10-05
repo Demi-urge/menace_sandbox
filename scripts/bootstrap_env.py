@@ -3371,6 +3371,36 @@ def _normalize_worker_banner_characters(message: str) -> str:
     return normalized
 
 
+def _contains_literal_worker_restart_banner(
+    message: str, *, normalized: str | None = None
+) -> bool:
+    """Return ``True`` when ``message`` still carries the raw stall banner."""
+
+    if not message and not normalized:
+        return False
+
+    candidate = normalized if normalized is not None else _normalize_worker_banner_characters(message)
+    if not candidate:
+        return False
+
+    # ``docker.exe`` occasionally interleaves carriage returns when repainting
+    # progress bars, leaving fragments such as ``worker stalled;\r restarting``
+    # in the diagnostic stream.  Treat these control characters as hard spaces
+    # so substring probes remain stable irrespective of the host terminal
+    # behaviour.
+    candidate = candidate.replace("\r\n", "\n").replace("\r", " ")
+    if "\n" in candidate:
+        candidate = re.sub(r"\s*\n\s*", " ", candidate)
+
+    # Normalise whitespace around the separator to ensure variants like
+    # ``worker stalled ; restarting`` collapse into the canonical token while
+    # preserving the expected spacing used in downstream messaging.
+    candidate = re.sub(r"\s*;\s*", "; ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+
+    return "worker stalled; restarting" in candidate.casefold()
+
+
 def _normalise_worker_stalled_phrase(message: str) -> str:
     """Collapse phrasing variants of ``worker has stalled`` into ``worker stalled``."""
 
@@ -7555,9 +7585,9 @@ def _guarantee_worker_banner_suppression(
             safeguarded.append(message)
             continue
 
-        lowered = message.casefold()
+        normalized = _normalize_worker_banner_characters(message)
         if (
-            "worker stalled; restarting" not in lowered
+            not _contains_literal_worker_restart_banner(message, normalized=normalized)
             and not _looks_like_literal_worker_restart_banner(message)
             and not _looks_like_worker_restart_fragment(message)
         ):
@@ -7592,7 +7622,7 @@ def _finalize_worker_banner_sequences(
             continue
 
         normalized = _normalize_worker_banner_characters(message)
-        if "worker stalled; restarting" not in normalized.casefold():
+        if not _contains_literal_worker_restart_banner(message, normalized=normalized):
             sanitized.append(message)
             continue
 
@@ -7617,9 +7647,10 @@ def _sanitize_worker_json_structure(
     if isinstance(payload, str):
         normalized = _normalise_worker_stalled_phrase(payload)
         lowered = normalized.casefold()
-        banner_like = "worker stalled; restarting" in lowered or (
-            "restart" in lowered and _contains_worker_stall_signal(normalized)
-        )
+        normalized_banner = _normalize_worker_banner_characters(payload)
+        banner_like = _contains_literal_worker_restart_banner(
+            payload, normalized=normalized_banner
+        ) or ("restart" in lowered and _contains_worker_stall_signal(normalized))
 
         if not banner_like:
             return payload, False
@@ -7757,7 +7788,9 @@ def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None
         if mutated and json_sanitized is not None:
             normalized_json = _normalize_worker_banner_characters(json_sanitized)
             lowered_json = normalized_json.casefold()
-            if "worker stalled; restarting" not in lowered_json and not (
+            if not _contains_literal_worker_restart_banner(
+                json_sanitized, normalized=normalized_json
+            ) and not (
                 "restart" in lowered_json and _contains_worker_stall_signal(normalized_json)
             ):
                 metadata[key] = json_sanitized
@@ -7771,9 +7804,9 @@ def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None
 
         normalized = _normalize_worker_banner_characters(text_value)
         lowered = normalized.casefold()
-        if "worker stalled; restarting" not in lowered and not (
-            "restart" in lowered and _contains_worker_stall_signal(normalized)
-        ):
+        if not _contains_literal_worker_restart_banner(
+            text_value, normalized=normalized
+        ) and not ("restart" in lowered and _contains_worker_stall_signal(normalized)):
             continue
 
         sanitized_value = _sanitize_worker_banner_text(text_value)
