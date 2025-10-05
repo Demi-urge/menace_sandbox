@@ -6477,7 +6477,7 @@ def _guarantee_worker_banner_suppression(
             continue
 
         lowered = message.casefold()
-        if "worker stalled; restarting" not in lowered:
+        if "worker stalled; restarting" not in lowered and not _looks_like_literal_worker_restart_banner(message):
             safeguarded.append(message)
             continue
 
@@ -6523,6 +6523,79 @@ _WORKER_RESTART_SUFFIX_PATTERN = re.compile(
     r"(?P<prefix>\b(?:worker\s+)?stall(?:ed|ing|s)?)\s*;\s*re[-\s]?start(?:ed|ing)?(?P<tail>\s+[^;]*)?",
     re.IGNORECASE,
 )
+
+
+_WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = (
+    ";",
+    ":",
+    ",",
+    "-",
+    "—",
+    "–",
+    "―",
+    "->",
+    "=>",
+    "→",
+    "⇒",
+    "/",
+    "\\",
+    "|",
+    "…",
+    "⋯",
+    "·",
+    "•",
+)
+
+
+def _looks_like_literal_worker_restart_banner(message: str) -> bool:
+    """Return ``True`` when *message* resembles the raw stall banner."""
+
+    if not message:
+        return False
+
+    normalized = _normalize_worker_banner_characters(message)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return False
+
+    lowered = normalized.casefold()
+    if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
+        return False
+
+    if "worker" not in lowered or "restart" not in lowered:
+        return False
+
+    canonical = re.sub(
+        r"re\s*[-_/]?\s*start(?:\s*[-_/]?\s*(ed|ing))?",
+        lambda match: "restart" + (match.group(1) or ""),
+        lowered,
+    )
+    canonical = re.sub(r"\s+", "", canonical)
+
+    stall_roots = (
+        "workerstall",
+        "workerstalls",
+        "workerstalled",
+        "workerstalling",
+        "workersstall",
+        "workersstalled",
+        "workersstalling",
+    )
+    restart_roots = ("restart", "restarted", "restarting")
+
+    for stall_root in stall_roots:
+        if stall_root not in canonical:
+            continue
+        for connector in _WORKER_LITERAL_RESTART_CONNECTORS:
+            connector_token = connector.replace(" ", "")
+            if not connector_token:
+                continue
+            for restart_root in restart_roots:
+                target = f"{stall_root}{connector_token}{restart_root}"
+                if target in canonical:
+                    return True
+
+    return False
 
 
 def _collapse_worker_restart_sequences(value: str) -> str:

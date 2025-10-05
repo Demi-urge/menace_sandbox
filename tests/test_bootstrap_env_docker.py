@@ -835,6 +835,48 @@ def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_guarantee_worker_banner_suppression_handles_spaced_semicolon() -> None:
+    """Final guard should rewrite banners with padded delimiters."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARNING worker stalled ; restarting component=\"vpnkit\" restartCount=2",
+    ]
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression(warnings, metadata)
+
+    assert safeguarded, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in safeguarded)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_guarantee_worker_banner_suppression_handles_arrow_separator() -> None:
+    """Arrow separators occasionally appear in Windows event streams."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARN[0042] moby/buildkit: worker stalled -> restarting due to IO pressure",
+    ]
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression(warnings, metadata)
+
+    assert safeguarded, "expected sanitized worker warning"
+    assert all("worker stalled" not in entry.lower() for entry in safeguarded)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_guarantee_worker_banner_suppression_preserves_guidance() -> None:
+    """Guidance messages should flow through untouched."""
+
+    metadata: dict[str, str] = {}
+    guidance = bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression([guidance], metadata)
+
+    assert safeguarded == [guidance]
+    assert metadata == {}
+
+
 def test_enforce_worker_banner_sanitization_handles_stuck_synonym() -> None:
     """Stuck phrasing introduced by newer Docker builds should be normalised."""
 
