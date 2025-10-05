@@ -297,6 +297,7 @@ def test_worker_has_stalled_phrase_is_sanitized() -> None:
 
     assert cleaned
     assert "worker stalled; restarting" not in cleaned.lower()
+    assert "io pressure" in cleaned.lower()
     assert metadata["docker_worker_health"] == "flapping"
 
 
@@ -2083,7 +2084,9 @@ def test_structured_worker_message_sanitised_when_only_banner() -> None:
     assert cleaned
     structured = metadata["docker_worker_last_error_structured_message"]
     assert structured
-    assert structured == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+    assert structured == (
+        "Docker Desktop automatically restarted a background worker after it stalled due to IO pressure"
+    )
     assert "worker stalled" not in structured.lower()
     fingerprint = metadata.get(
         "docker_worker_last_error_structured_message_fingerprint"

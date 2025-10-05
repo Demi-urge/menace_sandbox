@@ -6588,6 +6588,37 @@ def _derive_worker_banner_subject(raw_text: str, normalized: str) -> tuple[str |
     return subject or None, reason
 
 
+def _format_worker_restart_reason(reason: str | None) -> str | None:
+    """Return a cleaned clause describing *reason* for a worker restart."""
+
+    if not reason:
+        return None
+
+    cleaned = _clean_worker_metadata_value(reason)
+    if not cleaned:
+        return None
+
+    normalized = _normalise_worker_stalled_phrase(cleaned)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" .;:,-\u2013\u2014")
+    if not normalized:
+        return None
+
+    lowered = normalized.casefold()
+    if _contains_worker_stall_signal(normalized):
+        return None
+
+    for prefix in ("due to ", "because of ", "because "):
+        if lowered.startswith(prefix):
+            normalized = normalized[len(prefix) :].lstrip()
+            lowered = normalized.casefold()
+            break
+
+    if not normalized:
+        return None
+
+    return normalized
+
+
 def _render_worker_banner_narrative(
     subject: str | None, reason: str | None
 ) -> str:
@@ -6602,6 +6633,10 @@ def _render_worker_banner_narrative(
         base = (
             f"Docker Desktop automatically restarted the {normalized_subject} after it stalled"
         )
+
+    formatted_reason = _format_worker_restart_reason(reason)
+    if formatted_reason:
+        base = f"{base} due to {formatted_reason}"
 
     return base
 
