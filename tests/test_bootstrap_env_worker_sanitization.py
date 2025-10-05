@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterable
 import json
 
@@ -62,6 +63,25 @@ def test_worker_metadata_bytes_are_sanitized() -> None:
     sanitized = metadata.get("docker_worker_last_error_banner_raw")
     assert isinstance(sanitized, str)
     assert "worker stalled; restarting" not in sanitized.lower()
+
+    fingerprint = metadata.get("docker_worker_last_error_banner_raw_fingerprint")
+    assert fingerprint
+    assert fingerprint.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
+
+
+def test_worker_metadata_base64_payload_is_sanitized() -> None:
+    """Base64 encoded payloads should be decoded before sanitisation."""
+
+    raw = b"WARNING: worker stalled; restarting component=\"vpnkit\" restartCount=2"
+    payload = base64.b64encode(raw).decode("ascii")
+    metadata = {"docker_worker_last_error_banner_raw": payload}
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)  # type: ignore[arg-type]
+
+    sanitized = metadata.get("docker_worker_last_error_banner_raw")
+    assert isinstance(sanitized, str)
+    assert "worker stalled; restarting" not in sanitized.lower()
+    assert "vpnkit" in sanitized.lower()
 
     fingerprint = metadata.get("docker_worker_last_error_banner_raw_fingerprint")
     assert fingerprint
