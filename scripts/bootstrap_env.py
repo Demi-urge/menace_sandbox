@@ -6689,6 +6689,92 @@ def _enforce_worker_banner_sanitization(
     return harmonised
 
 
+def _stitch_worker_banner_fragments(messages: Sequence[object]) -> list[object]:
+    """Merge split worker stall banners emitted as adjacent log lines."""
+
+    entries = list(messages)
+    stitched: list[object] = []
+    total = len(entries)
+    index = 0
+
+    while index < total:
+        current = entries[index]
+
+        if not isinstance(current, str):
+            stitched.append(current)
+            index += 1
+            continue
+
+        if not _looks_like_worker_restart_fragment(current):
+            stitched.append(current)
+            index += 1
+            continue
+
+        combined = current
+        consumed = 0
+        probe = index + 1
+
+        while probe < total:
+            candidate = entries[probe]
+            if not isinstance(candidate, str):
+                break
+
+            joined = f"{combined.rstrip()} {candidate.lstrip()}"
+            normalized = _normalize_worker_banner_characters(joined)
+            lowered = normalized.casefold()
+
+            if "restart" in lowered:
+                combined = joined
+                consumed = probe - index
+                break
+
+            if not candidate.strip():
+                combined = joined
+                consumed = probe - index
+                probe += 1
+                continue
+
+            if _looks_like_worker_restart_fragment(candidate) or _contains_worker_stall_signal(candidate):
+                combined = joined
+                consumed = probe - index
+                probe += 1
+                continue
+
+            break
+
+        stitched.append(combined)
+        index += consumed + 1 if consumed else 1
+
+    return stitched
+
+
+def _looks_like_worker_restart_fragment(message: str) -> bool:
+    """Return ``True`` when *message* appears to be a truncated stall banner."""
+
+    if not message:
+        return False
+
+    normalized = _normalize_worker_banner_characters(message)
+    collapsed = re.sub(r"\s+", " ", normalized).strip()
+    if not collapsed:
+        return False
+
+    lowered = collapsed.casefold()
+    if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
+        return False
+
+    if "restart" in lowered:
+        return False
+
+    if "worker stalled" not in lowered:
+        return False
+
+    if len(collapsed) > 200:
+        return False
+
+    return bool(_WORKER_STALLED_FRAGMENT_PATTERN.search(collapsed))
+
+
 def _guarantee_worker_banner_suppression(
     messages: Iterable[str], metadata: MutableMapping[str, str]
 ) -> list[str]:
@@ -6706,8 +6792,9 @@ def _guarantee_worker_banner_suppression(
     """
 
     safeguarded: list[str] = []
+    stitched_messages = _stitch_worker_banner_fragments(list(messages))
 
-    for message in messages:
+    for message in stitched_messages:
         processed, structured = _normalise_structured_worker_banner(message, metadata)
 
         if structured:
@@ -6718,7 +6805,11 @@ def _guarantee_worker_banner_suppression(
             continue
 
         lowered = message.casefold()
-        if "worker stalled; restarting" not in lowered and not _looks_like_literal_worker_restart_banner(message):
+        if (
+            "worker stalled; restarting" not in lowered
+            and not _looks_like_literal_worker_restart_banner(message)
+            and not _looks_like_worker_restart_fragment(message)
+        ):
             safeguarded.append(message)
             continue
 
@@ -6785,6 +6876,32 @@ _WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = (
     "⋯",
     "·",
     "•",
+)
+
+_WORKER_STALLED_FRAGMENT_PATTERN = re.compile(
+    r"""
+    worker[\s_-]+stalled
+    (?:
+        \s*(?:
+            ;
+            |:
+            |,
+            |-+
+            |→
+            |⇒
+            |->
+            |=>
+            |…
+            |⋯
+            |·
+            |•
+            |/
+            |\\
+        )
+    )?
+    \s*$
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
 )
 
 
