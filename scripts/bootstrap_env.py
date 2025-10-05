@@ -7916,6 +7916,11 @@ def _classify_worker_flapping(
                 "excessive_restarts",
                 "Docker recorded at least six worker restarts during diagnostics",
             )
+        elif max_restart >= 4:
+            _register_reason(
+                "sustained_restarts",
+                "Docker recorded four or more worker restarts during diagnostics",
+            )
     elif telemetry.restart_samples:
         rendered = ", ".join(str(sample) for sample in telemetry.restart_samples)
         details.append(f"Docker reported restart counts during diagnostics: {rendered}.")
