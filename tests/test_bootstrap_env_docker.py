@@ -36,6 +36,7 @@ def test_windows_path_translates_to_wsl_mount_root(
     mount_root = tmp_path / "wsl-root"
     mount_root.mkdir()
 
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
     monkeypatch.setenv("WSL_HOST_MOUNT_ROOT", str(mount_root))
     monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
     monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
@@ -62,6 +63,7 @@ def test_resolve_command_path_discovers_windows_cli_from_wsl(
     """``_resolve_command_path`` should locate Windows CLIs exposed to WSL."""
 
     bootstrap_env._resolve_command_path.cache_clear()
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
 
     mount_root = tmp_path / "wsl-root"
     system32 = mount_root / "c" / "Windows" / "System32"
@@ -88,6 +90,7 @@ def test_run_command_executes_resolved_windows_cli(
     """``_run_command`` should execute CLIs discovered via Windows fallbacks."""
 
     bootstrap_env._resolve_command_path.cache_clear()
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
 
     mount_root = tmp_path / "wsl-root"
     system32 = mount_root / "c" / "Windows" / "System32"
@@ -110,11 +113,100 @@ def test_run_command_executes_resolved_windows_cli(
     assert "run-ok" in completed.stdout
 
 
+def test_get_wsl_mount_root_respects_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The automount root from configuration files should drive translation."""
+
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
+
+    custom_root = tmp_path / "wsl-root"
+    (custom_root / "c").mkdir(parents=True)
+
+    config_path = tmp_path / "wsl.conf"
+    config_path.write_text("[automount]\nroot = %s\n" % custom_root.as_posix(), encoding="utf-8")
+
+    monkeypatch.delenv("WSL_HOST_MOUNT_ROOT", raising=False)
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_wsl_configuration_paths",
+        lambda: (config_path,),
+    )
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_wsl_mount_roots_from_proc",
+        lambda: (),
+    )
+
+    root = bootstrap_env._get_wsl_host_mount_root()
+
+    assert root == custom_root
+
+
+def test_get_wsl_mount_root_prefers_proc_mounts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Mount candidates discovered via ``/proc`` should be preferred."""
+
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
+
+    proc_root = tmp_path / "drvfs"
+    (proc_root / "c").mkdir(parents=True)
+
+    monkeypatch.delenv("WSL_HOST_MOUNT_ROOT", raising=False)
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+    monkeypatch.setattr(bootstrap_env, "_iter_wsl_configuration_paths", lambda: ())
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_wsl_mount_roots_from_proc",
+        lambda: (proc_root,),
+    )
+
+    root = bootstrap_env._get_wsl_host_mount_root()
+
+    assert root == proc_root
+
+
+def test_translate_windows_path_uses_detected_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows path translation should honour the detected automount root."""
+
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
+
+    custom_root = tmp_path / "wslaut"
+    target = custom_root / "c" / "Program Files"
+    target.mkdir(parents=True)
+
+    config_path = tmp_path / "wsl.conf"
+    config_path.write_text("[automount]\nroot = %s\n" % custom_root.as_posix(), encoding="utf-8")
+
+    monkeypatch.delenv("WSL_HOST_MOUNT_ROOT", raising=False)
+    monkeypatch.setattr(bootstrap_env, "_is_windows", lambda: False)
+    monkeypatch.setattr(bootstrap_env, "_is_wsl", lambda: True)
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_wsl_configuration_paths",
+        lambda: (config_path,),
+    )
+    monkeypatch.setattr(
+        bootstrap_env,
+        "_iter_wsl_mount_roots_from_proc",
+        lambda: (),
+    )
+
+    translated = bootstrap_env._translate_windows_host_path(Path(r"C:\\Program Files"))
+
+    assert translated == target
+
+
 def test_docker_cli_discovery_uses_wsl_translation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """CLI discovery should resolve Windows paths via WSL mount translations."""
 
+    bootstrap_env._get_wsl_host_mount_root.cache_clear()
     mount_root = tmp_path / "wsl-root"
     target_dir = (
         mount_root
