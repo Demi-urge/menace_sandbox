@@ -51,6 +51,57 @@ def test_nested_structures_are_scrubbed_of_worker_stall_banners() -> None:
     assert "worker-banner:" in nested_fingerprints
 
 
+def test_worker_metadata_bytes_are_sanitized() -> None:
+    """Byte-oriented metadata should be normalised and fingerprinted."""
+
+    payload = b"WARNING: worker stalled; restarting component=\"vpnkit\" restartCount=2"
+    metadata = {"docker_worker_last_error_banner_raw": payload}
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)  # type: ignore[arg-type]
+
+    sanitized = metadata.get("docker_worker_last_error_banner_raw")
+    assert isinstance(sanitized, str)
+    assert "worker stalled; restarting" not in sanitized.lower()
+
+    fingerprint = metadata.get("docker_worker_last_error_banner_raw_fingerprint")
+    assert fingerprint
+    assert fingerprint.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
+
+
+def test_worker_metadata_memoryview_is_sanitized() -> None:
+    """``memoryview`` payloads should be decoded and rewritten."""
+
+    payload = memoryview(b"worker stalled; restarting component=\"vm\"")
+
+    sanitized, digest = bootstrap_env._sanitize_worker_metadata_value(payload)  # type: ignore[arg-type]
+
+    assert sanitized
+    assert "worker stalled; restarting" not in sanitized.lower()
+    assert digest
+    assert digest.startswith(bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX)
+
+
+def test_nested_bytes_payload_is_sanitized() -> None:
+    """Nested byte payloads should be converted into guidance."""
+
+    metadata = {
+        "docker_worker_nested_payload": [memoryview(b"worker stalled; restarting due to IO pressure")]
+    }
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)  # type: ignore[arg-type]
+
+    nested = metadata["docker_worker_nested_payload"]
+    assert isinstance(nested, list)
+    assert nested
+    first = nested[0]
+    assert isinstance(first, str)
+    assert "worker stalled; restarting" not in first.lower()
+
+    fingerprints = metadata.get("docker_worker_nested_banner_fingerprints", "")
+    assert isinstance(fingerprints, str)
+    assert bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX in fingerprints
+
+
 def test_worker_banner_subject_skips_severity_prefixes() -> None:
     message = "WARN[0042] moby/buildkit: worker stalled; restarting due to IO pressure"
 

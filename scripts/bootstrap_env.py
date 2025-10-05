@@ -2836,13 +2836,35 @@ def _strip_control_sequences(text: str) -> str:
     return cleaned
 
 
-def _fingerprint_worker_banner(raw_value: str | None) -> str | None:
-    """Return a deterministic fingerprint for raw worker stall banners."""
+def _coerce_textual_value(value: object) -> str | None:
+    """Return a textual representation of ``value`` when possible."""
 
-    if not raw_value:
+    if value is None:
         return None
 
-    cleaned = _strip_control_sequences(str(raw_value))
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        payload = bytes(value)
+        if not payload:
+            return ""
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return payload.decode("utf-8", "replace")
+
+    return None
+
+
+def _fingerprint_worker_banner(raw_value: object) -> str | None:
+    """Return a deterministic fingerprint for raw worker stall banners."""
+
+    text = _coerce_textual_value(raw_value)
+    if not text:
+        return None
+
+    cleaned = _strip_control_sequences(str(text))
     collapsed = re.sub(r"\s+", " ", cleaned).strip()
     if not collapsed:
         return None
@@ -7111,19 +7133,23 @@ def _scrub_nested_worker_artifacts(
 ) -> tuple[object, set[str], bool]:
     """Recursively sanitise nested metadata containers that echo worker banners."""
 
-    if isinstance(value, str):
-        sanitized, digest = _sanitize_worker_metadata_value(value)
-        if sanitized is None:
-            sanitized = value
-            mutated = False
-        else:
-            mutated = sanitized != value
+    if isinstance(value, (str, bytes, bytearray, memoryview)):
+        textual = _coerce_textual_value(value)
+        if textual is None:
+            return value, set(), False
+        sanitized, digest = _sanitize_worker_metadata_value(textual)
         digests: set[str] = set()
+        mutated = False
+        if sanitized is None:
+            result: object = textual if not isinstance(value, str) else value
+        else:
+            result = sanitized
+            mutated = sanitized != textual or not isinstance(value, str)
         if mutated and digest:
             digests.add(digest)
-        return sanitized, digests, mutated
+        return result, digests, mutated
 
-    if value is None or isinstance(value, (bytes, bytearray, memoryview)):
+    if value is None:
         return value, set(), False
 
     if seen is None:
@@ -7293,11 +7319,14 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
 
     for key in candidate_keys:
         raw_value = metadata.get(key)
-        if not raw_value or not isinstance(raw_value, str):
+        text_value = _coerce_textual_value(raw_value)
+        if not text_value:
             continue
 
-        sanitized, digest = _sanitize_worker_metadata_value(raw_value)
+        sanitized, digest = _sanitize_worker_metadata_value(text_value)
         if sanitized is None:
+            if isinstance(raw_value, (bytes, bytearray, memoryview)):
+                metadata[key] = text_value
             continue
 
         if digest and not metadata.get(f"{key}_fingerprint"):
@@ -7307,48 +7336,52 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
 
     for key, mode in _WORKER_METADATA_SANITIZE_RULES:
         raw_value = metadata.get(key)
-        if not raw_value or not isinstance(raw_value, str):
+        text_value = _coerce_textual_value(raw_value)
+        if not text_value:
             continue
 
-        normalized = _normalise_worker_stalled_phrase(raw_value)
+        normalized = _normalise_worker_stalled_phrase(text_value)
         if not _contains_worker_stall_signal(normalized):
             continue
 
         fingerprint_key = f"{key}_fingerprint"
         if mode == "multi":
             sanitized_value, digest = _sanitize_worker_metadata_value(
-                raw_value, prefer_canonical=True
+                text_value, prefer_canonical=True
             )
             if sanitized_value is None:
                 continue
-            if sanitized_value != raw_value:
+            if sanitized_value != text_value:
                 metadata[key] = sanitized_value
         else:
-            digest = _fingerprint_worker_banner(raw_value)
-            sanitized_value = _sanitize_worker_banner_text(raw_value)
-            if sanitized_value and sanitized_value != raw_value:
+            digest = _fingerprint_worker_banner(text_value)
+            sanitized_value = _sanitize_worker_banner_text(text_value)
+            if sanitized_value and sanitized_value != text_value:
                 metadata[key] = _canonicalize_worker_narrative(sanitized_value)
 
         if digest and not metadata.get(fingerprint_key):
             metadata[fingerprint_key] = digest
 
     for key, raw_value in list(metadata.items()):
-        if not isinstance(raw_value, str):
+        text_value = _coerce_textual_value(raw_value)
+        if text_value is None:
             continue
         if key in sanitized_primary_keys:
             continue
         if key.endswith("_fingerprint"):
             continue
 
-        normalized = _normalise_worker_stalled_phrase(raw_value)
+        normalized = _normalise_worker_stalled_phrase(text_value)
         if not _contains_worker_stall_signal(normalized):
             continue
 
-        sanitized_value = _sanitize_worker_banner_text(raw_value)
-        digest = _fingerprint_worker_banner(raw_value)
+        sanitized_value = _sanitize_worker_banner_text(text_value)
+        digest = _fingerprint_worker_banner(text_value)
 
-        if sanitized_value and sanitized_value != raw_value:
+        if sanitized_value and sanitized_value != text_value:
             metadata[key] = sanitized_value
+        elif isinstance(raw_value, (bytes, bytearray, memoryview)) and text_value:
+            metadata[key] = text_value
 
         fingerprint_key = f"{key}_fingerprint"
         if digest and not metadata.get(fingerprint_key):
@@ -7446,7 +7479,7 @@ def _sanitize_worker_json_fragment(raw: str) -> tuple[str | None, bool]:
 
 
 def _sanitize_worker_metadata_value(
-    value: str, *, prefer_canonical: bool = False
+    value: object, *, prefer_canonical: bool = False
 ) -> tuple[str | None, str | None]:
     """Return a sanitised worker metadata payload and its fingerprint.
 
@@ -7456,17 +7489,22 @@ def _sanitize_worker_metadata_value(
     normalised independently so we keep unrelated diagnostics intact.
     """
 
-    if not value:
+    text = _coerce_textual_value(value)
+
+    if text is None:
         return None, None
 
-    digest = _fingerprint_worker_banner(value)
+    if not text:
+        return None, None
 
-    json_sanitized, json_changed = _sanitize_worker_json_fragment(value)
+    digest = _fingerprint_worker_banner(text)
+
+    json_sanitized, json_changed = _sanitize_worker_json_fragment(text)
     if json_changed and json_sanitized:
         return json_sanitized, digest
 
     separators = re.compile(r"[;\n]\s*")
-    parts = [segment.strip() for segment in separators.split(value) if segment.strip()]
+    parts = [segment.strip() for segment in separators.split(text) if segment.strip()]
 
     if not parts:
         return None, digest
@@ -7483,8 +7521,8 @@ def _sanitize_worker_metadata_value(
             sanitized_parts.append(segment)
 
     if not mutated:
-        collapsed_value = _collapse_worker_restart_sequences(value)
-        if collapsed_value != value:
+        collapsed_value = _collapse_worker_restart_sequences(text)
+        if collapsed_value != text:
             return collapsed_value, digest
         return None, digest
 
