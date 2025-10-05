@@ -663,6 +663,50 @@ def test_virtualization_followups_triggered_by_worker_error(
     assert result.metadata["wsl_status_raw"].startswith("Status:")
 
 
+def test_collect_diagnostics_redacts_residual_worker_banner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Metadata should not leak verbatim ``worker stalled`` banners."""
+
+    fake_cli = tmp_path / "docker.exe"
+    fake_cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap_env, "_discover_docker_cli", lambda: (fake_cli, []))
+    monkeypatch.setattr(bootstrap_env, "_detect_runtime_context", lambda: _windows_context())
+
+    def fake_probe(
+        cli_path: Path, timeout: float
+    ) -> tuple[dict[str, str], list[str], list[str]]:
+        assert cli_path == fake_cli
+        return ({"server_version": "26.1.0"}, [], [])
+
+    monkeypatch.setattr(bootstrap_env, "_probe_docker_environment", fake_probe)
+
+    def fake_post_process(
+        *, metadata: dict[str, str], context: bootstrap_env.RuntimeContext, timeout: float = 6.0
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        metadata.update(
+            {
+                "docker_worker_last_error_banner_raw": "WARNING: worker stalled; restarting",
+                "docker_worker_last_error_banner_preserved": "worker stalled; restarting",
+            }
+        )
+        return [], [], {}
+
+    monkeypatch.setattr(bootstrap_env, "_post_process_docker_health", fake_post_process)
+
+    result = bootstrap_env._collect_docker_diagnostics(timeout=0.5)
+
+    banner_raw = result.metadata["docker_worker_last_error_banner_raw"]
+    preserved = result.metadata["docker_worker_last_error_banner_preserved"]
+
+    assert "worker stalled; restarting" not in banner_raw.lower()
+    assert "worker stalled; restarting" not in preserved.lower()
+    assert result.metadata["docker_worker_last_error_banner_raw_fingerprint"].startswith(
+        bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX
+    )
+
+
 def test_virtualization_followups_skipped_for_non_virtualization_issue(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
