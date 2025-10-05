@@ -6117,6 +6117,13 @@ def _scrub_residual_worker_warnings(
     aggregated_metadata: dict[str, str] = {}
 
     for message in messages:
+        processed, structured = _normalise_structured_worker_banner(
+            message, aggregated_metadata
+        )
+
+        if structured:
+            message = processed
+
         if not isinstance(message, str):
             rewritten.append(message)
             continue
@@ -6170,6 +6177,217 @@ _WORKER_BANNER_CONTEXT_FIELDS: tuple[str, ...] = (
     "channel",
     "namespace",
 )
+
+_WORKER_BANNER_CONTEXT_NORMALIZED_KEYS: frozenset[str] = frozenset(
+    re.sub(r"[^a-z0-9]", "", field.lower())
+    for field in _WORKER_BANNER_CONTEXT_FIELDS
+)
+
+_WORKER_BANNER_CONTEXT_PRIORITIES: Mapping[str, int] = {
+    "context": 120,
+    "worker": 115,
+    "component": 90,
+    "componentname": 90,
+    "componentdisplayname": 85,
+    "componentfriendlyname": 85,
+    "displayname": 80,
+    "module": 75,
+    "service": 70,
+    "origin": 65,
+    "source": 65,
+    "namespace": 60,
+    "target": 55,
+    "unit": 55,
+    "pipeline": 55,
+    "channel": 55,
+}
+
+
+@dataclass(order=True)
+class WorkerBannerCandidate:
+    """Represents a potential sanitised worker banner extracted from payloads."""
+
+    priority: int
+    cleaned: str = field(compare=False)
+    metadata: dict[str, str] = field(compare=False)
+    raw: str = field(compare=False)
+
+
+def _gather_worker_banner_context_hints(
+    mapping: Mapping[str, object],
+) -> list[str]:
+    """Return normalised worker context hints extracted from *mapping*."""
+
+    ranked: list[tuple[int, int, str]] = []
+
+    for index, (key, value) in enumerate(mapping.items()):
+        if not isinstance(value, str):
+            continue
+
+        normalized_key = re.sub(r"[^a-z0-9]", "", key.lower())
+        if normalized_key not in _WORKER_BANNER_CONTEXT_NORMALIZED_KEYS:
+            continue
+
+        candidate = _normalize_worker_context_candidate(value)
+        if not candidate or _is_worker_context_noise(candidate):
+            continue
+
+        priority = _WORKER_BANNER_CONTEXT_PRIORITIES.get(normalized_key, 10)
+        ranked.append((priority, index, candidate))
+
+    if not ranked:
+        return []
+
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for _priority, _index, candidate in ranked:
+        lowered = candidate.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        ordered.append(candidate)
+
+    return ordered
+
+
+def _score_worker_banner_candidate(raw: str, contexts: Sequence[str]) -> int:
+    """Return a deterministic priority score for a worker banner candidate."""
+
+    base = len(raw)
+    if contexts:
+        base += 25 * len(contexts)
+    return base
+
+
+def _build_worker_banner_candidate(
+    raw: str, contexts: Sequence[str]
+) -> WorkerBannerCandidate | None:
+    """Construct a :class:`WorkerBannerCandidate` from ``raw`` log payloads."""
+
+    cleaned, extracted = _normalise_docker_warning(raw)
+    if not cleaned:
+        cleaned = _sanitize_worker_banner_text(raw)
+
+    if not cleaned:
+        cleaned = _WORKER_STALLED_PRIMARY_NARRATIVE
+
+    metadata: dict[str, str] = dict(extracted)
+
+    if contexts:
+        unique_contexts: list[str] = []
+        seen: set[str] = set()
+        for context in contexts:
+            normalized = _normalize_worker_context_candidate(context)
+            if not normalized or _is_worker_context_noise(normalized):
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            unique_contexts.append(normalized)
+
+        if unique_contexts:
+            metadata.setdefault("docker_worker_context", unique_contexts[0])
+            metadata.setdefault(
+                "docker_worker_contexts",
+                ", ".join(unique_contexts),
+            )
+
+    fingerprint = _fingerprint_worker_banner(raw)
+    if fingerprint:
+        metadata.setdefault("docker_worker_last_error_banner_signature", fingerprint)
+        metadata.setdefault("docker_worker_last_error_banner_fingerprint", fingerprint)
+
+    metadata.setdefault("docker_worker_health", metadata.get("docker_worker_health", "flapping"))
+    metadata.setdefault("docker_worker_last_error_banner_source", "structured")
+
+    score = -_score_worker_banner_candidate(raw, contexts)
+
+    return WorkerBannerCandidate(
+        priority=score,
+        cleaned=cleaned,
+        metadata=metadata,
+        raw=raw,
+    )
+
+
+def _extract_worker_banner_candidates_from_structured_payload(
+    payload: object,
+    inherited_contexts: Sequence[str] | None = None,
+) -> list[WorkerBannerCandidate]:
+    """Return sanitised banner candidates discovered within ``payload``."""
+
+    contexts = list(inherited_contexts or ())
+    candidates: list[WorkerBannerCandidate] = []
+
+    if isinstance(payload, MappingABC):
+        local_contexts = contexts + _gather_worker_banner_context_hints(payload)
+        for child in payload.values():
+            candidates.extend(
+                _extract_worker_banner_candidates_from_structured_payload(
+                    child, local_contexts
+                )
+            )
+        return candidates
+
+    if isinstance(payload, SequenceABC) and not isinstance(
+        payload, (str, bytes, bytearray)
+    ):
+        for child in payload:
+            candidates.extend(
+                _extract_worker_banner_candidates_from_structured_payload(child, contexts)
+            )
+        return candidates
+
+    if isinstance(payload, str):
+        candidate_text = payload.strip()
+        if not candidate_text:
+            return candidates
+
+        lowered = candidate_text.casefold()
+        if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
+            return candidates
+
+        if (
+            "docker desktop automatically restarted" in lowered
+            and "after it stalled" in lowered
+        ):
+            return candidates
+
+        if _contains_worker_stall_signal(candidate_text):
+            candidate = _build_worker_banner_candidate(payload, contexts)
+            if candidate:
+                candidates.append(candidate)
+            return candidates
+
+        if candidate_text[0] in "[{":
+            try:
+                decoded = json.loads(candidate_text)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return candidates
+            return _extract_worker_banner_candidates_from_structured_payload(
+                decoded, contexts
+            )
+
+    return candidates
+
+
+def _normalise_structured_worker_banner(
+    message: object, metadata: MutableMapping[str, str]
+) -> tuple[object, bool]:
+    """Normalise structured payloads that embed worker stall diagnostics."""
+
+    candidates = _extract_worker_banner_candidates_from_structured_payload(message)
+    if not candidates:
+        return message, False
+
+    best = min(candidates)
+    for key, value in best.metadata.items():
+        metadata.setdefault(key, value)
+
+    return best.cleaned, True
 
 
 _WORKER_BANNER_FIELD_PATTERN = re.compile(
@@ -6378,6 +6596,11 @@ def _enforce_worker_banner_sanitization(
     harmonised: list[str] = []
 
     for message in messages:
+        processed, structured = _normalise_structured_worker_banner(message, metadata)
+
+        if structured:
+            message = processed
+
         if not isinstance(message, str):
             harmonised.append(message)
             continue
@@ -6485,6 +6708,11 @@ def _guarantee_worker_banner_suppression(
     safeguarded: list[str] = []
 
     for message in messages:
+        processed, structured = _normalise_structured_worker_banner(message, metadata)
+
+        if structured:
+            message = processed
+
         if not isinstance(message, str):
             safeguarded.append(message)
             continue

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import json
 
 from scripts import bootstrap_env
 
@@ -89,3 +90,64 @@ def test_worker_banner_final_guard_rewrites_literal_phrase() -> None:
 
     assert all("worker stalled; restarting" not in entry.casefold() for entry in safeguarded if isinstance(entry, str))
     assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_worker_banner_json_payload_is_sanitized() -> None:
+    payload = json.dumps(
+        {
+            "time": "2024-10-01T08:00:00-07:00",
+            "level": "warning",
+            "msg": "worker stalled; restarting",
+            "context": "vpnkit",
+            "diagnostic": {"error": "vm paused"},
+        }
+    )
+    metadata: dict[str, str] = {}
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization([payload], metadata)  # type: ignore[attr-defined]
+
+    assert len(harmonised) == 1
+    message = harmonised[0]
+    assert isinstance(message, str)
+    assert "worker stalled; restarting" not in message.lower()
+    assert "vpnkit" in message.lower()
+    assert metadata.get("docker_worker_context") == "vpnkit"
+    assert metadata.get("docker_worker_health") == "flapping"
+
+
+def test_worker_banner_structured_mapping_is_scrubbed() -> None:
+    payload = {
+        "level": "warn",
+        "message": "worker stalled; restarting",
+        "component": "com.docker.backend",
+        "context": "vpnkit",
+    }
+
+    rewritten, metadata = bootstrap_env._scrub_residual_worker_warnings([payload])  # type: ignore[attr-defined]
+
+    assert rewritten
+    assert isinstance(rewritten[0], str)
+    assert "worker stalled; restarting" not in rewritten[0].lower()
+    assert metadata.get("docker_worker_context") == "vpnkit"
+
+
+def test_worker_banner_nested_json_is_rewritten_by_guard() -> None:
+    payload = json.dumps(
+        {
+            "warnings": [
+                {
+                    "message": "worker stalled; restarting",
+                    "module": "vpnkit",
+                    "extra": {"retry": "5s"},
+                }
+            ]
+        }
+    )
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression([payload], metadata)  # type: ignore[attr-defined]
+
+    assert safeguarded
+    assert isinstance(safeguarded[0], str)
+    assert "worker stalled; restarting" not in safeguarded[0].lower()
+    assert metadata.get("docker_worker_context") == "vpnkit"
