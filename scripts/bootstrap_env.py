@@ -3409,6 +3409,50 @@ def _looks_like_worker_metadata_line(line: str) -> bool:
     return any(keyword in lowered for keyword in _WORKER_METADATA_HEURISTIC_KEYWORDS)
 
 
+_WORKER_CONTINUATION_PREFIXES: tuple[str, ...] = (
+    "restarting",
+    "restart",
+    "backoff",
+    "due",
+    "because",
+    "component",
+    "context",
+    "errcode",
+    "error",
+    "last",
+    "status",
+    "telemetry",
+    "metadata",
+)
+
+
+def _should_merge_worker_continuation(previous: str, current: str) -> bool:
+    """Return ``True`` when ``current`` continues a worker stall banner."""
+
+    if not previous or not current:
+        return False
+
+    prev_lower = previous.casefold()
+    curr_lower = current.casefold()
+
+    if curr_lower.startswith(_WORKER_CONTINUATION_PREFIXES):
+        return True
+
+    if prev_lower.endswith((";", ":", "-", "—", "…")):
+        return True
+
+    if prev_lower.endswith("worker stalled") and "restarting" in curr_lower:
+        return True
+
+    if "restarting" in curr_lower and "worker" not in curr_lower:
+        return True
+
+    if "errcode" in curr_lower or "restart" in curr_lower:
+        return True
+
+    return False
+
+
 def _coalesce_warning_lines(payload: str) -> Iterable[str]:
     """Combine continuation lines emitted as part of structured warnings."""
 
@@ -3438,13 +3482,19 @@ def _coalesce_warning_lines(payload: str) -> Iterable[str]:
             ):
                 pending.append(stripped)
                 continue
+            if pending_is_worker_warning and _should_merge_worker_continuation(
+                pending[-1], stripped
+            ):
+                pending.append(stripped)
+                pending_is_worker_warning = pending_is_worker_warning or line_reports_worker
+                continue
 
             yield " ".join(pending)
             pending = []
             pending_is_worker_warning = False
 
         pending.append(stripped)
-        pending_is_worker_warning = line_reports_worker
+        pending_is_worker_warning = pending_is_worker_warning or line_reports_worker
 
     if pending:
         yield " ".join(pending)
