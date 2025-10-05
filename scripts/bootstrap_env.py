@@ -23,6 +23,8 @@ import sysconfig
 from collections.abc import (
     Iterable as IterableABC,
     Mapping as MappingABC,
+    MutableMapping as MutableMappingABC,
+    MutableSequence as MutableSequenceABC,
     Sequence as SequenceABC,
 )
 from functools import lru_cache
@@ -5987,6 +5989,180 @@ def _collapse_worker_restart_sequences(value: str) -> str:
     return re.sub(r"\s{2,}", " ", collapsed).strip()
 
 
+def _merge_worker_banner_fingerprints(
+    existing: object, candidates: Iterable[str]
+) -> str | None:
+    """Merge worker banner fingerprints into a stable, sorted string."""
+
+    collected: set[str] = {candidate for candidate in candidates if candidate}
+
+    if isinstance(existing, str):
+        parts = [segment.strip() for segment in existing.split(",") if segment.strip()]
+        collected.update(parts)
+    elif isinstance(existing, IterableABC) and not isinstance(
+        existing, (str, bytes, bytearray)
+    ):
+        for token in existing:
+            if isinstance(token, str):
+                stripped = token.strip()
+                if stripped:
+                    collected.add(stripped)
+
+    if not collected:
+        return None
+
+    return ", ".join(sorted(collected))
+
+
+def _scrub_nested_worker_artifacts(
+    value: object, seen: set[int] | None = None
+) -> tuple[object, set[str], bool]:
+    """Recursively sanitise nested metadata containers that echo worker banners."""
+
+    if isinstance(value, str):
+        sanitized, digest = _sanitize_worker_metadata_value(value)
+        if sanitized is None:
+            sanitized = value
+            mutated = False
+        else:
+            mutated = sanitized != value
+        digests: set[str] = set()
+        if mutated and digest:
+            digests.add(digest)
+        return sanitized, digests, mutated
+
+    if value is None or isinstance(value, (bytes, bytearray, memoryview)):
+        return value, set(), False
+
+    if seen is None:
+        seen = set()
+
+    identifier = id(value)
+    if identifier in seen:
+        return value, set(), False
+
+    seen.add(identifier)
+
+    try:
+        if isinstance(value, MutableMappingABC):
+            mutated = False
+            digests: set[str] = set()
+            for key in list(value.keys()):
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    value[key], seen
+                )
+                if child_mutated:
+                    value[key] = sanitized_child
+                    mutated = True
+                digests.update(child_digests)
+            return value, digests, mutated
+
+        if isinstance(value, MappingABC):
+            mutated = False
+            digests: set[str] = set()
+            sanitized_items: dict[object, object] = {}
+            for key, raw in value.items():
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    raw, seen
+                )
+                sanitized_items[key] = sanitized_child
+                mutated = mutated or child_mutated
+                digests.update(child_digests)
+
+            if not mutated:
+                return value, digests, False
+
+            try:
+                reconstructed = value.__class__(sanitized_items)  # type: ignore[call-arg]
+            except Exception:
+                reconstructed = dict(sanitized_items)
+
+            return reconstructed, digests, True
+
+        if isinstance(value, MutableSequenceABC):
+            mutated = False
+            digests: set[str] = set()
+            for index in range(len(value)):
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    value[index], seen
+                )
+                if child_mutated:
+                    value[index] = sanitized_child
+                    mutated = True
+                digests.update(child_digests)
+            return value, digests, mutated
+
+        if isinstance(value, tuple):
+            digests: set[str] = set()
+            sanitized_items: list[object] = []
+            mutated = False
+            for item in value:
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    item, seen
+                )
+                sanitized_items.append(sanitized_child)
+                mutated = mutated or child_mutated
+                digests.update(child_digests)
+            if mutated:
+                return tuple(sanitized_items), digests, True
+            return value, digests, False
+
+        if isinstance(value, frozenset):
+            digests: set[str] = set()
+            sanitized_items: list[object] = []
+            mutated = False
+            for item in value:
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    item, seen
+                )
+                sanitized_items.append(sanitized_child)
+                mutated = mutated or child_mutated
+                digests.update(child_digests)
+            if mutated:
+                return frozenset(sanitized_items), digests, True
+            return value, digests, False
+
+        if isinstance(value, set):
+            digests: set[str] = set()
+            sanitized_items: list[object] = []
+            mutated = False
+            for item in list(value):
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    item, seen
+                )
+                sanitized_items.append(sanitized_child)
+                mutated = mutated or child_mutated
+                digests.update(child_digests)
+            if mutated:
+                value.clear()
+                for sanitized_item in sanitized_items:
+                    value.add(sanitized_item)
+            return value, digests, mutated
+
+        if isinstance(value, SequenceABC):
+            digests: set[str] = set()
+            sanitized_items: list[object] = []
+            mutated = False
+            for item in value:
+                sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
+                    item, seen
+                )
+                sanitized_items.append(sanitized_child)
+                mutated = mutated or child_mutated
+                digests.update(child_digests)
+            if mutated:
+                try:
+                    reconstructed = type(value)(sanitized_items)  # type: ignore[call-arg]
+                except Exception:
+                    reconstructed = list(sanitized_items)
+                return reconstructed, digests, True
+            return value, digests, False
+
+        return value, set(), False
+    finally:
+        seen.discard(identifier)
+
+
 def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
     """Scrub lingering worker stall phrases from metadata artefacts.
 
@@ -6083,6 +6259,28 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
         fingerprint_key = f"{key}_fingerprint"
         if digest and not metadata.get(fingerprint_key):
             metadata[fingerprint_key] = digest
+
+    visited: set[int] = set()
+    nested_fingerprints: set[str] = set()
+
+    for key in list(metadata.keys()):
+        value = metadata[key]
+        sanitized_value, digests, mutated = _scrub_nested_worker_artifacts(value, visited)
+        if mutated:
+            metadata[key] = sanitized_value
+            if isinstance(sanitized_value, str):
+                fingerprint_key = f"{key}_fingerprint"
+                if digests and not metadata.get(fingerprint_key):
+                    metadata[fingerprint_key] = sorted(digests)[0]
+        nested_fingerprints.update(digests)
+
+    if nested_fingerprints:
+        merged = _merge_worker_banner_fingerprints(
+            metadata.get("docker_worker_nested_banner_fingerprints"),
+            nested_fingerprints,
+        )
+        if merged:
+            metadata["docker_worker_nested_banner_fingerprints"] = merged
 
 
 def _sanitize_worker_metadata_value(value: str) -> tuple[str | None, str | None]:
