@@ -48,3 +48,31 @@ def test_nested_structures_are_scrubbed_of_worker_stall_banners() -> None:
     nested_fingerprints = metadata.get("docker_worker_nested_banner_fingerprints")
     assert isinstance(nested_fingerprints, str)
     assert "worker-banner:" in nested_fingerprints
+
+
+def test_worker_banner_subject_skips_severity_prefixes() -> None:
+    message = "WARN[0042] moby/buildkit: worker stalled; restarting due to IO pressure"
+
+    sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
+
+    assert sanitized == (
+        "Docker Desktop automatically restarted the moby/buildkit worker after it stalled"
+    )
+
+
+def test_worker_banner_ignores_structured_log_metadata() -> None:
+    message = (
+        'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting"'
+    )
+
+    sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
+
+    assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+
+
+def test_worker_banner_treats_warning_prefix_as_noise() -> None:
+    message = "warning: worker stalled; restarting"
+
+    sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
+
+    assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE

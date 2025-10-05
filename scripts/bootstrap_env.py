@@ -3045,6 +3045,49 @@ _WORKER_CONTEXT_BASE_KEYS = (
     "handler",
 )
 
+_WORKER_CONTEXT_BASE_KEY_TOKENS: frozenset[str] = frozenset(
+    key.lower() for key in _WORKER_CONTEXT_BASE_KEYS
+)
+
+_WORKER_CONTEXT_SEVERITY_TOKENS: frozenset[str] = frozenset(
+    {
+        "warn",
+        "warning",
+        "error",
+        "err",
+        "info",
+        "notice",
+        "debug",
+        "fatal",
+        "crit",
+        "critical",
+        "trace",
+    }
+)
+
+_WORKER_CONTEXT_LOG_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "level",
+        "severity",
+        "time",
+        "timestamp",
+        "ts",
+        "date",
+        "datetime",
+        "time_local",
+        "time_utc",
+        "logger",
+        "category",
+        "msg",
+        "message",
+    }
+)
+
+_WORKER_CONTEXT_SEVERITY_PATTERN = re.compile(
+    r"^(?:warn|warning|error|err|info|notice|debug|fatal|crit|critical|trace)(?:\[[0-9]+\])?$",
+    re.IGNORECASE,
+)
+
 _WORKER_CONTEXT_NOISE_TOKENS = {
     "backoff",
     "backoffs",
@@ -3058,6 +3101,7 @@ _WORKER_CONTEXT_NOISE_TOKENS = {
     "retries",
     "restart",
     "restarts",
+    "restarting",
     "restartcount",
     "restartcounts",
     "attempt",
@@ -3070,6 +3114,11 @@ _WORKER_CONTEXT_NOISE_TOKENS = {
     "codes",
     "errcode",
     "errorcode",
+    "stall",
+    "stalled",
+    "stalling",
+    "stalls",
+    "stuck",
 }
 
 _WORKER_CONTEXT_NOISE_LEADING = {"next", "pending", "upcoming", "future"}
@@ -4441,12 +4490,50 @@ def _is_worker_context_noise(candidate: str) -> bool:
     if not lowered:
         return True
 
+    trimmed_lowered = lowered.strip("[]{}()<>:;,.\"'")
+
+    if _WORKER_CONTEXT_SEVERITY_PATTERN.match(trimmed_lowered):
+        return True
+
+    severity_signature = re.sub(r"[^a-z]+", "", trimmed_lowered)
+    if severity_signature and severity_signature in _WORKER_CONTEXT_SEVERITY_TOKENS:
+        return True
+
     if _WORKER_CONTEXT_DURATION_PATTERN.fullmatch(lowered):
         return True
 
     normalized = re.sub(r"[\s\-_/]+", " ", lowered).strip()
     if not normalized:
         return True
+
+    if "=" in normalized:
+        key_part, _, value_part = normalized.partition("=")
+        canonical_key = re.sub(r"[^a-z0-9]+", "", key_part)
+        if not canonical_key:
+            return True
+        if canonical_key in _WORKER_CONTEXT_LOG_METADATA_KEYS:
+            return True
+        if canonical_key not in _WORKER_CONTEXT_BASE_KEY_TOKENS:
+            return True
+        candidate_value = value_part.strip().strip("\"'")
+        if candidate_value:
+            value_signature = re.sub(r"[^a-z]+", "", candidate_value.lower())
+            if value_signature in _WORKER_CONTEXT_SEVERITY_TOKENS:
+                return True
+
+    colon_index = normalized.find(":")
+    if colon_index != -1:
+        key_part = normalized[:colon_index].strip()
+        value_part = normalized[colon_index + 1 :].strip()
+        if value_part:
+            canonical_key = re.sub(r"[^a-z0-9]+", "", key_part)
+            if canonical_key in _WORKER_CONTEXT_LOG_METADATA_KEYS:
+                return True
+            if canonical_key and canonical_key not in _WORKER_CONTEXT_BASE_KEY_TOKENS:
+                return True
+            value_signature = re.sub(r"[^a-z]+", "", value_part.lower())
+            if value_signature in _WORKER_CONTEXT_SEVERITY_TOKENS:
+                return True
 
     tokens = [token for token in normalized.split(" ") if token]
     if not tokens:
@@ -6032,6 +6119,15 @@ def _derive_worker_banner_subject(raw_text: str, normalized: str) -> tuple[str |
         collapsed = re.sub(r"\s+", " ", collapsed).strip(" -:;,")
         if not collapsed:
             return
+        collapsed = collapsed.strip("[]{}()<>:;,.\"'")
+        if not collapsed:
+            return
+        tokens = [token for token in collapsed.split(" ") if token]
+        while tokens and _is_worker_context_noise(tokens[0]):
+            tokens.pop(0)
+        collapsed = " ".join(tokens)
+        if not collapsed:
+            return
         if _is_worker_context_noise(collapsed):
             return
         lowered = collapsed.lower()
@@ -6068,6 +6164,22 @@ def _derive_worker_banner_subject(raw_text: str, normalized: str) -> tuple[str |
             if token.lower().startswith("worker"):
                 break
             tentative = re.sub(r"[\s_-]+", " ", token).strip()
+            if not tentative:
+                continue
+            tentative = tentative.strip("[]{}()<>:;,.\"'")
+
+            if "=" in tentative:
+                key_part, _, value_part = tentative.partition("=")
+                key_token = re.sub(r"[^a-z0-9]+", "", key_part.lower())
+                value_token = value_part.strip().strip("\"'")
+                if (
+                    key_token in _WORKER_CONTEXT_BASE_KEY_TOKENS
+                    and value_token
+                    and not _is_worker_context_noise(value_token)
+                ):
+                    contexts.append(value_token)
+                    break
+
             if tentative and not _is_worker_context_noise(tentative):
                 contexts.append(tentative)
                 break
@@ -6083,6 +6195,7 @@ def _derive_worker_banner_subject(raw_text: str, normalized: str) -> tuple[str |
     if subject:
         subject = re.sub(r"^(?:the|an|a)\s+", "", subject, flags=re.IGNORECASE).strip()
         if subject:
+            subject = subject.strip("[]{}()<>:;,.\"'")
             subject = re.sub(r"\s+", " ", subject)
 
     return subject or None, reason
