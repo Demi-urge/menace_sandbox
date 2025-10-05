@@ -838,6 +838,31 @@ def test_summarize_docker_command_failure_sanitizes_worker_banner() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_summarize_docker_command_failure_handles_whitespace_separator() -> None:
+    """Stall banners separated only by whitespace should be rewritten."""
+
+    payload_stdout = "WARNING: worker stalled    restarting"
+    payload_stderr = ""
+
+    completed = subprocess.CompletedProcess(
+        ["docker", "info"],
+        1,
+        payload_stdout,
+        payload_stderr,
+    )
+
+    message, warnings, metadata = bootstrap_env._summarize_docker_command_failure(
+        completed,
+        "info",
+    )
+
+    normalized = " ".join(message.split())
+    assert "worker stalled; restarting" not in normalized.lower()
+    assert warnings
+    assert all("worker stalled; restarting" not in warning.lower() for warning in warnings)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_worker_warning_with_hyphenated_restart_is_normalised() -> None:
     """Hyphenated restart tokens should still be detected as worker stall banners."""
 

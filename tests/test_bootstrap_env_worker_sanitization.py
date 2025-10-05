@@ -323,3 +323,20 @@ def test_worker_banner_localised_connectors_are_sanitized(connector: str) -> Non
         if isinstance(entry, str)
     )
     assert metadata.get("docker_worker_health") == "flapping"
+
+
+def test_worker_banner_whitespace_separator_is_sanitized() -> None:
+    """Pure whitespace separators should still trigger stall rewriting."""
+
+    message = "WARNING: worker stalled    restarting component=\"vpnkit\""
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression([message], metadata)  # type: ignore[attr-defined]
+
+    assert safeguarded
+    assert all(
+        "worker stalled; restarting" not in entry.casefold()
+        for entry in safeguarded
+        if isinstance(entry, str)
+    )
+    assert metadata.get("docker_worker_health") == "flapping"
