@@ -5756,6 +5756,8 @@ def _extract_worker_flapping_descriptors(
                     return True
                 if existing in _WORKER_ERROR_NARRATIVES:
                     return True
+                if _looks_like_truncated_worker_error_token(existing):
+                    return True
                 return False
 
             structured_payload = _maybe_parse_structured_value(value)
@@ -6746,6 +6748,71 @@ def _stitch_worker_banner_fragments(messages: Sequence[object]) -> list[object]:
         index += consumed + 1 if consumed else 1
 
     return stitched
+
+
+def _looks_like_truncated_worker_error_token(value: str | None) -> bool:
+    """Return ``True`` when *value* appears to be a truncated worker error."""
+
+    if not value:
+        return True
+
+    candidate = value.strip()
+    if not candidate:
+        return True
+
+    def _count_quotes(text: str, quote: str) -> int:
+        count = 0
+        escaped = False
+        for char in text:
+            if char == "\\" and not escaped:
+                escaped = True
+                continue
+            if char == quote and not escaped:
+                count += 1
+            escaped = False
+        return count
+
+    if _count_quotes(candidate, '"') % 2 == 1 or _count_quotes(candidate, "'") % 2 == 1:
+        return True
+
+    opening_tokens = {"{": "}", "[": "]", "(": ")"}
+    closing_tokens = {v: k for k, v in opening_tokens.items()}
+    stack: list[str] = []
+    escaped = False
+    for char in candidate:
+        if char == "\\" and not escaped:
+            escaped = True
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if stack and stack[-1] in {'"', "'"}:
+            if char == stack[-1]:
+                stack.pop()
+            elif char == "\\":
+                escaped = True
+            continue
+        if char in {'"', "'"}:
+            stack.append(char)
+            continue
+        if char in opening_tokens:
+            stack.append(opening_tokens[char])
+            continue
+        if char in closing_tokens:
+            if not stack or stack[-1] != char:
+                return True
+            stack.pop()
+
+    if stack and any(token not in {'"', "'"} for token in stack):
+        return True
+
+    lowered = candidate.casefold()
+    if lowered.startswith('{"message"') and not candidate.endswith('}'):
+        return True
+    if lowered.startswith('"message"') and 'stalled' not in lowered and 'restart' not in lowered:
+        return True
+
+    return False
 
 
 def _looks_like_worker_restart_fragment(message: str) -> bool:

@@ -1983,6 +1983,26 @@ def test_worker_stall_json_error_payload_enriched() -> None:
     assert metadata["docker_worker_backoff"] == "45s"
 
 
+def test_worker_stall_json_payload_sanitises_primary_error_fields() -> None:
+    """Structured worker payloads should override truncated log fragments."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "lastError={\"message\":\"worker stalled; restarting\"}"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    primary_error = metadata["docker_worker_last_error"]
+    assert primary_error == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+    assert metadata["docker_worker_last_error_banner"] == primary_error
+    assert metadata["docker_worker_last_error_raw"] == primary_error
+    assert metadata["docker_worker_last_error_original"] == primary_error
+    assert "\"message\"" not in metadata["docker_worker_health_summary"].lower()
+    assert "worker stalled; restarting" not in metadata["docker_worker_health_summary"].lower()
+
+
 def test_structured_worker_message_sanitised_when_only_banner() -> None:
     """Structured ``lastError`` payloads should not leak the raw banner."""
 
