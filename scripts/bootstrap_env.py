@@ -38,6 +38,7 @@ from pathlib import Path, PureWindowsPath
 from typing import (
     Any,
     Callable,
+    Collection,
     Iterable,
     Mapping,
     MutableMapping,
@@ -448,6 +449,12 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_VSOCK_TIMEOUT": "a vsock connection timeout between Windows and the Docker VM",
     "VPNKIT_BACKGROUND_SYNC_IO_PRESSURE": "I/O pressure impacting the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": "disk pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_CPU_PRESSURE": "CPU pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_MEMORY_PRESSURE": "memory pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_NETWORK_PRESSURE": "network pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_NETWORK_CONGESTION": "network congestion impacting the vpnkit background sync worker",
+    "VPNKIT_VSOCK_SIGNAL_LOST": "a vsock signal interruption between Windows and the Docker VM",
+    "VPNKIT_VSOCK_CHANNEL_LOST": "a vsock channel interruption between Windows and the Docker VM",
     "WSL_VM_STOPPED": "a stopped WSL virtual machine",
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
     "WSL_VM_HIBERNATED": "a hibernated WSL virtual machine",
@@ -943,6 +950,158 @@ def _sanitize_error_code_suffix(code: str) -> str:
     return normalized.lower() or "unknown"
 
 
+def _build_vpnkit_background_sync_guidance(
+    candidate: str,
+    token_set: Collection[str],
+    metadata_builder: Callable[[str], Mapping[str, str]],
+) -> _WorkerErrorCodeDirective | None:
+    """Return guidance for ``VPNKIT_BACKGROUND_SYNC`` error codes.
+
+    Docker Desktop 4.33+ introduces additional ``VPNKIT_BACKGROUND_SYNC`` error
+    codes that highlight the specific host resource starving the background
+    synchronisation worker.  Earlier bootstrap revisions collapsed all
+    ``vpnkit`` failures into a generic remediation block, which left Windows
+    developers guessing whether CPU, memory, or network pressure triggered the
+    ``worker stalled; restarting`` banner.  Providing tailored guidance here
+    keeps the diagnostics actionable as Docker expands its telemetry surface.
+    """
+
+    prefix = "VPNKIT_BACKGROUND_SYNC_"
+    if not candidate.startswith(prefix):
+        return None
+
+    cpu_tokens = {"CPU"}
+    memory_tokens = {"MEMORY", "RAM"}
+    network_tokens = {
+        "NETWORK",
+        "NET",
+        "BANDWIDTH",
+        "CONGESTION",
+        "LATENCY",
+        "CONNECTIVITY",
+        "THROUGHPUT",
+    }
+
+    if token_set & cpu_tokens:
+        summary = (
+            "Reduce host CPU pressure so the vpnkit background sync worker can keep up"
+        )
+        reason = (
+            "Docker Desktop detected that host CPU pressure is throttling the "
+            "vpnkit background sync worker"
+        )
+        detail = (
+            "Sustained CPU saturation on Windows or inside the docker-desktop VM "
+            "prevents vpnkit from processing networking synchronisation events, "
+            "forcing repeated restarts."
+        )
+        remediation = (
+            "Close CPU-intensive workloads or increase Docker Desktop's CPU allocation in Settings > Resources",
+            "Ensure Windows is using a high-performance power profile so the docker-desktop VM is not frequency limited",
+            "Restart Docker Desktop after reducing CPU contention so the vpnkit background sync worker can stabilise",
+        )
+        return _WorkerErrorCodeDirective(
+            reason=reason,
+            detail=detail,
+            remediation=remediation,
+            metadata=metadata_builder(summary),
+        )
+
+    if token_set & memory_tokens:
+        summary = (
+            "Free host memory or expand Docker Desktop's allocation to stabilise the vpnkit background sync worker"
+        )
+        reason = (
+            "Docker Desktop detected that memory pressure is starving the vpnkit "
+            "background sync worker"
+        )
+        detail = (
+            "When Windows exhausts available memory the docker-desktop VM is paged "
+            "out, leaving vpnkit unable to reconcile port and DNS state until "
+            "resources are freed."
+        )
+        remediation = (
+            "Close memory-heavy applications or increase Docker Desktop's memory allocation in Settings > Resources",
+            "Ensure antivirus, endpoint protection, or memory compression tools are not starving the docker-desktop WSL VM",
+            "Restart Docker Desktop after freeing memory so vpnkit can rebuild its caches",
+        )
+        return _WorkerErrorCodeDirective(
+            reason=reason,
+            detail=detail,
+            remediation=remediation,
+            metadata=metadata_builder(summary),
+        )
+
+    if token_set & network_tokens:
+        summary = (
+            "Reduce network filtering or congestion impacting the vpnkit background sync worker"
+        )
+        reason = (
+            "Docker Desktop observed that host network congestion is delaying the "
+            "vpnkit background sync worker"
+        )
+        detail = (
+            "Aggressive VPN inspection, firewall filtering, or saturated network "
+            "interfaces slow vpnkit's ability to propagate port forwarding and DNS "
+            "updates between Windows and the docker-desktop VM."
+        )
+        remediation = (
+            "Temporarily disable or relax VPN and firewall agents that intercept Hyper-V virtual switches",
+            "Allow com.docker.backend and vpnkit.exe through endpoint protection tooling so networking updates are not throttled",
+            "Restart Docker Desktop after reducing network congestion so the vpnkit background sync worker can resynchronise state",
+        )
+        return _WorkerErrorCodeDirective(
+            reason=reason,
+            detail=detail,
+            remediation=remediation,
+            metadata=metadata_builder(summary),
+        )
+
+    return None
+
+
+def _build_vpnkit_vsock_guidance(
+    candidate: str,
+    token_set: Collection[str],
+    metadata_builder: Callable[[str], Mapping[str, str]],
+) -> _WorkerErrorCodeDirective | None:
+    """Return guidance for ``VPNKIT_VSOCK`` style error codes."""
+
+    if not candidate.startswith("VPNKIT_VSOCK_"):
+        return None
+
+    summary = (
+        "Repair the Hyper-V vsock bridge between Windows and the docker-desktop VM"
+    )
+    reason = (
+        "Docker Desktop detected instability in the Hyper-V vsock channel that vpnkit uses for networking"
+    )
+    detail = (
+        "Docker Desktop surfaced vsock error code %s indicating the socket tunnel "
+        "linking Windows and the docker-desktop virtual machine is unstable. "
+        "vpnkit relies on this bridge to proxy networking; when the tunnel drops "
+        "the worker stalls and restarts."
+    ) % candidate
+    remediation = (
+        "Run 'wsl --shutdown' and restart Docker Desktop to rebuild the vsock transport",
+        "Ensure virtualization-based security, antivirus, or third-party hypervisors are not blocking Hyper-V socket communication",
+        "If the channel keeps failing, reset Docker Desktop from Settings > Troubleshoot or reinstall it to repair the vsock drivers",
+    )
+
+    if "TIMEOUT" in token_set:
+        remediation = (
+            *remediation[:-1],
+            "Capture Windows Event Viewer > Applications and Services Logs > Microsoft > Windows > Hyper-V-Compute-Admin entries for persistent vsock timeouts and provide them to Docker Desktop support",
+        )
+
+    return _WorkerErrorCodeDirective(
+        reason=reason,
+        detail=detail,
+        remediation=remediation,
+        metadata=metadata_builder(summary),
+    )
+
+
 def _derive_generic_error_code_guidance(
     code: str,
 ) -> _WorkerErrorCodeDirective | None:
@@ -998,6 +1157,16 @@ def _derive_generic_error_code_guidance(
             remediation=remediation,
             metadata=_metadata(summary),
         )
+
+    specialized = _build_vpnkit_background_sync_guidance(
+        candidate, token_set, _metadata
+    )
+    if specialized is not None:
+        return specialized
+
+    specialized = _build_vpnkit_vsock_guidance(candidate, token_set, _metadata)
+    if specialized is not None:
+        return specialized
 
     if any(token.startswith("VPNKIT") for token in token_set):
         summary = (

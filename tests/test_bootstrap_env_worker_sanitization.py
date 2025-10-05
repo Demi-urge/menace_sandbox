@@ -187,6 +187,42 @@ def test_fullwidth_worker_banner_is_normalized() -> None:
     assert "docker desktop" in cleaned.lower()
 
 
+def test_worker_banner_errcode_cpu_pressure_guidance() -> None:
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "errCode=VPNKIT_BACKGROUND_SYNC_CPU_PRESSURE restartCount=3"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    lowered = cleaned.lower()
+    assert "worker stalled" not in lowered
+    assert "cpu pressure" in lowered
+    assert "vpnkit" in lowered
+
+    fingerprint_key = "docker_worker_last_error_guidance_vpnkit_background_sync_cpu_pressure"
+    assert fingerprint_key in metadata
+    assert "cpu" in metadata[fingerprint_key].lower()
+
+
+def test_worker_banner_errcode_vsock_signal_guidance() -> None:
+    message = (
+        "WARN[0032] moby/buildkit: worker stalled; restarting "
+        "component=\"vpnkit\" errCode=VPNKIT_VSOCK_SIGNAL_LOST"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    lowered = cleaned.lower()
+    assert "worker stalled" not in lowered
+    assert "vsock" in lowered
+    assert "vpnkit" in lowered
+
+    fingerprint_key = "docker_worker_last_error_guidance_vpnkit_vsock_signal_lost"
+    assert fingerprint_key in metadata
+    assert "vsock" in metadata[fingerprint_key].lower()
+
+
 def test_format_worker_restart_reason_strips_prefixes() -> None:
     reason = "because of lingering IO pressure "
 
