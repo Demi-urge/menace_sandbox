@@ -932,8 +932,12 @@ def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
     assert metadata["docker_worker_last_error_raw"].endswith(
         "background worker after it stalled"
     )
+    expected_preserved = (
+        "Docker Desktop automatically restarted the docker worker after it stalled"
+    )
+    assert metadata["docker_worker_last_error_banner_preserved"] == expected_preserved
     assert (
-        metadata["docker_worker_last_error_banner_preserved"]
+        bootstrap_env._canonicalize_worker_narrative(expected_preserved)
         == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
     )
     assert metadata["docker_worker_last_error_banner_signature"].startswith(
@@ -1028,6 +1032,18 @@ def test_collect_windows_virtualization_insights_reports_inactive_components(mon
             return subprocess.CompletedProcess(command, 0, payload_status, ""), None
         if command[:3] == ["wsl.exe", "-l", "-v"]:
             return subprocess.CompletedProcess(command, 0, payload_list, ""), None
+        if command and command[0].lower() == "powershell.exe":
+            payload = json.dumps(
+                [
+                    {"Name": "vmcompute", "Status": "Stopped", "StartType": "Manual"},
+                    {"Name": "hns", "Status": "Running", "StartType": "Automatic"},
+                    {"Name": "LxssManager", "Status": "Running", "StartType": "Automatic"},
+                    {"Name": "vmms", "Status": "Running", "StartType": "Automatic"},
+                    {"Name": "com.docker.service", "Status": "Stopped", "StartType": "Manual"},
+                ],
+                separators=(",", ":"),
+            )
+            return subprocess.CompletedProcess(command, 0, payload, ""), None
         if "Microsoft-Hyper-V-All" in command[-1]:
             return subprocess.CompletedProcess(command, 0, "Enabled\n", ""), None
         if "VirtualMachinePlatform" in command[-1]:
