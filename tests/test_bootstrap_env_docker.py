@@ -174,6 +174,8 @@ def test_windows_docker_directory_variants(
         program_files / "Docker" / "Docker" / "resources" / "cli-linux",
         program_files / "Docker" / "Docker" / "resources" / "cli-bin",
         program_files / "Docker" / "Docker" / "resources" / "docker-cli",
+        program_files / "Docker" / "Docker" / "resources" / "cli-arm",
+        program_files / "Docker" / "Docker" / "resources" / "cli-arm64",
         program_files / "Docker" / "Docker" / "cli",
         program_data / "DockerDesktop" / "cli",
         program_data / "DockerDesktop" / "cli-bin",
@@ -181,6 +183,33 @@ def test_windows_docker_directory_variants(
         local_appdata / "DockerDesktop" / "cli",
         local_appdata / "DockerDesktop" / "cli-bin",
         local_appdata / "DockerDesktop" / "cli-tools",
+        local_appdata / "DockerDesktop" / "cli-arm",
+        local_appdata / "DockerDesktop" / "cli-arm64",
+    }
+
+    assert expected.issubset(directory_set)
+
+
+def test_windows_docker_directory_includes_arm_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Docker discovery should probe Program Files (Arm) when available."""
+
+    arm_root = tmp_path / "Program Files (Arm)"
+    arm_root.mkdir()
+
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.setenv("ProgramFiles(Arm)", str(arm_root))
+
+    directories = list(bootstrap_env._iter_windows_docker_directories())
+    directory_set = {Path(path) for path in directories}
+
+    expected = {
+        arm_root / "Docker" / "Docker" / "resources" / "cli-arm",
+        arm_root / "Docker" / "Docker" / "resources" / "cli-arm64",
+        arm_root / "Docker" / "Docker" / "cli",
     }
 
     assert expected.issubset(directory_set)

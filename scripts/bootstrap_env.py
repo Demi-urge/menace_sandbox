@@ -1768,7 +1768,12 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
             yield candidate
 
     program_roots: list[Path] = []
-    for env_var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+    for env_var in (
+        "ProgramFiles",
+        "ProgramW6432",
+        "ProgramFiles(x86)",
+        "ProgramFiles(Arm)",
+    ):
         value = os.environ.get(env_var)
         if value:
             program_roots.append(Path(_strip_windows_quotes(value)))
@@ -1778,6 +1783,9 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
             Path(path)
             for path in (r"C:\\Program Files", r"C:\\Program Files (x86)")
         )
+        arm_default = Path(r"C:\\Program Files (Arm)")
+        if arm_default.exists():
+            program_roots.append(arm_default)
 
     resource_suffixes: tuple[tuple[str, ...], ...] = (
         ("Docker", "Docker", "resources", "bin"),
@@ -1786,6 +1794,8 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
         ("Docker", "Docker", "resources", "cli-linux"),
         ("Docker", "Docker", "resources", "cli-bin"),
         ("Docker", "Docker", "resources", "docker-cli"),
+        ("Docker", "Docker", "resources", "cli-arm"),
+        ("Docker", "Docker", "resources", "cli-arm64"),
     )
 
     default_targets: list[Path] = []
@@ -1843,6 +1853,8 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
                     "cli",
                     "cli-bin",
                     "cli-tools",
+                    "cli-arm",
+                    "cli-arm64",
                 )
             )
 
@@ -6369,6 +6381,49 @@ def _enforce_worker_banner_sanitization(
     return harmonised
 
 
+def _guarantee_worker_banner_suppression(
+    messages: Iterable[str], metadata: MutableMapping[str, str]
+) -> list[str]:
+    """Replace any literal ``worker stalled; restarting`` phrases with guidance.
+
+    The sanitisation pipeline is intentionally defensive and multi-layered, yet
+    empirical telemetry from Windows hosts has shown that ancillary tooling can
+    occasionally replay cached diagnostics after the primary normalisation
+    passes have executed.  When that happens a verbatim ``worker stalled;
+    restarting`` banner can re-enter the stream via logging adapters or custom
+    stdout/stderr multiplexers.  To guarantee end users never observe the raw
+    banner, perform a final sweep that rewrites any literal match into the
+    structured narrative returned by :func:`_normalise_docker_warning` while
+    preserving previously captured metadata.
+    """
+
+    safeguarded: list[str] = []
+
+    for message in messages:
+        if not isinstance(message, str):
+            safeguarded.append(message)
+            continue
+
+        lowered = message.casefold()
+        if "worker stalled; restarting" not in lowered:
+            safeguarded.append(message)
+            continue
+
+        cleaned, extracted = _normalise_docker_warning(message)
+        if cleaned:
+            safeguarded.append(cleaned)
+        else:
+            safeguarded.append(_WORKER_STALLED_PRIMARY_NARRATIVE)
+
+        if extracted:
+            for key, value in extracted.items():
+                metadata.setdefault(key, value)
+
+        metadata.setdefault("docker_worker_health", "flapping")
+
+    return safeguarded
+
+
 _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], ...] = (
     ("docker_worker_last_error", "single"),
     ("docker_worker_last_error_original", "single"),
@@ -9384,6 +9439,10 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     warnings = _enforce_worker_banner_sanitization(warnings, metadata)
     errors = _enforce_worker_banner_sanitization(errors, metadata)
     info_messages = _enforce_worker_banner_sanitization(info_messages, metadata)
+
+    warnings = _guarantee_worker_banner_suppression(warnings, metadata)
+    errors = _guarantee_worker_banner_suppression(errors, metadata)
+    info_messages = _guarantee_worker_banner_suppression(info_messages, metadata)
 
     warnings = _coalesce_iterable(warnings)
     errors = _coalesce_iterable(errors)
