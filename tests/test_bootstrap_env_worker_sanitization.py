@@ -79,6 +79,14 @@ def test_worker_banner_treats_warning_prefix_as_noise() -> None:
     assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
 
 
+def test_worker_banner_html_entity_semicolon_is_decoded() -> None:
+    message = "worker stalled&#59; restarting after host sleep"
+
+    sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
+
+    assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+
+
 def test_worker_banner_final_guard_rewrites_literal_phrase() -> None:
     messages = [
         "worker stalled; restarting",

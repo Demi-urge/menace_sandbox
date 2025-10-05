@@ -11,6 +11,7 @@ import argparse
 import ast
 import base64
 import hashlib
+import html
 import json
 import logging
 import math
@@ -2860,7 +2861,8 @@ def _normalize_worker_banner_characters(message: str) -> str:
     # characters when the host locale is configured for East Asian languages.
     # The worker stall detectors rely on ASCII separators, so normalise these
     # variants to their half-width counterparts before applying the heuristics.
-    normalized = message.translate(_WORKER_BANNER_CHARACTER_TRANSLATION)
+    normalized = html.unescape(message)
+    normalized = normalized.translate(_WORKER_BANNER_CHARACTER_TRANSLATION)
     return normalized
 
 
