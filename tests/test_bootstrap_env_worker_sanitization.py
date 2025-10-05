@@ -6,6 +6,8 @@ import base64
 from collections.abc import Iterable
 import json
 
+import pytest
+
 from scripts import bootstrap_env
 
 
@@ -279,6 +281,44 @@ def test_worker_banner_split_across_lines_is_stitched_and_rewritten() -> None:
 
     assert all(
         "worker stalled" not in entry.lower()
+        for entry in safeguarded
+        if isinstance(entry, str)
+    )
+    assert metadata.get("docker_worker_health") == "flapping"
+
+
+@pytest.mark.parametrize(
+    "connector",
+    [
+        "；",
+        "：",
+        "，",
+        "。",
+        "！",
+        "？",
+        "!",
+        "?",
+        "！？",
+        "？！",
+        "!?",
+        "?!",
+        "‧",
+        "・",
+        "／",
+        "＼",
+    ],
+)
+def test_worker_banner_localised_connectors_are_sanitized(connector: str) -> None:
+    """Non-ASCII separators should still trigger stall banner rewriting."""
+
+    message = f"WARN[0001] moby/buildkit: worker stalled{connector} restarting component=\"vpnkit\""
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression([message], metadata)  # type: ignore[attr-defined]
+
+    assert safeguarded
+    assert all(
+        "worker stalled; restarting" not in entry.casefold()
         for entry in safeguarded
         if isinstance(entry, str)
     )
