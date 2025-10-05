@@ -5020,15 +5020,17 @@ def _infer_worker_error_code_from_context(*values: str | None) -> str | None:
     pause_markers = ("pause", "paused", "standby")
 
     virtualization_context = any(marker in corpus for marker in virtualization_markers)
+    suspension_context = any(marker in corpus for marker in suspension_markers)
+    pause_context = any(marker in corpus for marker in pause_markers)
     hibernation_context = any(marker in corpus for marker in hibernation_markers)
 
-    if virtualization_context or hibernation_context:
+    if virtualization_context or hibernation_context or suspension_context or pause_context:
+        if suspension_context:
+            return "WSL_VM_SUSPENDED"
+        if pause_context:
+            return "WSL_VM_PAUSED"
         if hibernation_context:
             return "WSL_VM_HIBERNATED"
-        if any(marker in corpus for marker in suspension_markers):
-            return "WSL_VM_SUSPENDED"
-        if any(marker in corpus for marker in pause_markers):
-            return "WSL_VM_PAUSED"
 
     hyperv_markers = (
         "hyper-v",
@@ -6745,6 +6747,15 @@ def _enforce_worker_banner_sanitization(
     harmonised: list[str] = []
 
     for message in messages:
+        if isinstance(message, str):
+            lowered_message = message.casefold()
+            if any(
+                sentinel in lowered_message
+                for sentinel in _WORKER_GUIDANCE_SENTINELS
+            ):
+                harmonised.append(message)
+                continue
+
         processed, structured = _normalise_structured_worker_banner(message, metadata)
 
         if structured:
