@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import binascii
 import codecs
 import hashlib
 import html
@@ -6911,6 +6912,56 @@ def _looks_like_worker_restart_fragment(message: str) -> bool:
     return bool(_WORKER_STALLED_FRAGMENT_PATTERN.search(collapsed))
 
 
+def _decode_worker_base64_fragment(value: str) -> str | None:
+    """Decode base64-encoded worker stall payloads when present."""
+
+    if not value:
+        return None
+
+    candidate = value.strip()
+    if len(candidate) < 32:
+        return None
+
+    compact = re.sub(r"\s+", "", candidate)
+    if len(compact) % 4:
+        return None
+
+    if not (
+        _WORKER_BASE64_PATTERN.fullmatch(compact)
+        or _WORKER_BASE64_URLSAFE_PATTERN.fullmatch(compact)
+    ):
+        return None
+
+    decode_attempts = (
+        lambda data: base64.b64decode(data, validate=True),
+        lambda data: base64.b64decode(data, altchars=b"-_", validate=True),
+    )
+
+    for decoder in decode_attempts:
+        try:
+            decoded_bytes = decoder(compact)
+        except (binascii.Error, ValueError):
+            continue
+
+        if not decoded_bytes:
+            continue
+
+        try:
+            decoded_text = decoded_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            decoded_text = decoded_bytes.decode("utf-8", "replace")
+
+        normalized = decoded_text.strip()
+        if not normalized:
+            continue
+
+        collapsed = _normalise_worker_stalled_phrase(normalized)
+        if _contains_worker_stall_signal(collapsed):
+            return normalized
+
+    return None
+
+
 def _guarantee_worker_banner_suppression(
     messages: Iterable[str], metadata: MutableMapping[str, str]
 ) -> list[str]:
@@ -7051,6 +7102,10 @@ _WORKER_STALLED_FRAGMENT_PATTERN = re.compile(
     """,
     flags=re.IGNORECASE | re.VERBOSE,
 )
+
+
+_WORKER_BASE64_PATTERN = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+_WORKER_BASE64_URLSAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
 
 def _looks_like_literal_worker_restart_banner(message: str) -> bool:
@@ -7556,6 +7611,16 @@ def _sanitize_worker_metadata_value(
 
     if not text:
         return None, None
+
+    decoded = _decode_worker_base64_fragment(text)
+    if decoded is not None and decoded != text:
+        sanitised, digest = _sanitize_worker_metadata_value(
+            decoded, prefer_canonical=prefer_canonical
+        )
+        if sanitised is not None:
+            return sanitised, digest
+        if digest:
+            return None, digest
 
     digest = _fingerprint_worker_banner(text)
 
