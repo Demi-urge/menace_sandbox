@@ -12,6 +12,7 @@ import ast
 import base64
 import binascii
 import codecs
+import configparser
 import hashlib
 import html
 import json
@@ -1937,12 +1938,220 @@ def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
         yield Path(venv_root) / "Scripts"
 
 
+def _translate_windows_path_with_root(path: Path | str, mount_root: Path) -> Path | None:
+    """Translate *path* into a WSL path using the supplied mount root."""
+
+    raw = os.fspath(path).strip()
+    if not raw:
+        return None
+
+    normalized = raw.replace("/", "\\")
+    try:
+        windows_path = PureWindowsPath(normalized)
+    except Exception:
+        return None
+
+    drive = windows_path.drive
+    if drive:
+        drive_letter = drive.rstrip(":").lower()
+        if not drive_letter:
+            return None
+
+        relative_parts = [
+            part
+            for part in windows_path.parts
+            if part
+            and part not in {drive, windows_path.root, windows_path.anchor}
+        ]
+
+        target = mount_root / drive_letter
+        if relative_parts:
+            target = target.joinpath(*relative_parts)
+        return target
+
+    anchor = windows_path.anchor
+    if anchor.startswith("\\\\"):
+        host_share = anchor.strip("\\")
+        if not host_share or "\\" not in host_share:
+            return None
+        server, share = host_share.split("\\", 1)
+        relative = [part for part in windows_path.parts[1:] if part]
+        base = mount_root / "unc" / server / share
+        if relative:
+            base = base.joinpath(*relative)
+        return base
+
+    return None
+
+
+def _iter_wsl_configuration_paths() -> Iterable[Path]:
+    """Yield known WSL configuration files that may define automount roots."""
+
+    primary = Path("/etc/wsl.conf")
+    yield primary
+
+    conf_dir = primary.parent / "wsl.conf.d"
+    try:
+        if conf_dir.is_dir():
+            for candidate in sorted(conf_dir.glob("*.conf")):
+                yield candidate
+    except OSError:
+        return
+
+
+def _normalise_wsl_root_candidate(raw: str) -> Path | None:
+    """Return a normalised :class:`Path` for a WSL automount root value."""
+
+    cleaned = raw.strip().strip('"').strip("'")
+    if not cleaned:
+        return None
+
+    if cleaned.startswith("\\\\") or ":" in cleaned:
+        translated = _translate_windows_path_with_root(cleaned, Path("/mnt"))
+        if translated is not None:
+            return translated
+        return None
+
+    if not cleaned.startswith("/"):
+        cleaned = f"/{cleaned.lstrip('/')}"
+
+    return Path(cleaned)
+
+
+def _discover_wsl_automount_root() -> Path | None:
+    """Inspect WSL configuration files for an explicit automount root."""
+
+    parser = configparser.ConfigParser()
+    for config_path in _iter_wsl_configuration_paths():
+        try:
+            content = config_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        if not content.strip():
+            continue
+
+        parser.clear()
+        try:
+            parser.read_string(content)
+        except (configparser.Error, UnicodeDecodeError):
+            continue
+
+        if parser.has_option("automount", "root"):
+            candidate = parser.get("automount", "root")
+            normalized = _normalise_wsl_root_candidate(candidate)
+            if normalized is not None:
+                return normalized
+
+    return None
+
+
+def _iter_wsl_mount_roots_from_proc() -> tuple[Path, ...]:
+    """Return mount roots discovered from ``/proc`` mount information."""
+
+    candidates: set[Path] = set()
+    for proc_path in (Path("/proc/self/mountinfo"), Path("/proc/mounts")):
+        try:
+            with open(proc_path, "r", encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    parts = line.strip().split()
+                    if len(parts) < 5:
+                        continue
+
+                    if proc_path.name == "mountinfo":
+                        mount_point = parts[4]
+                        try:
+                            dash_index = parts.index("-")
+                        except ValueError:
+                            continue
+                        if dash_index + 1 >= len(parts):
+                            continue
+                        fs_type = parts[dash_index + 1]
+                    else:
+                        mount_point = parts[1]
+                        fs_type = parts[2] if len(parts) > 2 else ""
+
+                    if fs_type.lower() not in {"9p", "drvfs"}:
+                        continue
+
+                    if not mount_point.startswith("/"):
+                        continue
+
+                    mount_path = Path(mount_point)
+                    name = mount_path.name.lower()
+                    parent = mount_path.parent
+                    if not parent:
+                        continue
+
+                    if len(name) == 1 and name.isalpha():
+                        candidates.add(parent)
+                    elif name == "unc":
+                        candidates.add(parent)
+        except OSError:
+            continue
+
+    return tuple(sorted(candidates, key=str))
+
+
+def _is_viable_wsl_mount_root(candidate: Path) -> bool:
+    """Return ``True`` when *candidate* resembles a WSL drive mount root."""
+
+    try:
+        entries = list(candidate.iterdir())
+    except OSError:
+        return False
+
+    for entry in entries:
+        name = entry.name.lower()
+        if len(name) == 1 and name.isalpha():
+            return True
+        if name == "unc":
+            return True
+
+    return False
+
+
+@lru_cache(maxsize=None)
 def _get_wsl_host_mount_root() -> Path:
     """Return the root directory where Windows drives are mounted inside WSL."""
 
     override = os.environ.get(_WSL_HOST_MOUNT_ROOT_ENV)
     if override:
         return Path(override)
+
+    if not _is_wsl():
+        return Path("/mnt")
+
+    candidates: list[Path] = []
+
+    configured_root = _discover_wsl_automount_root()
+    if configured_root is not None:
+        candidates.append(configured_root)
+
+    candidates.extend(_iter_wsl_mount_roots_from_proc())
+    candidates.extend((Path("/mnt"), Path("/mnt/wsl"), Path("/mnt/host")))
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = os.path.normpath(str(candidate))
+        key = os.path.normcase(normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_candidates.append(Path(normalized))
+
+    for candidate in unique_candidates:
+        if _is_viable_wsl_mount_root(candidate):
+            return candidate
+
+    for candidate in unique_candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+
     return Path("/mnt")
 
 
@@ -1962,44 +2171,8 @@ def _translate_windows_host_path(path: Path) -> Path | None:
     if ":" not in raw and not raw.startswith("\\\\"):
         return None
 
-    normalized = raw.replace("/", "\\")
-    try:
-        windows_path = PureWindowsPath(normalized)
-    except Exception:
-        return None
-
-    drive = windows_path.drive
     mount_root = _get_wsl_host_mount_root()
-
-    if drive:
-        drive_letter = drive.rstrip(":").lower()
-        if not drive_letter:
-            return None
-
-        relative_parts = [
-            part
-            for part in windows_path.parts
-            if part
-            and part not in {drive, windows_path.root, windows_path.anchor}
-        ]
-
-        target = mount_root / drive_letter
-        if relative_parts:
-            target = target.joinpath(*relative_parts)
-        return target
-
-    if windows_path.anchor.startswith("\\\\"):
-        host_share = windows_path.parts[0].strip("\\")
-        if not host_share or "\\" not in host_share:
-            return None
-        server, share = host_share.split("\\", 1)
-        relative = list(windows_path.parts[1:])
-        base = mount_root / "unc" / server / share
-        if relative:
-            base = base.joinpath(*relative)
-        return base
-
-    return None
+    return _translate_windows_path_with_root(raw, mount_root)
 
 
 def _iter_windows_docker_directories() -> Iterable[Path]:
