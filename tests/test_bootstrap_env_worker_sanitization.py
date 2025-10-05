@@ -30,6 +30,7 @@ def test_nested_structures_are_scrubbed_of_worker_stall_banners() -> None:
             ],
             "tuple_data": (
                 "worker stalled; restarting soon",
+                "worker stuck; restarting",
                 "background worker stabilised",
             ),
         },

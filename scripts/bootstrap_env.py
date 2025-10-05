@@ -303,6 +303,31 @@ _WORKER_STALLED_PRIMARY_CODE = _WORKER_ERROR_NORMALISERS[0][1]
 _WORKER_STALLED_PRIMARY_NARRATIVE = _WORKER_ERROR_NORMALISERS[0][2]
 _WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
 
+#
+# ``Docker Desktop`` builds for Windows occasionally vary the terminology they
+# use when reporting background worker health.  Historically the primary
+# symptom was the "worker stalled; restarting" banner; newer releases have
+# started to surface synonymous phrasing such as "worker stuck; restarting" or
+# "worker is stuck" while the recovery behaviour remains identical.  The
+# sanitisation pipeline relies on collapsing all of those variants into a single
+# canonical "worker stalled" form before the downstream heuristics run.  The
+# ``_WORKER_STALL_ROOT_PATTERN`` consolidates the acceptable verb forms so
+# regular expressions throughout this module can be generated programmatically
+# and updated in a single location when Docker introduces new synonyms.
+#
+
+_WORKER_STALL_ROOT_PATTERN = r"(?:stall(?:ed|ing|s)?|stuck(?:ing)?)"
+_WORKER_STALL_KEYWORD_TOKENS: frozenset[str] = frozenset(
+    {
+        "stall",
+        "stalled",
+        "stalling",
+        "stalls",
+        "stuck",
+        "sticking",
+    }
+)
+
 _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
     "restart_loop": "a restart loop",
@@ -1018,7 +1043,7 @@ def _rewrite_inline_worker_contexts(message: str) -> str:
 
 
 _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
-    r"""
+    rf"""
     worker
     (?:
         \s+(?:has|have|had|is|was|are|were)(?:\s+been)?
@@ -1029,7 +1054,7 @@ _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
         |
         \s+(?:apparently|reportedly|likely|probably|possibly|potentially|maybe|virtually|nearly|almost|still|persistently|chronically|repeatedly)
     )+
-    \s+stalled
+    \s+{_WORKER_STALL_ROOT_PATTERN}
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -1052,7 +1077,10 @@ def _contains_worker_stall_signal(message: str) -> bool:
     if any(sentinel in lowered for sentinel in _WORKER_GUIDANCE_SENTINELS):
         return False
 
-    if "worker" not in lowered or "stall" not in lowered:
+    if "worker" not in lowered:
+        return False
+
+    if not any(keyword in lowered for keyword in _WORKER_STALL_KEYWORD_TOKENS):
         return False
 
     normalized = _normalise_worker_stalled_phrase(message)
@@ -2682,7 +2710,7 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
 
 
 _WORKER_STALL_CAMELCASE_PATTERN = re.compile(
-    r"(?i)\b(workers?)(?=stall)",
+    r"(?i)\b(workers?)(?=st(?:all|uck))",
 )
 
 
@@ -2719,9 +2747,17 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bworker[\s_-]+stall(?!ed)\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalling\b", re.IGNORECASE), "worker stalled"),
     (re.compile(r"\bworker[\s_-]+stalls\b", re.IGNORECASE), "worker stalled"),
+    (re.compile(r"\bworker[\s_-]+stuck\b", re.IGNORECASE), "worker stalled"),
     (
         re.compile(
             r"\bworker\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?stall(?:ed|ing)?\b",
+            re.IGNORECASE,
+        ),
+        "worker stalled",
+    ),
+    (
+        re.compile(
+            r"\bworker\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?stuck\b",
             re.IGNORECASE,
         ),
         "worker stalled",
@@ -2730,13 +2766,13 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 _WORKER_STALL_FUZZY_RESTART_PATTERN = re.compile(
-    r"\bworkers?\b.{0,200}?\bstall\w*\b",
+    rf"\bworkers?\b.{{0,200}}?\b{_WORKER_STALL_ROOT_PATTERN}\b",
     re.IGNORECASE | re.DOTALL,
 )
 
 
 _WORKER_STALL_CONTEXT_PATTERN = re.compile(
-    r"\bworker\b.{0,240}?\bstall\w*\b",
+    rf"\bworker\b.{{0,240}}?\b{_WORKER_STALL_ROOT_PATTERN}\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -2760,14 +2796,14 @@ _WORKER_STALL_CONTEXT_HINTS: tuple[str, ...] = (
 
 
 _WORKER_STALLED_BANNER_PATTERN = re.compile(
-    r"""
+    rf"""
     workers?                        # worker or workers tokens
     (?:\s+|[-_]\s*)?               # whitespace or common separators
     (?:
         (?:has|have|had|is|are|was|were)\s+ # optional auxiliary verbs
         (?:been\s+)?                # optional ``been`` filler token
     )?
-    stall(?:ed|ing|s)?               # stall/stalled/stalling variations
+    {_WORKER_STALL_ROOT_PATTERN}    # stall/stuck variations
     (?:\s+|[^\w\s])*              # permissive punctuation/spacing between clauses
     re[-\s]*(?:start|set)(?:ed|ing)? # restart/restarting/re-starting and reset/resetting variants
     """,
@@ -2776,7 +2812,7 @@ _WORKER_STALLED_BANNER_PATTERN = re.compile(
 
 
 _WORKER_STALLED_DETECTION_PATTERN = re.compile(
-    r"(\bworker\s+stalled)(?:\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?)?\s+(?:detected|detection)\b",
+    rf"(\bworker\s+{_WORKER_STALL_ROOT_PATTERN})(?:\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?)?\s+(?:detected|detection)\b",
     re.IGNORECASE,
 )
 

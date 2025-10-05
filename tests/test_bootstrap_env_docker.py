@@ -770,6 +770,29 @@ def test_enforce_worker_banner_sanitization_handles_dash_separator() -> None:
     assert metadata["docker_worker_health"] == "flapping"
 
 
+def test_enforce_worker_banner_sanitization_handles_stuck_synonym() -> None:
+    """Stuck phrasing introduced by newer Docker builds should be normalised."""
+
+    metadata: dict[str, str] = {}
+    warnings = [
+        "WARN[0042] moby/buildkit: worker stuck; restarting component=\"vpnkit\" restartCount=2",
+    ]
+
+    harmonised = bootstrap_env._enforce_worker_banner_sanitization(warnings, metadata)
+
+    assert harmonised, "expected sanitized worker warning"
+    assert all("worker stuck; restarting" not in entry.lower() for entry in harmonised)
+    assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_contains_worker_stall_signal_detects_stuck_banner() -> None:
+    """Heuristics should treat stuck workers as stall incidents."""
+
+    message = "WARNING: worker stuck; restarting component=\"vpnkit\""
+
+    assert bootstrap_env._contains_worker_stall_signal(message)
+
+
 def test_enforce_worker_banner_sanitization_handles_resetting_variants() -> None:
     """Resetting phrasing should be harmonised like restart diagnostics."""
 
