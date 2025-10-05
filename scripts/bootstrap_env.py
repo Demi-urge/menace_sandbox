@@ -7581,6 +7581,83 @@ def _finalize_worker_banner_sequences(
     return sanitized
 
 
+def _sanitize_worker_json_structure(
+    payload: object, metadata: MutableMapping[str, str]
+) -> tuple[object, bool]:
+    """Recursively scrub ``worker stalled`` banners from JSON-compatible objects."""
+
+    if isinstance(payload, str):
+        normalized = _normalise_worker_stalled_phrase(payload)
+        lowered = normalized.casefold()
+        banner_like = "worker stalled; restarting" in lowered or (
+            "restart" in lowered and _contains_worker_stall_signal(normalized)
+        )
+
+        if not banner_like:
+            return payload, False
+
+        cleaned, extracted = _normalise_docker_warning(payload)
+        if not cleaned:
+            cleaned = _WORKER_STALLED_PRIMARY_NARRATIVE
+
+        if extracted:
+            for key, value in extracted.items():
+                metadata.setdefault(key, value)
+
+        return cleaned, cleaned != payload
+
+    if isinstance(payload, MappingABC):
+        updated: dict[object, object] = {}
+        changed = False
+
+        for key, value in payload.items():
+            sanitized, mutated = _sanitize_worker_json_structure(value, metadata)
+            updated[key] = sanitized
+            changed = changed or mutated
+
+        return updated, changed
+
+    if isinstance(payload, SequenceABC) and not isinstance(
+        payload, (str, bytes, bytearray, memoryview)
+    ):
+        updated_sequence: list[object] = []
+        changed = False
+
+        for item in payload:
+            sanitized, mutated = _sanitize_worker_json_structure(item, metadata)
+            updated_sequence.append(sanitized)
+            changed = changed or mutated
+
+        if isinstance(payload, tuple):
+            return tuple(updated_sequence), changed
+
+        return updated_sequence, changed
+
+    return payload, False
+
+
+def _sanitize_worker_json_payload(
+    raw_text: str, metadata: MutableMapping[str, str]
+) -> tuple[str | None, bool]:
+    """Sanitise JSON blobs that embed worker stall diagnostics."""
+
+    trimmed = raw_text.strip()
+    if not trimmed or trimmed[0] not in "[{":
+        return None, False
+
+    try:
+        decoded = json.loads(trimmed)
+    except ValueError:
+        return None, False
+
+    sanitized, changed = _sanitize_worker_json_structure(decoded, metadata)
+    if not changed:
+        return None, False
+
+    rendered = json.dumps(sanitized, separators=(",", ":"), ensure_ascii=False)
+    return rendered, True
+
+
 def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None:
     """Purge residual literal stall banners from metadata artefacts."""
 
@@ -7589,14 +7666,35 @@ def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None
         if not text_value:
             continue
 
+        original_value = text_value
+
+        json_sanitized, mutated = _sanitize_worker_json_payload(text_value, metadata)
+        if mutated and json_sanitized is not None:
+            normalized_json = _normalize_worker_banner_characters(json_sanitized)
+            lowered_json = normalized_json.casefold()
+            if "worker stalled; restarting" not in lowered_json and not (
+                "restart" in lowered_json and _contains_worker_stall_signal(normalized_json)
+            ):
+                metadata[key] = json_sanitized
+                digest = _fingerprint_worker_banner(original_value)
+                if digest:
+                    fingerprint_key = f"{key}_fingerprint"
+                    metadata.setdefault(fingerprint_key, digest)
+                continue
+
+            text_value = json_sanitized
+
         normalized = _normalize_worker_banner_characters(text_value)
-        if "worker stalled; restarting" not in normalized.casefold():
+        lowered = normalized.casefold()
+        if "worker stalled; restarting" not in lowered and not (
+            "restart" in lowered and _contains_worker_stall_signal(normalized)
+        ):
             continue
 
         sanitized_value = _sanitize_worker_banner_text(text_value)
-        digest = _fingerprint_worker_banner(text_value)
+        digest = _fingerprint_worker_banner(original_value)
 
-        if sanitized_value and sanitized_value != text_value:
+        if sanitized_value and sanitized_value != metadata.get(key):
             metadata[key] = sanitized_value
         elif isinstance(raw_value, (bytes, bytearray, memoryview)):
             metadata[key] = text_value
