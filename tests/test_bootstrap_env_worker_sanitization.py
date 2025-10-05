@@ -178,6 +178,15 @@ def test_worker_banner_html_entity_semicolon_is_decoded() -> None:
     assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
 
 
+def test_fullwidth_worker_banner_is_normalized() -> None:
+    message = "ＷＡＲＮＩＮＧ： Ｗｏｒｋｅｒ ｓｔａｌｌｅｄ； ｒｅｓｔａｒｔｉｎｇ"
+
+    cleaned, _ = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert "docker desktop" in cleaned.lower()
+
+
 def test_format_worker_restart_reason_strips_prefixes() -> None:
     reason = "because of lingering IO pressure "
 
@@ -265,7 +274,27 @@ def test_worker_banner_nested_json_is_rewritten_by_guard() -> None:
     assert safeguarded
     assert isinstance(safeguarded[0], str)
     assert "worker stalled; restarting" not in safeguarded[0].lower()
-    assert metadata.get("docker_worker_context") == "vpnkit"
+
+
+def test_worker_hibernation_error_code_guidance() -> None:
+    message = "WARNING: worker stalled; restarting (errCode=WSL_VM_HIBERNATED)"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata.get("docker_worker_last_error_code") == "WSL_VM_HIBERNATED"
+    guidance = metadata.get("docker_worker_last_error_guidance_wsl_vm_hibernated")
+    assert guidance
+    assert "fast startup" in guidance.lower()
+
+
+def test_hibernation_inferred_from_context() -> None:
+    message = "worker stalled; restarting after Windows resumed from hibernation"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled" not in cleaned.lower()
+    assert metadata.get("docker_worker_last_error_code") == "WSL_VM_HIBERNATED"
 
 
 def test_worker_banner_split_across_lines_is_stitched_and_rewritten() -> None:

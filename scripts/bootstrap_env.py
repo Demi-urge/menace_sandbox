@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import unicodedata
 from collections.abc import (
     Iterable as IterableABC,
     Mapping as MappingABC,
@@ -229,6 +230,8 @@ _NON_BREAKING_WHITESPACE_CODEPOINTS: tuple[int, ...] = (
     0x00A0,  # NO-BREAK SPACE
     0x2007,  # FIGURE SPACE
     0x202F,  # NARROW NO-BREAK SPACE
+    0x205F,  # MEDIUM MATHEMATICAL SPACE
+    0x3000,  # IDEOGRAPHIC SPACE (full-width space)
 )
 
 _INVISIBLE_WORKER_BANNER_CODEPOINTS: tuple[int, ...] = (
@@ -447,6 +450,7 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": "disk pressure impacting the vpnkit background sync worker",
     "WSL_VM_STOPPED": "a stopped WSL virtual machine",
     "WSL_VM_CRASHED": "a crashed WSL virtual machine",
+    "WSL_VM_HIBERNATED": "a hibernated WSL virtual machine",
     "WSL_VM_SUSPENDED": "a suspended WSL virtual machine",
     "WSL_KERNEL_MISSING": "a missing Windows Subsystem for Linux kernel",
     "HCS_E_ACCESS_DENIED": "an access-denied error from the Host Compute Service",
@@ -593,6 +597,24 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_wsl_vm_suspended": (
                 "Shut down WSL using 'wsl --shutdown', restart Docker Desktop, and avoid suspending the docker-desktop VM"
+            ),
+        },
+    ),
+    "WSL_VM_HIBERNATED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop reported that the WSL virtualization environment resumed from hibernation"
+        ),
+        detail=(
+            "Windows hibernation or Fast Startup left the docker-desktop WSL virtual machine in a suspended state"
+        ),
+        remediation=(
+            "Run 'wsl --shutdown' from an elevated PowerShell session and restart Docker Desktop",
+            "Disable Windows Fast Startup to prevent WSL from entering a hibernated state before launching Docker Desktop",
+            "If hibernation is required, ensure Docker Desktop is fully shut down prior to putting Windows to sleep",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_wsl_vm_hibernated": (
+                "Shut down WSL using 'wsl --shutdown', restart Docker Desktop, and disable Windows Fast Startup to avoid hibernating the docker-desktop VM"
             ),
         },
     ),
@@ -2925,11 +2947,12 @@ def _normalize_worker_banner_characters(message: str) -> str:
     if not message:
         return ""
 
+    normalized = unicodedata.normalize("NFKC", message)
     # ``docker.exe`` on Windows may emit full-width or compatibility punctuation
     # characters when the host locale is configured for East Asian languages.
     # The worker stall detectors rely on ASCII separators, so normalise these
     # variants to their half-width counterparts before applying the heuristics.
-    normalized = html.unescape(message)
+    normalized = html.unescape(normalized)
     normalized = normalized.translate(_WORKER_BANNER_CHARACTER_TRANSLATION)
     return normalized
 
@@ -4981,10 +5004,27 @@ def _infer_worker_error_code_from_context(*values: str | None) -> str | None:
     corpus = " ".join(tokens).casefold()
 
     virtualization_markers = ("wsl", "virtual machine", "vm", "docker-desktop")
-    suspension_markers = ("suspend", "suspended", "hibernat", "sleep")
+    suspension_markers = ("suspend", "suspended", "sleep")
+    hibernation_markers = (
+        "hibernat",
+        "fast startup",
+        "fast-startup",
+        "faststart",
+        "hybrid sleep",
+        "resume from sleep",
+        "resumed from sleep",
+        "resumed from hibernation",
+        "hibernated",
+        "hibernation",
+    )
     pause_markers = ("pause", "paused", "standby")
 
-    if any(marker in corpus for marker in virtualization_markers):
+    virtualization_context = any(marker in corpus for marker in virtualization_markers)
+    hibernation_context = any(marker in corpus for marker in hibernation_markers)
+
+    if virtualization_context or hibernation_context:
+        if hibernation_context:
+            return "WSL_VM_HIBERNATED"
         if any(marker in corpus for marker in suspension_markers):
             return "WSL_VM_SUSPENDED"
         if any(marker in corpus for marker in pause_markers):
@@ -6147,12 +6187,14 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
         return None, {}
 
     metadata: dict[str, str] = {}
-    if _contains_worker_stall_signal(cleaned):
+    normalized_cleaned = _normalise_worker_stalled_phrase(cleaned)
+    if _contains_worker_stall_signal(normalized_cleaned):
         metadata["docker_worker_health"] = "flapping"
 
         normalized_original = _normalise_worker_stalled_phrase(message)
         descriptors, worker_metadata = _extract_worker_flapping_descriptors(
-            message, normalized_message=normalized_original
+            message,
+            normalized_message=normalized_original,
         )
         metadata.update(worker_metadata)
 
