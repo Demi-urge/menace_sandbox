@@ -6612,7 +6612,7 @@ class _WorkerWarningAggregator:
 def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], dict[str, str]]:
     """Normalise warning ``messages`` and capture associated metadata."""
 
-    normalized: list[str] = []
+    normalized_entries: list[tuple[str, str | None]] = []
     metadata: dict[str, str] = {}
     seen: set[str] = set()
 
@@ -6632,10 +6632,34 @@ def _normalize_warning_collection(messages: Iterable[str]) -> tuple[list[str], d
         if key in seen:
             continue
         seen.add(key)
-        normalized.append(cleaned)
+        severity = None
+        if extracted:
+            severity = extracted.get("docker_worker_health_severity")
+        normalized_entries.append((cleaned, severity))
 
     worker_metadata = worker_aggregator.finalize()
     metadata.update(worker_metadata)
+
+    normalized = [message for message, _ in normalized_entries]
+
+    summary = worker_metadata.get("docker_worker_health_summary") if worker_metadata else None
+    if isinstance(summary, str):
+        summary = summary.strip()
+    else:
+        summary = None
+
+    if summary:
+        filtered_messages: list[str] = []
+        for message, severity in normalized_entries:
+            if _looks_like_worker_guidance(message):
+                normalized_severity = (severity or "").strip().lower()
+                if normalized_severity != "info":
+                    continue
+            filtered_messages.append(message)
+        filtered_messages.insert(0, summary)
+        normalized = _coalesce_iterable(filtered_messages)
+    else:
+        normalized = _coalesce_iterable(normalized)
 
     return normalized, metadata
 
@@ -7855,12 +7879,12 @@ def _classify_worker_flapping(
     if occurrence_count:
         plural = "s" if occurrence_count != 1 else ""
         details.append(
-            f"Docker emitted {occurrence_count} worker stall warning{plural} during diagnostics."
+            f"Docker emitted {occurrence_count} warning{plural} about stalled Docker Desktop workers during diagnostics."
         )
         if occurrence_count >= 4:
             _register_reason(
                 "warning_frequency",
-                "Docker emitted four or more worker stall warnings during a single diagnostics run",
+                "Docker emitted four or more warnings about stalled Docker Desktop workers during a single diagnostics run",
             )
 
     if telemetry.context_occurrences:
