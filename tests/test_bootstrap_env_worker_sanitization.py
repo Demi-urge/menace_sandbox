@@ -151,3 +151,22 @@ def test_worker_banner_nested_json_is_rewritten_by_guard() -> None:
     assert isinstance(safeguarded[0], str)
     assert "worker stalled; restarting" not in safeguarded[0].lower()
     assert metadata.get("docker_worker_context") == "vpnkit"
+
+
+def test_worker_banner_split_across_lines_is_stitched_and_rewritten() -> None:
+    messages = [
+        "WARNING: worker stalled;",
+        'restarting component="vpnkit" restartCount=2',
+        "lastError=\"worker stalled; restarting\"",
+    ]
+
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression(messages, metadata)  # type: ignore[attr-defined]
+
+    assert all(
+        "worker stalled" not in entry.lower()
+        for entry in safeguarded
+        if isinstance(entry, str)
+    )
+    assert metadata.get("docker_worker_health") == "flapping"
