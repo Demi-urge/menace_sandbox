@@ -324,6 +324,19 @@ def test_normalise_docker_warning_handles_auxiliary_worker_stall_banner() -> Non
     assert metadata["docker_worker_context"] == "background sync"
 
 
+def test_normalise_docker_warning_merges_worker_banner_split_lines() -> None:
+    message = "WARNING: worker stalled;\nrestarting due to IO pressure\ncomponent=\"vpnkit\" restartCount=2"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    normalized = cleaned.lower()
+    assert "worker stalled; restarting" not in normalized
+    assert "docker desktop" in normalized
+    assert "io pressure" in normalized
+    assert metadata["docker_worker_context"] == "vpnkit"
+    assert metadata["docker_worker_restart_count"] == "2"
+
+
 def test_normalise_docker_warning_extracts_key_value_context() -> None:
     message = (
         'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting" '
