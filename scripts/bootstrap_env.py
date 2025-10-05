@@ -317,6 +317,70 @@ _WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
 #
 
 _WORKER_STALL_ROOT_PATTERN = r"(?:stall(?:ed|ing|s)?|stuck(?:ing)?)"
+_WORKER_STALL_FOLLOWER_WORDS: tuple[str, ...] = (
+    "be",
+    "been",
+    "being",
+    "become",
+    "becomes",
+    "becoming",
+    "became",
+    "got",
+    "gets",
+    "getting",
+    "gotten",
+    "stay",
+    "stays",
+    "stayed",
+    "staying",
+    "remain",
+    "remains",
+    "remaining",
+    "remained",
+    "keep",
+    "keeps",
+    "kept",
+    "keeping",
+    "continue",
+    "continues",
+    "continued",
+    "continuing",
+    "to",
+)
+_WORKER_STALL_INTENSIFIER_WORDS: tuple[str, ...] = (
+    "still",
+    "yet",
+    "again",
+    "persistently",
+    "chronically",
+    "repeatedly",
+    "constantly",
+    "continually",
+    "continuously",
+    "regularly",
+    "periodically",
+    "sporadically",
+    "intermittently",
+    "frequently",
+    "briefly",
+    "temporarily",
+    "newly",
+    "recently",
+    "consistently",
+    "always",
+    "ever",
+    "just",
+    "even",
+    "almost",
+    "nearly",
+    "virtually",
+)
+_WORKER_STALL_FOLLOWER_PATTERN = "|".join(
+    re.escape(word) for word in _WORKER_STALL_FOLLOWER_WORDS
+)
+_WORKER_STALL_INTENSIFIER_PATTERN = "|".join(
+    re.escape(word) for word in _WORKER_STALL_INTENSIFIER_WORDS
+)
 _WORKER_STALL_KEYWORD_TOKENS: frozenset[str] = frozenset(
     {
         "stall",
@@ -327,6 +391,29 @@ _WORKER_STALL_KEYWORD_TOKENS: frozenset[str] = frozenset(
         "sticking",
     }
 )
+
+_WORKER_STALLED_VARIATIONS_BODY = rf"""
+    (?:
+        \s+(?:has|have|had|is|was|are|were)
+        |
+        \s+(?:may|might|could|should|would)
+        |
+        \s+(?:appears?|appeared|appearing|seems?|seemed|seeming)(?:\s+to)?(?:\s+have)?(?:\s+been)?
+        |
+        \s+(?:remains?|remaining|remained)
+        |
+        \s+(?:stays?|stayed|staying)
+        |
+        \s+(?:keeps?|kept|keeping)
+        |
+        \s+(?:continues?|continued|continuing)(?:\s+to)?
+        |
+        \s+(?:{_WORKER_STALL_FOLLOWER_PATTERN})
+        |
+        \s+(?:{_WORKER_STALL_INTENSIFIER_PATTERN})
+    )+
+    \s+{_WORKER_STALL_ROOT_PATTERN}
+"""
 
 _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "stalled_restart": "an automatic restart after a stall",
@@ -939,10 +1026,18 @@ _WORKER_INLINE_CONTEXT_STOPWORDS = {
     "and",
     "are",
     "been",
+    "became",
+    "become",
+    "becomes",
+    "becoming",
     "could",
     "had",
     "has",
     "have",
+    "got",
+    "gets",
+    "getting",
+    "gotten",
     "is",
     "may",
     "might",
@@ -950,15 +1045,31 @@ _WORKER_INLINE_CONTEXT_STOPWORDS = {
     "possibly",
     "probably",
     "reportedly",
+    "remain",
+    "remained",
+    "remaining",
+    "remains",
     "seems",
     "seemed",
     "seeming",
     "should",
+    "stay",
+    "stayed",
+    "staying",
+    "stays",
     "still",
     "that",
     "the",
     "this",
     "to",
+    "keep",
+    "keeps",
+    "kept",
+    "keeping",
+    "continue",
+    "continued",
+    "continuing",
+    "continues",
     "virtually",
     "was",
     "were",
@@ -1045,16 +1156,7 @@ def _rewrite_inline_worker_contexts(message: str) -> str:
 _WORKER_STALLED_VARIATIONS_PATTERN = re.compile(
     rf"""
     worker
-    (?:
-        \s+(?:has|have|had|is|was|are|were)(?:\s+been)?
-        |
-        \s+(?:appears?|appeared|appearing|seems?|seemed|seeming)(?:\s+to)?(?:\s+have)?(?:\s+been)?
-        |
-        \s+(?:may|might|could|should|would)\s+(?:have)?(?:\s+been)?
-        |
-        \s+(?:apparently|reportedly|likely|probably|possibly|potentially|maybe|virtually|nearly|almost|still|persistently|chronically|repeatedly)
-    )+
-    \s+{_WORKER_STALL_ROOT_PATTERN}
+{_WORKER_STALLED_VARIATIONS_BODY}
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -2759,6 +2861,13 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             r"\bworker\s+(?:has|have|had|is|are|was|were)\s+(?:been\s+)?stuck\b",
             re.IGNORECASE,
+        ),
+        "worker stalled",
+    ),
+    (
+        re.compile(
+            rf"\bworker{_WORKER_STALLED_VARIATIONS_BODY}\b",
+            re.IGNORECASE | re.VERBOSE,
         ),
         "worker stalled",
     ),
