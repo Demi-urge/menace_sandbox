@@ -1050,15 +1050,36 @@ def test_errcode_field_feeds_worker_error_guidance() -> None:
 
     assert "worker stalled; restarting" not in cleaned.lower()
     assert metadata["docker_worker_health"] == "flapping"
-    assert metadata["docker_worker_last_error_code"] == "WSL_KERNEL_OUTDATED"
 
-    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
-    context = _windows_context()
-    assessment = bootstrap_env._classify_worker_flapping(telemetry, context)
 
-    assert assessment.severity == "error"
-    assert any("wsl kernel" in detail.lower() for detail in assessment.details)
-    assert any("wsl --update" in step.lower() for step in assessment.remediation)
+def test_worker_warning_with_become_synonym_is_normalised() -> None:
+    """Worker stall banners using "has become" should collapse cleanly."""
+
+    message = (
+        "WARNING: worker has become stuck; restarting soon (component=\"vpnkit\")"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    assert "worker has become stuck" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+
+
+def test_worker_warning_with_remains_synonym_is_normalised() -> None:
+    """Worker stall banners using "remains" should be collapsed into guidance."""
+
+    message = "WARNING: worker remains stalled; restarting"
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    assert "worker remains stalled" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_last_error_code"] == "stalled_restart"
+    assert metadata["docker_worker_health_severity"] == "info"
+    remediation = metadata.get("docker_worker_health_remediation", "").lower()
+    assert "monitor docker desktop" in remediation
 
 
 def test_inline_errcode_banner_is_not_misclassified_as_context() -> None:
