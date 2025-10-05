@@ -1554,7 +1554,10 @@ def _contains_worker_stall_signal(message: str) -> bool:
         return True
 
     condensed = re.sub(r"[\s_-]+", "", normalized).casefold()
-    recovery_tokens = tuple(marker.replace(" ", "") for marker in _WORKER_RECOVERY_MARKERS)
+    recovery_tokens = tuple(
+        marker.replace(" ", "").replace("-", "").replace("_", "")
+        for marker in _WORKER_RECOVERY_MARKERS
+    )
     recovery_in_lowered = any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS)
     recovery_in_condensed = any(token in condensed for token in recovery_tokens)
 
@@ -3469,6 +3472,24 @@ _WORKER_RECOVERY_MARKERS: tuple[str, ...] = (
     "resetting",
     "reset-loop",
     "reset loop",
+    "relaunch",
+    "relaunching",
+    "re-launch",
+    "re-launching",
+    "relaunch-loop",
+    "relaunch loop",
+    "reinitialize",
+    "reinitializing",
+    "reinitialise",
+    "reinitialising",
+    "re-initialize",
+    "re-initializing",
+    "re-initialise",
+    "re-initialising",
+    "reinitialization",
+    "reinitialisation",
+    "reinit",
+    "reiniting",
 )
 
 

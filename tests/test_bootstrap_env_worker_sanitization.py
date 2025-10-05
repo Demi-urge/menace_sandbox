@@ -152,6 +152,34 @@ def test_worker_banner_subject_skips_severity_prefixes() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "phrase",
+    (
+        "reinitializing",
+        "re-initializing",
+        "reinitialising",
+        "relaunching",
+        "re-launching",
+        "reiniting",
+    ),
+)
+def test_worker_banner_recovery_synonyms_are_sanitized(phrase: str) -> None:
+    message = (
+        f'WARNING: worker stalled; {phrase} component="vpnkit" restartCount=2 '
+        "lastError=\"vpnkit background sync stalled\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    lowered = cleaned.lower()
+    assert "worker stalled; restarting" not in lowered
+    assert phrase.lower() not in lowered
+    assert metadata.get("docker_worker_health") == "flapping"
+    details = metadata.get("docker_worker_health_details", "").lower()
+    assert "automatically restarted" in details
+    assert "vpnkit" in details
+
+
 def test_worker_banner_ignores_structured_log_metadata() -> None:
     message = (
         'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting"'
