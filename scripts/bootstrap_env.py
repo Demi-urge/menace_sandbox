@@ -307,6 +307,21 @@ _WORKER_ERROR_NORMALISERS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
 )
 
+_WORKER_ERROR_CODE_NORMALISATION: dict[str, str] = {
+    "worker_stalled": "worker_stalled",
+}
+
+for _pattern, _code, _narrative in _WORKER_ERROR_NORMALISERS:
+    canonical = "worker_stalled" if _code == "stalled_restart" else _code
+    _WORKER_ERROR_CODE_NORMALISATION[_code.casefold()] = canonical
+    _WORKER_ERROR_CODE_NORMALISATION[_code.replace("-", "_").casefold()] = canonical
+    _WORKER_ERROR_CODE_NORMALISATION[_narrative.casefold()] = canonical
+
+_WORKER_ERROR_NARRATIVE_LOOKUP: dict[str, str] = {
+    narrative.casefold(): "worker_stalled" if code == "stalled_restart" else code
+    for _pattern, code, narrative in _WORKER_ERROR_NORMALISERS
+}
+
 _WORKER_STALLED_PRIMARY_CODE = _WORKER_ERROR_NORMALISERS[0][1]
 _WORKER_STALLED_PRIMARY_NARRATIVE = _WORKER_ERROR_NORMALISERS[0][2]
 _WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
@@ -6666,6 +6681,19 @@ def _normalise_docker_warning(message: str) -> tuple[str | None, dict[str, str]]
 
     _redact_worker_banner_artifacts(metadata)
 
+    for key in ("docker_worker_last_error_interpreted", "docker_worker_last_error_category"):
+        classification = metadata.get(key)
+        if not classification:
+            continue
+
+        canonical = _canonicalize_worker_classification(classification)
+        if canonical:
+            metadata[key] = canonical
+            continue
+
+        if isinstance(classification, str) and _contains_worker_stall_signal(classification):
+            metadata[key] = "worker_stalled"
+
     return cleaned, metadata
 
 
@@ -7658,12 +7686,69 @@ def _sanitize_worker_json_payload(
     return rendered, True
 
 
+def _canonicalize_worker_classification(value: object) -> str | None:
+    """Return a canonical worker classification token derived from *value*."""
+
+    text_value = _coerce_textual_value(value)
+    if not text_value:
+        return None
+
+    cleaned = _clean_worker_metadata_value(text_value)
+    if not cleaned:
+        return None
+
+    lowered = cleaned.casefold()
+    token_candidate = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+
+    if token_candidate in _WORKER_ERROR_CODE_NORMALISATION:
+        return _WORKER_ERROR_CODE_NORMALISATION[token_candidate]
+
+    if lowered in _WORKER_ERROR_CODE_NORMALISATION:
+        return _WORKER_ERROR_CODE_NORMALISATION[lowered]
+
+    harmonised = _normalise_worker_stalled_phrase(cleaned)
+    harmonised_lower = harmonised.casefold()
+    harmonised_token = re.sub(r"[^a-z0-9]+", "_", harmonised_lower).strip("_")
+
+    if harmonised_token in _WORKER_ERROR_CODE_NORMALISATION:
+        return _WORKER_ERROR_CODE_NORMALISATION[harmonised_token]
+
+    harmonised_collapsed = re.sub(r"\s+", " ", harmonised_lower).strip()
+    narrative_code = _WORKER_ERROR_NARRATIVE_LOOKUP.get(harmonised_collapsed)
+    if narrative_code:
+        return narrative_code
+
+    for pattern, code, _narrative in _WORKER_ERROR_NORMALISERS:
+        if pattern.search(harmonised_lower) or pattern.search(lowered):
+            return "worker_stalled" if code == "stalled_restart" else code
+
+    if _contains_worker_stall_signal(cleaned):
+        return "worker_stalled"
+
+    return None
+
+
 def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None:
     """Purge residual literal stall banners from metadata artefacts."""
 
     for key, raw_value in list(metadata.items()):
         text_value = _coerce_textual_value(raw_value)
         if not text_value:
+            continue
+
+        if key in _WORKER_METADATA_CLASSIFICATION_KEYS:
+            canonical = _canonicalize_worker_classification(text_value)
+            if canonical:
+                metadata[key] = canonical
+                continue
+
+            if _contains_worker_stall_signal(text_value):
+                metadata[key] = "worker_stalled"
+                continue
+
+            cleaned = _clean_worker_metadata_value(text_value)
+            if cleaned:
+                metadata[key] = cleaned
             continue
 
         original_value = text_value
@@ -7702,6 +7787,14 @@ def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None
         fingerprint_key = f"{key}_fingerprint"
         if digest and not metadata.get(fingerprint_key):
             metadata[fingerprint_key] = digest
+
+
+_WORKER_METADATA_CLASSIFICATION_KEYS: frozenset[str] = frozenset(
+    {
+        "docker_worker_last_error_category",
+        "docker_worker_last_error_interpreted",
+    }
+)
 
 
 _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], ...] = (

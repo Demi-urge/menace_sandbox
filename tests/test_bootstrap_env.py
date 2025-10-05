@@ -945,6 +945,30 @@ def test_normalise_docker_warning_handles_experienced_stall_variant() -> None:
     )
 
 
+def test_finalize_worker_metadata_preserves_classification_tokens() -> None:
+    metadata = {
+        "docker_worker_last_error_interpreted": "WARNING: worker stalled; restarting",
+        "docker_worker_last_error_category": "stalled_restart",
+    }
+
+    bootstrap_env._finalize_worker_banner_metadata(metadata)
+
+    assert metadata["docker_worker_last_error_interpreted"] == "worker_stalled"
+    assert metadata["docker_worker_last_error_category"] == "worker_stalled"
+
+
+def test_finalize_worker_metadata_canonicalizes_restart_loop_label() -> None:
+    metadata = {
+        "docker_worker_last_error_interpreted": (
+            "Docker Desktop detected that a background worker entered a restart loop"
+        ),
+    }
+
+    bootstrap_env._finalize_worker_banner_metadata(metadata)
+
+    assert metadata["docker_worker_last_error_interpreted"] == "restart_loop"
+
+
 def test_normalise_docker_warning_extracts_context_from_has_stalled_variant() -> None:
     message = (
         "WARN[0002] [vpnkit] worker has stalled; restarting in ~30s due to disk latency"
