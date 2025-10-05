@@ -2262,6 +2262,36 @@ def test_structured_worker_message_sanitised_when_only_banner() -> None:
     assert "worker stalled" not in raw_value.lower()
 
 
+def test_finalize_metadata_sanitises_nested_json_payloads() -> None:
+    """Nested JSON metadata values should be rewritten without leaking stall banners."""
+
+    metadata: dict[str, str] = {
+        "docker_worker_json_snapshot": json.dumps(
+            {
+                "status": "worker stalled; restarting component=\"vpnkit\"",
+                "history": [
+                    "worker stalled; restarting due to IO pressure",
+                    {
+                        "message": "worker stalled; restarting",
+                        "detail": "worker stalled; restarting (errCode=VPNKIT_VSOCK_TIMEOUT)",
+                    },
+                ],
+            }
+        )
+    }
+
+    bootstrap_env._finalize_worker_banner_metadata(metadata)
+
+    snapshot = metadata["docker_worker_json_snapshot"]
+    parsed = json.loads(snapshot)
+
+    serialised = json.dumps(parsed)
+    assert "worker stalled; restarting" not in serialised.lower()
+    assert "Docker Desktop automatically restarted" in serialised
+
+    fingerprint_key = "docker_worker_json_snapshot_fingerprint"
+    assert fingerprint_key in metadata
+
 def test_error_code_guidance_covers_hns_service_unavailable() -> None:
     """Explicit HNS error codes should surface actionable remediation steps."""
 
