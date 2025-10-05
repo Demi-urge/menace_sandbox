@@ -6442,6 +6442,74 @@ def _redact_worker_banner_artifacts(metadata: MutableMapping[str, str]) -> None:
             metadata["docker_worker_nested_banner_fingerprints"] = merged
 
 
+def _sanitize_worker_json_fragment(raw: str) -> tuple[str | None, bool]:
+    """Sanitise Docker worker stall banners embedded inside JSON fragments.
+
+    Docker Desktop occasionally serialises worker diagnostics as JSON before
+    emitting them through stderr or auxiliary telemetry channels.  When those
+    payloads are collected verbatim we need to rewrite any ``worker stalled``
+    phrasing without discarding the surrounding structure so that downstream
+    tooling can continue to reason about the metadata.  This helper performs a
+    tolerant JSON decode, recursively rewrites any string values that resemble a
+    worker stall banner, and re-serialises the structure using a stable format
+    so diffs remain deterministic.
+    """
+
+    if not raw:
+        return None, False
+
+    candidate = raw.strip()
+    if not candidate or candidate[0] not in "[{" or candidate[-1] not in "]}":
+        return None, False
+
+    try:
+        decoded = json.loads(candidate)
+    except (TypeError, ValueError):
+        return None, False
+
+    def _rewrite(node: object) -> tuple[object, bool]:
+        if isinstance(node, str):
+            normalized = _normalise_worker_stalled_phrase(node)
+            if _contains_worker_stall_signal(normalized):
+                return _sanitize_worker_banner_text(node), True
+            return node, False
+        if isinstance(node, list):
+            mutated = False
+            rewritten: list[object] = []
+            for item in node:
+                replacement, changed = _rewrite(item)
+                mutated = mutated or changed
+                rewritten.append(replacement)
+            if mutated:
+                return rewritten, True
+            return node, False
+        if isinstance(node, dict):
+            mutated = False
+            rewritten_dict: dict[str, object] = {}
+            for key, value in node.items():
+                replacement, changed = _rewrite(value)
+                mutated = mutated or changed
+                rewritten_dict[key] = replacement
+            if mutated:
+                return rewritten_dict, True
+            return node, False
+        return node, False
+
+    rewritten, mutated = _rewrite(decoded)
+    if not mutated:
+        return None, False
+
+    try:
+        # ``sort_keys`` keeps the representation deterministic so that the same
+        # payload always produces identical sanitised output irrespective of key
+        # ordering in the original JSON blob.
+        rendered = json.dumps(rewritten, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):  # pragma: no cover - defensive guard
+        return None, False
+
+    return rendered, True
+
+
 def _sanitize_worker_metadata_value(
     value: str, *, prefer_canonical: bool = False
 ) -> tuple[str | None, str | None]:
@@ -6457,6 +6525,10 @@ def _sanitize_worker_metadata_value(
         return None, None
 
     digest = _fingerprint_worker_banner(value)
+
+    json_sanitized, json_changed = _sanitize_worker_json_fragment(value)
+    if json_changed and json_sanitized:
+        return json_sanitized, digest
 
     separators = re.compile(r"[;\n]\s*")
     parts = [segment.strip() for segment in separators.split(value) if segment.strip()]
