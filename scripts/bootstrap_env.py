@@ -847,10 +847,50 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
             ),
         },
     ),
+    "HCS_E_HYPERV_NOT_RUNNING": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that the Hyper-V hypervisor is not running",
+        detail=(
+            "Hyper-V must be running to host the docker-desktop virtual machine. When the hypervisor is disabled or stopped, Docker Desktop workers continually restart while waiting for the virtualization stack."
+        ),
+        remediation=(
+            "Open an elevated PowerShell session and run 'bcdedit /set hypervisorlaunchtype auto' to ensure the Hyper-V hypervisor starts automatically",
+            "Restart the 'Hyper-V Virtual Machine Management' and 'Hyper-V Host Compute Service' Windows services",
+            "Reboot Windows after re-enabling Hyper-V so Docker Desktop can relaunch its virtualization backend",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_hcs_e_hyperv_not_running": (
+                "Re-enable the Hyper-V hypervisor (hypervisorlaunchtype auto) and restart the Hyper-V services"
+            ),
+        },
+    ),
+    "HCS_E_HYPERV_NOT_PRESENT": _WorkerErrorCodeDirective(
+        reason="Docker Desktop detected that required Hyper-V features are not installed",
+        detail=(
+            "The Windows Hyper-V feature stack (including Virtual Machine Platform) is required to host the docker-desktop virtual machine. When those features are missing Docker Desktop cannot start its workers."
+        ),
+        remediation=(
+            "Enable 'Hyper-V', 'Virtual Machine Platform', and 'Windows Hypervisor Platform' via OptionalFeatures.exe or the 'Enable-WindowsOptionalFeature' PowerShell cmdlet",
+            "Ensure hardware virtualization support is enabled in firmware (Intel VT-x/AMD-V)",
+            "Reboot Windows after installing Hyper-V features and relaunch Docker Desktop",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_hcs_e_hyperv_not_present": (
+                "Install the Hyper-V and Virtual Machine Platform Windows features and reboot"
+            ),
+        },
+    ),
 }
 
 _WORKER_ERROR_CODE_GUIDANCE.setdefault(
     "WSL2_VM_SUSPENDED", _WORKER_ERROR_CODE_GUIDANCE["WSL_VM_SUSPENDED"]
+)
+_WORKER_ERROR_CODE_GUIDANCE.setdefault(
+    "HYPERV_NOT_RUNNING",
+    _WORKER_ERROR_CODE_GUIDANCE["HCS_E_HYPERV_NOT_RUNNING"],
+)
+_WORKER_ERROR_CODE_GUIDANCE.setdefault(
+    "HYPERV_NOT_PRESENT",
+    _WORKER_ERROR_CODE_GUIDANCE["HCS_E_HYPERV_NOT_PRESENT"],
 )
 
 _WORKER_ERROR_NARRATIVES: tuple[str, ...] = tuple(
@@ -4866,6 +4906,38 @@ def _infer_worker_error_code_from_context(*values: str | None) -> str | None:
             return "WSL_VM_SUSPENDED"
         if any(marker in corpus for marker in pause_markers):
             return "WSL_VM_PAUSED"
+
+    hyperv_markers = (
+        "hyper-v",
+        "hyperv",
+        "hypervisor",
+        "host compute service",
+        "hcs",
+        "vm compute service",
+    )
+    if any(marker in corpus for marker in hyperv_markers):
+        missing_markers = (
+            "not present",
+            "missing",
+            "not installed",
+            "absent",
+            "install hyper-v",
+        )
+        offline_markers = (
+            "not running",
+            "stopped",
+            "stop",  # covers "cannot stop" / "stopped"
+            "disabled",
+            "turned off",
+            "hypervisorlaunchtype off",
+            "failed to start",
+            "cannot start",
+        )
+
+        if any(marker in corpus for marker in missing_markers):
+            return "HCS_E_HYPERV_NOT_PRESENT"
+        if any(marker in corpus for marker in offline_markers):
+            return "HCS_E_HYPERV_NOT_RUNNING"
 
     if "vsock" in corpus or "hyper-v socket" in corpus or "hvsock" in corpus:
         timeout_markers = (

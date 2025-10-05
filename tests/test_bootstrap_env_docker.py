@@ -469,6 +469,42 @@ def test_worker_warning_wsl_vm_suspended_inferred() -> None:
     details = metadata["docker_worker_health_details"].lower()
     assert "suspend" in details or "hibern" in details
 
+
+def test_worker_warning_hyperv_not_running_inferred() -> None:
+    """Hyper-V outage phrasing should map to the not-running directive."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vm\" "
+        "lastError=\"Hyper-V hypervisor not running; hypervisorlaunchtype off\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "HCS_E_HYPERV_NOT_RUNNING"
+    remediation = metadata["docker_worker_health_remediation"].lower()
+    assert "hyper-v" in remediation
+    assert "hypervisor" in remediation or "hypervisorlaunchtype" in remediation
+
+
+def test_worker_warning_hyperv_not_present_errcode() -> None:
+    """Explicit Hyper-V missing codes should surface installation guidance."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vm\" "
+        "errCode=HCS_E_HYPERV_NOT_PRESENT "
+        "lastError=\"Hyper-V features are not installed\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "HCS_E_HYPERV_NOT_PRESENT"
+    details = metadata["docker_worker_health_details"].lower()
+    assert "hyper-v" in details or "virtual machine platform" in details
+    remediation = metadata["docker_worker_health_remediation"].lower()
+    assert "optionalfeatures" in remediation or "enable" in remediation
+
 def test_collect_docker_diagnostics_virtualization_without_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
