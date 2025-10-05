@@ -329,7 +329,51 @@ _WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
 # the underlying restart symptoms are identical to the long-standing
 # ``worker stalled`` banner.  Treat those synonyms as equivalent so the
 # sanitisation pipeline collapses every variation into the canonical narrative.
-_WORKER_STALL_ROOT_PATTERN = r"(?:stall(?:ed|ing|s)?|stuck(?:ing)?|hang(?:ed|ing|s)?|hung|freez(?:e|ing|ed|es)?|froz(?:e|en))"
+_WORKER_STALL_ROOT_PATTERN = r"""(?x:
+    (?:
+        stall(?:ed|ing|s)?
+        |
+        stuck(?:ing)?
+        |
+        hang(?:ed|ing|s)?
+        |
+        hung
+        |
+        freez(?:e|ing|ed|es)?
+        |
+        froz(?:e|en)
+        |
+        unrespons(?:ive|iveness)?
+        |
+        non[-_\s]?respons(?:ive|iveness)?
+        |
+        not[-_\s]?respond(?:ing|ed)?
+        |
+        no[-_\s]?response
+        |
+        timeout
+        |
+        timed[-_\s]?out
+        |
+        unreach(?:able|ability)?
+        |
+        no[-_\s]?heartbeat
+        |
+        heartbeat[-_\s]?lost
+        |
+        lost[-_\s]?heartbeat
+        |
+        off[-_\s]?line
+        |
+        offline
+        |
+        disconnect(?:ed|ing|s)?
+        |
+        no[-_\s]?reply
+        |
+        non[-_\s]?reply
+    )
+)"""
 _WORKER_STALL_FOLLOWER_WORDS: tuple[str, ...] = (
     "be",
     "been",
@@ -410,6 +454,19 @@ _WORKER_STALL_KEYWORD_TOKENS: frozenset[str] = frozenset(
         "freezes",
         "freezing",
         "frozen",
+        "unresponsive",
+        "nonresponsive",
+        "non-responsive",
+        "timeout",
+        "timed",
+        "timedout",
+        "responding",
+        "respond",
+        "response",
+        "unreachable",
+        "heartbeat",
+        "offline",
+        "disconnected",
     }
 )
 
@@ -3371,6 +3428,41 @@ _WORKER_STALL_CANONICALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "worker stalled",
     ),
+    (
+        re.compile(
+            r"""
+            \bworkers?\b
+            (?:
+                \s+(?:has|have|had|is|are|was|were|become|became|becoming|remains?|stays?|stayed|got|getting|gotten)
+            )?
+            (?:\s+(?:been|still|yet|again))?
+            (?:\s+(?:marked|reported|detected))?
+            (?:\s+as)?
+            (?:\s+(?:chronically|persistently|repeatedly|intermittently))?
+            \s*
+            (?:
+                non[-_\s]?responsive
+                |unrespons(?:ive|iveness)?
+                |not[-_\s]?respond(?:ing|ed)?
+                |no[-_\s]?response
+                |timed[-_\s]?out
+                |timeout
+                |unreach(?:able|ability)?
+                |no[-_\s]?heartbeat
+                |heartbeat[-_\s]?lost
+                |lost[-_\s]?heartbeat
+                |off[-_\s]?line
+                |offline
+                |disconnect(?:ed|ing|s)?
+                |no[-_\s]?reply
+                |non[-_\s]?reply
+            )
+            \b
+            """,
+            re.IGNORECASE | re.VERBOSE,
+        ),
+        "worker stalled",
+    ),
 )
 
 
@@ -3401,6 +3493,14 @@ _WORKER_STALL_CONTEXT_HINTS: tuple[str, ...] = (
     "status",
     "background",
     "context=",
+    "unresponsive",
+    "nonresponsive",
+    "respond",
+    "timeout",
+    "heartbeat",
+    "unreachable",
+    "offline",
+    "disconnect",
 )
 
 
@@ -3441,7 +3541,10 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
         return ""
 
     lowered = message.casefold()
-    if "worker" not in lowered or "stall" not in lowered:
+    if "worker" not in lowered:
+        return message
+
+    if not any(keyword in lowered for keyword in _WORKER_STALL_KEYWORD_TOKENS):
         return message
 
     # Restrict rewrites to situations that look like restart diagnostics so we
@@ -7060,7 +7163,9 @@ def _sanitize_worker_banner_text(raw_text: str | None) -> str:
     subject, reason = _derive_worker_banner_subject(raw_text, normalized)
 
     lowered = normalized.casefold()
-    if "worker stalled" in lowered or ("stall" in lowered and "restart" in lowered):
+    if _contains_worker_stall_signal(normalized) or "worker stalled" in lowered or (
+        "stall" in lowered and "restart" in lowered
+    ):
         narrative = _render_worker_banner_narrative(subject, reason)
         if "worker stalled" in narrative.casefold():
             return _WORKER_STALLED_PRIMARY_NARRATIVE
@@ -7322,7 +7427,8 @@ def _looks_like_worker_restart_fragment(message: str) -> bool:
         return False
 
     normalized = _normalize_worker_banner_characters(message)
-    collapsed = re.sub(r"\s+", " ", normalized).strip()
+    harmonised = _normalise_worker_stalled_phrase(normalized)
+    collapsed = re.sub(r"\s+", " ", harmonised).strip()
     if not collapsed:
         return False
 
@@ -7599,7 +7705,8 @@ def _looks_like_literal_worker_restart_banner(message: str) -> bool:
         return False
 
     normalized = _normalize_worker_banner_characters(message)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
+    harmonised = _normalise_worker_stalled_phrase(normalized)
+    normalized = re.sub(r"\s+", " ", harmonised).strip()
     if not normalized:
         return False
 
