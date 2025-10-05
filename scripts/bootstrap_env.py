@@ -525,6 +525,8 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_BACKGROUND_SYNC_CPU_PRESSURE": "CPU pressure impacting the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_MEMORY_PRESSURE": "memory pressure impacting the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_NETWORK_PRESSURE": "network pressure impacting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_NETWORK_JITTER": "network jitter disrupting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_IO_THROTTLED": "host I/O throttling slowing the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_NETWORK_CONGESTION": "network congestion impacting the vpnkit background sync worker",
     "VPNKIT_VSOCK_SIGNAL_LOST": "a vsock signal interruption between Windows and the Docker VM",
     "VPNKIT_VSOCK_CHANNEL_LOST": "a vsock channel interruption between Windows and the Docker VM",
@@ -792,6 +794,26 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
             ),
         },
     ),
+    "VPNKIT_BACKGROUND_SYNC_IO_THROTTLED": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected that host I/O throttling is delaying the vpnkit background sync worker"
+        ),
+        detail=(
+            "Windows storage stacks occasionally throttle heavy read/write bursts when background maintenance runs. "
+            "During those throttling windows vpnkit cannot checkpoint port forwarding and DNS state, so Docker "
+            "restarts the worker repeatedly until throughput recovers."
+        ),
+        remediation=(
+            "Temporarily pause disk-heavy backup or synchronisation utilities that saturate the Docker Desktop data disk",
+            "Allow Windows maintenance tasks (such as Storage Sense or Defender scans) to complete before retrying Docker commands",
+            "Restart Docker Desktop once I/O throttling subsides so the vpnkit background sync worker can resynchronise",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_background_sync_io_throttled": (
+                "Reduce host I/O throttling and restart Docker Desktop so the vpnkit background sync worker can resynchronise"
+            ),
+        },
+    ),
     "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE": _WorkerErrorCodeDirective(
         reason=(
             "Docker Desktop reported that the vpnkit background sync worker is blocked by disk pressure on the Windows host"
@@ -807,6 +829,26 @@ _WORKER_ERROR_CODE_GUIDANCE: Mapping[str, _WorkerErrorCodeDirective] = {
         metadata={
             "docker_worker_last_error_guidance_vpnkit_background_sync_disk_pressure": (
                 "Free disk space so Docker Desktop's vpnkit background sync worker is no longer blocked by storage pressure"
+            ),
+        },
+    ),
+    "VPNKIT_BACKGROUND_SYNC_NETWORK_JITTER": _WorkerErrorCodeDirective(
+        reason=(
+            "Docker Desktop detected that network jitter is disrupting the vpnkit background sync worker"
+        ),
+        detail=(
+            "vpnkit mirrors container networking configuration between Windows and the Linux VM. "
+            "Erratic latency spikes or packet loss on the host can cause vpnkit's background sync loop to miss deadlines, "
+            "triggering repeated restarts until connectivity stabilises."
+        ),
+        remediation=(
+            "Disable or reconfigure VPN, firewall, and traffic-shaping tools that introduce jitter on the docker-desktop network adapters",
+            "Avoid saturating Wi-Fi or metered links while Docker Desktop is synchronising networking state",
+            "Restart Docker Desktop after stabilising the host network so vpnkit can rebuild its routing tables",
+        ),
+        metadata={
+            "docker_worker_last_error_guidance_vpnkit_background_sync_network_jitter": (
+                "Stabilise host networking (VPN, Wi-Fi, firewall rules) and restart Docker Desktop so vpnkit can resynchronise"
             ),
         },
     ),

@@ -1475,6 +1475,62 @@ def test_virtualization_errcode_generic_guidance() -> None:
     assert "virtual" in summary or "hyper-v" in summary
 
 
+def test_vpnkit_network_jitter_errcode_surfaces_actionable_guidance() -> None:
+    """Newer vpnkit jitter errCodes should never leak raw stall banners."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 errCode=VPNKIT_BACKGROUND_SYNC_NETWORK_JITTER "
+        "lastError=\"worker stalled; restarting due to network jitter\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_NETWORK_JITTER"
+    assert metadata["docker_worker_health"] == "flapping"
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_background_sync_network_jitter"
+    assert guidance_key in metadata
+    assert "network" in metadata[guidance_key].lower()
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert assessment.severity in {"warning", "error"}
+    assert any("network" in reason.lower() for reason in assessment.reasons)
+    assert any("vpnkit" in detail.lower() for detail in assessment.details)
+    assert any("restart docker desktop" in step.lower() for step in assessment.remediation)
+
+
+def test_vpnkit_io_throttled_errcode_includes_disk_guidance() -> None:
+    """The IO throttled errCode should surface storage remediation steps."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=3 errCode=VPNKIT_BACKGROUND_SYNC_IO_THROTTLED "
+        "lastError=\"worker stalled; restarting while host IO was throttled\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_IO_THROTTLED"
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_background_sync_io_throttled"
+    assert guidance_key in metadata
+    assert "io" in metadata[guidance_key].lower() or "throttling" in metadata[guidance_key].lower()
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    assert any("i/o" in reason.lower() or "io" in reason.lower() for reason in assessment.reasons)
+    assert any("disk" in detail.lower() or "storage" in detail.lower() for detail in assessment.details)
+    assert any("restart docker desktop" in step.lower() for step in assessment.remediation)
+
+
 def test_wsl_kernel_missing_guidance() -> None:
     """Missing WSL kernel codes should surface installation guidance."""
 
