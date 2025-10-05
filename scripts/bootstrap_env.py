@@ -316,7 +316,12 @@ _WORKER_STALLED_SIGNATURE_PREFIX = "worker-banner:"
 # and updated in a single location when Docker introduces new synonyms.
 #
 
-_WORKER_STALL_ROOT_PATTERN = r"(?:stall(?:ed|ing|s)?|stuck(?:ing)?)"
+#
+# Docker Desktop 4.32+ occasionally reports workers as "hung" or "frozen" when
+# the underlying restart symptoms are identical to the long-standing
+# ``worker stalled`` banner.  Treat those synonyms as equivalent so the
+# sanitisation pipeline collapses every variation into the canonical narrative.
+_WORKER_STALL_ROOT_PATTERN = r"(?:stall(?:ed|ing|s)?|stuck(?:ing)?|hang(?:ed|ing|s)?|hung|freez(?:e|ing|ed|es)?|froz(?:e|en))"
 _WORKER_STALL_FOLLOWER_WORDS: tuple[str, ...] = (
     "be",
     "been",
@@ -389,6 +394,14 @@ _WORKER_STALL_KEYWORD_TOKENS: frozenset[str] = frozenset(
         "stalls",
         "stuck",
         "sticking",
+        "hang",
+        "hung",
+        "hangs",
+        "hanging",
+        "freeze",
+        "freezes",
+        "freezing",
+        "frozen",
     }
 )
 
@@ -2864,7 +2877,7 @@ def _normalise_worker_stalled_phrase(message: str) -> str:
 
 
 _WORKER_STALL_CAMELCASE_PATTERN = re.compile(
-    r"(?i)\b(workers?)(?=st(?:all|uck))",
+    r"(?i)\b(workers?)(?=(?:st(?:all|uck)|hang|hung|freez|froz))",
 )
 
 

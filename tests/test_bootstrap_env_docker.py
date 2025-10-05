@@ -454,6 +454,35 @@ def test_worker_warning_wsl_vm_suspended_errcode() -> None:
     assert "wsl --shutdown" in guidance
 
 
+def test_worker_warning_hung_variant() -> None:
+    """Hung worker phrasing should normalise to the canonical guidance."""
+
+    message = (
+        "WARNING: worker hung; restarting component=\"vpnkit\" "
+        "restartCount=4 errCode=VPNKIT_UNRESPONSIVE"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker hung" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_UNRESPONSIVE"
+    assert "vpnkit" in metadata["docker_worker_health_details"].lower()
+
+
+def test_worker_warning_frozen_variant() -> None:
+    """Frozen worker phrasing should also collapse into guidance."""
+
+    message = (
+        "WARN[0042] moby/buildkit: worker frozen; restarting due to host sleep cycle"
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker frozen" not in cleaned.lower()
+    assert metadata["docker_worker_health"] == "flapping"
+    assert "restart" in metadata["docker_worker_health_summary"].lower()
+
+
 def test_worker_warning_wsl_vm_suspended_inferred() -> None:
     """Suspension phrasing without explicit codes should infer WSL suspension faults."""
 
