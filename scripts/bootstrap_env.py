@@ -7073,31 +7073,93 @@ _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], .
 )
 
 
-_WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = (
+# Connector tokens that appear between ``worker stalled`` and ``restarting``.
+#
+# ``Docker Desktop`` on Windows localises portions of its diagnostics based on
+# the host locale.  When non-English locales are active we routinely observe the
+# ``worker stalled; restarting`` banner rendered with fullwidth punctuation or
+# inverted question/exclamation marks.  Normalising all of the observed
+# separators ensures the sanitisation pipeline continues to collapse the warning
+# into the canonical guidance regardless of the user's locale.
+_WORKER_ASCII_RESTART_CONNECTORS: tuple[str, ...] = (
     ";",
     ":",
     ",",
     "-",
-    "—",
-    "–",
-    "―",
     "->",
     "=>",
-    "→",
-    "⇒",
+    "|",
     "/",
     "\\",
-    "|",
     "…",
     "⋯",
     "·",
     "•",
 )
 
-_WORKER_RESTART_CONNECTOR_PATTERN = "|".join(
-    re.escape(token)
-    for token in sorted(_WORKER_LITERAL_RESTART_CONNECTORS, key=len, reverse=True)
+_WORKER_UNICODE_RESTART_CONNECTORS: tuple[str, ...] = (
+    "—",
+    "–",
+    "―",
+    "→",
+    "⇒",
+    "／",
+    "＼",
 )
+
+_WORKER_PUNCTUATION_RESTART_CONNECTORS: tuple[str, ...] = (
+    "!",
+    "?",
+    "！？",
+    "？！",
+    "!?",
+    "?!",
+    "！",
+    "？",
+    "，",
+    "．",
+    "｡",
+    "。",
+    "、",
+    "﹔",
+    "﹕",
+    "﹒",
+    "﹑",
+    "﹗",
+    "﹖",
+    "；",
+    "：",
+    "‧",
+    "・",
+    "･",
+    "／",
+    "＼",
+)
+
+_WORKER_LITERAL_RESTART_CONNECTORS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *_WORKER_ASCII_RESTART_CONNECTORS,
+            *_WORKER_UNICODE_RESTART_CONNECTORS,
+            *_WORKER_PUNCTUATION_RESTART_CONNECTORS,
+        )
+    )
+)
+
+_WORKER_SORTED_RESTART_CONNECTORS: tuple[str, ...] = tuple(
+    sorted(_WORKER_LITERAL_RESTART_CONNECTORS, key=len, reverse=True)
+)
+
+_WORKER_RESTART_CONNECTOR_PATTERN = "|".join(
+    re.escape(token) for token in _WORKER_SORTED_RESTART_CONNECTORS
+)
+
+_WORKER_FRAGMENT_CONNECTORS = [
+    re.escape(token) for token in _WORKER_SORTED_RESTART_CONNECTORS
+]
+_WORKER_FRAGMENT_CONNECTORS.append("-+")
+
+_WORKER_FRAGMENT_CONNECTOR_PATTERN = "|".join(_WORKER_FRAGMENT_CONNECTORS)
 
 _WORKER_RESTART_CONNECTOR_STRIPPER = re.compile(
     rf"^(?:{_WORKER_RESTART_CONNECTOR_PATTERN})\s*",
@@ -7113,25 +7175,10 @@ _WORKER_RESTART_SUFFIX_PATTERN = re.compile(
 
 
 _WORKER_STALLED_FRAGMENT_PATTERN = re.compile(
-    r"""
+    rf"""
     worker[\s_-]+stalled
     (?:
-        \s*(?:
-            ;
-            |:
-            |,
-            |-+
-            |→
-            |⇒
-            |->
-            |=>
-            |…
-            |⋯
-            |·
-            |•
-            |/
-            |\\
-        )
+        \s*(?:{_WORKER_FRAGMENT_CONNECTOR_PATTERN})
     )?
     \s*$
     """,
