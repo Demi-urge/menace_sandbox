@@ -848,6 +848,37 @@ def test_worker_metadata_value_preserves_context_while_collapsing_restart_suffix
     assert "stalled; restarting" not in sanitized.lower()
 
 
+def test_worker_metadata_value_rewrites_embedded_json_banner() -> None:
+    """JSON fragments embedded in metadata should be rewritten without raw banners."""
+
+    value = json.dumps(
+        {
+            "component": "vpnkit",
+            "status": "worker stalled; restarting",
+            "details": {
+                "lastError": "worker stalled; restarting due to IO pressure",
+                "restartCount": 3,
+            },
+        }
+    )
+
+    sanitized, digest = bootstrap_env._sanitize_worker_metadata_value(value)
+
+    assert sanitized is not None
+    assert digest
+    assert "worker stalled" not in sanitized.lower()
+
+    parsed = json.loads(sanitized)
+    assert parsed["component"] == "vpnkit"
+    assert parsed["details"]["restartCount"] == 3
+    assert parsed["status"].startswith(
+        "Docker Desktop automatically restarted a background worker"
+    )
+    assert parsed["details"]["lastError"].startswith(
+        "Docker Desktop automatically restarted a background worker"
+    )
+
+
 def test_worker_primary_metadata_is_redacted() -> None:
     """Primary worker error metadata should not leak the raw stall banner."""
 
