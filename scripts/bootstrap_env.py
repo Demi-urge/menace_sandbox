@@ -10016,6 +10016,18 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     errors = _guarantee_worker_banner_suppression(errors, metadata)
     info_messages = _guarantee_worker_banner_suppression(info_messages, metadata)
 
+    # Windows builds of Docker Desktop occasionally replay cached telemetry
+    # blobs after the primary sanitisation passes have completed.  Those blobs
+    # may contain verbatim ``worker stalled; restarting`` banners in metadata
+    # fields such as ``docker_worker_last_error_banner_raw`` even though the
+    # human facing warnings have been rewritten already.  Apply one final sweep
+    # over the metadata to guarantee that every lingering banner is converted
+    # into the canonical guidance narrative before returning diagnostics to the
+    # caller.  This keeps downstream tooling from leaking the raw banner when
+    # rendering the metadata dictionary verbatim (for example in Windows event
+    # viewers or CI upload artefacts).
+    _redact_worker_banner_artifacts(metadata)
+
     warnings = _coalesce_iterable(warnings)
     errors = _coalesce_iterable(errors)
     info_messages = _coalesce_iterable(info_messages)
