@@ -76,3 +76,16 @@ def test_worker_banner_treats_warning_prefix_as_noise() -> None:
     sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
 
     assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+
+
+def test_worker_banner_final_guard_rewrites_literal_phrase() -> None:
+    messages = [
+        "worker stalled; restarting",
+        "no action required",
+    ]
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression(messages, metadata)  # type: ignore[attr-defined]
+
+    assert all("worker stalled; restarting" not in entry.casefold() for entry in safeguarded if isinstance(entry, str))
+    assert metadata["docker_worker_health"] == "flapping"
