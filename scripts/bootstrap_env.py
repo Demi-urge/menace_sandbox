@@ -7551,6 +7551,61 @@ def _guarantee_worker_banner_suppression(
     return safeguarded
 
 
+def _finalize_worker_banner_sequences(
+    messages: Iterable[object], metadata: MutableMapping[str, str]
+) -> list[object]:
+    """Ensure raw ``worker stalled; restarting`` banners never escape."""
+
+    sanitized: list[object] = []
+
+    for message in messages:
+        if not isinstance(message, str):
+            sanitized.append(message)
+            continue
+
+        normalized = _normalize_worker_banner_characters(message)
+        if "worker stalled; restarting" not in normalized.casefold():
+            sanitized.append(message)
+            continue
+
+        cleaned, extracted = _normalise_docker_warning(message)
+
+        sanitized.append(cleaned or _WORKER_STALLED_PRIMARY_NARRATIVE)
+
+        if extracted:
+            for key, value in extracted.items():
+                metadata.setdefault(key, value)
+
+        metadata.setdefault("docker_worker_health", "flapping")
+
+    return sanitized
+
+
+def _finalize_worker_banner_metadata(metadata: MutableMapping[str, str]) -> None:
+    """Purge residual literal stall banners from metadata artefacts."""
+
+    for key, raw_value in list(metadata.items()):
+        text_value = _coerce_textual_value(raw_value)
+        if not text_value:
+            continue
+
+        normalized = _normalize_worker_banner_characters(text_value)
+        if "worker stalled; restarting" not in normalized.casefold():
+            continue
+
+        sanitized_value = _sanitize_worker_banner_text(text_value)
+        digest = _fingerprint_worker_banner(text_value)
+
+        if sanitized_value and sanitized_value != text_value:
+            metadata[key] = sanitized_value
+        elif isinstance(raw_value, (bytes, bytearray, memoryview)):
+            metadata[key] = text_value
+
+        fingerprint_key = f"{key}_fingerprint"
+        if digest and not metadata.get(fingerprint_key):
+            metadata[fingerprint_key] = digest
+
+
 _WORKER_METADATA_SANITIZE_RULES: tuple[tuple[str, Literal["single", "multi"]], ...] = (
     ("docker_worker_last_error", "single"),
     ("docker_worker_last_error_original", "single"),
@@ -10781,6 +10836,12 @@ def _collect_docker_diagnostics(timeout: float = 12.0) -> DockerDiagnosticResult
     # rendering the metadata dictionary verbatim (for example in Windows event
     # viewers or CI upload artefacts).
     _redact_worker_banner_artifacts(metadata)
+
+    warnings = _finalize_worker_banner_sequences(warnings, metadata)
+    errors = _finalize_worker_banner_sequences(errors, metadata)
+    info_messages = _finalize_worker_banner_sequences(info_messages, metadata)
+
+    _finalize_worker_banner_metadata(metadata)
 
     warnings = _coalesce_iterable(warnings)
     errors = _coalesce_iterable(errors)
