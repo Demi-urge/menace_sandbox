@@ -1499,6 +1499,53 @@ def test_wsl_kernel_missing_guidance() -> None:
     assert "wsl" in assessment.metadata[guidance_key].lower()
 
 
+def test_worker_unresponsive_banner_is_normalized() -> None:
+    """Unresponsive worker banners should be rewritten into guidance."""
+
+    message = (
+        "WARNING: worker unresponsive; restarting component=\"vpnkit\" "
+        "restartCount=3 errCode=VPNKIT_UNRESPONSIVE "
+        "lastError=\"vpnkit background sync worker unresponsive; restarting due to IO pressure\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    lowered = cleaned.lower()
+    assert "worker unresponsive; restarting" not in lowered
+    assert "worker stalled; restarting" not in lowered
+    assert (
+        "automatically restarted" in lowered
+        or "repeatedly restarting" in lowered
+        or "restart" in lowered
+    )
+
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_UNRESPONSIVE"
+    assert metadata["docker_worker_health"] == "flapping"
+    assert metadata["docker_worker_health_severity"] in {"warning", "error", "info"}
+
+
+def test_worker_timeout_banner_is_normalized() -> None:
+    """Timeout-oriented worker banners should be harmonised."""
+
+    message = (
+        "WARN[0045] moby/buildkit: worker timed out; restarting component=\"vpnkit\" "
+        "restartCount=2 errCode=VPNKIT_BACKGROUND_SYNC_TIMEOUT "
+        "lastError=\"worker timed out; restarting after 45s\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned is not None
+    lowered = cleaned.lower()
+    assert "worker timed out; restarting" not in lowered
+    assert "worker stalled; restarting" not in lowered
+    assert "automatically restarted" in lowered
+
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_TIMEOUT"
+    assert metadata["docker_worker_health"] == "flapping"
+
+
 def test_wsl2_prefixed_errcode_surfaces_wsl_guidance() -> None:
     """WSL2-prefixed error codes should be treated as WSL guidance triggers."""
 

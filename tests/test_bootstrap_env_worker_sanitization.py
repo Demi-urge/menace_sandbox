@@ -205,6 +205,31 @@ def test_worker_banner_errcode_cpu_pressure_guidance() -> None:
     assert "cpu" in metadata[fingerprint_key].lower()
 
 
+def test_worker_unresponsive_banner_is_sanitized() -> None:
+    message = "WARNING: worker unresponsive; restarting because heartbeat lost"
+
+    sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
+
+    assert "worker unresponsive; restarting" not in sanitized.lower()
+    assert "heartbeat" in sanitized.lower()
+    assert "automatically restarted" in sanitized.lower()
+
+
+def test_worker_timeout_metadata_is_sanitized() -> None:
+    metadata = {
+        "docker_worker_last_error_banner_raw": "worker timed out; restarting",
+        "docker_worker_last_error_banner": "worker timed out; restarting",
+    }
+
+    bootstrap_env._redact_worker_banner_artifacts(metadata)  # type: ignore[arg-type]
+
+    for key in ("docker_worker_last_error_banner_raw", "docker_worker_last_error_banner"):
+        value = metadata.get(key)
+        assert isinstance(value, str)
+        assert "worker timed out; restarting" not in value.lower()
+        assert "automatically restarted" in value.lower()
+
+
 def test_worker_banner_errcode_vsock_signal_guidance() -> None:
     message = (
         "WARN[0032] moby/buildkit: worker stalled; restarting "
