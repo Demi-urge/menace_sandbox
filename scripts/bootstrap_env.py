@@ -8633,6 +8633,12 @@ def _post_process_docker_health(
 
     additional_metadata["docker_worker_health_severity"] = severity
     if summary:
+        sanitized_summary = _enforce_worker_banner_sanitization(
+            [summary],
+            additional_metadata,
+        )
+        if sanitized_summary:
+            summary = sanitized_summary[0]
         additional_metadata["docker_worker_health_summary"] = summary
     if virtualization_metadata:
         additional_metadata.update(virtualization_metadata)
@@ -8657,15 +8663,23 @@ def _post_process_docker_health(
         _append_unique(target, summary)
 
     if virtualization_warnings:
-        for message in virtualization_warnings:
+        sanitized_virtualization_warnings = _enforce_worker_banner_sanitization(
+            virtualization_warnings,
+            additional_metadata,
+        )
+        for message in sanitized_virtualization_warnings:
             _append_unique(warnings, message)
 
     if virtualization_errors:
+        sanitized_virtualization_errors = _enforce_worker_banner_sanitization(
+            virtualization_errors,
+            additional_metadata,
+        )
         if severity == "error":
-            for message in virtualization_errors:
+            for message in sanitized_virtualization_errors:
                 _append_unique(errors, message)
         else:
-            for message in virtualization_errors:
+            for message in sanitized_virtualization_errors:
                 _append_unique(
                     warnings,
                     f"Virtualization issue detected: {message}",
