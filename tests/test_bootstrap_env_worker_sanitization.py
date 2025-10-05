@@ -146,7 +146,7 @@ def test_worker_banner_subject_skips_severity_prefixes() -> None:
     sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
 
     assert sanitized == (
-        "Docker Desktop automatically restarted the moby/buildkit worker after it stalled"
+        "Docker Desktop automatically restarted the moby/buildkit worker after it stalled due to IO pressure"
     )
 
 
@@ -174,6 +174,22 @@ def test_worker_banner_html_entity_semicolon_is_decoded() -> None:
     sanitized = bootstrap_env._sanitize_worker_banner_text(message)  # type: ignore[attr-defined]
 
     assert sanitized == bootstrap_env._WORKER_STALLED_PRIMARY_NARRATIVE
+
+
+def test_format_worker_restart_reason_strips_prefixes() -> None:
+    reason = "because of lingering IO pressure "
+
+    formatted = bootstrap_env._format_worker_restart_reason(reason)  # type: ignore[attr-defined]
+
+    assert formatted == "lingering IO pressure"
+
+
+def test_format_worker_restart_reason_rejects_worker_tokens() -> None:
+    reason = "due to worker stalled; restarting"
+
+    formatted = bootstrap_env._format_worker_restart_reason(reason)  # type: ignore[attr-defined]
+
+    assert formatted is None
 
 
 def test_worker_banner_final_guard_rewrites_literal_phrase() -> None:
