@@ -480,6 +480,23 @@ def test_worker_banner_whitespace_separator_is_sanitized() -> None:
     assert metadata.get("docker_worker_health") == "flapping"
 
 
+def test_worker_banner_period_separator_is_sanitized() -> None:
+    """A literal period separator should be treated as a stall banner delimiter."""
+
+    message = "WARNING: worker stalled. restarting component=\"vpnkit\" restartCount=2"
+    metadata: dict[str, str] = {}
+
+    safeguarded = bootstrap_env._guarantee_worker_banner_suppression([message], metadata)  # type: ignore[attr-defined]
+
+    assert safeguarded
+    assert all(
+        "worker stalled" not in entry.casefold()
+        for entry in safeguarded
+        if isinstance(entry, str)
+    )
+    assert metadata.get("docker_worker_health") == "flapping"
+
+
 def test_finalize_sequences_strip_carriage_return_variants() -> None:
     """Final sanitisation should catch carriage-return variants of the banner."""
 
