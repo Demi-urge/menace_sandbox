@@ -497,6 +497,23 @@ def test_worker_banner_period_separator_is_sanitized() -> None:
     assert metadata.get("docker_worker_health") == "flapping"
 
 
+def test_worker_banner_component_identifier_context_is_preserved() -> None:
+    """Inline component identifiers should influence the worker narrative."""
+
+    message = (
+        'WARNING: worker stalled; restarting componentID="vpnkitCore" '
+        'restartCount=2 backoff=\"45s\"'
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    lowered = cleaned.lower()
+    assert "worker stalled" not in lowered
+    assert "vpnkitcore" in lowered
+    assert metadata.get("docker_worker_context") == "vpnkitCore"
+    assert metadata.get("docker_worker_backoff") == "45s"
+
+
 def test_finalize_sequences_strip_carriage_return_variants() -> None:
     """Final sanitisation should catch carriage-return variants of the banner."""
 
