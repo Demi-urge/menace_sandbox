@@ -1086,6 +1086,30 @@ def _build_vpnkit_background_sync_guidance(
     if not candidate.startswith(prefix):
         return None
 
+    # Normalise token variants so substring-based error codes (for example
+    # ``IOPRESSURE``) are captured alongside delimited counterparts such as
+    # ``IO_PRESSURE``.  Docker frequently tweaks error-code casing between
+    # releases which makes relying on a single canonical spelling brittle.
+    enriched_tokens = set(token_set)
+    if "I" in enriched_tokens and "O" in enriched_tokens:
+        enriched_tokens.add("IO")
+
+    for token in tuple(token_set):
+        upper = token.upper()
+        if upper and upper not in {"BACKGROUND", "SYNC", "VPNKIT"}:
+            if "IO" in upper:
+                enriched_tokens.add("IO")
+            if "DISK" in upper:
+                enriched_tokens.add("DISK")
+            if "STORAGE" in upper:
+                enriched_tokens.add("STORAGE")
+            if "LATENCY" in upper:
+                enriched_tokens.add("LATENCY")
+            if "THROTTLE" in upper:
+                enriched_tokens.add("THROTTLE")
+
+    token_set = enriched_tokens
+
     cpu_tokens = {"CPU"}
     memory_tokens = {"MEMORY", "RAM"}
     network_tokens = {
@@ -1109,6 +1133,23 @@ def _build_vpnkit_background_sync_guidance(
         "THROTTLING",
         "OVERLOAD",
         "OVERLOADED",
+    }
+    io_tokens = {
+        "IO",
+        "I/O",
+        "IOPS",
+        "LATENCY",
+        "THROTTLE",
+        "THROTTLED",
+        "THROTTLING",
+    }
+    disk_tokens = {
+        "DISK",
+        "STORAGE",
+        "VHD",
+        "VHDX",
+        "SSD",
+        "HDD",
     }
 
     if token_set & cpu_tokens:
@@ -1179,6 +1220,43 @@ def _build_vpnkit_background_sync_guidance(
             "Allow com.docker.backend and vpnkit.exe through endpoint protection tooling so networking updates are not throttled",
             "Restart Docker Desktop after reducing network congestion so the vpnkit background sync worker can resynchronise state",
         )
+        return _WorkerErrorCodeDirective(
+            reason=reason,
+            detail=detail,
+            remediation=remediation,
+            metadata=metadata_builder(summary),
+        )
+
+    if (token_set & io_tokens) or (token_set & disk_tokens):
+        disk_related = bool(token_set & disk_tokens)
+        summary = (
+            "Reduce disk pressure affecting the vpnkit background sync worker"
+            if disk_related
+            else "Reduce host I/O throttling impacting the vpnkit background sync worker"
+        )
+        reason = (
+            "Docker Desktop detected that disk throughput limitations are restarting the vpnkit background sync worker"
+            if disk_related
+            else "Docker Desktop detected host I/O throttling is starving the vpnkit background sync worker"
+        )
+        detail = (
+            "When Windows storage subsystems are saturated the docker-desktop virtual disk cannot service vpnkit's background"
+            " synchronisation requests, forcing the worker to restart until disk pressure is relieved."
+            if disk_related
+            else "Host-level storage throttling or sustained I/O contention prevents vpnkit from flushing synchronisation"
+            " events, causing repeated restarts until the contention abates."
+        )
+        remediation = (
+            "Pause antivirus, backup, indexing, or encryption tools saturating the docker-desktop.vhdx virtual disk",
+            "Verify the drive hosting Docker Desktop data has free space and, if necessary, move it to faster storage or an SSD",
+            "Restart Docker Desktop after reducing disk and I/O contention so the vpnkit background sync worker can stabilise",
+        )
+        if not disk_related:
+            remediation = (
+                remediation[0],
+                "Review Windows storage QoS policies, virtualization guard rails, or third-party tools that throttle the docker-desktop virtual disk",
+                remediation[2],
+            )
         return _WorkerErrorCodeDirective(
             reason=reason,
             detail=detail,
