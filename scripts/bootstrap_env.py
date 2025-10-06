@@ -526,6 +526,7 @@ _BASE_WORKER_ERROR_CODE_LABELS: dict[str, str] = {
     "VPNKIT_BACKGROUND_SYNC_MEMORY_PRESSURE": "memory pressure impacting the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_NETWORK_PRESSURE": "network pressure impacting the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_NETWORK_JITTER": "network jitter disrupting the vpnkit background sync worker",
+    "VPNKIT_BACKGROUND_SYNC_NETWORK_SATURATION": "network saturation throttling the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_IO_THROTTLED": "host I/O throttling slowing the vpnkit background sync worker",
     "VPNKIT_BACKGROUND_SYNC_NETWORK_CONGESTION": "network congestion impacting the vpnkit background sync worker",
     "VPNKIT_VSOCK_SIGNAL_LOST": "a vsock signal interruption between Windows and the Docker VM",
@@ -1095,6 +1096,19 @@ def _build_vpnkit_background_sync_guidance(
         "LATENCY",
         "CONNECTIVITY",
         "THROUGHPUT",
+        "SATURATION",
+        "SATURATED",
+        "SATURATING",
+        "STARVATION",
+        "STARVED",
+        "STARVING",
+        "UTILIZATION",
+        "UTILISATION",
+        "THROTTLE",
+        "THROTTLED",
+        "THROTTLING",
+        "OVERLOAD",
+        "OVERLOADED",
     }
 
     if token_set & cpu_tokens:
@@ -1149,7 +1163,7 @@ def _build_vpnkit_background_sync_guidance(
 
     if token_set & network_tokens:
         summary = (
-            "Reduce network filtering or congestion impacting the vpnkit background sync worker"
+            "Reduce network filtering, congestion, or saturation impacting the vpnkit background sync worker"
         )
         reason = (
             "Docker Desktop observed that host network congestion is delaying the "
@@ -4864,6 +4878,61 @@ def _stringify_structured_warning(
             candidates.sort(key=lambda item: (item[0], item[1]))
             best = candidates[-1]
             return best[2]
+
+        def _gather_values(keys: tuple[str, ...]) -> list[str]:
+            values: list[str] = []
+            for field in keys:
+                value = canonical.get(field)
+                if not value:
+                    continue
+                cleaned = _clean_worker_metadata_value(value)
+                if cleaned:
+                    values.append(cleaned)
+            return values
+
+        status_fields = (
+            "status",
+            "status_text",
+            "statusmessage",
+            "status_message",
+            "statusshortmessage",
+            "short_message",
+            "shortmessage",
+        )
+        detail_fields = (
+            "status_detail_text",
+            "statusdetailtext",
+            "detail",
+            "description",
+            "summary",
+            "status_long_text",
+            "statuslongtext",
+            "status_long_message",
+            "statuslongmessage",
+            "long_message",
+            "longmessage",
+            "long_text",
+            "longtext",
+        )
+
+        status_values = _gather_values(status_fields)
+        detail_values = _gather_values(detail_fields)
+
+        composite_candidates: list[str] = []
+        for status_value in status_values:
+            composite_candidates.append(status_value)
+            for detail_value in detail_values:
+                combined = f"{status_value} {detail_value}".strip()
+                if combined:
+                    composite_candidates.append(combined)
+
+        if not composite_candidates:
+            composite_candidates = detail_values
+
+        for candidate_text in composite_candidates:
+            normalized = _normalise_worker_stalled_phrase(candidate_text)
+            if _contains_worker_stall_signal(normalized):
+                return candidate_text
 
         for fallback in ("last_error", "last_error_message", "error"):
             value = canonical.get(fallback)

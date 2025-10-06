@@ -1680,6 +1680,39 @@ def test_vpnkit_background_sync_guidance() -> None:
     assert "background sync" in assessment.metadata[guidance_key].lower()
 
 
+def test_structured_warning_combines_status_and_detail_fields() -> None:
+    """Structured worker payloads split across fields should be normalised."""
+
+    payload = {
+        "status": "worker stalled",
+        "statusDetailText": (
+            "restarting component=\"vpnkit\" restartCount=4 backoff=\"PT45S\" "
+            "errCode=VPNKIT_BACKGROUND_SYNC_NETWORK_SATURATION"
+        ),
+        "component": "vpnkit",
+        "restartCount": "4",
+        "backoff": "PT45S",
+        "errCode": "VPNKIT_BACKGROUND_SYNC_NETWORK_SATURATION",
+    }
+
+    rendered = bootstrap_env._stringify_structured_warning(payload, ("warnings", "0"))
+
+    assert rendered is not None
+    assert "worker stalled; restarting" not in rendered.lower()
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(rendered)
+
+    assert cleaned is not None
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_NETWORK_SATURATION"
+
+    guidance_key = (
+        "docker_worker_last_error_guidance_vpnkit_background_sync_network_saturation"
+    )
+    assert guidance_key in metadata
+    assert "network" in metadata[guidance_key].lower()
+
+
 def test_worker_flapping_metadata_enrichment_handles_structured_payload() -> None:
     """Structured worker telemetry should be extracted from the warning payload."""
 
