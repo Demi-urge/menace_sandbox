@@ -25,7 +25,15 @@ from contextlib import contextmanager
 from dynamic_path_router import resolve_path, path_for_prompt
 
 
-from ..error_parser import ErrorParser
+if __package__ in {None, ""}:  # pragma: no cover - script execution fallback
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    _PROJECT_ROOT_STR = str(_PROJECT_ROOT)
+    if _PROJECT_ROOT_STR not in sys.path:
+        sys.path.insert(0, _PROJECT_ROOT_STR)
+
+    from error_parser import ErrorParser  # type: ignore[import-not-found]
+else:  # pragma: no cover - package execution path
+    from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
 try:  # pragma: no cover - tolerate trimmed environments
     from . import environment as _environment
