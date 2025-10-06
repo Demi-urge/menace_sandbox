@@ -8768,6 +8768,36 @@ def _sanitize_worker_json_fragment(raw: str) -> tuple[str | None, bool]:
     except (TypeError, ValueError):
         return None, False
 
+    def _merge_key_collision(existing: object, replacement: object) -> object:
+        """Merge two JSON values that map to the same sanitised key."""
+
+        if existing == replacement:
+            return existing
+
+        def _as_iterable(value: object) -> list[object]:
+            if isinstance(value, list):
+                return list(value)
+            return [value]
+
+        combined: list[object] = []
+        combined.extend(_as_iterable(existing))
+        combined.extend(_as_iterable(replacement))
+
+        deduplicated: list[object] = []
+        seen: set[str] = set()
+
+        for item in combined:
+            try:
+                marker = json.dumps(item, sort_keys=True, separators=(",", ":"))
+            except (TypeError, ValueError):
+                marker = repr(item)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduplicated.append(item)
+
+        return deduplicated
+
     def _rewrite(node: object) -> tuple[object, bool]:
         if isinstance(node, str):
             normalized = _normalise_worker_stalled_phrase(node)
@@ -8788,9 +8818,30 @@ def _sanitize_worker_json_fragment(raw: str) -> tuple[str | None, bool]:
             mutated = False
             rewritten_dict: dict[str, object] = {}
             for key, value in node.items():
+                sanitized_key = key
+                key_mutated = False
+
+                if isinstance(key, str):
+                    replacement_key, _, key_changed = _sanitize_worker_metadata_key(key)
+                    sanitized_key = (
+                        str(replacement_key)
+                        if not isinstance(replacement_key, str)
+                        else replacement_key
+                    )
+                    key_mutated = key_changed
+
                 replacement, changed = _rewrite(value)
-                mutated = mutated or changed
-                rewritten_dict[key] = replacement
+                mutated = mutated or changed or key_mutated or sanitized_key != key
+
+                if sanitized_key in rewritten_dict:
+                    existing_value = rewritten_dict[sanitized_key]
+                    merged = _merge_key_collision(existing_value, replacement)
+                    if merged is not existing_value:
+                        rewritten_dict[sanitized_key] = merged
+                    mutated = True
+                else:
+                    rewritten_dict[sanitized_key] = replacement
+
             if mutated:
                 return rewritten_dict, True
             return node, False
