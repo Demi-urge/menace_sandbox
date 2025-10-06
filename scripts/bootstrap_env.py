@@ -7997,6 +7997,7 @@ _WORKER_ASCII_RESTART_CONNECTORS: tuple[str, ...] = (
     ";",
     ":",
     ",",
+    ".",
     "-",
     "->",
     "=>",
