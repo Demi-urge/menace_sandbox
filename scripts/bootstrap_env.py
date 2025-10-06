@@ -1568,14 +1568,8 @@ def _contains_worker_stall_signal(message: str) -> bool:
         return True
 
     condensed = re.sub(r"[\s_-]+", "", normalized).casefold()
-    recovery_tokens = tuple(
-        marker.replace(" ", "").replace("-", "").replace("_", "")
-        for marker in _WORKER_RECOVERY_MARKERS
-    )
-    recovery_in_lowered = any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS)
-    recovery_in_condensed = any(token in condensed for token in recovery_tokens)
 
-    if (recovery_in_lowered or recovery_in_condensed) and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(
+    if _has_worker_recovery_marker(message, normalized_hint=normalized) and _WORKER_STALL_FUZZY_RESTART_PATTERN.search(
         normalized
     ):
         return True
@@ -3506,6 +3500,90 @@ _WORKER_RECOVERY_MARKERS: tuple[str, ...] = (
     "reiniting",
 )
 
+_WORKER_RECOVERY_MARKERS_COMPACT: tuple[str, ...] = tuple(
+    marker.replace(" ", "").replace("-", "").replace("_", "")
+    for marker in _WORKER_RECOVERY_MARKERS
+)
+
+_WORKER_RECOVERY_LOCALISED_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\breinici[a-záéíóúãõçñ]*\b", re.IGNORECASE),
+    re.compile(r"\breinicializ[a-záéíóúãõçñ]*\b", re.IGNORECASE),
+    re.compile(r"\br[ée]initialis[a-zàâçéèêëîïôûùüÿœæ]*\b", re.IGNORECASE),
+    re.compile(r"\bred[ée]marr[a-zàâçéèêëîïôûùüÿœæ]*\b", re.IGNORECASE),
+    re.compile(r"\bneu[-\s]?start[a-zäöüß]*\b", re.IGNORECASE),
+    re.compile(r"\briavvi[a-zàèéìòù]*\b", re.IGNORECASE),
+)
+
+_WORKER_RECOVERY_CJK_MARKERS: tuple[str, ...] = (
+    "重新启动",
+    "重新啟動",
+    "重新開機",
+    "重新开机",
+    "重启",
+    "重啟",
+    "重启中",
+    "重啟中",
+    "再启动",
+    "再啟動",
+    "再起動",
+    "再啓動",
+    "再起动",
+    "再起動中",
+    "再啟動中",
+    "再起動します",
+    "再起動しています",
+    "再啟動します",
+    "再啟動しています",
+    "재시작",
+    "재시작 중",
+    "재부팅",
+    "재부팅 중",
+    "다시 시작",
+    "다시시작",
+)
+
+
+def _has_worker_recovery_marker(
+    message: str,
+    *,
+    normalized_hint: str | None = None,
+) -> bool:
+    """Return ``True`` when *message* references a worker restart event."""
+
+    if not message:
+        return False
+
+    lowered = message.casefold()
+
+    if any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS):
+        return True
+
+    condensed_lowered = re.sub(r"[\s_-]+", "", lowered)
+    if any(marker and marker in condensed_lowered for marker in _WORKER_RECOVERY_MARKERS_COMPACT):
+        return True
+
+    normalized = normalized_hint if normalized_hint is not None else _normalize_worker_banner_characters(message)
+    normalized_casefold = normalized.casefold()
+
+    if normalized_casefold != lowered:
+        if any(marker in normalized_casefold for marker in _WORKER_RECOVERY_MARKERS):
+            return True
+        condensed_normalized = re.sub(r"[\s_-]+", "", normalized_casefold)
+        if any(marker and marker in condensed_normalized for marker in _WORKER_RECOVERY_MARKERS_COMPACT):
+            return True
+    else:
+        condensed_normalized = condensed_lowered
+
+    for pattern in _WORKER_RECOVERY_LOCALISED_PATTERNS:
+        if pattern.search(normalized_casefold):
+            return True
+
+    for token in _WORKER_RECOVERY_CJK_MARKERS:
+        if token and (token in normalized or token in normalized_casefold):
+            return True
+
+    return False
+
 
 def _normalize_worker_token_case(token: str) -> str:
     """Return a ``worker`` token that preserves the source capitalisation."""
@@ -3677,7 +3755,7 @@ def _canonicalize_worker_stall_tokens(message: str) -> str:
         lambda match: _normalize_worker_token_case(match.group(1)),
         message,
     )
-    if not any(marker in lowered for marker in _WORKER_RECOVERY_MARKERS):
+    if not _has_worker_recovery_marker(message, normalized_hint=message):
         return message
 
     canonical = message

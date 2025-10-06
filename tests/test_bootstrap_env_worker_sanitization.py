@@ -180,6 +180,29 @@ def test_worker_banner_recovery_synonyms_are_sanitized(phrase: str) -> None:
     assert "vpnkit" in details
 
 
+@pytest.mark.parametrize(
+    "message",
+    (
+        'WARNING: worker stalled; reiniciando componente="vpnkit" restartCount=1',
+        'WARNING: worker stalled; reinicialização componente="vpnkit"',
+        'WARNING: worker stalled; redémarrage composant="vpnkit"',
+        'WARNING: worker stalled; Neustart component="vpnkit"',
+        'WARNING: worker stalled；重新启动 组件="vpnkit"',
+        'WARNING: worker stalled；再起動しています component="vpnkit"',
+        'WARNING: worker stalled; 재시작 중 component="vpnkit"',
+        'WARNING: worker stalled; riavvio componente="vpnkit"',
+    ),
+)
+def test_worker_banner_localised_restart_tokens_are_sanitized(message: str) -> None:
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert cleaned
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert "docker desktop" in cleaned.lower()
+    assert metadata.get("docker_worker_health") == "flapping"
+    assert bootstrap_env._contains_worker_stall_signal(message)
+
+
 def test_worker_banner_ignores_structured_log_metadata() -> None:
     message = (
         'time="2024-05-03T08:13:37-07:00" level=warning msg="worker stalled; restarting"'
