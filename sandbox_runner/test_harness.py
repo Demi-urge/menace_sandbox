@@ -33,7 +33,10 @@ if __package__ in {None, ""}:  # pragma: no cover - script execution fallback
 
     from error_parser import ErrorParser  # type: ignore[import-not-found]
 else:  # pragma: no cover - package execution path
-    from ..error_parser import ErrorParser
+    try:
+        from ..error_parser import ErrorParser
+    except ImportError:  # pragma: no cover - top-level package fallback
+        from error_parser import ErrorParser  # type: ignore[import-not-found]
 from sandbox_settings import SandboxSettings
 try:  # pragma: no cover - tolerate trimmed environments
     from . import environment as _environment
