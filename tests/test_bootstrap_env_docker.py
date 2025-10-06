@@ -2092,6 +2092,26 @@ def test_structured_warning_component_name_context() -> None:
     assert "worker stalled; restarting" not in warnings[0].lower()
 
 
+def test_structured_warning_component_identifier_context() -> None:
+    """Structured payloads using identifier fields should expose context."""
+
+    payload = {
+        "message": "worker stalled; restarting",
+        "componentIdentifier": "vpnkit-background-sync",
+        "restartCount": 3,
+        "backoffSeconds": 30,
+    }
+
+    warnings, metadata = bootstrap_env._normalize_docker_warnings(payload)
+
+    assert warnings
+    assert metadata["docker_worker_context"] == "vpnkit-background-sync"
+    assert metadata["docker_worker_restart_count"] == "3"
+    assert metadata["docker_worker_backoff"] == "30s"
+    assert any("vpnkit-background-sync" in warning.lower() for warning in warnings)
+    assert "worker stalled; restarting" not in warnings[0].lower()
+
+
 def test_structured_warning_prefers_status_message_over_status() -> None:
     """Status message fields should outrank generic status strings."""
 
