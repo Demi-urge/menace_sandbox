@@ -102,6 +102,7 @@ _DOCKER_SKIP_ENV = "MENACE_BOOTSTRAP_SKIP_DOCKER_CHECK"
 _DOCKER_REQUIRE_ENV = "MENACE_REQUIRE_DOCKER"
 _DOCKER_ASSUME_NO_ENV = "MENACE_BOOTSTRAP_ASSUME_NO_DOCKER"
 _WSL_HOST_MOUNT_ROOT_ENV = "WSL_HOST_MOUNT_ROOT"
+_WINDOWS_VISIBILITY_SKIP_ENV = "MENACE_BOOTSTRAP_NO_WINDOWS_PAUSE"
 
 
 _WINDOWS_ENV_VAR_PATTERN = re.compile(r"%(?P<name>[A-Za-z0-9_]+)%")
@@ -2114,6 +2115,43 @@ def _configure_logging(level: int) -> None:
 def _apply_environment(overrides: Mapping[str, str]) -> None:
     for key, value in overrides.items():
         os.environ[key] = value
+
+
+def _should_wait_for_windows_console() -> bool:
+    """Return ``True`` when we should pause so Windows users can see output."""
+
+    if os.name != "nt":  # pragma: no cover - Windows only behaviour
+        return False
+
+    if os.environ.get(_WINDOWS_VISIBILITY_SKIP_ENV):
+        return False
+
+    stdin = getattr(sys, "stdin", None)
+    stdout = getattr(sys, "stdout", None)
+    if stdin is None or stdout is None:
+        return False
+
+    if not stdin.isatty() or not stdout.isatty():
+        return False
+
+    return True
+
+
+def _wait_for_windows_console_visibility() -> None:
+    """Pause the process so Windows console users can read the log output."""
+
+    if not _should_wait_for_windows_console():
+        return
+
+    message = (
+        "\nAll output above has been written. Press Enter to exit and close this window."
+    )
+    try:
+        print(message)
+        sys.stdout.flush()
+        input()
+    except (EOFError, KeyboardInterrupt):  # pragma: no cover - interactive only
+        pass
 
 
 def _iter_windows_script_candidates(executable: Path) -> Iterable[Path]:
@@ -11637,6 +11675,12 @@ def _run_bootstrap(config: BootstrapConfig) -> None:
     )
     run_startup_checks(skip_stripe_router=config.skip_stripe_router, policy=policy)
     EnvironmentBootstrapper(policy=policy).bootstrap()
+    LOGGER.info("Environment bootstrap completed successfully")
+    logging.shutdown()
+    if sys.stdout is not None and sys.stdout.isatty():
+        print("Bootstrap complete. You can close this window.")
+        sys.stdout.flush()
+    _wait_for_windows_console_visibility()
 
 
 def main(argv: list[str] | None = None) -> None:
