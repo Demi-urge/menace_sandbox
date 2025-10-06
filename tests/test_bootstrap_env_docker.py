@@ -307,6 +307,40 @@ def test_windows_docker_directory_includes_arm_roots(
     assert expected.issubset(directory_set)
 
 
+def test_windows_docker_directory_includes_versioned_app_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Docker discovery should surface versioned DockerDesktop app bundles."""
+
+    program_files = tmp_path / "Program Files"
+    program_files.mkdir()
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.delenv("ProgramFiles(Arm)", raising=False)
+
+    program_data = tmp_path / "ProgramData"
+    program_data.mkdir()
+    monkeypatch.setenv("ProgramData", str(program_data))
+
+    local_appdata = tmp_path / "LocalAppData"
+    app_dir = local_appdata / "DockerDesktop" / "app-4.33.0"
+    (app_dir / "resources" / "bin").mkdir(parents=True)
+    (app_dir / "resources" / "cli").mkdir(parents=True)
+    (app_dir / "cli-bin").mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+
+    directories = {Path(entry) for entry in bootstrap_env._iter_windows_docker_directories()}
+
+    expected = {
+        app_dir / "resources" / "bin",
+        app_dir / "resources" / "cli",
+        app_dir / "cli-bin",
+    }
+
+    assert expected.issubset(directories)
+
+
 def test_worker_warning_sanitization_removes_raw_banner() -> None:
     """Ensure ``worker stalled`` banners are rewritten into guidance."""
 

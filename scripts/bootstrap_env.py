@@ -2378,6 +2378,50 @@ def _translate_windows_host_path(path: Path) -> Path | None:
     return _translate_windows_path_with_root(raw, mount_root)
 
 
+def _iter_dockerdesktop_app_directories(root: Path) -> Iterable[Path]:
+    """Yield versioned Docker Desktop application directories under ``root``.
+
+    Docker Desktop's Electron-based bundles install into per-version
+    ``app-<semver>`` directories when deployed via user-mode installers (for
+    example the Microsoft Store or winget).  Those directories expose
+    ``resources\\bin`` folders that contain ``docker.exe``/``com.docker.cli.exe``
+    and, starting with 4.30, optional ``resources\\cli-*`` overlays used by the
+    Windows/WSL interoperability layer.
+
+    Historically :func:`_iter_windows_docker_directories` only emitted a static
+    list of potential directories.  That approach broke on hosts where Docker
+    Desktop had been installed exclusively through the versioned app bundle
+    because none of the static candidates existed, leading bootstrap to claim
+    Docker was unavailable.  Enumerating the versioned directories when present
+    keeps discovery resilient without hard-coding every possible version
+    component.  The helper defensively catches filesystem errors so bootstrap
+    remains robust on locked-down workstations that deny listing access.
+    """
+
+    app_root = root / "DockerDesktop"
+    try:
+        entries = list(app_root.iterdir())
+    except FileNotFoundError:
+        return
+    except NotADirectoryError:
+        return
+    except PermissionError:
+        LOGGER.debug("Unable to enumerate DockerDesktop app bundles under %s", app_root)
+        return
+    except OSError as exc:  # pragma: no cover - defensive safeguard
+        LOGGER.debug("Failed to enumerate DockerDesktop app bundles: %s", exc)
+        return
+
+    pattern = re.compile(r"app-[0-9][0-9A-Za-z_.-]*", re.IGNORECASE)
+
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        if not pattern.fullmatch(entry.name):
+            continue
+        yield entry
+
+
 def _iter_windows_docker_directories() -> Iterable[Path]:
     """Yield directories that commonly contain Docker Desktop CLIs on Windows."""
 
@@ -2419,6 +2463,23 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
         ("Docker", "Docker", "resources", "docker-cli"),
         ("Docker", "Docker", "resources", "cli-arm"),
         ("Docker", "Docker", "resources", "cli-arm64"),
+    )
+
+    app_resource_suffixes: tuple[tuple[str, ...], ...] = (
+        ("resources", "bin"),
+        ("resources", "cli"),
+        ("resources", "cli-wsl"),
+        ("resources", "cli-linux"),
+        ("resources", "cli-bin"),
+        ("resources", "docker-cli"),
+        ("resources", "cli-arm"),
+        ("resources", "cli-arm64"),
+    )
+
+    app_overlay_suffixes: tuple[tuple[str, ...], ...] = (
+        ("cli",),
+        ("cli-bin",),
+        ("cli-tools",),
     )
 
     default_targets: list[Path] = []
@@ -2480,6 +2541,12 @@ def _iter_windows_docker_directories() -> Iterable[Path]:
                     "cli-arm64",
                 )
             )
+
+            for app_dir in _iter_dockerdesktop_app_directories(base):
+                for suffix in app_resource_suffixes:
+                    default_targets.append(app_dir.joinpath(*suffix))
+                for suffix in app_overlay_suffixes:
+                    default_targets.append(app_dir.joinpath(*suffix))
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
