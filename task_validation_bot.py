@@ -44,7 +44,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from menace.synthesis_models import SynthesisTask
+try:
+    from .synthesis_models import SynthesisTask
+except ImportError:  # pragma: no cover - flat imports during bootstrap
+    from synthesis_models import SynthesisTask  # type: ignore
 
 
 
