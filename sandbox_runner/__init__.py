@@ -9,6 +9,7 @@ _LIGHT_IMPORTS = settings.menace_light_imports
 
 _env_mod = None
 _env_simulate_temporal_trajectory = None
+_cycle_runner_loader = None
 
 _ENV_EXPORTS = (
     "simulate_execution_environment",
@@ -61,10 +62,7 @@ def __getattr__(name: str):  # type: ignore[override]
         globals()[name] = ml
         return ml
     if name == "_sandbox_cycle_runner":
-        from .cycle import _sandbox_cycle_runner as cyc
-
-        globals()[name] = cyc
-        return cyc
+        return _load_cycle_runner()
     raise AttributeError(name)
 
 
@@ -83,8 +81,21 @@ def simulate_temporal_trajectory(
     )
 
 
+def _load_cycle_runner():
+    """Import and cache :func:`sandbox_runner.cycle._sandbox_cycle_runner`."""
+
+    global _cycle_runner_loader
+    if _cycle_runner_loader is None:
+        from .cycle import _sandbox_cycle_runner as cyc
+
+        _cycle_runner_loader = cyc
+        globals()["_sandbox_cycle_runner"] = cyc
+    return _cycle_runner_loader
+
+
 if not _LIGHT_IMPORTS:
-    from .cycle import _sandbox_cycle_runner
+    def _sandbox_cycle_runner(*args, **kwargs):  # type: ignore[override]
+        return _load_cycle_runner()(*args, **kwargs)
 
 from .resource_tuner import ResourceTuner  # noqa: E402
 from .workflow_sandbox_runner import WorkflowSandboxRunner  # noqa: E402
