@@ -1839,6 +1839,8 @@ def stop_background_loop() -> None:
     global _BACKGROUND_LOOP, _BACKGROUND_THREAD
     loop = _BACKGROUND_LOOP
     thread = _BACKGROUND_THREAD
+    loop_closed = True
+    thread_stopped = True
     if loop is not None:
         try:
             loop.call_soon_threadsafe(loop.stop)
@@ -1847,15 +1849,36 @@ def stop_background_loop() -> None:
     if thread is not None:
         try:
             thread.join(timeout=1.0)
+            if thread.is_alive():
+                logger.warning("background loop thread did not stop within timeout")
+                thread_stopped = False
         except Exception as exc:
             logger.warning("failed joining background thread: %s", exc)
+            thread_stopped = False
+    thread_stopped = thread_stopped and (thread is None or not thread.is_alive())
     if loop is not None:
         try:
-            loop.close()
+            running = loop.is_running()
         except Exception as exc:
-            logger.warning("failed closing background loop: %s", exc)
-    _BACKGROUND_LOOP = None
-    _BACKGROUND_THREAD = None
+            logger.warning("failed checking background loop status: %s", exc)
+            loop_closed = False
+        else:
+            if running:
+                logger.warning("background loop still running; skipping close")
+                loop_closed = False
+            else:
+                try:
+                    loop.close()
+                except Exception as exc:
+                    logger.warning("failed closing background loop: %s", exc)
+                    loop_closed = False
+        try:
+            loop_closed = loop_closed and not loop.is_running()
+        except Exception:
+            loop_closed = False
+    if thread_stopped and loop_closed:
+        _BACKGROUND_LOOP = None
+        _BACKGROUND_THREAD = None
 
 
 def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> Any:
