@@ -142,6 +142,62 @@ def test_nested_bytes_payload_is_sanitized() -> None:
     assert bootstrap_env._WORKER_STALLED_SIGNATURE_PREFIX in fingerprints
 
 
+def test_worker_json_fragment_rewrites_keys_and_values() -> None:
+    """JSON fragments should sanitise both keys and values containing stall banners."""
+
+    payload = json.dumps(
+        {
+            "worker stalled; restarting": {
+                "status": "worker stalled; restarting",
+                "context": "vpnkit",
+            }
+        }
+    )
+
+    sanitized, mutated = bootstrap_env._sanitize_worker_json_fragment(payload)
+
+    assert mutated is True
+    assert isinstance(sanitized, str)
+
+    decoded = json.loads(sanitized)
+    assert decoded
+    for key in decoded:
+        assert "worker stalled" not in key.lower()
+
+    first_value = next(iter(decoded.values()))
+    if isinstance(first_value, dict):
+        for value in first_value.values():
+            assert "worker stalled" not in str(value).lower()
+
+
+def test_worker_json_fragment_merges_colliding_keys() -> None:
+    """Sanitised JSON keys should gracefully merge duplicate worker stall entries."""
+
+    payload = json.dumps(
+        {
+            "worker stalled; restarting": "vpnkit",
+            "Worker stalled; restarting": "buildkit",
+        }
+    )
+
+    sanitized, mutated = bootstrap_env._sanitize_worker_json_fragment(payload)
+
+    assert mutated is True
+    assert isinstance(sanitized, str)
+
+    decoded = json.loads(sanitized)
+    assert len(decoded) >= 1
+
+    for key, value in decoded.items():
+        assert "worker stalled" not in key.lower()
+        if isinstance(value, list):
+            assert value
+            for entry in value:
+                assert "worker stalled" not in str(entry).lower()
+        else:
+            assert "worker stalled" not in str(value).lower()
+
+
 def test_worker_banner_subject_skips_severity_prefixes() -> None:
     message = "WARN[0042] moby/buildkit: worker stalled; restarting due to IO pressure"
 
