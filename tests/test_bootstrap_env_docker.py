@@ -1828,6 +1828,29 @@ def test_worker_warning_vpnkit_io_pressure_guidance() -> None:
     assert any("pressure" in segment.lower() for segment in assessment.details)
 
 
+def test_worker_warning_vpnkit_disk_pressure_guidance() -> None:
+    """Disk pressure codes should surface vpnkit-specific remediation steps."""
+
+    message = (
+        "WARNING: worker stalled; restarting component=\"vpnkit\" "
+        "restartCount=4 backoff=PT75S errCode=VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE "
+        "lastError=\"vpnkit background sync worker stalled; restarting due to disk pressure\""
+    )
+
+    cleaned, metadata = bootstrap_env._normalise_docker_warning(message)
+
+    assert "worker stalled; restarting" not in cleaned.lower()
+    assert metadata["docker_worker_last_error_code"] == "VPNKIT_BACKGROUND_SYNC_DISK_PRESSURE"
+
+    telemetry = bootstrap_env.WorkerRestartTelemetry.from_metadata(metadata)
+    assessment = bootstrap_env._classify_worker_flapping(telemetry, _windows_context())
+
+    guidance_key = "docker_worker_last_error_guidance_vpnkit_background_sync_disk_pressure"
+    assert guidance_key in assessment.metadata
+    assert "disk" in assessment.metadata[guidance_key].lower()
+    assert any("disk" in segment.lower() or "storage" in segment.lower() for segment in assessment.details)
+
+
 def test_generic_pressure_error_guidance() -> None:
     """Unrecognised pressure-oriented error codes should still provide guidance."""
 
