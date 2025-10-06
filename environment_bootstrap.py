@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import subprocess
 import shutil
 import importlib.util
@@ -17,6 +18,7 @@ from typing import Iterable, TYPE_CHECKING
 import threading
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -85,17 +87,27 @@ class EnvironmentBootstrapper:
                     self.logger.error("cluster supervisor failed: %s", exc)
 
     def _run(self, cmd: list[str], **kwargs) -> None:
-        """Run a subprocess command with retries."""
+        """Run a subprocess command with retries and duration logging."""
+
+        display = " ".join(shlex.quote(part) for part in cmd)
 
         @retry(Exception, attempts=3)
         def _execute() -> subprocess.CompletedProcess:
             return subprocess.run(cmd, check=True, **kwargs)
 
+        start = time.monotonic()
+        self.logger.info("executing command: %s", display)
         try:
             _execute()
         except Exception as exc:
-            self.logger.error("command failed after retries: %s", exc)
+            duration = time.monotonic() - start
+            self.logger.error(
+                "command failed after %.1fs (retried): %s", duration, display
+            )
             raise
+        duration = time.monotonic() - start
+        level = logging.WARNING if duration >= 60 else logging.INFO
+        self.logger.log(level, "command finished in %.1fs: %s", duration, display)
 
     # ------------------------------------------------------------------
     def check_commands(self, cmds: Iterable[str]) -> None:
@@ -384,6 +396,7 @@ class EnvironmentBootstrapper:
             return
         for req in pkgs:
             try:
+                self.logger.info("installing python dependency: %s", req)
                 self._run([sys.executable, "-m", "pip", "install", req])
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.error("failed installing %s: %s", req, exc)
@@ -420,7 +433,18 @@ class EnvironmentBootstrapper:
                     raise
         if self.policy.enforce_remote_checks:
             self.check_remote_dependencies(self.remote_endpoints)
+        self.logger.info(
+            "verifying project dependencies declared in pyproject.toml"
+        )
         missing = startup_checks.verify_project_dependencies(policy=self.policy)
+        if missing:
+            self.logger.warning(
+                "%d python packages are missing: %s",
+                len(missing),
+                ", ".join(sorted(missing)),
+            )
+        else:
+            self.logger.info("all declared project dependencies import successfully")
         if missing:
             self.install_dependencies(missing)
         if self.policy.ensure_apscheduler and importlib.util.find_spec("apscheduler") is None:
