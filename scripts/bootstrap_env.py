@@ -8176,6 +8176,34 @@ def _merge_worker_banner_fingerprints(
     return ", ".join(sorted(collected))
 
 
+_WORKER_METADATA_KEY_SANITISER = re.compile(r"[^0-9A-Za-z]+")
+
+
+def _sanitize_worker_metadata_key(key: object) -> tuple[object, set[str], bool]:
+    """Return a sanitised mapping key when ``worker stalled`` banners bleed into it."""
+
+    if not isinstance(key, str):
+        return key, set(), False
+
+    normalized = _normalise_worker_stalled_phrase(key)
+    if not _contains_worker_stall_signal(normalized):
+        return key, set(), False
+
+    fingerprint = _fingerprint_worker_banner(key)
+    narrative = _sanitize_worker_banner_text(key)
+    canonical = _canonicalize_worker_narrative(narrative)
+
+    collapsed = _WORKER_METADATA_KEY_SANITISER.sub("_", canonical).strip("_")
+    if not collapsed:
+        collapsed = "docker_worker_guidance"
+
+    collapsed = collapsed.lower()
+    if fingerprint:
+        collapsed = f"{collapsed}_{fingerprint}"
+
+    return collapsed, ({fingerprint} if fingerprint else set()), collapsed != key
+
+
 def _scrub_nested_worker_artifacts(
     value: object, seen: set[int] | None = None
 ) -> tuple[object, set[str], bool]:
@@ -8213,14 +8241,20 @@ def _scrub_nested_worker_artifacts(
         if isinstance(value, MutableMappingABC):
             mutated = False
             digests: set[str] = set()
+            sanitized_items: dict[object, object] = {}
             for key in list(value.keys()):
+                sanitized_key, key_digests, key_mutated = _sanitize_worker_metadata_key(key)
                 sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
                     value[key], seen
                 )
-                if child_mutated:
-                    value[key] = sanitized_child
-                    mutated = True
+                sanitized_items[sanitized_key] = sanitized_child
+                mutated = mutated or child_mutated or key_mutated or sanitized_key != key
+                digests.update(key_digests)
                 digests.update(child_digests)
+            if mutated:
+                value.clear()
+                for sanitized_key, sanitized_child in sanitized_items.items():
+                    value[sanitized_key] = sanitized_child
             return value, digests, mutated
 
         if isinstance(value, MappingABC):
@@ -8228,11 +8262,13 @@ def _scrub_nested_worker_artifacts(
             digests: set[str] = set()
             sanitized_items: dict[object, object] = {}
             for key, raw in value.items():
+                sanitized_key, key_digests, key_mutated = _sanitize_worker_metadata_key(key)
                 sanitized_child, child_digests, child_mutated = _scrub_nested_worker_artifacts(
                     raw, seen
                 )
-                sanitized_items[key] = sanitized_child
-                mutated = mutated or child_mutated
+                sanitized_items[sanitized_key] = sanitized_child
+                mutated = mutated or child_mutated or key_mutated or sanitized_key != key
+                digests.update(key_digests)
                 digests.update(child_digests)
 
             if not mutated:

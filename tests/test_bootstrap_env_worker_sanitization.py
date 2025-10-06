@@ -328,6 +328,26 @@ def test_worker_banner_json_payload_is_sanitized() -> None:
     assert metadata.get("docker_worker_health") == "flapping"
 
 
+def test_worker_metadata_keys_are_sanitized() -> None:
+    payload = {
+        "WARNING: worker stalled; restarting component=\"vpnkit\"": "worker stalled; restarting",
+        "nested": {
+            "worker stalled; restarting (errCode=VPNKIT_BACKGROUND_SYNC_CPU)": "vpnkit background sync worker stalled; restarting",
+        },
+    }
+
+    sanitized, digests, mutated = bootstrap_env._scrub_nested_worker_artifacts(payload)  # type: ignore[attr-defined]
+
+    assert mutated
+    assert digests, "expected worker banner fingerprints to be propagated"
+    assert all("worker stalled" not in key.lower() for key in sanitized.keys())
+
+    nested = sanitized.get("nested")
+    assert isinstance(nested, dict)
+    assert all("worker stalled" not in key.lower() for key in nested.keys())
+    assert all("worker stalled" not in str(value).lower() for value in nested.values())
+
+
 def test_worker_banner_structured_mapping_is_scrubbed() -> None:
     payload = {
         "level": "warn",
