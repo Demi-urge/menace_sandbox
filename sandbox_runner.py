@@ -14,12 +14,14 @@ import signal
 import sys
 import threading
 
+import importlib
 import importlib.util
 import logging
 import os
 import shutil
 import uuid
-from typing import TYPE_CHECKING
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -196,7 +198,7 @@ from logging_utils import log_record, get_logger, setup_logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, TYPE_CHECKING, Iterable
+from typing import Dict, List, Iterable
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
 from menace.self_improvement_policy import SelfImprovementPolicy
@@ -246,7 +248,6 @@ except Exception:  # pragma: no cover - psutil not installed
 from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
 from relevancy_radar import scan as relevancy_radar_scan, radar
-from sandbox_runner.cycle import _async_track_usage
 try:  # telemetry optional
     from sandbox_runner.meta_logger import _SandboxMetaLogger
 except ImportError as exc:  # pragma: no cover - meta logger missing
@@ -263,6 +264,39 @@ except Exception:  # pragma: no cover - optional dependency
 if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
     from self_coding_engine import SelfCodingEngine
+
+_CYCLE_MODULE: ModuleType | None = None
+
+
+def _load_cycle_module() -> ModuleType:
+    """Return the :mod:`sandbox_runner.cycle` module lazily."""
+
+    global _CYCLE_MODULE
+    if _CYCLE_MODULE is None:
+        _CYCLE_MODULE = importlib.import_module("sandbox_runner.cycle")
+    return _CYCLE_MODULE
+
+
+def _async_track_usage(module: str, impact: float | None = None) -> None:
+    """Proxy to :func:`sandbox_runner.cycle._async_track_usage`."""
+
+    cycle = _load_cycle_module()
+    cycle._async_track_usage(module, impact)
+
+
+def _sandbox_cycle_runner(*args: Any, **kwargs: Any) -> Any:
+    """Proxy to :func:`sandbox_runner.cycle._sandbox_cycle_runner`."""
+
+    cycle = _load_cycle_module()
+    return cycle._sandbox_cycle_runner(*args, **kwargs)
+
+
+def map_module_identifier(*args: Any, **kwargs: Any) -> Any:
+    """Proxy to :func:`sandbox_runner.cycle.map_module_identifier`."""
+
+    cycle = _load_cycle_module()
+    return cycle.map_module_identifier(*args, **kwargs)
+
 
 __path__ = [resolve_path("sandbox_runner").as_posix()]
 logger = get_logger(__name__)
@@ -315,7 +349,6 @@ from sandbox_runner.environment import (
     _section_worker,
     validate_preset,
 )
-from sandbox_runner.cycle import _sandbox_cycle_runner, map_module_identifier
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
 from meta_workflow_planner import simulate_meta_workflow as _simulate_meta_workflow
 
