@@ -11637,6 +11637,7 @@ def _run_bootstrap(config: BootstrapConfig) -> None:
     )
     run_startup_checks(skip_stripe_router=config.skip_stripe_router, policy=policy)
     EnvironmentBootstrapper(policy=policy).bootstrap()
+    LOGGER.info("Environment bootstrap completed successfully")
 
 
 def main(argv: list[str] | None = None) -> None:
