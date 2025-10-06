@@ -147,11 +147,6 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from patch_suggestion_db import PatchSuggestionDB  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
-    from .bot_registry import BotRegistry, get_bot_workflow_tests
-except Exception:  # pragma: no cover - fallback for flat layout
-    from bot_registry import BotRegistry, get_bot_workflow_tests  # type: ignore
-
-try:  # pragma: no cover - allow package/flat imports
     from .patch_provenance import record_patch_metadata, get_patch_by_commit
 except Exception:  # pragma: no cover - fallback for flat layout
     from patch_provenance import (
@@ -174,13 +169,26 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from code_database import PatchRecord  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from .bot_registry import BotRegistry
     from .enhancement_classifier import EnhancementClassifier
     from .evolution_orchestrator import EvolutionOrchestrator
     from .self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
     from .self_improvement.target_region import TargetRegion as _TargetRegion
 else:  # pragma: no cover - runtime stubs avoid circular imports
+    BotRegistry = Any  # type: ignore[misc, assignment]
     _BaselineTracker = Any  # type: ignore[misc, assignment]
     _TargetRegion = Any  # type: ignore[misc, assignment]
+
+
+def _get_bot_workflow_tests(*args: Any, **kwargs: Any) -> list[str]:
+    """Lazily import :func:`get_bot_workflow_tests` to avoid circular imports."""
+
+    try:
+        from .bot_registry import get_bot_workflow_tests as _inner
+    except Exception as exc:  # pragma: no cover - best effort fallback
+        raise RuntimeError("bot workflow lookup is unavailable") from exc
+    result = _inner(*args, **kwargs)
+    return list(result or [])
 
 
 _BASELINE_TRACKER_CLS: type[_BaselineTracker] | None = None
@@ -878,13 +886,13 @@ class SelfCodingManager:
             if not self.bot_registry:
                 return tests
             try:
-                tests = get_bot_workflow_tests(
+                tests = _get_bot_workflow_tests(
                     self.bot_name, registry=self.bot_registry
                 )
             except Exception:
                 self.logger.exception("failed to resolve default workflow tests")
                 return []
-            return list(tests or [])
+            return tests
 
         def _summary_workflow_tests() -> list[str]:
             summary_tests: list[str] = []
