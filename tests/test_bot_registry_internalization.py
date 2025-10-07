@@ -161,6 +161,29 @@ def test_register_bot_internalization_retry(monkeypatch):
 
     assert attempts["count"] == 2
     node = reg.graph.nodes["BarBot"]
-    assert "pending_internalization" not in node
+    assert not node.get("pending_internalization")
     assert ("bot:internalized", {"bot": "BarBot"}) in bus.events
     assert "BarBot" not in reg._internalization_retry_attempts
+
+
+def test_register_bot_blocks_on_missing_dependency(monkeypatch):
+    bus = DummyBus()
+    reg = bot_registry.BotRegistry(event_bus=bus)
+
+    def fail_internalize(self, name, *, manager=None, data_bot=None):
+        raise ModuleNotFoundError("No module named 'totally_missing_lib'")
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_internalize_missing_coding_bot",
+        fail_internalize,
+        raising=False,
+    )
+
+    reg.register_bot("BlockedBot", is_coding_bot=True)
+
+    node = reg.graph.nodes["BlockedBot"]
+    assert node["internalization_blocked"]["exception"] == "ModuleNotFoundError"
+    assert not node.get("pending_internalization")
+    assert node["internalization_blocked"]["error"]
+    assert any(evt[0] == "bot:internalization_blocked" for evt in bus.events)
