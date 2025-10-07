@@ -259,22 +259,37 @@ def self_coding_managed(
                 _ensure_threshold_entry(name, t)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("threshold reload failed for %s", name)
+        register_kwargs = dict(
+            name=name,
+            roi_threshold=roi_t,
+            error_threshold=err_t,
+            manager=manager,
+            data_bot=data_bot,
+            module_path=module_path,
+            is_coding_bot=True,
+        )
         try:
-            bot_registry.register_bot(
-                name,
-                roi_threshold=roi_t,
-                error_threshold=err_t,
-                manager=manager,
-                data_bot=data_bot,
-                is_coding_bot=True,
-            )
+            bot_registry.register_bot(**register_kwargs)
         except TypeError:  # pragma: no cover - legacy registries
             try:
-                bot_registry.register_bot(
-                    name, manager=manager, data_bot=data_bot, is_coding_bot=True
-                )
+                fallback_kwargs = dict(register_kwargs)
+                fallback_kwargs.pop("roi_threshold", None)
+                fallback_kwargs.pop("error_threshold", None)
+                bot_registry.register_bot(**fallback_kwargs)
             except TypeError:
                 bot_registry.register_bot(name, is_coding_bot=True)
+                if module_path:
+                    try:
+                        node = bot_registry.graph.nodes.get(name)
+                        if node is not None:
+                            node["module"] = module_path
+                        bot_registry.modules[name] = module_path
+                    except Exception:  # pragma: no cover - best effort bookkeeping
+                        logger.debug(
+                            "failed to persist module path for %s after legacy registration",
+                            name,
+                            exc_info=True,
+                        )
         update_kwargs: dict[str, Any] = {}
         should_update = True
         try:

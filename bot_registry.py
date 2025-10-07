@@ -876,12 +876,20 @@ class BotRegistry:
         test_failure_threshold: float | None = None,
         manager: "SelfCodingManager" | None = None,
         data_bot: "DataBot" | None = None,
+        module_path: str | os.PathLike[str] | None = None,
         is_coding_bot: bool = False,
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
         with self._lock:
             self.graph.add_node(name)
             node = self.graph.nodes[name]
+            if module_path is not None:
+                try:
+                    resolved_path = os.fspath(module_path)
+                except TypeError:
+                    resolved_path = str(module_path)
+                node["module"] = resolved_path
+                self.modules[name] = resolved_path
             existing_mgr = node.get("selfcoding_manager") or node.get("manager")
             existing_data = node.get("data_bot")
             is_coding_bot = bool(is_coding_bot)
