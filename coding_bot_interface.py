@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _UNSIGNED_WARNING_CACHE: set[str] = set()
 _UNSIGNED_WARNING_LOCK = threading.Lock()
+_SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
+_SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
 
 
 def _unsigned_provenance_allowed() -> bool:
@@ -79,7 +81,123 @@ def _unsigned_provenance_allowed() -> bool:
     pubkey = os.getenv("PATCH_PROVENANCE_PUBKEY") or os.getenv(
         "PATCH_PROVENANCE_PUBLIC_KEY"
     )
-    return not (prov_file and pubkey)
+    if not (prov_file and pubkey):
+        return True
+
+    if _signed_provenance_available(prov_file, pubkey):
+        return False
+
+    return True
+
+
+def _signed_provenance_available(prov_file: str, pubkey: str) -> bool:
+    """Validate signed provenance configuration returning ``True`` when usable."""
+
+    prov_path = Path(prov_file).expanduser()
+    try:
+        if not prov_path.exists():
+            _warn_signed_provenance_misconfigured(
+                prov_file,
+                pubkey,
+                "file does not exist",
+            )
+            return False
+        if not prov_path.is_file():
+            _warn_signed_provenance_misconfigured(
+                prov_file,
+                pubkey,
+                "path is not a regular file",
+            )
+            return False
+        with prov_path.open("rb") as handle:
+            handle.read(1)
+    except OSError as exc:  # pragma: no cover - filesystem dependent
+        _warn_signed_provenance_misconfigured(
+            prov_file,
+            pubkey,
+            f"file is not readable ({exc})",
+        )
+        return False
+
+    pubkey_value = (pubkey or "").strip()
+    if not pubkey_value:
+        _warn_signed_provenance_misconfigured(
+            prov_file,
+            pubkey,
+            "public key environment variable is empty",
+        )
+        return False
+
+    if _looks_like_path(pubkey_value):
+        key_path = Path(pubkey_value).expanduser()
+        try:
+            if not key_path.exists():
+                _warn_signed_provenance_misconfigured(
+                    prov_file,
+                    pubkey,
+                    "public key path does not exist",
+                )
+                return False
+            if not key_path.is_file():
+                _warn_signed_provenance_misconfigured(
+                    prov_file,
+                    pubkey,
+                    "public key path is not a file",
+                )
+                return False
+            with key_path.open("rb") as handle:
+                handle.read(1)
+        except OSError as exc:  # pragma: no cover - filesystem dependent
+            _warn_signed_provenance_misconfigured(
+                prov_file,
+                pubkey,
+                f"public key file is not readable ({exc})",
+            )
+            return False
+
+    return True
+
+
+def _looks_like_path(value: str) -> bool:
+    """Heuristically determine whether *value* represents a filesystem path."""
+
+    if not value:
+        return False
+
+    candidate = value.strip()
+    if candidate.startswith("-----BEGIN") or candidate.startswith("ssh-"):
+        return False
+    if candidate.startswith("~"):
+        return True
+    if os.path.isabs(candidate):
+        return True
+    if len(candidate) > 2 and candidate[1] == ":" and candidate[2:3] in {"\\", "/"}:
+        return True
+    if any(sep and sep in candidate for sep in (os.sep, os.path.altsep)):
+        return True
+    suffix = Path(candidate).suffix.lower()
+    if suffix in {".pem", ".pub", ".key", ".der", ".json"}:
+        return True
+    return False
+
+
+def _warn_signed_provenance_misconfigured(
+    prov_file: str, pubkey: str, reason: str
+) -> None:
+    """Log a single warning for unusable signed provenance settings."""
+
+    key = (prov_file or "", pubkey or "")
+    with _SIGNED_PROVENANCE_WARNING_LOCK:
+        if key in _SIGNED_PROVENANCE_WARNING_CACHE:
+            return
+        _SIGNED_PROVENANCE_WARNING_CACHE.add(key)
+
+    logger.warning(
+        "Signed provenance requested via PATCH_PROVENANCE_FILE=%s but %s; "
+        "falling back to unsigned provenance.",
+        prov_file,
+        reason,
+    )
 
 
 def _warn_unsigned_once(name: str) -> None:
