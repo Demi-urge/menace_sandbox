@@ -93,6 +93,60 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
     disabled = node.get("self_coding_disabled")
     assert disabled is not None
     assert disabled["transient_error"]["repeat_count"] == registry._max_transient_error_signature_repeats
+    assert (
+        disabled["transient_error"]["total_repeat_count"]
+        == registry._max_transient_error_signature_repeats
+    )
+    assert disabled["transient_error"]["unique_signatures"] == 1
     assert node.get("pending_internalization") is False
     assert "internalization_blocked" in node
+
+
+def test_transient_import_errors_with_varying_signatures(monkeypatch):
+    registry = _make_registry()
+    registry._max_transient_error_signature_repeats = 99
+    registry._max_transient_error_total_repeats = 3
+    registry._transient_error_grace_period = 0.0
+
+    attempts = {"count": 0}
+
+    def _boom():
+        attempts["count"] += 1
+        raise ImportError(
+            "cannot import name 'Helper' from partially initialized module 'menace.foo' "
+            f"(attempt {attempts['count']})"
+        )
+
+    scheduled: list[tuple[str, float | None]] = []
+
+    monkeypatch.setattr(
+        registry,
+        "_internalize_missing_coding_bot",
+        lambda *a, **k: _boom(),
+    )
+    monkeypatch.setattr(
+        registry,
+        "_schedule_internalization_retry",
+        lambda name, *, delay=None: scheduled.append((name, delay)),
+    )
+
+    registry.register_bot("FutureProfitabilityBot", is_coding_bot=True)
+
+    for _ in range(10):
+        if not scheduled:
+            break
+        name, _delay = scheduled.pop(0)
+        registry._retry_internalization(name)
+        node = registry.graph.nodes[name]
+        if node.get("self_coding_disabled"):
+            break
+
+    node = registry.graph.nodes["FutureProfitabilityBot"]
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None, "self-coding should be disabled after repeated failures"
+    error_meta = disabled["transient_error"]
+    assert error_meta["total_repeat_count"] == attempts["count"]
+    assert error_meta["unique_signatures"] == attempts["count"]
+    assert error_meta["repeat_count"] == 1
+    assert node.get("pending_internalization") is False
 
