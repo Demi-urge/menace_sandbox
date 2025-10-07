@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 from vector_service.context_builder import ContextBuilder
 from vector_service.retriever import StackRetriever
+
+logger = logging.getLogger(__name__)
+
 
 DB_SPEC: Tuple[Tuple[str, str, str], ...] = (
     ("bots_db", "bots.db", "BOT_DB_PATH"),
@@ -29,7 +33,19 @@ def _ensure_readable(path: Path, filename: str) -> str:
     except FileNotFoundError:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
-    except OSError:
+    except PermissionError as exc:
+        logger.warning(
+            "create_context_builder: unable to open %s due to permission error: %s",
+            filename,
+            exc,
+        )
+        return str(path)
+    except OSError as exc:
+        logger.warning(
+            "create_context_builder: best-effort access failed for %s: %s",
+            filename,
+            exc,
+        )
         return str(path)
     return str(path)
 

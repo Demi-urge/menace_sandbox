@@ -36,6 +36,9 @@ load_internal = import_compat.load_internal
 sys.modules.setdefault("menace", importlib.import_module("menace_sandbox"))
 sys.modules.setdefault("menace.task_validation_bot", sys.modules[__name__])
 
+dependency_probe = load_internal("self_coding_dependency_probe")
+ensure_self_coding_ready = dependency_probe.ensure_self_coding_ready
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +71,14 @@ def _resolve_management() -> tuple[
     back to a no-op decorator so the bot behaves as a regular, non self-coding
     implementation.
     """
+
+    ready, missing = ensure_self_coding_ready()
+    if not ready:
+        logger.warning(
+            "Self-coding integration disabled for TaskValidationBot due to missing dependencies: %s",
+            ", ".join(missing),
+        )
+        return _noop_self_coding, None, None, None
 
     try:
         registry_cls = load_internal("bot_registry").BotRegistry
