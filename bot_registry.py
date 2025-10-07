@@ -301,6 +301,16 @@ _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
 # transient retries.  Normalising the message here lets the caller surface a
 # proper ``SelfCodingUnavailableError`` instead of looping indefinitely.
 _DLL_LOAD_FAILED_RE = re.compile(r"while importing ([^:]+)")
+_CIRCULAR_IMPORT_RE = re.compile(
+    r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from"
+    r"(?: partially initialized module)? ['\"](?P<module>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+_PARTIAL_MODULE_RE = re.compile(
+    r"partially initialized module ['\"](?P<module>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+_CIRCULAR_HINT_RE = re.compile("circular import", re.IGNORECASE)
 
 
 def _collect_missing_modules(exc: BaseException) -> set[str]:
@@ -323,6 +333,12 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 dll_match = _DLL_LOAD_FAILED_RE.search(str(item))
                 if dll_match:
                     missing.add(dll_match.group(1))
+            circular_match = _CIRCULAR_IMPORT_RE.search(str(item))
+            if circular_match:
+                missing.add(circular_match.group("module"))
+            partial_match = _PARTIAL_MODULE_RE.search(str(item))
+            if partial_match:
+                missing.add(partial_match.group("module"))
     return missing
 
 
@@ -751,8 +767,13 @@ class BotRegistry:
         except Exception as exc:
             missing_modules = _collect_missing_modules(exc)
             if missing_modules:
+                reason = (
+                    "self-coding bootstrap failed: circular import detected"
+                    if _CIRCULAR_HINT_RE.search(str(exc))
+                    else "self-coding bootstrap failed: missing runtime dependencies"
+                )
                 raise SelfCodingUnavailableError(
-                    "self-coding bootstrap failed: missing runtime dependencies",
+                    reason,
                     missing=missing_modules,
                 ) from exc
 

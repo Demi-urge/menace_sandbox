@@ -17,3 +17,19 @@ def test_collect_missing_modules_handles_nested_dll_message():
     )
     missing = _collect_missing_modules(err)
     assert "helper_lib" in missing
+
+
+def test_collect_missing_modules_detects_circular_import():
+    err = ImportError(
+        "cannot import name 'TaskValidationBot' from partially initialized module 'menace_sandbox.task_validation_bot' (most likely due to a circular import)"
+    )
+    missing = _collect_missing_modules(err)
+    assert "menace_sandbox.task_validation_bot" in missing
+
+
+def test_collect_missing_modules_detects_circular_import_without_partial_hint():
+    err = ImportError(
+        "cannot import name 'TaskValidationBot' from 'menace_sandbox.task_validation_bot' (most likely due to a circular import)"
+    )
+    missing = _collect_missing_modules(err)
+    assert "menace_sandbox.task_validation_bot" in missing
