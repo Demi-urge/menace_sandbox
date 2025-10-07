@@ -294,6 +294,13 @@ def _iter_exception_chain(exc: BaseException) -> Iterable[BaseException]:
 
 
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
+# Windows frequently reports missing optional dependencies via ``ImportError``
+# messages that lack the ``name`` attribute.  Those errors typically follow the
+# "DLL load failed while importing <module>" pattern which previously slipped
+# through ``_collect_missing_modules`` and forced the registry into repeated
+# transient retries.  Normalising the message here lets the caller surface a
+# proper ``SelfCodingUnavailableError`` instead of looping indefinitely.
+_DLL_LOAD_FAILED_RE = re.compile(r"while importing ([^:]+)")
 
 
 def _collect_missing_modules(exc: BaseException) -> set[str]:
@@ -312,6 +319,10 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             match = _MISSING_MODULE_RE.search(str(item))
             if match:
                 missing.add(match.group(1))
+            else:
+                dll_match = _DLL_LOAD_FAILED_RE.search(str(item))
+                if dll_match:
+                    missing.add(dll_match.group(1))
     return missing
 
 
