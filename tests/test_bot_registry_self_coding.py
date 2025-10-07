@@ -21,6 +21,39 @@ def _make_registry() -> bot_registry.BotRegistry:
     return bot_registry.BotRegistry(event_bus=None)
 
 
+def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "schedule_unmanaged_scan",
+        lambda self, interval=3600.0: None,
+    )
+    registry = bot_registry.BotRegistry(event_bus=None)
+
+    def _raise(*_args, **_kwargs):
+        raise bot_registry.SelfCodingUnavailableError(
+            "self-coding bootstrap failed",
+            missing=("quick_fix_engine",),
+        )
+
+    monkeypatch.setattr(registry, "_internalize_missing_coding_bot", _raise)
+
+    module_path = tmp_path / "example_bot.py"
+    module_path.write_text("# stub\n", encoding="utf-8")
+
+    registry.register_bot(
+        "ExampleBot",
+        module_path=module_path,
+        is_coding_bot=True,
+    )
+
+    node = registry.graph.nodes["ExampleBot"]
+    assert node["module"] == str(module_path)
+    assert registry.modules["ExampleBot"] == str(module_path)
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    assert disabled["missing_dependencies"] == ["quick_fix_engine"]
+
+
 def test_register_bot_marks_self_coding_disabled_when_dependencies_missing(monkeypatch):
     monkeypatch.setattr(
         bot_registry,
