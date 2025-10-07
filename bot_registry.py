@@ -834,6 +834,23 @@ class BotRegistry:
             )
         except Exception as exc:
             missing_modules = _collect_missing_modules(exc)
+            if not missing_modules and isinstance(exc, (ImportError, ModuleNotFoundError)):
+                # Windows frequently surfaces dependency issues via generic
+                # ``ImportError`` exceptions that do not expose the missing
+                # module via ``exc.name``.  Re-running the dependency probe lets
+                # us convert those errors into a deterministic
+                # ``SelfCodingUnavailableError`` so the registry can disable
+                # self-coding instead of retrying indefinitely.
+                try:
+                    ready, missing = ensure_self_coding_ready()
+                except Exception:  # pragma: no cover - defensive best effort
+                    ready, missing = (False, tuple())
+                if not ready and missing:
+                    missing_modules.update(missing)
+                else:
+                    name_attr = getattr(exc, "name", None)
+                    if isinstance(name_attr, str) and name_attr.strip():
+                        missing_modules.add(name_attr.strip())
             if missing_modules:
                 reason = (
                     "self-coding bootstrap failed: circular import detected"

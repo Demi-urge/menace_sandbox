@@ -82,3 +82,23 @@ def test_runtime_probe_handles_generic_import_failure(monkeypatch):
     assert not ready
     assert "quick_fix_engine" in missing
     probe._runtime_dependency_issues.cache_clear()
+
+
+def test_runtime_probe_handles_windows_error_loading(monkeypatch):
+    monkeypatch.setattr(
+        probe,
+        "find_spec",
+        lambda name: types.SimpleNamespace(),
+    )
+
+    def _boom(name: str):  # pragma: no cover - exercised via probe
+        raise ImportError('Error loading "C:/menace/quick_fix_engine.pyd" or one of its dependencies.')
+
+    monkeypatch.setattr(probe.importlib, "import_module", _boom)
+    probe._runtime_dependency_issues.cache_clear()
+
+    ready, missing = probe.ensure_self_coding_ready()
+
+    assert not ready
+    assert any("quick_fix_engine" in item for item in missing)
+    probe._runtime_dependency_issues.cache_clear()

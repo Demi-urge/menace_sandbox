@@ -38,12 +38,16 @@ _DEFAULT_MODULES: Tuple[str, ...] = (
 # installations where ``find_spec`` succeeds but importing the module fails due
 # to missing DLLs.  Probing the import early allows us to surface the precise
 # dependency gap instead of looping retries during bot internalisation.
-_RUNTIME_IMPORTS: Tuple[str, ...] = ("menace_sandbox.quick_fix_engine",)
+_RUNTIME_IMPORTS: Tuple[str, ...] = (
+    "menace_sandbox.quick_fix_engine",
+    "menace.quick_fix_engine",
+)
 
 
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
 _DLL_LOAD_FAILED_RE = re.compile(r"while importing (?P<module>[^:]+)")
 _FAILED_IMPORT_RE = re.compile(r"failed to import (?P<module>[\w.]+)", re.IGNORECASE)
+_WINDOWS_ERROR_LOADING_RE = re.compile(r"Error loading ['\"](?P<module>[^'\"]+)['\"]")
 
 
 def _iter_exception_chain(exc: BaseException):
@@ -82,7 +86,12 @@ def _collect_missing_from_exception(exc: BaseException) -> set[str]:
             continue
         if isinstance(item, ImportError):
             missing.update(_normalise_module_name(getattr(item, "name", None)))
-        for regex in (_MISSING_MODULE_RE, _DLL_LOAD_FAILED_RE, _FAILED_IMPORT_RE):
+        for regex in (
+            _MISSING_MODULE_RE,
+            _DLL_LOAD_FAILED_RE,
+            _FAILED_IMPORT_RE,
+            _WINDOWS_ERROR_LOADING_RE,
+        ):
             match = regex.search(message)
             if match:
                 key = match.groupdict().get("module") or match.group(1)
