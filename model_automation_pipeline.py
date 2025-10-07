@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Iterable, Dict, Optional, Any, TYPE_CHECKING, Callable
+from typing import List, Iterable, Dict, Optional, Any, TYPE_CHECKING, Callable, Type, cast
+from functools import lru_cache
 import logging
 
 try:
@@ -28,7 +29,6 @@ except Exception:  # pragma: no cover - optional dependency
         ValidationError,
     )
 
-from .task_validation_bot import TaskValidationBot
 from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
 from .hierarchy_assessment_bot import HierarchyAssessmentBot
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
@@ -134,6 +134,36 @@ class AutomationResult:
     workflow_evolution: List[Dict[str, Any]] | None = None
 
 
+if TYPE_CHECKING:  # pragma: no cover - type checking only imports
+    from .task_validation_bot import TaskValidationBot
+else:  # pragma: no cover - runtime fallback avoids circular imports
+    TaskValidationBot = Any  # type: ignore[misc, assignment]
+
+
+@lru_cache(maxsize=1)
+def _task_validation_cls() -> Type["TaskValidationBot"]:
+    """Return the ``TaskValidationBot`` class without triggering circular imports.
+
+    The import of :mod:`task_validation_bot` eagerly initialises the
+    self-coding stack which, in turn, reaches back into this module to build the
+    automation pipeline.  Importing the class lazily via this helper prevents
+    Windows start-up sequences from oscillating between partially initialised
+    modules and repeated internalisation retries.  The ``lru_cache`` guard keeps
+    the import overhead negligible while remaining thread-safe.
+    """
+
+    from .task_validation_bot import TaskValidationBot as _TaskValidationBot
+
+    return _TaskValidationBot
+
+
+def _build_default_validator() -> "TaskValidationBot":
+    """Instantiate a default task validator using the cached class reference."""
+
+    validator_cls = _task_validation_cls()
+    return cast("TaskValidationBot", validator_cls([]))
+
+
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -212,7 +242,7 @@ class ModelAutomationPipeline:
                 context_builder=self.context_builder,
             )
         self.synthesis_bot = synthesis_bot
-        self.validator = validator or TaskValidationBot([])
+        self.validator = validator or _build_default_validator()
         self.planner = planner or BotPlanningBot()
         self.hierarchy = hierarchy or HierarchyAssessmentBot()
         self.data_bot = data_bot or DataBot()
