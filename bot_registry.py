@@ -363,6 +363,20 @@ _WINDOWS_LIBRARY_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Import failures originating from these modules indicate that the self-coding
+# runtime itself is unavailable rather than a temporary race with the module
+# graph.  Treating them as non-transient prevents the registry from retrying
+# indefinitely on Windows when compiled extensions such as ``quick_fix_engine``
+# are missing supporting DLLs.
+_INTERNAL_SELF_CODING_MODULES: tuple[str, ...] = (
+    "quick_fix_engine",
+    "self_coding_manager",
+    "model_automation_pipeline",
+    "code_database",
+    "gpt_memory",
+    "self_coding_thresholds",
+)
+
 
 def _normalise_token(token: str | None) -> set[str]:
     """Return a normalised set of candidate module names for ``token``."""
@@ -462,6 +476,9 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
         module_name = _missing_module_name(exc)
         if module_name is None:
             return True
+        root_name = module_name.split(".", 1)[0]
+        if module_name.startswith(("menace_sandbox.", "menace.")) or root_name in _INTERNAL_SELF_CODING_MODULES:
+            return False
         return _resolved_module_exists(module_name)
     if isinstance(exc, ImportError) and "partially initialized" in message:
         return True

@@ -21,6 +21,20 @@ def _make_registry() -> bot_registry.BotRegistry:
     return bot_registry.BotRegistry(event_bus=None)
 
 
+def test_internal_self_coding_modules_not_transient():
+    exc = ModuleNotFoundError(
+        "No module named 'menace_sandbox.quick_fix_engine'",
+        name="menace_sandbox.quick_fix_engine",
+    )
+    assert not bot_registry._is_transient_internalization_error(exc)
+
+    exc_top_level = ModuleNotFoundError(
+        "No module named 'quick_fix_engine'",
+        name="quick_fix_engine",
+    )
+    assert not bot_registry._is_transient_internalization_error(exc_top_level)
+
+
 def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bot_registry.BotRegistry,
