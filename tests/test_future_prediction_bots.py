@@ -1,3 +1,7 @@
+import importlib
+import sys
+import types
+
 import pytest
 import menace.prediction_manager_bot as pmb
 import menace.future_prediction_bots as fpb
@@ -107,3 +111,31 @@ def test_roi_tracker_predicts_with_future_bots(tmp_path):
     assert tracker.rolling_mae_metric("synergy_code_quality") >= 0.0
     assert tracker.rolling_mae_metric("synergy_network_latency") >= 0.0
     assert tracker.rolling_mae_metric("synergy_throughput") >= 0.0
+
+
+def test_future_prediction_bots_import_without_self_coding_dependencies():
+    module_name = "menace_sandbox.future_prediction_bots"
+    preserved_modules: dict[str, object] = {}
+    for target in list(sys.modules):
+        if target == module_name or target.startswith(f"{module_name}."):
+            preserved_modules[target] = sys.modules.pop(target)
+    preserved_probe = sys.modules.get("menace_sandbox.self_coding_dependency_probe")
+    if preserved_probe is not None:
+        preserved_modules["menace_sandbox.self_coding_dependency_probe"] = preserved_probe
+        sys.modules.pop("menace_sandbox.self_coding_dependency_probe")
+
+    stub_probe = types.ModuleType("menace_sandbox.self_coding_dependency_probe")
+    stub_probe.ensure_self_coding_ready = lambda modules=None: (False, ("pydantic",))
+    sys.modules["menace_sandbox.self_coding_dependency_probe"] = stub_probe
+
+    try:
+        module = importlib.import_module(module_name)
+        assert module.registry is None
+        assert module.data_bot is None
+        assert module.manager is None
+        assert "menace_sandbox.data_bot" not in sys.modules
+        assert "menace_sandbox.coding_bot_interface" not in sys.modules
+    finally:
+        sys.modules.pop(module_name, None)
+        sys.modules.pop("menace_sandbox.self_coding_dependency_probe", None)
+        sys.modules.update(preserved_modules)

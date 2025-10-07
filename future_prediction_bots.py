@@ -1,24 +1,24 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import os
-from typing import Callable, Iterable, TypeVar
+from typing import Any, Callable, Iterable, TypeVar, TYPE_CHECKING
 
-from .data_bot import DataBot
-from .bot_registry import BotRegistry
-
-try:  # pragma: no cover - allow flat execution fallback
+try:  # pragma: no cover - prefer package import when available
     from .self_coding_dependency_probe import ensure_self_coding_ready
-except Exception:  # pragma: no cover - fallback when package import unavailable
+except Exception:  # pragma: no cover - fallback when executed from flat layout
     from self_coding_dependency_probe import ensure_self_coding_ready  # type: ignore
 
-try:  # pragma: no cover - optional self-coding dependency
-    from .coding_bot_interface import self_coding_managed as _self_coding_managed
-except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
-    _self_coding_managed = None  # type: ignore[assignment]
-    _SELF_CODING_IMPORT_ERROR = exc
-else:
-    _SELF_CODING_IMPORT_ERROR = None
+if TYPE_CHECKING:  # pragma: no cover - type checking only imports
+    from .bot_registry import BotRegistry
+    from .data_bot import DataBot
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime aliases avoid importing heavy dependencies early
+    BotRegistry = Any  # type: ignore[assignment]
+    DataBot = Any  # type: ignore[assignment]
+    SelfCodingManager = Any  # type: ignore[assignment]
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,19 @@ F = TypeVar("F")
 DecoratorFactory = Callable[..., Callable[[F], F]]
 
 
+def _exc_info(exc: BaseException) -> tuple[type[BaseException], BaseException, Any] | None:
+    """Return ``exc_info`` tuple when debug logging is enabled."""
+
+    if not logger.isEnabledFor(logging.DEBUG):
+        return None
+    return (exc.__class__, exc, exc.__traceback__)
+
+
 def _noop_self_coding(
-    *, bot_registry: BotRegistry | None = None, data_bot: DataBot | None = None
+    *,
+    bot_registry: BotRegistry | None = None,
+    data_bot: DataBot | None = None,
+    manager: SelfCodingManager | None = None,
 ) -> Callable[[F], F]:
     """Fallback decorator used when self-coding infrastructure is unavailable."""
 
@@ -36,20 +47,42 @@ def _noop_self_coding(
             setattr(cls, "bot_registry", bot_registry)
         if data_bot is not None:
             setattr(cls, "data_bot", data_bot)
+        if manager is not None:
+            setattr(cls, "manager", manager)
         return cls
 
     return decorator
 
 
-def _bootstrap_self_coding() -> tuple[DecoratorFactory, BotRegistry | None, DataBot | None]:
-    """Initialise shared self-coding helpers with strong fault tolerance.
+def _module_prefix() -> str:
+    """Return the package prefix used for runtime imports."""
 
-    The Windows sandbox frequently executes in minimal environments where
-    optional dependencies may be missing.  Importing ``BotRegistry`` and
-    ``DataBot`` at module load time must therefore avoid raising and instead
-    fall back to a no-op decorator so the broader sandbox can continue to load
-    without repeatedly retrying internalisation.
-    """
+    if __package__:
+        return __package__.split(".")[0]
+    # When executed from a flat layout fall back to the canonical package name.
+    return "menace_sandbox"
+
+
+def _import_optional(module: str) -> Any:
+    """Import *module* relative to the sandbox, tolerating flat layouts."""
+
+    prefix = _module_prefix()
+    dotted = f"{prefix}.{module}" if not module.startswith(prefix) else module
+    try:
+        return importlib.import_module(dotted)
+    except ModuleNotFoundError:
+        if dotted != module:
+            return importlib.import_module(module)
+        raise
+
+
+def _bootstrap_self_coding() -> tuple[
+    DecoratorFactory,
+    BotRegistry | None,
+    DataBot | None,
+    SelfCodingManager | None,
+]:
+    """Initialise shared self-coding helpers with strong fault tolerance."""
 
     ready, missing = ensure_self_coding_ready()
     if not ready:
@@ -57,41 +90,84 @@ def _bootstrap_self_coding() -> tuple[DecoratorFactory, BotRegistry | None, Data
             "Self-coding decorator unavailable; future prediction bots will run without autonomous updates (missing: %s)",
             ", ".join(missing),
         )
-        return _noop_self_coding, None, None
-
-    if _self_coding_managed is None:
-        if _SELF_CODING_IMPORT_ERROR is not None:
-            logger.warning(
-                "Self-coding decorator unavailable; future prediction bots will run without autonomous updates",
-                exc_info=_SELF_CODING_IMPORT_ERROR if logger.isEnabledFor(logging.DEBUG) else None,
-            )
-        return _noop_self_coding, None, None
+        return _noop_self_coding, None, None, None
 
     try:
-        registry_local = BotRegistry()
-    except Exception as registry_exc:  # pragma: no cover - registry bootstrap failure
+        registry_mod = _import_optional("bot_registry")
+        data_bot_mod = _import_optional("data_bot")
+        interface_mod = _import_optional("coding_bot_interface")
+        manager_mod = _import_optional("self_coding_manager")
+        engine_mod = _import_optional("self_coding_engine")
+        pipeline_mod = _import_optional("model_automation_pipeline")
+        code_db_mod = _import_optional("code_database")
+        memory_mod = _import_optional("gpt_memory")
+        ctx_util_mod = _import_optional("context_builder_util")
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "Self-coding decorator unavailable; future prediction bots will run without autonomous updates: %s",
+            exc,
+        )
+        return _noop_self_coding, None, None, None
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning(
+            "Self-coding bootstrap failed for future prediction bots: %s",
+            exc,
+            exc_info=_exc_info(exc),
+        )
+        return _noop_self_coding, None, None, None
+
+    try:
+        registry_local = registry_mod.BotRegistry()
+    except Exception as exc:  # pragma: no cover - registry bootstrap failure
         logger.warning(
             "BotRegistry bootstrap failed; disabling self-coding for future prediction bots",
-            exc_info=registry_exc if logger.isEnabledFor(logging.DEBUG) else None,
+            exc_info=_exc_info(exc),
         )
-        return _noop_self_coding, None, None
+        return _noop_self_coding, None, None, None
 
     try:
-        data_bot_local = DataBot(start_server=False)
-    except Exception as data_exc:  # pragma: no cover - data bot bootstrap failure
+        data_bot_local = data_bot_mod.DataBot(start_server=False)
+    except Exception as exc:  # pragma: no cover - data bot bootstrap failure
         logger.warning(
             "DataBot bootstrap failed; disabling self-coding for future prediction bots",
-            exc_info=data_exc if logger.isEnabledFor(logging.DEBUG) else None,
+            exc_info=_exc_info(exc),
         )
-        return _noop_self_coding, None, None
+        return _noop_self_coding, None, None, None
 
-    return _self_coding_managed, registry_local, data_bot_local
+    try:
+        context_builder = ctx_util_mod.create_context_builder()
+        engine = engine_mod.SelfCodingEngine(
+            code_db_mod.CodeDB(),
+            memory_mod.GPTMemoryManager(),
+            context_builder=context_builder,
+        )
+        pipeline = pipeline_mod.ModelAutomationPipeline(
+            context_builder=context_builder,
+            bot_registry=registry_local,
+        )
+        manager_local = manager_mod.SelfCodingManager(
+            engine,
+            pipeline,
+            data_bot=data_bot_local,
+            bot_registry=registry_local,
+        )
+    except Exception as exc:  # pragma: no cover - bootstrap degraded
+        logger.warning(
+            "Self-coding services unavailable for future prediction bots: %s",
+            exc,
+            exc_info=_exc_info(exc),
+        )
+        return _noop_self_coding, None, None, None
+
+    decorator_factory = interface_mod.self_coding_managed
+
+    return decorator_factory, registry_local, data_bot_local, manager_local
 
 
-decorator_factory, registry, data_bot = _bootstrap_self_coding()
+decorator_factory, registry, data_bot, manager = _bootstrap_self_coding()
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureLucrativityBot:
     """Predict upcoming lucrativity based on recent metrics."""
 
@@ -118,7 +194,7 @@ class FutureLucrativityBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureProfitabilityBot:
     """Predict upcoming profitability by averaging recent data."""
 
@@ -145,7 +221,7 @@ class FutureProfitabilityBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureAntifragilityBot:
     """Predict upcoming antifragility by averaging recent data."""
 
@@ -172,7 +248,7 @@ class FutureAntifragilityBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureShannonEntropyBot:
     """Predict upcoming Shannon entropy by averaging recent data."""
 
@@ -199,7 +275,7 @@ class FutureShannonEntropyBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureSynergyProfitBot:
     """Predict upcoming synergy profitability metrics by averaging recent data."""
 
@@ -238,7 +314,7 @@ class FutureSynergyProfitBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureSynergyMaintainabilityBot:
     """Predict upcoming synergy maintainability by averaging recent data."""
 
@@ -247,9 +323,7 @@ class FutureSynergyMaintainabilityBot:
     def __init__(self, data_bot: DataBot | None = None) -> None:
         self.data_bot = data_bot
 
-    def predict_metric(
-        self, name: str, _features: Iterable[float] | None = None
-    ) -> float:
+    def predict_metric(self, name: str, _features: Iterable[float] | None = None) -> float:
         if name != "synergy_maintainability":
             return 0.0
         if not self.data_bot:
@@ -279,7 +353,7 @@ class FutureSynergyMaintainabilityBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureSynergyCodeQualityBot:
     """Predict upcoming synergy code quality by averaging recent data."""
 
@@ -288,9 +362,7 @@ class FutureSynergyCodeQualityBot:
     def __init__(self, data_bot: DataBot | None = None) -> None:
         self.data_bot = data_bot
 
-    def predict_metric(
-        self, name: str, _features: Iterable[float] | None = None
-    ) -> float:
+    def predict_metric(self, name: str, _features: Iterable[float] | None = None) -> float:
         if name != "synergy_code_quality":
             return 0.0
         if not self.data_bot:
@@ -320,7 +392,7 @@ class FutureSynergyCodeQualityBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureSynergyNetworkLatencyBot:
     """Predict upcoming synergy network latency by averaging recent data."""
 
@@ -329,9 +401,7 @@ class FutureSynergyNetworkLatencyBot:
     def __init__(self, data_bot: DataBot | None = None) -> None:
         self.data_bot = data_bot
 
-    def predict_metric(
-        self, name: str, _features: Iterable[float] | None = None
-    ) -> float:
+    def predict_metric(self, name: str, _features: Iterable[float] | None = None) -> float:
         if name != "synergy_network_latency":
             return 0.0
         if not self.data_bot:
@@ -361,7 +431,7 @@ class FutureSynergyNetworkLatencyBot:
             return 0.0
 
 
-@decorator_factory(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot, manager=manager)
 class FutureSynergyThroughputBot:
     """Predict upcoming synergy throughput by averaging recent data."""
 
@@ -370,9 +440,7 @@ class FutureSynergyThroughputBot:
     def __init__(self, data_bot: DataBot | None = None) -> None:
         self.data_bot = data_bot
 
-    def predict_metric(
-        self, name: str, _features: Iterable[float] | None = None
-    ) -> float:
+    def predict_metric(self, name: str, _features: Iterable[float] | None = None) -> float:
         if name != "synergy_throughput":
             return 0.0
         if not self.data_bot:
