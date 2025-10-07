@@ -340,6 +340,10 @@ _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
 # transient retries.  Normalising the message here lets the caller surface a
 # proper ``SelfCodingUnavailableError`` instead of looping indefinitely.
 _DLL_LOAD_FAILED_RE = re.compile(r"while importing ([^:]+)")
+_DLL_LOAD_FAILED_PREFIX_RE = re.compile(
+    r"DLL load failed(?:[^:]*):\s*(?:The specified module could not be found\.?|%1 is not a valid Win32 application\.?|error code \d+)",
+    re.IGNORECASE,
+)
 _CIRCULAR_IMPORT_RE = re.compile(
     r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from"
     r"(?: partially initialized module)? ['\"](?P<module>[^'\"]+)['\"]",
@@ -350,6 +354,43 @@ _PARTIAL_MODULE_RE = re.compile(
     re.IGNORECASE,
 )
 _CIRCULAR_HINT_RE = re.compile("circular import", re.IGNORECASE)
+_WINDOWS_DLL_TOKEN_RE = re.compile(
+    r"['\"](?P<token>[\w.-]+\.(?:dll|pyd))['\"]",
+    re.IGNORECASE,
+)
+_WINDOWS_LIBRARY_HINT_RE = re.compile(
+    r"(?:module|library) ['\"](?P<module>[\w.\-]+)['\"] (?:could not|not) be found",
+    re.IGNORECASE,
+)
+
+
+def _normalise_token(token: str | None) -> set[str]:
+    """Return a normalised set of candidate module names for ``token``."""
+
+    if not token:
+        return set()
+
+    cleaned = token.strip().strip("'\"")
+    if not cleaned:
+        return set()
+
+    candidates: set[str] = set()
+    base = cleaned.replace("\\", "/").strip()
+    if not base:
+        return set()
+
+    # Handle filesystem paths or DLL names by using their stem in addition to the
+    # raw representation.  ``Path.stem`` removes extensions such as ``.pyd``
+    # while leaving dotted module names untouched.
+    path = Path(base)
+    stem = path.stem
+    if stem and stem != base:
+        candidates.add(stem)
+    if base:
+        candidates.add(base)
+    if stem:
+        candidates.add(stem.replace("-", "_"))
+    return {candidate for candidate in candidates if candidate}
 
 
 def _collect_missing_modules(exc: BaseException) -> set[str]:
@@ -372,6 +413,25 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 dll_match = _DLL_LOAD_FAILED_RE.search(str(item))
                 if dll_match:
                     missing.add(dll_match.group(1))
+            message = str(item)
+            if _DLL_LOAD_FAILED_PREFIX_RE.search(message):
+                # ``ImportError`` instances raised by ``importlib`` on Windows
+                # frequently omit the module name altogether when the failure
+                # originates from a transitive DLL dependency.  Falling back to
+                # the ``path`` attribute as well as any quoted DLL names in the
+                # error message allows us to surface a deterministic
+                # ``SelfCodingUnavailableError`` instead of looping on
+                # transient retries.
+                path_tokens = _normalise_token(getattr(item, "path", None))
+                missing.update(path_tokens)
+                for match in _WINDOWS_DLL_TOKEN_RE.finditer(message):
+                    missing.update(_normalise_token(match.group("token")))
+                lib_match = _WINDOWS_LIBRARY_HINT_RE.search(message)
+                if lib_match:
+                    missing.update(_normalise_token(lib_match.group("module")))
+                cause = getattr(item, "__cause__", None)
+                if isinstance(cause, OSError):
+                    missing.update(_normalise_token(getattr(cause, "filename", None)))
             circular_match = _CIRCULAR_IMPORT_RE.search(str(item))
             if circular_match:
                 missing.add(circular_match.group("module"))
