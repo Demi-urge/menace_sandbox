@@ -811,6 +811,27 @@ class BotRegistry:
                     exc_info=True,
                 )
 
+        disable_payload: dict[str, Any] | None = None
+        # When we can reliably infer missing modules from the exception chain we
+        # proactively disable self-coding.  Windows command prompt executions in
+        # particular surface dependency gaps as ``ImportError`` instances during
+        # the initial bootstrap which previously left bots stuck in a permanent
+        # "internalization blocked" state.  Surfacing the missing dependencies
+        # and emitting the ``bot:self_coding_disabled`` event keeps the sandbox
+        # responsive while providing operators with actionable diagnostics.
+        missing_modules = sorted(_collect_missing_modules(exc))
+        if missing_modules and not node.get("self_coding_disabled"):
+            disable_payload = {
+                "reason": (
+                    "self-coding disabled after unrecoverable import failure: "
+                    f"{exc}"
+                ),
+                "missing_dependencies": missing_modules,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": "internalization_blocked",
+            }
+            node["self_coding_disabled"] = disable_payload
+
         logger.error(
             "internalization for %s blocked after non-recoverable error: %s",
             name,
@@ -824,6 +845,20 @@ class BotRegistry:
                     "bot:internalization_blocked",
                     {"bot": name, "error": node["internalization_blocked"]},
                 )
+                if disable_payload is not None:
+                    payload = {
+                        "bot": name,
+                        "missing": missing_modules,
+                        "reason": disable_payload["reason"],
+                        "source": "internalization_blocked",
+                    }
+                    try:
+                        self.event_bus.publish("bot:self_coding_disabled", payload)
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug(
+                            "failed to publish bot:self_coding_disabled event after blocked internalization",
+                            exc_info=True,
+                        )
             except Exception as pub_exc:  # pragma: no cover - best effort
                 logger.error(
                     "Failed to publish bot:internalization_blocked event: %s",

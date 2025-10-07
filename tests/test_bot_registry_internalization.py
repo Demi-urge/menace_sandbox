@@ -227,7 +227,12 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
     assert node["internalization_blocked"]["exception"] == "ModuleNotFoundError"
     assert not node.get("pending_internalization")
     assert node["internalization_blocked"]["error"]
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    assert "totally_missing_lib" in disabled["missing_dependencies"]
+    assert disabled["reason"].startswith("self-coding disabled after unrecoverable import failure")
     assert any(evt[0] == "bot:internalization_blocked" for evt in bus.events)
+    assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)
 
 
 def test_dependency_failure_disables_self_coding(monkeypatch):
