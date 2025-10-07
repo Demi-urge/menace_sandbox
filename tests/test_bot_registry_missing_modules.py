@@ -63,3 +63,20 @@ def test_collect_missing_modules_handles_dll_error_without_module():
     )
     missing = _collect_missing_modules(err)
     assert "api-ms-win-core-path-l1-1-0" in missing
+
+
+def test_collect_missing_modules_handles_module_not_found_without_name():
+    err = ModuleNotFoundError(
+        "DLL load failed while importing quick_fix_engine: The specified module could not be found.",
+        name=None,
+    )
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
+
+
+def test_transient_detection_with_inferred_missing_module():
+    err = ModuleNotFoundError(
+        "DLL load failed while importing quick_fix_engine: The specified module could not be found.",
+        name=None,
+    )
+    assert _is_transient_internalization_error(err) is False

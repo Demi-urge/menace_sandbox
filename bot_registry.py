@@ -416,7 +416,14 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             name = _missing_module_name(item)
             if name:
                 missing.add(name)
-            continue
+            # ``ModuleNotFoundError`` inherits from ``ImportError`` which means we
+            # deliberately fall through instead of ``continue``-ing here.  Windows
+            # frequently raises ``ModuleNotFoundError`` instances without the
+            # ``name`` attribute populated when a transitive DLL import fails.
+            # Allowing the execution to reach the ``ImportError`` branch lets us
+            # analyse the error message and ``path`` attribute so that
+            # ``_collect_missing_modules`` can still surface a deterministic
+            # dependency hint.
         if isinstance(item, ImportError):
             if getattr(item, "name", None):
                 missing.add(str(item.name))
@@ -475,6 +482,9 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     if isinstance(exc, ModuleNotFoundError):
         module_name = _missing_module_name(exc)
         if module_name is None:
+            inferred = _collect_missing_modules(exc)
+            if inferred:
+                return False
             return True
         root_name = module_name.split(".", 1)[0]
         if module_name.startswith(("menace_sandbox.", "menace.")) or root_name in _INTERNAL_SELF_CODING_MODULES:
