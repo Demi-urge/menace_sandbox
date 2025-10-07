@@ -29,8 +29,9 @@ import logging
 import os
 import hashlib
 import threading
-from types import SimpleNamespace
-from typing import Any, Callable, TypeVar, TYPE_CHECKING
+from dataclasses import dataclass
+from types import ModuleType, SimpleNamespace
+from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
 import time
 
 _HELPER_NAME = "import_compat"
@@ -64,6 +65,21 @@ _UNSIGNED_WARNING_CACHE: set[str] = set()
 _UNSIGNED_WARNING_LOCK = threading.Lock()
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
+
+
+@dataclass(slots=True)
+class _ProvenanceDecision:
+    """Describe the provenance metadata resolved for a coding bot."""
+
+    patch_id: int | None
+    commit: str | None
+    mode: Literal["signed", "unsigned", "missing"]
+    source: str | None = None
+    reason: str | None = None
+
+    @property
+    def available(self) -> bool:
+        return self.mode != "missing"
 
 
 def _unsigned_provenance_allowed() -> bool:
@@ -244,6 +260,160 @@ def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int
     patch_id = -abs(seed_value)
     commit = f"{_UNSIGNED_COMMIT_PREFIX}{digest}"
     return patch_id, commit
+
+
+def _coerce_patch_id(value: object) -> int | None:
+    """Best-effort conversion of *value* into an integer patch identifier."""
+
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        text = str(value).strip()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if not text:
+        return None
+    try:
+        return int(text, 10)
+    except (TypeError, ValueError):  # pragma: no cover - invalid representation
+        return None
+
+
+def _coerce_commit(value: object) -> str | None:
+    """Return a normalised commit hash representation or ``None``."""
+
+    if value is None:
+        return None
+    try:
+        text = str(value).strip()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return text or None
+
+
+def _extract_module_provenance(module: ModuleType | None) -> tuple[int | None, str | None]:
+    """Return module-level provenance metadata when available."""
+
+    if module is None:
+        return (None, None)
+
+    candidates: list[tuple[int | None, str | None]] = []
+    for attr in ("__menace_provenance__", "__provenance__", "MENACE_PROVENANCE"):
+        data = getattr(module, attr, None)
+        if isinstance(data, dict):
+            patch_id = _coerce_patch_id(
+                data.get("patch_id") or data.get("patch") or data.get("id")
+            )
+            commit = _coerce_commit(
+                data.get("commit")
+                or data.get("commit_hash")
+                or data.get("hash")
+            )
+            candidates.append((patch_id, commit))
+        elif isinstance(data, (tuple, list)) and len(data) >= 2:
+            candidates.append((_coerce_patch_id(data[0]), _coerce_commit(data[1])))
+    explicit_patch = _coerce_patch_id(getattr(module, "__patch_id__", None))
+    explicit_commit = _coerce_commit(
+        getattr(module, "__commit__", None) or getattr(module, "__commit_hash__", None)
+    )
+    candidates.append((explicit_patch, explicit_commit))
+    for patch_id, commit in candidates:
+        if patch_id is not None and commit is not None:
+            return patch_id, commit
+    return (None, None)
+
+
+def _backfill_commit_from_history(patch_id: int, *, log_hint: str) -> str | None:
+    """Attempt to recover a commit hash for ``patch_id`` from stored metadata."""
+
+    try:  # pragma: no cover - optional dependency
+        from .patch_provenance import PatchProvenanceService
+    except Exception:  # pragma: no cover - best effort recovery
+        logger.debug(
+            "failed to import PatchProvenanceService while backfilling provenance for %s",
+            log_hint,
+            exc_info=True,
+        )
+        return None
+
+    try:
+        service = PatchProvenanceService()
+        record = service.db.get(patch_id)
+    except Exception:  # pragma: no cover - best effort recovery
+        logger.debug(
+            "failed to load provenance record for patch %s while backfilling %s",
+            patch_id,
+            log_hint,
+            exc_info=True,
+        )
+        return None
+
+    summary = getattr(record, "summary", None)
+    if not summary:
+        return None
+    try:
+        data = json.loads(summary)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug(
+            "failed to parse provenance summary for patch %s while backfilling %s",
+            patch_id,
+            log_hint,
+            exc_info=True,
+        )
+        return None
+    commit = _coerce_commit(data.get("commit"))
+    return commit
+
+
+def _resolve_provenance_decision(
+    name: str,
+    module_path: str | None,
+    manager_sources: list[object],
+    module_provenance: tuple[int | None, str | None],
+) -> _ProvenanceDecision:
+    """Resolve provenance metadata for a coding bot registration."""
+
+    patch_id: int | None = None
+    commit: str | None = None
+
+    for candidate in manager_sources:
+        if candidate is None:
+            continue
+        patch_id = patch_id or _coerce_patch_id(getattr(candidate, "_last_patch_id", None))
+        commit = commit or _coerce_commit(getattr(candidate, "_last_commit_hash", None))
+        if patch_id is not None and commit is not None:
+            return _ProvenanceDecision(patch_id, commit, "signed", source="manager")
+
+    if patch_id is not None and commit is None:
+        commit = _backfill_commit_from_history(patch_id, log_hint=name)
+        if commit is not None:
+            return _ProvenanceDecision(patch_id, commit, "signed", source="manager")
+
+    module_patch, module_commit = module_provenance
+    if module_patch is not None:
+        commit_candidate = module_commit or _backfill_commit_from_history(
+            module_patch, log_hint=name
+        )
+        if commit_candidate is not None:
+            return _ProvenanceDecision(
+                module_patch, commit_candidate, "signed", source="module"
+            )
+
+    allow_unsigned = _unsigned_provenance_allowed()
+    if allow_unsigned:
+        unsigned_patch, unsigned_commit = _derive_unsigned_provenance(name, module_path)
+        return _ProvenanceDecision(
+            unsigned_patch, unsigned_commit, "unsigned", source="unsigned"
+        )
+
+    reason = (
+        "strict provenance policy requires signed metadata"
+        if not allow_unsigned
+        else "provenance metadata unavailable"
+    )
+    return _ProvenanceDecision(None, None, "missing", source=None, reason=reason)
 
 create_context_builder = load_internal("context_builder_util").create_context_builder
 
@@ -733,6 +903,12 @@ def self_coding_managed(
                     name,
                 )
 
+        update_kwargs: dict[str, Any] = {}
+        should_update = True
+        register_as_coding = True
+        decision: _ProvenanceDecision | None = None
+        module_provenance = _extract_module_provenance(sys.modules.get(cls.__module__))
+
         register_kwargs = dict(
             name=name,
             roi_threshold=roi_t,
@@ -742,6 +918,63 @@ def self_coding_managed(
             module_path=module_path,
             is_coding_bot=True,
         )
+
+        try:
+            update_sig = inspect.signature(bot_registry.update_bot)
+        except (AttributeError, TypeError, ValueError):  # pragma: no cover - best effort
+            update_sig = None
+
+        expects_provenance = False
+        if update_sig is not None:
+            params = update_sig.parameters
+            expects_provenance = "patch_id" in params and "commit" in params
+
+        if expects_provenance:
+            manager_sources: list[object] = []
+            if manager is not None:
+                manager_sources.append(manager)
+            if manager_instance is not None and manager_instance not in manager_sources:
+                manager_sources.append(manager_instance)
+            try:
+                ctx_manager = MANAGER_CONTEXT.get(None)
+            except LookupError:  # pragma: no cover - defensive
+                ctx_manager = None
+            if ctx_manager is not None and ctx_manager not in manager_sources:
+                manager_sources.append(ctx_manager)
+
+            decision = _resolve_provenance_decision(
+                name, module_path or None, manager_sources, module_provenance
+            )
+            if decision.available:
+                update_kwargs["patch_id"] = decision.patch_id
+                update_kwargs["commit"] = decision.commit
+                if decision.mode == "unsigned":
+                    _warn_unsigned_once(name)
+            else:
+                should_update = False
+                register_as_coding = False
+                logger.info(
+                    "skipping bot update for %s due to missing provenance metadata",
+                    name,
+                )
+                reason = decision.reason or "provenance metadata unavailable"
+                if not isinstance(manager_instance, _DisabledSelfCodingManager):
+                    manager_instance = _DisabledSelfCodingManager(
+                        bot_registry=bot_registry,
+                        data_bot=data_bot,
+                    )
+                register_kwargs["manager"] = None
+                logger.warning(
+                    "strict provenance policy prevents self-coding bootstrap for %s; operating without autonomous patching (%s)",
+                    name,
+                    reason,
+                )
+        else:
+            decision = decision or _ProvenanceDecision(None, None, "signed")
+
+        register_kwargs["is_coding_bot"] = register_as_coding
+        if register_as_coding:
+            register_kwargs["manager"] = manager_instance
         try:
             bot_registry.register_bot(**register_kwargs)
         except TypeError:  # pragma: no cover - legacy registries
@@ -769,82 +1002,6 @@ def self_coding_managed(
             registries_seen = set()
         registries_seen.add(id(bot_registry))
         cls._self_coding_registry_ids = registries_seen
-        update_kwargs: dict[str, Any] = {}
-        should_update = True
-        try:
-            update_sig = inspect.signature(bot_registry.update_bot)
-        except (AttributeError, TypeError, ValueError):  # pragma: no cover - best effort
-            update_sig = None
-
-        if update_sig is not None:
-            params = update_sig.parameters
-            expects_provenance = "patch_id" in params and "commit" in params
-        else:  # pragma: no cover - defensive default
-            expects_provenance = False
-
-        if expects_provenance:
-            patch_id = None
-            commit = None
-            manager_sources = []
-            if manager is not None:
-                manager_sources.append(manager)
-            try:
-                ctx_manager = MANAGER_CONTEXT.get(None)
-            except LookupError:  # pragma: no cover - defensive
-                ctx_manager = None
-            if ctx_manager is not None and ctx_manager not in manager_sources:
-                manager_sources.append(ctx_manager)
-
-            for candidate in manager_sources:
-                patch_id = patch_id or getattr(candidate, "_last_patch_id", None)
-                commit = commit or getattr(candidate, "_last_commit_hash", None)
-                if patch_id is not None and commit is not None:
-                    break
-
-            if patch_id is not None and commit is None:
-                try:  # pragma: no cover - best effort metadata recovery
-                    from .patch_provenance import PatchProvenanceService
-
-                    service = PatchProvenanceService()
-                    record = service.db.get(patch_id)
-                    summary = getattr(record, "summary", None)
-                    if summary:
-                        try:
-                            commit = json.loads(summary).get("commit")
-                        except Exception:
-                            commit = None
-                except Exception:
-                    logger.debug(
-                        "failed to backfill provenance for %s", name,
-                        exc_info=True,
-                    )
-
-            metadata_missing = False
-            fallback_used = False
-
-            if patch_id is not None and commit is not None:
-                update_kwargs["patch_id"] = patch_id
-                update_kwargs["commit"] = commit
-            else:
-                metadata_missing = True
-                if _unsigned_provenance_allowed():
-                    fallback_patch, fallback_commit = _derive_unsigned_provenance(
-                        name, module_path or None
-                    )
-                    update_kwargs["patch_id"] = fallback_patch
-                    update_kwargs["commit"] = fallback_commit
-                    should_update = True
-                    fallback_used = True
-                    _warn_unsigned_once(name)
-                else:
-                    should_update = False
-
-            if metadata_missing and not fallback_used:
-                logger.info(
-                    "skipping bot update for %s due to missing provenance metadata",
-                    name,
-                )
-
         if should_update:
             try:
                 bot_registry.update_bot(name, module_path, **update_kwargs)
@@ -854,6 +1011,7 @@ def self_coding_managed(
         cls.bot_registry = bot_registry  # type: ignore[attr-defined]
         cls.data_bot = data_bot  # type: ignore[attr-defined]
         cls.manager = manager_instance  # type: ignore[attr-defined]
+        cls._self_coding_manual_mode = not register_as_coding
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
@@ -892,8 +1050,11 @@ def self_coding_managed(
                     logger.exception(
                         "failed to initialise thresholds for %s", name_local
                     )
-            if _self_coding_runtime_available() and not isinstance(
-                manager_local, SelfCodingManager
+            manual_mode = getattr(cls, "_self_coding_manual_mode", False)
+            if (
+                _self_coding_runtime_available()
+                and not manual_mode
+                and not isinstance(manager_local, SelfCodingManager)
             ):
                 raise RuntimeError("SelfCodingManager instance is required")
             self.manager = manager_local
