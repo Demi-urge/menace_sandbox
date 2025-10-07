@@ -557,6 +557,12 @@ class BotRegistry:
         # number of attempts even when the exact message fluctuates.
         self._max_transient_error_total_repeats = 12
         self._transient_error_grace_period = 45.0
+        # Windows command prompt environments frequently import sandbox modules
+        # noticeably slower than their POSIX counterparts which can lead to
+        # eager internalisation attempts racing partially initialised modules.
+        # Starting retries after a short, configurable delay gives the module
+        # graph time to settle without blocking the caller thread.
+        self._initial_internalization_delay = 0.75
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -767,6 +773,32 @@ class BotRegistry:
                     manager=mgr,
                     data_bot=db,
                 )
+            except SelfCodingUnavailableError as exc:
+                node["pending_internalization"] = False
+                node["self_coding_disabled"] = {
+                    "reason": str(exc),
+                    "missing_dependencies": list(exc.missing_modules),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                self._internalization_retry_attempts.pop(name, None)
+                self._clear_transient_error_state(name)
+                logger.warning("self-coding disabled for %s: %s", name, exc)
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:self_coding_disabled",
+                            {
+                                "bot": name,
+                                "missing": list(exc.missing_modules),
+                                "reason": str(exc),
+                            },
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug(
+                            "failed to publish bot:self_coding_disabled event",
+                            exc_info=True,
+                        )
+                return
             except Exception as exc:
                 node.setdefault("internalization_errors", []).append(str(exc))
                 if _is_transient_internalization_error(exc) and (
@@ -923,18 +955,12 @@ class BotRegistry:
                 if db is None:
                     missing.append("data_bot")
                 if missing:
-                    try:
-                        self._internalize_missing_coding_bot(
-                            name,
-                            manager=mgr,
-                            data_bot=db,
-                        )
-                        return
-                    except SelfCodingUnavailableError as exc:
+                    ready, missing_deps = ensure_self_coding_ready()
+                    if not ready:
                         node["pending_internalization"] = False
                         node["self_coding_disabled"] = {
-                            "reason": str(exc),
-                            "missing_dependencies": list(exc.missing_modules),
+                            "reason": "self-coding dependencies unavailable",
+                            "missing_dependencies": list(missing_deps),
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         }
                         self._internalization_retry_attempts.pop(name, None)
@@ -949,7 +975,9 @@ class BotRegistry:
                                 )
                         self._clear_transient_error_state(name)
                         logger.warning(
-                            "self-coding disabled for %s: %s", name, exc
+                            "self-coding disabled for %s: missing dependencies: %s",
+                            name,
+                            ", ".join(missing_deps),
                         )
                         if self.event_bus:
                             try:
@@ -957,8 +985,8 @@ class BotRegistry:
                                     "bot:self_coding_disabled",
                                     {
                                         "bot": name,
-                                        "missing": list(exc.missing_modules),
-                                        "reason": str(exc),
+                                        "missing": list(missing_deps),
+                                        "reason": "self-coding dependencies unavailable",
                                     },
                                 )
                             except Exception:  # pragma: no cover - best effort
@@ -967,38 +995,18 @@ class BotRegistry:
                                     exc_info=True,
                                 )
                         return
-                    except Exception as exc:
-                        if self.event_bus:
-                            try:
-                                self.event_bus.publish(
-                                    "bot:internalization_failed",
-                                    {"bot": name, "error": str(exc)},
-                                )
-                            except Exception as exc2:  # pragma: no cover - best effort
-                                logger.error(
-                                    "Failed to publish bot:internalization_failed event: %s",
-                                    exc2,
-                                )
-                        node.setdefault("internalization_errors", []).append(str(exc))
-                        if _is_transient_internalization_error(exc):
-                            state = self._register_transient_failure(name, exc)
-                            if state.should_disable(
-                                max_signature_repeats=self._max_transient_error_signature_repeats,
-                                max_total_repeats=self._max_transient_error_total_repeats,
-                                max_window=self._transient_error_grace_period,
-                            ):
-                                self._disable_self_coding_due_to_transient_errors(
-                                    name, exc, state
-                                )
-                                return
-                            node["pending_internalization"] = True
-                            self._schedule_internalization_retry(name)
-                            logger.debug(
-                                "deferring internalization for %s due to import error", name
-                            )
-                            return
-                        self._record_internalization_blocked(name, exc)
-                        return
+
+                    node["pending_internalization"] = True
+                    self._internalization_retry_attempts.pop(name, None)
+                    logger.debug(
+                        "delaying self-coding bootstrap for %s; helpers missing: %s",
+                        name,
+                        ", ".join(sorted(missing)),
+                    )
+                    self._schedule_internalization_retry(
+                        name, delay=self._initial_internalization_delay
+                    )
+                    return
             self._clear_transient_error_state(name)
             if roi_threshold is not None:
                 node["roi_threshold"] = float(roi_threshold)
