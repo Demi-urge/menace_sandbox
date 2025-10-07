@@ -26,6 +26,7 @@ from functools import wraps
 import inspect
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
 
@@ -53,18 +54,98 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+logger = logging.getLogger(__name__)
+
 create_context_builder = load_internal("context_builder_util").create_context_builder
 
-_self_coding_thresholds = load_internal("self_coding_thresholds")
-update_thresholds = _self_coding_thresholds.update_thresholds
-_load_config = _self_coding_thresholds._load_config
+
+class _ThresholdModuleFallback:
+    """Gracefully degrade when ``self_coding_thresholds`` is unavailable.
+
+    The Windows command prompt environments that ship with the autonomous
+    sandbox frequently omit scientific Python dependencies such as
+    :mod:`pydantic`.  Importing :mod:`self_coding_thresholds` in that situation
+    raises a :class:`ModuleNotFoundError` which used to abort the import of this
+    module entirely, cascading into repeated internalisation retries for coding
+    bots.  The fallback implementation below keeps the decorator operational
+    while clearly surfacing the degraded behaviour via structured logging.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        self._update_logged = False
+        self._load_logged = False
+
+    def update_thresholds(self, name: str, *args: Any, **kwargs: Any) -> None:
+        if not self._update_logged:
+            logger.warning(
+                "self_coding_thresholds unavailable; skipping threshold updates (%s)",
+                self.reason,
+            )
+            self._update_logged = True
+        else:
+            logger.debug(
+                "suppressed threshold update for %s due to missing dependencies", name
+            )
+
+    def load_config(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if not self._load_logged:
+            logger.info(
+                "returning empty self-coding threshold config because dependencies are missing (%s)",
+                self.reason,
+            )
+            self._load_logged = True
+        return {}
+
+
+try:
+    _self_coding_thresholds = load_internal("self_coding_thresholds")
+except ModuleNotFoundError as exc:
+    fallback = _ThresholdModuleFallback(f"module not found: {exc}")
+    update_thresholds = fallback.update_thresholds
+
+    def _load_config(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return fallback.load_config(*args, **kwargs)
+
+except Exception as exc:  # pragma: no cover - defensive degradation
+    fallback = _ThresholdModuleFallback(f"import failure: {exc}")
+    update_thresholds = fallback.update_thresholds
+
+    def _load_config(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return fallback.load_config(*args, **kwargs)
+
+else:
+    update_thresholds = _self_coding_thresholds.update_thresholds
+    _load_config = _self_coding_thresholds._load_config
 
 try:  # pragma: no cover - optional self-coding dependency
     SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager
-except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when absent
-    SelfCodingManager = Any  # type: ignore
-except Exception:  # pragma: no cover - degrade gracefully when unavailable
-    SelfCodingManager = Any  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully when absent
+    fallback_mod = sys.modules.get("menace.self_coding_manager")
+    if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
+        SelfCodingManager = getattr(fallback_mod, "SelfCodingManager")  # type: ignore[assignment]
+        logger.debug(
+            "using stub SelfCodingManager from menace.self_coding_manager after import failure", exc_info=exc
+        )
+    else:
+        logger.warning(
+            "self_coding_manager could not be imported; self-coding will run in disabled mode",
+            exc_info=exc,
+        )
+        SelfCodingManager = Any  # type: ignore
+except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
+    fallback_mod = sys.modules.get("menace.self_coding_manager")
+    if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
+        SelfCodingManager = getattr(fallback_mod, "SelfCodingManager")  # type: ignore[assignment]
+        logger.debug(
+            "using stub SelfCodingManager from menace.self_coding_manager after runtime error", exc_info=exc
+        )
+    else:
+        logger.warning(
+            "self_coding_manager import failed; self-coding will run in disabled mode",
+            exc_info=exc,
+        )
+        SelfCodingManager = Any  # type: ignore
 
 _ENGINE_AVAILABLE = True
 _ENGINE_IMPORT_ERROR: Exception | None = None
@@ -72,13 +153,43 @@ _ENGINE_IMPORT_ERROR: Exception | None = None
 try:  # pragma: no cover - allow tests to stub engine
     _self_coding_engine = load_internal("self_coding_engine")
 except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
-    _ENGINE_AVAILABLE = False
-    _ENGINE_IMPORT_ERROR = exc
-    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+    fallback_engine = sys.modules.get("menace.self_coding_engine")
+    if fallback_engine is not None:
+        _self_coding_engine = fallback_engine  # type: ignore[assignment]
+        MANAGER_CONTEXT = getattr(
+            fallback_engine,
+            "MANAGER_CONTEXT",
+            contextvars.ContextVar("MANAGER_CONTEXT", default=None),
+        )
+        _ENGINE_AVAILABLE = True
+        _ENGINE_IMPORT_ERROR = None
+        logger.debug(
+            "using stub self_coding_engine from menace.self_coding_engine after import failure",
+            exc_info=exc,
+        )
+    else:
+        _ENGINE_AVAILABLE = False
+        _ENGINE_IMPORT_ERROR = exc
+        MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
 except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
-    _ENGINE_AVAILABLE = False
-    _ENGINE_IMPORT_ERROR = exc
-    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+    fallback_engine = sys.modules.get("menace.self_coding_engine")
+    if fallback_engine is not None:
+        _self_coding_engine = fallback_engine  # type: ignore[assignment]
+        MANAGER_CONTEXT = getattr(
+            fallback_engine,
+            "MANAGER_CONTEXT",
+            contextvars.ContextVar("MANAGER_CONTEXT", default=None),
+        )
+        _ENGINE_AVAILABLE = True
+        _ENGINE_IMPORT_ERROR = None
+        logger.debug(
+            "using stub self_coding_engine from menace.self_coding_engine after runtime error",
+            exc_info=exc,
+        )
+    else:
+        _ENGINE_AVAILABLE = False
+        _ENGINE_IMPORT_ERROR = exc
+        MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
 else:
     MANAGER_CONTEXT = getattr(
         _self_coding_engine,
@@ -101,13 +212,140 @@ else:  # pragma: no cover - runtime placeholders
     EvolutionOrchestrator = Any  # type: ignore
 
 
-logger = logging.getLogger(__name__)
-
 if not _ENGINE_AVAILABLE and _ENGINE_IMPORT_ERROR is not None:
     logger.warning(
         "self_coding_engine could not be imported; coding bot helpers are in limited mode",
         exc_info=_ENGINE_IMPORT_ERROR,
     )
+
+
+def _self_coding_runtime_available() -> bool:
+    return _ENGINE_AVAILABLE and isinstance(SelfCodingManager, type)
+
+
+class _DisabledSelfCodingManager:
+    """Fallback manager used when the runtime cannot support self-coding."""
+
+    __slots__ = (
+        "bot_registry",
+        "data_bot",
+        "engine",
+        "quick_fix",
+        "error_db",
+        "evolution_orchestrator",
+        "_last_patch_id",
+        "_last_commit_hash",
+    )
+
+    def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
+        self.bot_registry = bot_registry
+        self.data_bot = data_bot
+        self.engine = SimpleNamespace(
+            cognition_layer=SimpleNamespace(context_builder=None)
+        )
+        # Mark quick_fix as initialised so downstream code skips heavy bootstrap.
+        self.quick_fix = object()
+        self.error_db = None
+        self.evolution_orchestrator = None
+        self._last_patch_id = None
+        self._last_commit_hash = None
+
+    def register_patch_cycle(self, *_args: Any, **_kwargs: Any) -> None:
+        logger.debug(
+            "self-coding disabled; ignoring register_patch_cycle invocation"
+        )
+
+    def run_post_patch_cycle(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        logger.debug(
+            "self-coding disabled; ignoring run_post_patch_cycle invocation"
+        )
+        return {}
+
+    def refresh_quick_fix_context(self) -> Any:
+        return getattr(self.engine, "context_builder", None)
+
+
+def _bootstrap_manager(
+    name: str,
+    bot_registry: BotRegistry,
+    data_bot: DataBot,
+) -> Any:
+    """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
+
+    if not _self_coding_runtime_available():
+        raise RuntimeError("self-coding runtime is unavailable")
+
+    try:
+        return SelfCodingManager(  # type: ignore[call-arg]
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+    except TypeError:
+        pass
+
+    try:
+        code_db_cls = _load_optional_module("code_database").CodeDB
+        memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
+        engine_mod = _load_optional_module(
+            "self_coding_engine", fallback="menace.self_coding_engine"
+        )
+        pipeline_mod = _load_optional_module(
+            "model_automation_pipeline", fallback="menace.model_automation_pipeline"
+        )
+        ctx_builder = create_context_builder()
+        engine = engine_mod.SelfCodingEngine(
+            code_db_cls(),
+            memory_cls(),
+            context_builder=ctx_builder,
+        )
+        pipeline = pipeline_mod.ModelAutomationPipeline(
+            context_builder=ctx_builder,
+            bot_registry=bot_registry,
+        )
+        manager_mod = _load_optional_module(
+            "self_coding_manager", fallback="menace.self_coding_manager"
+        )
+        return manager_mod.SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name=name,
+            data_bot=data_bot,
+            bot_registry=bot_registry,
+        )
+    except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
+        raise RuntimeError(f"manager bootstrap failed: {exc}") from exc
+
+
+def _load_optional_module(name: str, *, fallback: str | None = None) -> Any:
+    """Attempt to load *name* falling back to ``fallback`` module when present."""
+
+    try:
+        return load_internal(name)
+    except ModuleNotFoundError as exc:
+        if fallback:
+            module = sys.modules.get(fallback)
+            if module is not None:
+                logger.debug(
+                    "using stub module %s for %s after import error",
+                    fallback,
+                    name,
+                    exc_info=exc,
+                )
+                return module
+        raise
+    except Exception as exc:
+        if fallback:
+            module = sys.modules.get(fallback)
+            if module is not None:
+                logger.debug(
+                    "using stub module %s for %s after runtime error",
+                    fallback,
+                    name,
+                    exc_info=exc,
+                )
+                return module
+        raise
+
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -199,7 +437,29 @@ def _resolve_helpers(
         module_path = ""
 
     if manager is None:
-        raise RuntimeError("SelfCodingManager is required but was not provided")
+        if _self_coding_runtime_available():
+            try:
+                name_local = getattr(
+                    obj,
+                    "name",
+                    getattr(obj, "bot_name", obj.__class__.__name__),
+                )
+                manager = _bootstrap_manager(name_local, registry, data_bot)
+            except Exception as exc:
+                logger.warning(
+                    "SelfCodingManager bootstrap failed for %s: %s",
+                    name_local,
+                    exc,
+                )
+                manager = _DisabledSelfCodingManager(
+                    bot_registry=registry,
+                    data_bot=data_bot,
+                )
+        else:
+            manager = _DisabledSelfCodingManager(
+                bot_registry=registry,
+                data_bot=data_bot,
+            )
 
     return registry, data_bot, orchestrator, module_path, manager
 
@@ -259,11 +519,36 @@ def self_coding_managed(
                 _ensure_threshold_entry(name, t)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("threshold reload failed for %s", name)
+        manager_instance = manager
+        if manager_instance is None:
+            if _self_coding_runtime_available():
+                try:
+                    manager_instance = _bootstrap_manager(name, bot_registry, data_bot)
+                except Exception as exc:
+                    logger.warning(
+                        "automatic SelfCodingManager bootstrap failed for %s: %s",
+                        name,
+                        exc,
+                    )
+                    manager_instance = _DisabledSelfCodingManager(
+                        bot_registry=bot_registry,
+                        data_bot=data_bot,
+                    )
+            else:
+                manager_instance = _DisabledSelfCodingManager(
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                )
+                logger.warning(
+                    "self-coding runtime unavailable; %s will run without autonomous patching",
+                    name,
+                )
+
         register_kwargs = dict(
             name=name,
             roi_threshold=roi_t,
             error_threshold=err_t,
-            manager=manager,
+            manager=manager_instance,
             data_bot=data_bot,
             module_path=module_path,
             is_coding_bot=True,
@@ -290,6 +575,11 @@ def self_coding_managed(
                             name,
                             exc_info=True,
                         )
+        registries_seen = getattr(cls, "_self_coding_registry_ids", None)
+        if not isinstance(registries_seen, set):
+            registries_seen = set()
+        registries_seen.add(id(bot_registry))
+        cls._self_coding_registry_ids = registries_seen
         update_kwargs: dict[str, Any] = {}
         should_update = True
         try:
@@ -358,14 +648,16 @@ def self_coding_managed(
 
         cls.bot_registry = bot_registry  # type: ignore[attr-defined]
         cls.data_bot = data_bot  # type: ignore[attr-defined]
-        cls.manager = manager  # type: ignore[attr-defined]
+        cls.manager = manager_instance  # type: ignore[attr-defined]
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
             orchestrator: EvolutionOrchestrator | None = kwargs.pop(
                 "evolution_orchestrator", None
             )
-            manager_local: SelfCodingManager | None = kwargs.get("manager", manager)
+            manager_local: SelfCodingManager | None = kwargs.get(
+                "manager", manager_instance
+            )
             orig_init(self, *args, **kwargs)
             try:
                 (
@@ -395,23 +687,41 @@ def self_coding_managed(
                     logger.exception(
                         "failed to initialise thresholds for %s", name_local
                     )
-            if not isinstance(manager_local, SelfCodingManager):
+            if _self_coding_runtime_available() and not isinstance(
+                manager_local, SelfCodingManager
+            ):
                 raise RuntimeError("SelfCodingManager instance is required")
             self.manager = manager_local
 
+            if not _self_coding_runtime_available():
+                if orchestrator is not None:
+                    self.evolution_orchestrator = orchestrator
+                return
+
+            orchestrator_boot_failed = False
             if orchestrator is None:
                 try:
-                    _capital_module = load_internal("capital_management_bot")
+                    _capital_module = _load_optional_module(
+                        "capital_management_bot",
+                        fallback="menace.capital_management_bot",
+                    )
                     CapitalManagementBot = _capital_module.CapitalManagementBot
-                    _improvement_module = load_internal("self_improvement.engine")
+                    _improvement_module = _load_optional_module(
+                        "self_improvement.engine",
+                        fallback="menace.self_improvement.engine",
+                    )
                     SelfImprovementEngine = _improvement_module.SelfImprovementEngine
-                    _evolution_manager_module = load_internal(
-                        "system_evolution_manager"
+                    _evolution_manager_module = _load_optional_module(
+                        "system_evolution_manager",
+                        fallback="menace.system_evolution_manager",
                     )
                     SystemEvolutionManager = (
                         _evolution_manager_module.SystemEvolutionManager
                     )
-                    _eo_module = load_internal("evolution_orchestrator")
+                    _eo_module = _load_optional_module(
+                        "evolution_orchestrator",
+                        fallback="menace.evolution_orchestrator",
+                    )
                     _EO = _eo_module.EvolutionOrchestrator
 
                     capital = CapitalManagementBot(data_bot=d_bot)
@@ -435,14 +745,16 @@ def self_coding_managed(
                         selfcoding_manager=manager_local,
                     )
                 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
-                    raise RuntimeError(
-                        f"{cls.__name__}: "
-                        "EvolutionOrchestrator is required but could not be instantiated"
-                    ) from exc
+                    logger.warning(
+                        "%s: EvolutionOrchestrator dependencies unavailable: %s",
+                        cls.__name__,
+                        exc,
+                    )
+                    orchestrator_boot_failed = True
+                    orchestrator = None
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
-                        f"{cls.__name__}: "
-                        "EvolutionOrchestrator is required but could not be instantiated"
+                        f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
                     ) from exc
 
             if orchestrator is not None:
@@ -451,67 +763,105 @@ def self_coding_managed(
                     manager_local.evolution_orchestrator = orchestrator
                 except Exception:
                     pass
+            elif orchestrator_boot_failed:
+                self.evolution_orchestrator = None
+
             if getattr(manager_local, "quick_fix", None) is None:
                 try:
-                    _quick_fix_module = load_internal("quick_fix_engine")
+                    _quick_fix_module = _load_optional_module(
+                        "quick_fix_engine", fallback="menace.quick_fix_engine"
+                    )
                     QuickFixEngine = _quick_fix_module.QuickFixEngine
-                    ErrorDB = load_internal("error_bot").ErrorDB
-                    _helper_fn = load_internal(
-                        "self_coding_manager"
+                    ErrorDB = _load_optional_module(
+                        "error_bot", fallback="menace.error_bot"
+                    ).ErrorDB
+                    _helper_fn = _load_optional_module(
+                        "self_coding_manager", fallback="menace.self_coding_manager"
                     )._manager_generate_helper_with_builder
                 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
-                    raise RuntimeError(
-                        f"{cls.__name__}: QuickFixEngine is required but could not be imported"
-                    ) from exc
+                    logger.warning(
+                        "%s: QuickFixEngine dependencies unavailable: %s",
+                        cls.__name__,
+                        exc,
+                    )
+                    manager_local.quick_fix = manager_local.quick_fix or None
+                    ErrorDB = None
+                    QuickFixEngine = None
                 except Exception as exc:  # pragma: no cover - optional dependency
-                    raise RuntimeError(
-                        f"{cls.__name__}: QuickFixEngine is required but could not be imported"
-                    ) from exc
-                engine = getattr(manager_local, "engine", None)
-                clayer = getattr(engine, "cognition_layer", None)
-                if clayer is None:
-                    raise RuntimeError(
-                        f"{cls.__name__}: QuickFixEngine requires a cognition_layer with a context_builder"
+                    logger.warning(
+                        "%s: QuickFixEngine initialisation failed: %s",
+                        cls.__name__,
+                        exc,
                     )
+                    manager_local.quick_fix = manager_local.quick_fix or None
+                    ErrorDB = None
+                    QuickFixEngine = None
+                if QuickFixEngine is not None and ErrorDB is not None:
+                    engine = getattr(manager_local, "engine", None)
+                    clayer = getattr(engine, "cognition_layer", None)
+                    if clayer is None:
+                        logger.warning(
+                            "%s: QuickFixEngine requires a cognition_layer; skipping bootstrap",
+                            cls.__name__,
+                        )
+                    else:
+                        try:
+                            builder = clayer.context_builder
+                        except AttributeError as exc:
+                            logger.warning(
+                                "%s: QuickFixEngine missing context_builder: %s",
+                                cls.__name__,
+                                exc,
+                            )
+                        else:
+                            error_db = getattr(self, "error_db", None) or getattr(
+                                manager_local, "error_db", None
+                            )
+                            if error_db is None:
+                                try:
+                                    error_db = ErrorDB()
+                                except Exception as exc:  # pragma: no cover
+                                    logger.warning(
+                                        "%s: failed to initialise ErrorDB for QuickFixEngine: %s",
+                                        cls.__name__,
+                                        exc,
+                                    )
+                                    error_db = None
+                            if error_db is not None:
+                                try:
+                                    manager_local.quick_fix = QuickFixEngine(
+                                        error_db,
+                                        manager_local,
+                                        context_builder=builder,
+                                        helper_fn=_helper_fn,
+                                    )
+                                    manager_local.error_db = error_db
+                                except Exception as exc:  # pragma: no cover - instantiation errors
+                                    logger.warning(
+                                        "%s: failed to initialise QuickFixEngine: %s",
+                                        cls.__name__,
+                                        exc,
+                                    )
+                                    manager_local.quick_fix = manager_local.quick_fix or None
+            registries_seen = getattr(cls, "_self_coding_registry_ids", set())
+            should_register = isinstance(registries_seen, set) and (
+                id(registry) not in registries_seen
+            )
+            if should_register:
                 try:
-                    builder = clayer.context_builder
-                except AttributeError as exc:
-                    raise RuntimeError(
-                        f"{cls.__name__}: QuickFixEngine requires a context_builder"
-                    ) from exc
-                error_db = getattr(self, "error_db", None) or getattr(
-                    manager_local, "error_db", None
-                )
-                if error_db is None:
-                    try:
-                        error_db = ErrorDB()
-                    except Exception as exc:  # pragma: no cover - instantiation errors
-                        raise RuntimeError(
-                            f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine"
-                        ) from exc
-                try:
-                    manager_local.quick_fix = QuickFixEngine(
-                        error_db,
-                        manager_local,
-                        context_builder=builder,
-                        helper_fn=_helper_fn,
+                    registry.register_bot(
+                        name_local,
+                        roi_threshold=getattr(thresholds, "roi_drop", None),
+                        error_threshold=getattr(thresholds, "error_threshold", None),
+                        manager=manager_local,
+                        data_bot=d_bot,
+                        is_coding_bot=True,
                     )
-                    manager_local.error_db = error_db
-                except Exception as exc:  # pragma: no cover - instantiation errors
-                    raise RuntimeError(
-                        f"{cls.__name__}: failed to initialise QuickFixEngine"
-                    ) from exc
-            try:
-                registry.register_bot(
-                    name_local,
-                    roi_threshold=getattr(thresholds, "roi_drop", None),
-                    error_threshold=getattr(thresholds, "error_threshold", None),
-                    manager=manager_local,
-                    data_bot=d_bot,
-                    is_coding_bot=True,
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("bot registration failed for %s", name_local)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("bot registration failed for %s", name_local)
+                else:
+                    registries_seen.add(id(registry))
+                    cls._self_coding_registry_ids = registries_seen
             if orchestrator is not None:
                 try:
                     orchestrator.register_bot(name_local)
