@@ -578,8 +578,14 @@ def self_coding_managed(
         registries_seen = getattr(cls, "_self_coding_registry_ids", None)
         if not isinstance(registries_seen, set):
             registries_seen = set()
-        registries_seen.add(id(bot_registry))
+        registry_managers = getattr(cls, "_self_coding_registry_managers", None)
+        if not isinstance(registry_managers, dict):
+            registry_managers = {}
+        registry_id = id(bot_registry)
+        registries_seen.add(registry_id)
+        registry_managers[registry_id] = manager_instance
         cls._self_coding_registry_ids = registries_seen
+        cls._self_coding_registry_managers = registry_managers
         update_kwargs: dict[str, Any] = {}
         should_update = True
         try:
@@ -844,8 +850,23 @@ def self_coding_managed(
                                     )
                                     manager_local.quick_fix = manager_local.quick_fix or None
             registries_seen = getattr(cls, "_self_coding_registry_ids", set())
-            should_register = isinstance(registries_seen, set) and (
-                id(registry) not in registries_seen
+            if not isinstance(registries_seen, set):
+                registries_seen = set()
+            registry_managers = getattr(cls, "_self_coding_registry_managers", None)
+            if not isinstance(registry_managers, dict):
+                registry_managers = {}
+            registry_id = id(registry)
+            previous_manager = registry_managers.get(registry_id)
+            new_disabled = isinstance(manager_local, _DisabledSelfCodingManager)
+            previous_disabled = isinstance(previous_manager, _DisabledSelfCodingManager)
+            manager_replaced = (
+                previous_manager is not None and previous_manager is not manager_local
+            )
+            should_register = (
+                registry_id not in registries_seen
+                or (previous_disabled and not new_disabled)
+                or (manager_replaced and not (previous_disabled and new_disabled))
+                or (registry_id not in registry_managers and not new_disabled)
             )
             if should_register:
                 try:
@@ -860,8 +881,13 @@ def self_coding_managed(
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("bot registration failed for %s", name_local)
                 else:
-                    registries_seen.add(id(registry))
+                    registries_seen.add(registry_id)
+                    registry_managers[registry_id] = manager_local
                     cls._self_coding_registry_ids = registries_seen
+                    cls._self_coding_registry_managers = registry_managers
+            else:
+                registry_managers[registry_id] = manager_local
+                cls._self_coding_registry_managers = registry_managers
             if orchestrator is not None:
                 try:
                     orchestrator.register_bot(name_local)
