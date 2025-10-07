@@ -77,9 +77,11 @@ class DummyRegistry:
     def __init__(self):
         self.registered = []
         self.updated = []
+        self.register_calls = []
 
     def register_bot(self, name, **kwargs):
         self.registered.append(name)
+        self.register_calls.append((name, kwargs))
 
     def update_bot(self, name, module_path):
         self.updated.append((name, module_path))
@@ -208,7 +210,7 @@ def test_thresholds_loaded_on_init():
     assert "loader" in data_bot._thresholds
 
 
-def test_skips_provenance_update_when_metadata_missing():
+def test_unsigned_provenance_generated_when_metadata_missing():
     registry = ProvenanceRegistry()
     data_bot = DummyDataBot()
 
@@ -221,8 +223,34 @@ def test_skips_provenance_update_when_metadata_missing():
 
     Bot()
     assert registry.registered == ["provless"]
-    assert registry.provenance_updates == []
+    assert registry.attempts == 1
+    assert len(registry.provenance_updates) == 1
+    name, module_path, patch_id, commit = registry.provenance_updates[0]
+    assert name == "provless"
+    assert patch_id < 0
+    assert commit.startswith("unsigned:")
+    assert registry.register_calls[0][1].get("is_coding_bot") is True
+
+
+def test_signed_policy_disables_self_coding_when_metadata_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MENACE_REQUIRE_SIGNED_PROVENANCE", "1")
+    registry = ProvenanceRegistry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "strictprov"
+
+        def __init__(self):
+            pass
+
+    Bot()
+    assert registry.registered == ["strictprov"]
     assert registry.attempts == 0
+    assert registry.provenance_updates == []
+    assert registry.register_calls[0][1].get("is_coding_bot") is False
 
 
 def test_uses_manager_provenance_for_update():
