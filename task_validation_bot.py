@@ -7,6 +7,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from dataclasses import asdict
+from functools import lru_cache
 from typing import Callable, Iterable, List
 import logging
 
@@ -131,12 +132,30 @@ def _resolve_management() -> tuple[
     return decorator, registry, data_bot, manager
 
 
-(
-    _self_coding_managed,
-    registry,
-    data_bot,
-    _manager,
-) = _resolve_management()
+@lru_cache(maxsize=1)
+def _cached_management() -> tuple[
+    Callable[..., Callable[[type], type]], object | None, object | None, object | None
+]:
+    """Resolve and cache self-coding helpers on first use.
+
+    Windows command prompt environments frequently observe slow module imports
+    which caused the previous eager initialisation to race the
+    :class:`TaskValidationBot` definition.  By deferring the resolution until
+    the decorator is actually applied we guarantee the class has been defined
+    and avoid the circular-import induced internalisation stalls reported by
+    users.
+    """
+
+    return _resolve_management()
+
+
+def _apply_self_coding(cls: type) -> type:
+    """Decorate ``cls`` using the lazily resolved self-coding helpers."""
+
+    decorator, registry, data_bot, manager = _cached_management()
+    return decorator(bot_registry=registry, data_bot=data_bot, manager=manager)(cls)
+
+
 SynthesisTask = load_internal("synthesis_models").SynthesisTask
 
 try:
@@ -177,9 +196,7 @@ class TaskSchema(Schema):
     category = fields.Str(required=True)
 
 
-@_self_coding_managed(
-    bot_registry=registry, data_bot=data_bot, manager=_manager
-)
+@_apply_self_coding
 class TaskValidationBot:
     """Validate tasks against goals and structure."""
 
