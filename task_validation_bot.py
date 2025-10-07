@@ -2,15 +2,83 @@
 
 from __future__ import annotations
 
-from .bot_registry import BotRegistry
-from .data_bot import DataBot
-
-from .coding_bot_interface import self_coding_managed
+import importlib
+import importlib.util
+import sys
+from pathlib import Path
 from dataclasses import asdict
-from typing import Iterable, List
+from typing import Callable, Iterable, List
+import logging
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
+
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+sys.modules.setdefault("menace", importlib.import_module("menace_sandbox"))
+sys.modules.setdefault("menace.task_validation_bot", sys.modules[__name__])
+
+logger = logging.getLogger(__name__)
+
+
+def _noop_self_coding(**_kwargs):
+    def decorator(cls):
+        cls.bot_registry = _kwargs.get("bot_registry")  # type: ignore[attr-defined]
+        cls.data_bot = _kwargs.get("data_bot")  # type: ignore[attr-defined]
+        cls.manager = _kwargs.get("manager")  # type: ignore[attr-defined]
+        return cls
+
+    return decorator
+
+
+def _resolve_management() -> tuple[
+    Callable[..., Callable[[type], type]],
+    object | None,
+    object | None,
+]:
+    try:
+        registry_cls = load_internal("bot_registry").BotRegistry
+        data_bot_cls = load_internal("data_bot").DataBot
+        decorator = load_internal("coding_bot_interface").self_coding_managed
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional deps missing
+        logger.warning(
+            "Self-coding integration disabled for TaskValidationBot: %s", exc
+        )
+        return _noop_self_coding, None, None
+
+    try:
+        registry = registry_cls()
+        data_bot = data_bot_cls(start_server=False)
+    except Exception as exc:  # pragma: no cover - bootstrap degraded
+        logger.warning(
+            "Failed to initialise self-coding services for TaskValidationBot: %s",
+            exc,
+        )
+        return _noop_self_coding, None, None
+
+    return decorator, registry, data_bot
+
+
+_self_coding_managed, registry, data_bot = _resolve_management()
+SynthesisTask = load_internal("synthesis_models").SynthesisTask
 
 try:
     import pandas as pd  # type: ignore
@@ -40,16 +108,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     zmq = None  # type: ignore
 import uuid
-import logging
-
-logger = logging.getLogger(__name__)
-
-try:
-    from .synthesis_models import SynthesisTask
-except ImportError:  # pragma: no cover - flat imports during bootstrap
-    from synthesis_models import SynthesisTask  # type: ignore
-
-
 
 class TaskSchema(Schema):
     """Schema ensuring task structure."""
@@ -60,7 +118,7 @@ class TaskSchema(Schema):
     category = fields.Str(required=True)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@_self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class TaskValidationBot:
     """Validate tasks against goals and structure."""
 

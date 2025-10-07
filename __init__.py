@@ -26,6 +26,7 @@ sys.modules.setdefault(
         resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
         path_for_prompt=lambda p: Path(p).as_posix(),
         get_project_root=lambda: Path("."),
+        repo_root=lambda: Path("."),
     ),
 )
 
