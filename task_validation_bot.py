@@ -53,31 +53,79 @@ def _resolve_management() -> tuple[
     Callable[..., Callable[[type], type]],
     object | None,
     object | None,
+    object | None,
 ]:
+    """Initialise self-coding integration helpers when dependencies permit.
+
+    The self-coding stack is extremely dependency heavy.  On Windows the
+    start-up sequence regularly races the import of large modules such as
+    ``self_coding_manager`` which, in turn, eagerly pull in the
+    ``quick_fix_engine`` and other components.  When that happens during class
+    decoration we end up registering the bot without a fully constructed
+    manager which later triggers repeated internalisation attempts and stalls
+    the sandbox.  To avoid that partial initialisation we only return the real
+    decorator when every prerequisite can be created eagerly; otherwise we fall
+    back to a no-op decorator so the bot behaves as a regular, non self-coding
+    implementation.
+    """
+
     try:
         registry_cls = load_internal("bot_registry").BotRegistry
         data_bot_cls = load_internal("data_bot").DataBot
         decorator = load_internal("coding_bot_interface").self_coding_managed
+        manager_mod = load_internal("self_coding_manager")
+        engine_mod = load_internal("self_coding_engine")
+        pipeline_mod = load_internal("model_automation_pipeline")
+        code_db_cls = load_internal("code_database").CodeDB
+        memory_cls = load_internal("gpt_memory").GPTMemoryManager
+        ctx_util = load_internal("context_builder_util")
     except ModuleNotFoundError as exc:  # pragma: no cover - optional deps missing
         logger.warning(
             "Self-coding integration disabled for TaskValidationBot: %s", exc
         )
-        return _noop_self_coding, None, None
+        return _noop_self_coding, None, None, None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "Failed to import self-coding dependencies for TaskValidationBot: %s",
+            exc,
+        )
+        return _noop_self_coding, None, None, None
 
     try:
         registry = registry_cls()
         data_bot = data_bot_cls(start_server=False)
+        context_builder = ctx_util.create_context_builder()
+        engine = engine_mod.SelfCodingEngine(
+            code_db_cls(),
+            memory_cls(),
+            context_builder=context_builder,
+        )
+        pipeline = pipeline_mod.ModelAutomationPipeline(
+            context_builder=context_builder,
+            bot_registry=registry,
+        )
+        manager = manager_mod.SelfCodingManager(
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+        )
     except Exception as exc:  # pragma: no cover - bootstrap degraded
         logger.warning(
-            "Failed to initialise self-coding services for TaskValidationBot: %s",
+            "Self-coding services unavailable for TaskValidationBot: %s",
             exc,
         )
-        return _noop_self_coding, None, None
+        return _noop_self_coding, None, None, None
 
-    return decorator, registry, data_bot
+    return decorator, registry, data_bot, manager
 
 
-_self_coding_managed, registry, data_bot = _resolve_management()
+(
+    _self_coding_managed,
+    registry,
+    data_bot,
+    _manager,
+) = _resolve_management()
 SynthesisTask = load_internal("synthesis_models").SynthesisTask
 
 try:
@@ -118,7 +166,9 @@ class TaskSchema(Schema):
     category = fields.Str(required=True)
 
 
-@_self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@_self_coding_managed(
+    bot_registry=registry, data_bot=data_bot, manager=_manager
+)
 class TaskValidationBot:
     """Validate tasks against goals and structure."""
 
