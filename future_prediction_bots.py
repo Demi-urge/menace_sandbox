@@ -1,19 +1,84 @@
 from __future__ import annotations
 
-from .coding_bot_interface import self_coding_managed
 import logging
-from typing import Iterable
+import os
+from typing import Callable, Iterable, TypeVar
 
 from .data_bot import DataBot
 from .bot_registry import BotRegistry
 
+try:  # pragma: no cover - optional self-coding dependency
+    from .coding_bot_interface import self_coding_managed as _self_coding_managed
+except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
+    _self_coding_managed = None  # type: ignore[assignment]
+    _SELF_CODING_IMPORT_ERROR = exc
+else:
+    _SELF_CODING_IMPORT_ERROR = None
+
 logger = logging.getLogger(__name__)
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+F = TypeVar("F")
+DecoratorFactory = Callable[..., Callable[[F], F]]
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+def _noop_self_coding(
+    *, bot_registry: BotRegistry | None = None, data_bot: DataBot | None = None
+) -> Callable[[F], F]:
+    """Fallback decorator used when self-coding infrastructure is unavailable."""
+
+    def decorator(cls: F) -> F:
+        if bot_registry is not None:  # pragma: no cover - defensive attribute wiring
+            setattr(cls, "bot_registry", bot_registry)
+        if data_bot is not None:
+            setattr(cls, "data_bot", data_bot)
+        return cls
+
+    return decorator
+
+
+def _bootstrap_self_coding() -> tuple[DecoratorFactory, BotRegistry | None, DataBot | None]:
+    """Initialise shared self-coding helpers with strong fault tolerance.
+
+    The Windows sandbox frequently executes in minimal environments where
+    optional dependencies may be missing.  Importing ``BotRegistry`` and
+    ``DataBot`` at module load time must therefore avoid raising and instead
+    fall back to a no-op decorator so the broader sandbox can continue to load
+    without repeatedly retrying internalisation.
+    """
+
+    if _self_coding_managed is None:
+        if _SELF_CODING_IMPORT_ERROR is not None:
+            logger.warning(
+                "Self-coding decorator unavailable; future prediction bots will run without autonomous updates",
+                exc_info=_SELF_CODING_IMPORT_ERROR if logger.isEnabledFor(logging.DEBUG) else None,
+            )
+        return _noop_self_coding, None, None
+
+    try:
+        registry_local = BotRegistry()
+    except Exception as registry_exc:  # pragma: no cover - registry bootstrap failure
+        logger.warning(
+            "BotRegistry bootstrap failed; disabling self-coding for future prediction bots",
+            exc_info=registry_exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        return _noop_self_coding, None, None
+
+    try:
+        data_bot_local = DataBot(start_server=False)
+    except Exception as data_exc:  # pragma: no cover - data bot bootstrap failure
+        logger.warning(
+            "DataBot bootstrap failed; disabling self-coding for future prediction bots",
+            exc_info=data_exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        return _noop_self_coding, None, None
+
+    return _self_coding_managed, registry_local, data_bot_local
+
+
+decorator_factory, registry, data_bot = _bootstrap_self_coding()
+
+
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureLucrativityBot:
     """Predict upcoming lucrativity based on recent metrics."""
 
@@ -40,7 +105,7 @@ class FutureLucrativityBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureProfitabilityBot:
     """Predict upcoming profitability by averaging recent data."""
 
@@ -67,7 +132,7 @@ class FutureProfitabilityBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureAntifragilityBot:
     """Predict upcoming antifragility by averaging recent data."""
 
@@ -94,7 +159,7 @@ class FutureAntifragilityBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureShannonEntropyBot:
     """Predict upcoming Shannon entropy by averaging recent data."""
 
@@ -121,7 +186,7 @@ class FutureShannonEntropyBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyProfitBot:
     """Predict upcoming synergy profitability metrics by averaging recent data."""
 
@@ -160,7 +225,7 @@ class FutureSynergyProfitBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyMaintainabilityBot:
     """Predict upcoming synergy maintainability by averaging recent data."""
 
@@ -201,7 +266,7 @@ class FutureSynergyMaintainabilityBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyCodeQualityBot:
     """Predict upcoming synergy code quality by averaging recent data."""
 
@@ -242,7 +307,7 @@ class FutureSynergyCodeQualityBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyNetworkLatencyBot:
     """Predict upcoming synergy network latency by averaging recent data."""
 
@@ -283,7 +348,7 @@ class FutureSynergyNetworkLatencyBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@decorator_factory(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyThroughputBot:
     """Predict upcoming synergy throughput by averaging recent data."""
 
