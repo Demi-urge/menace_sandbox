@@ -187,3 +187,46 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
     assert not node.get("pending_internalization")
     assert node["internalization_blocked"]["error"]
     assert any(evt[0] == "bot:internalization_blocked" for evt in bus.events)
+
+
+def test_dependency_failure_disables_self_coding(monkeypatch):
+    bus = DummyBus()
+    reg = bot_registry.BotRegistry(event_bus=bus)
+
+    monkeypatch.setattr(
+        bot_registry,
+        "_load_self_coding_thresholds",
+        lambda _name: types.SimpleNamespace(
+            roi_drop=None, error_increase=None, test_failure_increase=None
+        ),
+    )
+
+    class _StubDataBot(DummyDataBot):
+        def schedule_monitoring(self, *_a, **_k):
+            raise AssertionError("should not schedule monitoring when disabled")
+
+    components = bot_registry._SelfCodingComponents(
+        internalize_coding_bot=lambda *a, **k: (_ for _ in ()).throw(
+            ModuleNotFoundError("No module named 'torch'")
+        ),
+        engine_cls=lambda *a, **k: object(),
+        pipeline_cls=lambda *a, **k: object(),
+        data_bot_cls=lambda *a, **k: _StubDataBot(),
+        code_db_cls=lambda *a, **k: object(),
+        memory_manager_cls=lambda *a, **k: object(),
+        context_builder_factory=lambda: object(),
+    )
+
+    monkeypatch.setattr(
+        bot_registry,
+        "_load_self_coding_components",
+        lambda: components,
+    )
+
+    reg.register_bot("TorchlessBot", is_coding_bot=True)
+
+    node = reg.graph.nodes["TorchlessBot"]
+    disabled = node["self_coding_disabled"]
+    assert "torch" in disabled["missing_dependencies"]
+    assert disabled["reason"]
+    assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)
