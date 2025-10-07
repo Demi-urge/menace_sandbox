@@ -199,12 +199,51 @@ class _TransientErrorState:
     last_seen: float = field(default_factory=time.monotonic)
     first_seen_wallclock: float = field(default_factory=time.time)
     last_seen_wallclock: float = field(default_factory=time.time)
+    total_count: int = 1
+    signature_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
-    def increment(self) -> "_TransientErrorState":
-        self.count += 1
+    def __post_init__(self) -> None:
+        # Normalise bookkeeping so subsequent updates can rely on the aggregated
+        # counters.  ``count`` always reflects the cumulative occurrences for the
+        # current signature rather than only consecutive repeats which ensures
+        # noisy error messages (for example those embedding file paths) are still
+        # treated as the same failure mode.
+        self.signature_counts[self.signature] = self.count
+
+    def increment(self, signature: tuple[str, str]) -> "_TransientErrorState":
         self.last_seen = time.monotonic()
         self.last_seen_wallclock = time.time()
+        self.total_count += 1
+        aggregate = self.signature_counts.get(signature, 0) + 1
+        self.signature_counts[signature] = aggregate
+        if signature == self.signature:
+            self.count = aggregate
+        else:
+            self.signature = signature
+            self.count = aggregate
         return self
+
+    @property
+    def unique_signatures(self) -> int:
+        return len(self.signature_counts)
+
+    def window_seconds(self) -> float:
+        return self.last_seen - self.first_seen
+
+    def should_disable(
+        self,
+        *,
+        max_signature_repeats: int,
+        max_total_repeats: int,
+        max_window: float,
+    ) -> bool:
+        if self.count >= max_signature_repeats:
+            return True
+        if self.total_count >= max_total_repeats:
+            return True
+        if max_window > 0 and self.window_seconds() >= max_window:
+            return True
+        return False
 
 
 def _exception_signature(exc: BaseException) -> tuple[str, str]:
@@ -508,6 +547,12 @@ class BotRegistry:
         self._transient_error_state: Dict[str, _TransientErrorState] = {}
         self._max_internalization_retries = 5
         self._max_transient_error_signature_repeats = 3
+        # Import failures on Windows often alternate between several different
+        # signatures (for example reporting individual DLL issues).  Track the
+        # overall failure pressure so we can stop retrying after a reasonable
+        # number of attempts even when the exact message fluctuates.
+        self._max_transient_error_total_repeats = 12
+        self._transient_error_grace_period = 45.0
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -551,11 +596,11 @@ class BotRegistry:
         signature = _exception_signature(exc)
         with self._lock:
             state = self._transient_error_state.get(name)
-            if state is None or state.signature != signature:
+            if state is None:
                 state = _TransientErrorState(signature=signature)
                 self._transient_error_state[name] = state
             else:
-                state.increment()
+                state.increment(signature)
         return state
 
     def _clear_transient_error_state(self, name: str) -> None:
@@ -580,8 +625,19 @@ class BotRegistry:
         timestamp = datetime.now(timezone.utc).isoformat()
         reason = (
             "self-coding disabled after repeated transient import failures"
-            f" ({state.count} attempts): {exc}"
+            f" ({state.total_count} attempts across {state.unique_signatures}"
+            f" signature(s)): {exc}"
         )
+        signature_history = [
+            {
+                "type": sig[0],
+                "message": sig[1],
+                "count": count,
+            }
+            for sig, count in sorted(
+                state.signature_counts.items(), key=lambda item: item[1], reverse=True
+            )
+        ]
         node["self_coding_disabled"] = {
             "reason": reason,
             "missing_dependencies": missing,
@@ -590,21 +646,28 @@ class BotRegistry:
                 "type": exc.__class__.__name__,
                 "message": str(exc),
                 "repeat_count": state.count,
+                "total_repeat_count": state.total_count,
+                "unique_signatures": state.unique_signatures,
                 "first_seen": datetime.fromtimestamp(
                     state.first_seen_wallclock, tz=timezone.utc
                 ).isoformat(),
                 "last_seen": datetime.fromtimestamp(
                     state.last_seen_wallclock, tz=timezone.utc
                 ).isoformat(),
-                "window_seconds": round(state.last_seen - state.first_seen, 3),
+                "window_seconds": round(state.window_seconds(), 3),
+                "signature_counts": signature_history,
             },
         }
         self._clear_transient_error_state(name)
 
         logger.warning(
-            "self-coding disabled for %s after %s repeated transient import failures: %s",
+            (
+                "self-coding disabled for %s after %s transient import failures"
+                " across %s signature(s): %s"
+            ),
             name,
-            state.count,
+            state.total_count,
+            state.unique_signatures,
             exc,
         )
 
@@ -706,9 +769,10 @@ class BotRegistry:
                     attempts < self._max_internalization_retries
                 ):
                     state = self._register_transient_failure(name, exc)
-                    if (
-                        state.count
-                        >= self._max_transient_error_signature_repeats
+                    if state.should_disable(
+                        max_signature_repeats=self._max_transient_error_signature_repeats,
+                        max_total_repeats=self._max_transient_error_total_repeats,
+                        max_window=self._transient_error_grace_period,
                     ):
                         self._disable_self_coding_due_to_transient_errors(
                             name, exc, state
@@ -889,9 +953,10 @@ class BotRegistry:
                         node.setdefault("internalization_errors", []).append(str(exc))
                         if _is_transient_internalization_error(exc):
                             state = self._register_transient_failure(name, exc)
-                            if (
-                                state.count
-                                >= self._max_transient_error_signature_repeats
+                            if state.should_disable(
+                                max_signature_repeats=self._max_transient_error_signature_repeats,
+                                max_total_repeats=self._max_transient_error_total_repeats,
+                                max_window=self._transient_error_grace_period,
                             ):
                                 self._disable_self_coding_due_to_transient_errors(
                                     name, exc, state
