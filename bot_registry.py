@@ -19,6 +19,7 @@ import json
 import os
 import threading
 from dataclasses import asdict, is_dataclass
+from types import SimpleNamespace
 
 try:
     from .databases import MenaceDB
@@ -174,6 +175,20 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 _REGISTERED_BOTS = {}
 
+def _default_thresholds() -> SimpleNamespace:
+    """Return conservative default self-coding thresholds.
+
+    The object is recreated on each call to prevent downstream mutation from
+    affecting other callers.
+    """
+
+    return SimpleNamespace(
+        roi_drop=-0.1,
+        error_increase=1.0,
+        test_failure_increase=0.0,
+        patch_success_drop=-0.2,
+    )
+
 
 def _resolved_module_exists(module_name: str | None) -> bool:
     """Return ``True`` when ``module_name`` can be resolved locally."""
@@ -230,6 +245,54 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     if isinstance(exc, ImportError) and "partially initialized" in str(exc):
         return True
     return False
+
+
+def _load_self_coding_thresholds(name: str) -> Any:
+    """Return self-coding thresholds while tolerating missing dependencies.
+
+    ``self_coding_thresholds`` has an extensive dependency surface that often
+    includes optional packages (for example :mod:`pydantic`).  When those
+    packages are unavailable – a common scenario on fresh Windows
+    installations – importing the module during bot internalisation raises a
+    :class:`ModuleNotFoundError`.  Historically that exception bubbled up and
+    was interpreted as a transient error which caused the registry to retry the
+    import indefinitely, effectively stalling the sandbox start-up sequence.
+
+    Instead we now attempt to import ``get_thresholds`` lazily and fall back to
+    a conservative static configuration when either the import itself or the
+    threshold lookup fails.  This keeps the sandbox responsive whilst clearly
+    logging the degraded behaviour so operators can install the missing
+    dependencies at their convenience.
+    """
+
+    try:
+        from .self_coding_thresholds import get_thresholds
+    except ModuleNotFoundError as exc:  # pragma: no cover - environment specific
+        logger.warning(
+            "self_coding_thresholds unavailable for %s; using built-in defaults", name
+        )
+        logger.debug("self_coding_thresholds import failure: %s", exc, exc_info=True)
+        return _default_thresholds()
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning(
+            "Failed to import self_coding_thresholds for %s; using built-in defaults", name
+        )
+        logger.debug("self_coding_thresholds unexpected import error", exc_info=True)
+        return _default_thresholds()
+
+    try:
+        return get_thresholds(name)
+    except Exception as exc:  # pragma: no cover - configuration failure
+        logger.warning(
+            "Unable to load self-coding thresholds for %s; reverting to defaults: %s",
+            name,
+            exc,
+        )
+        logger.debug(
+            "self_coding_thresholds.get_thresholds raised an exception",
+            exc_info=True,
+        )
+        return _default_thresholds()
 
 def _extend_workflow_tests(target: list[str], seen: set[str], value: Any) -> None:
     for item in normalize_workflow_tests(value):
@@ -474,15 +537,13 @@ class BotRegistry:
         from .code_database import CodeDB
         from .gpt_memory import GPTMemoryManager
         from context_builder_util import create_context_builder
-        from .self_coding_thresholds import get_thresholds
-
         node = self.graph.nodes[name]
 
         ctx = create_context_builder()
         engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=ctx)
         pipeline = ModelAutomationPipeline(context_builder=ctx, bot_registry=self)
         db = data_bot or DataBot(start_server=False)
-        th = get_thresholds(name)
+        th = _load_self_coding_thresholds(name)
         internalize_coding_bot(
             name,
             engine,
