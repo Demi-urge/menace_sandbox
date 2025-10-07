@@ -609,16 +609,39 @@ class BotRegistry:
         pipeline = components.pipeline_cls(context_builder=ctx, bot_registry=self)
         db = data_bot or components.data_bot_cls(start_server=False)
         th = _load_self_coding_thresholds(name)
-        components.internalize_coding_bot(
-            name,
-            engine,
-            pipeline,
-            data_bot=db,
-            bot_registry=self,
-            roi_threshold=getattr(th, "roi_drop", None),
-            error_threshold=getattr(th, "error_increase", None),
-            test_failure_threshold=getattr(th, "test_failure_increase", None),
-        )
+        try:
+            components.internalize_coding_bot(
+                name,
+                engine,
+                pipeline,
+                data_bot=db,
+                bot_registry=self,
+                roi_threshold=getattr(th, "roi_drop", None),
+                error_threshold=getattr(th, "error_increase", None),
+                test_failure_threshold=getattr(th, "test_failure_increase", None),
+            )
+        except Exception as exc:
+            missing_modules = _collect_missing_modules(exc)
+            if missing_modules:
+                raise SelfCodingUnavailableError(
+                    "self-coding bootstrap failed: missing runtime dependencies",
+                    missing=missing_modules,
+                ) from exc
+
+            if isinstance(exc, ImportError):
+                hinted: set[str] = set()
+                name_attr = getattr(exc, "name", None)
+                if name_attr and "DLL load failed" in str(exc):
+                    hinted.add(str(name_attr))
+                if "QuickFixEngine failed to initialise" in str(exc):
+                    hinted.add("quick_fix_engine")
+                if hinted:
+                    raise SelfCodingUnavailableError(
+                        "self-coding bootstrap failed: runtime component unavailable",
+                        missing=hinted,
+                    ) from exc
+
+            raise
         node.pop("pending_internalization", None)
         self._internalization_retry_attempts.pop(name, None)
 
