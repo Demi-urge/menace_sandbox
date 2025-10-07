@@ -189,6 +189,75 @@ logger = logging.getLogger(__name__)
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS = {}
 
+_PATH_SEPARATORS: tuple[str, ...] = tuple(
+    sorted({sep for sep in (os.sep, os.altsep, "/", "\\") if sep})
+)
+
+
+def _is_probable_filesystem_path(value: str | os.PathLike[str] | None) -> bool:
+    """Heuristically determine whether ``value`` refers to a filesystem path.
+
+    ``bot_registry`` persists module references exactly as they were supplied by
+    upstream orchestrators.  On Unix-like systems this is typically a dotted
+    module path such as ``"menace.task_validation_bot"`` or a relative file path
+    with forward slashes.  Windows invocations, however, frequently pass fully
+    qualified paths that include drive letters and backslashes.  Prior to this
+    helper the registry only inspected the string for ``"/"`` and therefore
+    mis-classified legitimate Windows paths as pure module names which caused
+    :func:`importlib.import_module` to receive values like
+    ``"C:\\menace\\task_validation_bot.py"``.  ``importlib`` rightfully raises a
+    :class:`ModuleNotFoundError` for such values, stalling the sandbox during the
+    internalisation loop.
+
+    The heuristic intentionally prefers recall over precision: if the value
+    *might* represent a path we delegate to ``importlib.util.spec_from_file_location``
+    which safely handles non-existent files by raising an informative
+    :class:`ImportError`.  The function therefore checks for several signals that
+    only appear in filesystem paths – presence of native or alternative path
+    separators, explicit drive specifications, relative prefixes and common
+    source file extensions.  The resulting behaviour is deterministic across
+    platforms which keeps the registry's hot swapping logic aligned between
+    Linux CI and production Windows environments.
+    """
+
+    if value is None:
+        return False
+
+    if isinstance(value, os.PathLike):
+        # ``os.fspath`` provides the canonical string representation even for
+        # custom ``PathLike`` implementations.
+        value = os.fspath(value)
+
+    if not isinstance(value, str) or not value:
+        return False
+
+    lower = value.lower()
+    if lower.endswith((".py", ".pyc", ".pyo", "__init__")):
+        return True
+
+    drive, _ = os.path.splitdrive(value)
+    if drive:
+        return True
+
+    if value.startswith(("./", "../")):
+        return True
+
+    if any(sep in value for sep in _PATH_SEPARATORS):
+        return True
+
+    # ``Path`` normalisation is comparatively expensive but captures edge
+    # cases such as ``C:module.py`` (drive without separator) or "virtual"
+    # absolute prefixes returned by certain packaging workflows.  The
+    # conversion deliberately avoids resolving the path to prevent I/O.
+    try:
+        parts = Path(value).parts
+    except TypeError:
+        return False
+    if len(parts) > 1:
+        return True
+
+    return False
+
 
 @dataclass(slots=True)
 class _TransientErrorState:
@@ -1814,8 +1883,8 @@ class BotRegistry:
             logger.error("Failed to check manual changes for %s: %s", module_path, exc)
         try:
             path_obj = Path(module_path)
-            if path_obj.suffix == ".py" or "/" in module_path:
-                module_name = path_obj.stem
+            if _is_probable_filesystem_path(module_path):
+                module_name = path_obj.stem or path_obj.name
                 spec = importlib.util.spec_from_file_location(
                     module_name, module_path
                 )
@@ -1887,8 +1956,8 @@ class BotRegistry:
         module_path = node["module"]
         try:
             path_obj = Path(module_path)
-            if path_obj.suffix == ".py" or "/" in module_path:
-                module_name = path_obj.stem
+            if _is_probable_filesystem_path(module_path):
+                module_name = path_obj.stem or path_obj.name
             else:
                 module_name = module_path
             importlib.invalidate_caches()

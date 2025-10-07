@@ -2,6 +2,7 @@
 
 from menace_sandbox.bot_registry import (
     _collect_missing_modules,
+    _is_probable_filesystem_path,
     _is_transient_internalization_error,
 )
 
@@ -97,3 +98,20 @@ def test_collect_missing_modules_handles_procedure_not_found():
     )
     missing = _collect_missing_modules(err)
     assert "quick_fix_engine" in missing
+
+
+def test_is_probable_filesystem_path_detects_windows_drive(tmp_path):
+    module_file = tmp_path / "bots" / "task_validation_bot.py"
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text("BOT = True", encoding="utf-8")
+    windows_style_path = str(module_file).replace("/", "\\")
+    assert _is_probable_filesystem_path(windows_style_path) is True
+
+
+def test_is_probable_filesystem_path_detects_unc_prefix():
+    unc_path = r"\\\shared\bots\future_profitability_bot.py"
+    assert _is_probable_filesystem_path(unc_path) is True
+
+
+def test_is_probable_filesystem_path_rejects_module_names():
+    assert _is_probable_filesystem_path("menace_sandbox.task_validation_bot") is False
