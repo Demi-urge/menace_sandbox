@@ -7,6 +7,11 @@ from typing import Callable, Iterable, TypeVar
 from .data_bot import DataBot
 from .bot_registry import BotRegistry
 
+try:  # pragma: no cover - allow flat execution fallback
+    from .self_coding_dependency_probe import ensure_self_coding_ready
+except Exception:  # pragma: no cover - fallback when package import unavailable
+    from self_coding_dependency_probe import ensure_self_coding_ready  # type: ignore
+
 try:  # pragma: no cover - optional self-coding dependency
     from .coding_bot_interface import self_coding_managed as _self_coding_managed
 except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
@@ -45,6 +50,14 @@ def _bootstrap_self_coding() -> tuple[DecoratorFactory, BotRegistry | None, Data
     fall back to a no-op decorator so the broader sandbox can continue to load
     without repeatedly retrying internalisation.
     """
+
+    ready, missing = ensure_self_coding_ready()
+    if not ready:
+        logger.warning(
+            "Self-coding decorator unavailable; future prediction bots will run without autonomous updates (missing: %s)",
+            ", ".join(missing),
+        )
+        return _noop_self_coding, None, None
 
     if _self_coding_managed is None:
         if _SELF_CODING_IMPORT_ERROR is not None:
