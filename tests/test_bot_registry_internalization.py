@@ -37,6 +37,10 @@ class DummyContext:
 
 
 def _install_stub_modules(monkeypatch):
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
     scm = types.ModuleType("menace_sandbox.self_coding_manager")
     def fake_internalize(name, engine, pipeline, *, data_bot, bot_registry, **kw):
         fake_internalize.calls.append((name, data_bot))
@@ -101,11 +105,28 @@ def _install_stub_modules(monkeypatch):
     )
 
 
+
 def test_register_bot_internalizes(monkeypatch):
     _install_stub_modules(monkeypatch)
     bus = DummyBus()
     reg = bot_registry.BotRegistry(event_bus=bus)
+    scheduled: list[str] = []
+
+    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+        self._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append(name)
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_schedule_internalization_retry",
+        _schedule,
+        raising=False,
+    )
+
     reg.register_bot("FooBot", is_coding_bot=True)
+    assert scheduled, "internalisation retry should be scheduled"
+    for name in list(scheduled):
+        reg._retry_internalization(name)
     assert ("bot:internalized", {"bot": "FooBot"}) in bus.events
 
 
@@ -170,6 +191,10 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
     bus = DummyBus()
     reg = bot_registry.BotRegistry(event_bus=bus)
 
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
     def fail_internalize(self, name, *, manager=None, data_bot=None):
         raise ModuleNotFoundError("No module named 'totally_missing_lib'")
 
@@ -180,7 +205,23 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
         raising=False,
     )
 
+    scheduled: list[str] = []
+
+    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+        self._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append(name)
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_schedule_internalization_retry",
+        _schedule,
+        raising=False,
+    )
+
     reg.register_bot("BlockedBot", is_coding_bot=True)
+
+    for name in list(scheduled):
+        reg._retry_internalization(name)
 
     node = reg.graph.nodes["BlockedBot"]
     assert node["internalization_blocked"]["exception"] == "ModuleNotFoundError"
@@ -192,6 +233,10 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
 def test_dependency_failure_disables_self_coding(monkeypatch):
     bus = DummyBus()
     reg = bot_registry.BotRegistry(event_bus=bus)
+
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
 
     monkeypatch.setattr(
         bot_registry,
@@ -223,7 +268,23 @@ def test_dependency_failure_disables_self_coding(monkeypatch):
         lambda: components,
     )
 
+    scheduled: list[str] = []
+
+    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+        self._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append(name)
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_schedule_internalization_retry",
+        _schedule,
+        raising=False,
+    )
+
     reg.register_bot("TorchlessBot", is_coding_bot=True)
+
+    for name in list(scheduled):
+        reg._retry_internalization(name)
 
     node = reg.graph.nodes["TorchlessBot"]
     disabled = node["self_coding_disabled"]

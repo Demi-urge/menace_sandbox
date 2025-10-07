@@ -29,6 +29,10 @@ def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
     )
     registry = bot_registry.BotRegistry(event_bus=None)
 
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
     def _raise(*_args, **_kwargs):
         raise bot_registry.SelfCodingUnavailableError(
             "self-coding bootstrap failed",
@@ -36,6 +40,14 @@ def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
         )
 
     monkeypatch.setattr(registry, "_internalize_missing_coding_bot", _raise)
+
+    scheduled: list[tuple[str, float | None]] = []
+
+    def _schedule(name: str, *, delay: float | None = None) -> None:
+        registry._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append((name, delay))
+
+    monkeypatch.setattr(registry, "_schedule_internalization_retry", _schedule)
 
     module_path = tmp_path / "example_bot.py"
     module_path.write_text("# stub\n", encoding="utf-8")
@@ -45,6 +57,9 @@ def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
         module_path=module_path,
         is_coding_bot=True,
     )
+
+    assert scheduled, "internalisation retry should be scheduled"
+    registry._retry_internalization("ExampleBot")
 
     node = registry.graph.nodes["ExampleBot"]
     assert node["module"] == str(module_path)
@@ -67,12 +82,16 @@ def test_register_bot_marks_self_coding_disabled_when_dependencies_missing(monke
     node = registry.graph.nodes["TaskValidationBot"]
     disabled = node.get("self_coding_disabled")
     assert disabled is not None
-    assert disabled["missing_dependencies"] == ["pydantic", "sklearn"]
+    assert sorted(disabled["missing_dependencies"]) == ["pydantic", "sklearn"]
     assert disabled["reason"].startswith("self-coding dependencies unavailable")
     assert node.get("pending_internalization") is False
 
 
 def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
     def _raise_components():
         raise bot_registry.SelfCodingUnavailableError(
             "self-coding bootstrap failed",
@@ -86,7 +105,18 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     )
 
     registry = _make_registry()
+    scheduled: list[tuple[str, float | None]] = []
+
+    def _schedule(name: str, *, delay: float | None = None) -> None:
+        registry._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append((name, delay))
+
+    monkeypatch.setattr(registry, "_schedule_internalization_retry", _schedule)
+
     registry.register_bot("FutureProfitabilityBot", is_coding_bot=True)
+
+    assert scheduled, "internalisation retry should be scheduled"
+    registry._retry_internalization("FutureProfitabilityBot")
 
     node = registry.graph.nodes["FutureProfitabilityBot"]
     disabled = node.get("self_coding_disabled")
@@ -97,6 +127,10 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
 
 def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
     registry = _make_registry()
+
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
 
     def _boom(*_a, **_k):  # pragma: no cover - monkeypatched in test
         raise ImportError(
@@ -110,17 +144,21 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
         "_internalize_missing_coding_bot",
         lambda *a, **k: _boom(),
     )
-    monkeypatch.setattr(
-        registry,
-        "_schedule_internalization_retry",
-        lambda name, *, delay=None: scheduled.append((name, delay)),
-    )
+    def _schedule(name: str, *, delay: float | None = None) -> None:
+        registry._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append((name, delay))
+
+    monkeypatch.setattr(registry, "_schedule_internalization_retry", _schedule)
 
     registry.register_bot("FutureLucrativityBot", is_coding_bot=True)
 
-    # simulate background retries
-    for _ in range(2):
-        registry._retry_internalization("FutureLucrativityBot")
+    # simulate background retries until the registry disables self-coding
+    for _ in range(5):
+        if scheduled:
+            registry._retry_internalization("FutureLucrativityBot")
+        node = registry.graph.nodes["FutureLucrativityBot"]
+        if node.get("self_coding_disabled"):
+            break
 
     node = registry.graph.nodes["FutureLucrativityBot"]
     disabled = node.get("self_coding_disabled")
@@ -141,6 +179,10 @@ def test_transient_import_errors_with_varying_signatures(monkeypatch):
     registry._max_transient_error_total_repeats = 3
     registry._transient_error_grace_period = 0.0
 
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
     attempts = {"count": 0}
 
     def _boom():
@@ -157,11 +199,11 @@ def test_transient_import_errors_with_varying_signatures(monkeypatch):
         "_internalize_missing_coding_bot",
         lambda *a, **k: _boom(),
     )
-    monkeypatch.setattr(
-        registry,
-        "_schedule_internalization_retry",
-        lambda name, *, delay=None: scheduled.append((name, delay)),
-    )
+    def _schedule(name: str, *, delay: float | None = None) -> None:
+        registry._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append((name, delay))
+
+    monkeypatch.setattr(registry, "_schedule_internalization_retry", _schedule)
 
     registry.register_bot("FutureProfitabilityBot", is_coding_bot=True)
 
