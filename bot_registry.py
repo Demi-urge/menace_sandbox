@@ -341,7 +341,7 @@ _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
 # proper ``SelfCodingUnavailableError`` instead of looping indefinitely.
 _DLL_LOAD_FAILED_RE = re.compile(r"while importing ([^:]+)")
 _DLL_LOAD_FAILED_PREFIX_RE = re.compile(
-    r"DLL load failed(?:[^:]*):\s*(?:The specified module could not be found\.?|%1 is not a valid Win32 application\.?|error code \d+)",
+    r"DLL load failed(?:[^:]*):\s*(?:The specified module could not be found\.?|The specified procedure could not be found\.?|%1 is not a valid Win32 application\.?|error code \d+)",
     re.IGNORECASE,
 )
 _CIRCULAR_IMPORT_RE = re.compile(
@@ -480,11 +480,12 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
         return False
 
     if isinstance(exc, ModuleNotFoundError):
+        inferred_missing = _collect_missing_modules(exc)
+        if inferred_missing:
+            return False
+
         module_name = _missing_module_name(exc)
         if module_name is None:
-            inferred = _collect_missing_modules(exc)
-            if inferred:
-                return False
             return True
         root_name = module_name.split(".", 1)[0]
         if module_name.startswith(("menace_sandbox.", "menace.")) or root_name in _INTERNAL_SELF_CODING_MODULES:

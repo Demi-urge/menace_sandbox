@@ -80,3 +80,20 @@ def test_transient_detection_with_inferred_missing_module():
         name=None,
     )
     assert _is_transient_internalization_error(err) is False
+
+
+def test_transient_detection_with_named_module_reports_non_transient():
+    err = ModuleNotFoundError(
+        "No module named 'quick_fix_engine'",
+        name="quick_fix_engine",
+    )
+    assert _is_transient_internalization_error(err) is False
+
+
+def test_collect_missing_modules_handles_procedure_not_found():
+    err = ImportError(
+        "DLL load failed while importing quick_fix_engine: The specified procedure could not be found.",
+        name="quick_fix_engine",
+    )
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
