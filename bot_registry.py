@@ -29,7 +29,96 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     PathwayDB = None  # type: ignore
 
-import networkx as nx
+try:
+    import networkx as nx
+except ModuleNotFoundError:  # pragma: no cover - allow execution without networkx
+    from collections.abc import Iterator, MutableMapping
+
+    class _NodeView(MutableMapping):
+        """Lightweight mapping that mirrors ``networkx`` node access semantics."""
+
+        def __init__(self, graph: "_DiGraph") -> None:
+            self._graph = graph
+
+        def __getitem__(self, key: str) -> dict:
+            return self._graph._ensure_node(key)
+
+        def __setitem__(self, key: str, value: dict) -> None:
+            self._graph._nodes[key] = dict(value)
+            self._graph._adj.setdefault(key, {})
+
+        def __delitem__(self, key: str) -> None:
+            self._graph._nodes.pop(key, None)
+            self._graph._adj.pop(key, None)
+            for nbrs in self._graph._adj.values():
+                nbrs.pop(key, None)
+
+        def __contains__(self, key: object) -> bool:
+            return key in self._graph._nodes
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._graph._nodes)
+
+        def __len__(self) -> int:
+            return len(self._graph._nodes)
+
+        def get(self, key: str, default: Optional[dict] = None) -> Optional[dict]:
+            return self._graph._nodes.get(key, default)
+
+    class _DiGraph:
+        """Minimal ``DiGraph`` implementation covering the registry use cases."""
+
+        def __init__(self) -> None:
+            self._nodes: Dict[str, dict] = {}
+            self._adj: Dict[str, Dict[str, dict]] = {}
+            self.nodes = _NodeView(self)
+
+        def _ensure_node(self, node: str) -> dict:
+            data = self._nodes.setdefault(node, {})
+            self._adj.setdefault(node, {})
+            return data
+
+        def add_node(self, node: str, **attrs: Any) -> None:
+            data = self._ensure_node(node)
+            if attrs:
+                data.update(attrs)
+
+        def add_edge(self, u: str, v: str, **attrs: Any) -> None:
+            self.add_node(u)
+            self.add_node(v)
+            edge = self._adj[u].setdefault(v, {})
+            edge.update(attrs)
+
+        def has_edge(self, u: str, v: str) -> bool:
+            return v in self._adj.get(u, {})
+
+        def successors(self, node: str) -> Iterator[str]:
+            return iter(self._adj.get(node, {}))
+
+        def edges(self, data: bool = False):
+            for u, nbrs in self._adj.items():
+                for v, attrs in nbrs.items():
+                    if data:
+                        yield (u, v, attrs)
+                    else:
+                        yield (u, v)
+
+        def clear(self) -> None:
+            self._nodes.clear()
+            self._adj.clear()
+
+        def __contains__(self, node: object) -> bool:
+            return node in self._nodes
+
+        def __getitem__(self, node: str) -> Dict[str, dict]:
+            self._ensure_node(node)
+            return self._adj[node]
+
+    class _NetworkXShim:
+        DiGraph = _DiGraph
+
+    nx = _NetworkXShim()  # type: ignore[assignment]
+
 import logging
 import traceback
 from datetime import datetime, timezone
