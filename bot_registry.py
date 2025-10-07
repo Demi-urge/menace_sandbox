@@ -394,12 +394,16 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     background scan instead of hard failing the import.
     """
 
+    message = str(exc)
+    if _CIRCULAR_HINT_RE.search(message):
+        return False
+
     if isinstance(exc, ModuleNotFoundError):
         module_name = _missing_module_name(exc)
         if module_name is None:
             return True
         return _resolved_module_exists(module_name)
-    if isinstance(exc, ImportError) and "partially initialized" in str(exc):
+    if isinstance(exc, ImportError) and "partially initialized" in message:
         return True
     return False
 
