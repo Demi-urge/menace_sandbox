@@ -8,7 +8,17 @@ broadcasts a ``bot:updated`` event so other components can react to the
 change.
 """
 
-from typing import List, Tuple, Union, Optional, Dict, Any, TYPE_CHECKING
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Tuple,
+    TYPE_CHECKING,
+    Union,
+)
 from pathlib import Path
 import time
 import importlib
@@ -17,6 +27,7 @@ import sys
 import subprocess
 import json
 import os
+import re
 import threading
 from dataclasses import asdict, is_dataclass
 from types import SimpleNamespace
@@ -146,6 +157,8 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from threshold_service import threshold_service  # type: ignore
 
+from .self_coding_dependency_probe import ensure_self_coding_ready
+
 try:  # pragma: no cover - allow flat imports
     from .retry_utils import with_retry
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -222,6 +235,60 @@ def _missing_module_name(exc: ModuleNotFoundError) -> str | None:
             if remainder:
                 return remainder
     return None
+
+
+class SelfCodingUnavailableError(RuntimeError):
+    """Raised when the self-coding stack cannot be initialised safely."""
+
+    def __init__(self, message: str, *, missing: Iterable[str] | None = None) -> None:
+        super().__init__(message)
+        missing_set = {
+            m for m in (missing or ()) if isinstance(m, str) and m.strip()
+        }
+        self.missing_modules: tuple[str, ...] = tuple(sorted(missing_set))
+
+
+class _SelfCodingComponents(NamedTuple):
+    internalize_coding_bot: Any
+    engine_cls: Any
+    pipeline_cls: Any
+    data_bot_cls: Any
+    code_db_cls: Any
+    memory_manager_cls: Any
+    context_builder_factory: Any
+
+
+def _iter_exception_chain(exc: BaseException) -> Iterable[BaseException]:
+    """Yield *exc* and each exception in its cause/context chain safely."""
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+_MISSING_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
+
+
+def _collect_missing_modules(exc: BaseException) -> set[str]:
+    """Return a best-effort set of import targets missing for *exc*."""
+
+    missing: set[str] = set()
+    for item in _iter_exception_chain(exc):
+        if isinstance(item, ModuleNotFoundError):
+            name = _missing_module_name(item)
+            if name:
+                missing.add(name)
+            continue
+        if isinstance(item, ImportError):
+            if getattr(item, "name", None):
+                missing.add(str(item.name))
+            match = _MISSING_MODULE_RE.search(str(item))
+            if match:
+                missing.add(match.group(1))
+    return missing
 
 
 def _is_transient_internalization_error(exc: Exception) -> bool:
@@ -530,21 +597,19 @@ class BotRegistry:
         manager: "SelfCodingManager | None",
         data_bot: "DataBot | None",
     ) -> None:
-        from .self_coding_manager import internalize_coding_bot
-        from .self_coding_engine import SelfCodingEngine
-        from .model_automation_pipeline import ModelAutomationPipeline
-        from .data_bot import DataBot
-        from .code_database import CodeDB
-        from .gpt_memory import GPTMemoryManager
-        from context_builder_util import create_context_builder
         node = self.graph.nodes[name]
 
-        ctx = create_context_builder()
-        engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=ctx)
-        pipeline = ModelAutomationPipeline(context_builder=ctx, bot_registry=self)
-        db = data_bot or DataBot(start_server=False)
+        components = _load_self_coding_components()
+        ctx = components.context_builder_factory()
+        engine = components.engine_cls(
+            components.code_db_cls(),
+            components.memory_manager_cls(),
+            context_builder=ctx,
+        )
+        pipeline = components.pipeline_cls(context_builder=ctx, bot_registry=self)
+        db = data_bot or components.data_bot_cls(start_server=False)
         th = _load_self_coding_thresholds(name)
-        internalize_coding_bot(
+        components.internalize_coding_bot(
             name,
             engine,
             pipeline,
@@ -599,6 +664,42 @@ class BotRegistry:
                             manager=mgr,
                             data_bot=db,
                         )
+                        return
+                    except SelfCodingUnavailableError as exc:
+                        node["pending_internalization"] = False
+                        node["self_coding_disabled"] = {
+                            "reason": str(exc),
+                            "missing_dependencies": list(exc.missing_modules),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        self._internalization_retry_attempts.pop(name, None)
+                        handle = self._internalization_retry_handles.pop(name, None)
+                        if handle is not None:
+                            try:
+                                handle.cancel()
+                            except Exception:  # pragma: no cover - best effort
+                                logger.debug(
+                                    "failed to cancel retry timer after disabling self-coding",
+                                    exc_info=True,
+                                )
+                        logger.warning(
+                            "self-coding disabled for %s: %s", name, exc
+                        )
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "bot:self_coding_disabled",
+                                    {
+                                        "bot": name,
+                                        "missing": list(exc.missing_modules),
+                                        "reason": str(exc),
+                                    },
+                                )
+                            except Exception:  # pragma: no cover - best effort
+                                logger.debug(
+                                    "failed to publish bot:self_coding_disabled event",
+                                    exc_info=True,
+                                )
                         return
                     except Exception as exc:
                         if self.event_bus:
@@ -1658,3 +1759,42 @@ def get_all_registered_bots():
 
 
 __all__ = ["BotRegistry", "get_bot_workflow_tests"]
+
+
+def _load_self_coding_components() -> _SelfCodingComponents:
+    """Return the core classes required for self-coding integration."""
+
+    ready, missing = ensure_self_coding_ready()
+    if not ready:
+        raise SelfCodingUnavailableError(
+            "self-coding dependencies unavailable",
+            missing=missing,
+        )
+
+    try:
+        from .self_coding_manager import internalize_coding_bot
+        from .self_coding_engine import SelfCodingEngine
+        from .model_automation_pipeline import ModelAutomationPipeline
+        from .data_bot import DataBot
+        from .code_database import CodeDB
+        from .gpt_memory import GPTMemoryManager
+        from context_builder_util import create_context_builder
+    except ImportError as exc:
+        modules = _collect_missing_modules(exc)
+        if modules:
+            raise SelfCodingUnavailableError(
+                "self-coding bootstrap failed: missing runtime dependencies",
+                missing=modules,
+            ) from exc
+        raise
+
+    return _SelfCodingComponents(
+        internalize_coding_bot,
+        SelfCodingEngine,
+        ModelAutomationPipeline,
+        DataBot,
+        CodeDB,
+        GPTMemoryManager,
+        create_context_builder,
+    )
+
