@@ -186,6 +186,7 @@ except Exception:  # pragma: no cover - optional dependency
     RollbackManager = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+_UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS = {}
 
 
@@ -1460,6 +1461,10 @@ class BotRegistry:
         be determined a :class:`RuntimeError` is raised.
         """
 
+        is_unsigned = isinstance(commit, str) and commit.startswith(
+            _UNSIGNED_COMMIT_PREFIX
+        )
+
         if patch_id is None or commit is None:
             logger.warning(
                 "update_bot called without provenance for %s (patch_id=%s commit=%s)",
@@ -1488,41 +1493,56 @@ class BotRegistry:
         with self._lock:
             self.register_bot(name, is_coding_bot=False)
             node = self.graph.nodes[name]
+            unsigned_meta: dict[str, Any] | None = None
 
-            try:
-                self._verify_signed_provenance(patch_id, commit)
-            except RuntimeError as exc:
-                logger.error("Signed provenance verification failed: %s", exc)
-                if self.event_bus:
-                    try:
-                        self.event_bus.publish(
-                            "bot:update_blocked",
-                            {
-                                "name": name,
-                                "module": module_path,
-                                "patch_id": patch_id,
-                                "commit": commit,
-                                "reason": "unverified_provenance",
-                                "error": str(exc),
-                            },
-                        )
-                    except Exception as exc2:
-                        logger.error(
-                            "Failed to publish bot:update_blocked event: %s", exc2
-                        )
-                node["update_blocked"] = True
-                if self.persist_path:
-                    try:
-                        self.save(self.persist_path)
-                    except Exception as exc2:  # pragma: no cover - best effort
-                        logger.error(
-                            "Failed to save bot registry to %s: %s",
-                            self.persist_path,
-                            exc2,
-                        )
-                raise RuntimeError(
-                    "update blocked: provenance verification failed"
-                ) from exc
+            if not is_unsigned:
+                try:
+                    self._verify_signed_provenance(patch_id, commit)
+                except RuntimeError as exc:
+                    logger.error("Signed provenance verification failed: %s", exc)
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "bot:update_blocked",
+                                {
+                                    "name": name,
+                                    "module": module_path,
+                                    "patch_id": patch_id,
+                                    "commit": commit,
+                                    "reason": "unverified_provenance",
+                                    "error": str(exc),
+                                },
+                            )
+                        except Exception as exc2:
+                            logger.error(
+                                "Failed to publish bot:update_blocked event: %s", exc2
+                            )
+                    node["update_blocked"] = True
+                    if self.persist_path:
+                        try:
+                            self.save(self.persist_path)
+                        except Exception as exc2:  # pragma: no cover - best effort
+                            logger.error(
+                                "Failed to save bot registry to %s: %s",
+                                self.persist_path,
+                                exc2,
+                            )
+                    raise RuntimeError(
+                        "update blocked: provenance verification failed"
+                    ) from exc
+            else:
+                timestamp = time.time()
+                unsigned_meta = {
+                    "commit": commit,
+                    "patch_id": patch_id,
+                    "timestamp": timestamp,
+                }
+                node.pop("update_blocked", None)
+                logger.warning(
+                    "Applying unsigned provenance update for %s (patch_id=%s)",
+                    name,
+                    patch_id,
+                )
 
             prev_state = dict(node)
             prev_module_entry = self.modules.get(name)
@@ -1530,6 +1550,8 @@ class BotRegistry:
             node["version"] = int(node.get("version", 0)) + 1
             node["patch_id"] = patch_id
             node["commit"] = commit
+            if unsigned_meta is not None:
+                node["unsigned_provenance"] = unsigned_meta
             try:
                 ph = node.setdefault("patch_history", [])
                 ph.append({"patch_id": patch_id, "commit": commit, "ts": time.time()})
@@ -1546,6 +1568,8 @@ class BotRegistry:
                         "patch_id": patch_id,
                         "commit": commit,
                     }
+                    if unsigned_meta is not None:
+                        payload["unsigned"] = True
                     self.event_bus.publish("bot:updated", payload)
                 except Exception as exc:
                     logger.error("Failed to publish bot:updated event: %s", exc)
@@ -1563,6 +1587,22 @@ class BotRegistry:
                 self.hot_swap_bot(name)
                 self.health_check_bot(name, prev_state)
                 update_ok = True
+                if self.event_bus and unsigned_meta is not None:
+                    try:
+                        self.event_bus.publish(
+                            "bot:unsigned_update",
+                            {
+                                "name": name,
+                                "module": module_path,
+                                "patch_id": patch_id,
+                                "commit": commit,
+                                "timestamp": unsigned_meta["timestamp"],
+                            },
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "Failed to publish bot:unsigned_update event: %s", exc
+                        )
                 if self.event_bus:
                     try:
                         self.event_bus.publish(
