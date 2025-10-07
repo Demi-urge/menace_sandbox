@@ -29,7 +29,7 @@ import json
 import os
 import re
 import threading
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
 
 try:
@@ -187,6 +187,30 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 _REGISTERED_BOTS = {}
+
+
+@dataclass(slots=True)
+class _TransientErrorState:
+    """Track repeated transient import failures for a single bot."""
+
+    signature: tuple[str, str]
+    count: int = 1
+    first_seen: float = field(default_factory=time.monotonic)
+    last_seen: float = field(default_factory=time.monotonic)
+    first_seen_wallclock: float = field(default_factory=time.time)
+    last_seen_wallclock: float = field(default_factory=time.time)
+
+    def increment(self) -> "_TransientErrorState":
+        self.count += 1
+        self.last_seen = time.monotonic()
+        self.last_seen_wallclock = time.time()
+        return self
+
+
+def _exception_signature(exc: BaseException) -> tuple[str, str]:
+    """Return a stable signature describing *exc* for retry heuristics."""
+
+    return (exc.__class__.__name__, str(exc))
 
 def _default_thresholds() -> SimpleNamespace:
     """Return conservative default self-coding thresholds.
@@ -454,7 +478,9 @@ class BotRegistry:
         self._lock = threading.RLock()
         self._internalization_retry_attempts: Dict[str, int] = {}
         self._internalization_retry_handles: Dict[str, threading.Timer] = {}
+        self._transient_error_state: Dict[str, _TransientErrorState] = {}
         self._max_internalization_retries = 5
+        self._max_transient_error_signature_repeats = 3
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -489,6 +515,86 @@ class BotRegistry:
             timer.start()
         except Exception:  # pragma: no cover - timer creation best effort
             logger.exception("failed to start internalization retry timer for %s", name)
+
+    def _register_transient_failure(
+        self, name: str, exc: Exception
+    ) -> _TransientErrorState:
+        """Record a transient failure and return the associated state."""
+
+        signature = _exception_signature(exc)
+        with self._lock:
+            state = self._transient_error_state.get(name)
+            if state is None or state.signature != signature:
+                state = _TransientErrorState(signature=signature)
+                self._transient_error_state[name] = state
+            else:
+                state.increment()
+        return state
+
+    def _clear_transient_error_state(self, name: str) -> None:
+        """Forget previously recorded transient failures for ``name``."""
+
+        with self._lock:
+            self._transient_error_state.pop(name, None)
+
+    def _disable_self_coding_due_to_transient_errors(
+        self, name: str, exc: Exception, state: _TransientErrorState
+    ) -> None:
+        """Disable self-coding after repeated transient import failures."""
+
+        self._record_internalization_blocked(name, exc)
+
+        node = self.graph.nodes.get(name)
+        if node is None:
+            self._clear_transient_error_state(name)
+            return
+
+        missing = sorted(_collect_missing_modules(exc))
+        timestamp = datetime.now(timezone.utc).isoformat()
+        reason = (
+            "self-coding disabled after repeated transient import failures"
+            f" ({state.count} attempts): {exc}"
+        )
+        node["self_coding_disabled"] = {
+            "reason": reason,
+            "missing_dependencies": missing,
+            "timestamp": timestamp,
+            "transient_error": {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+                "repeat_count": state.count,
+                "first_seen": datetime.fromtimestamp(
+                    state.first_seen_wallclock, tz=timezone.utc
+                ).isoformat(),
+                "last_seen": datetime.fromtimestamp(
+                    state.last_seen_wallclock, tz=timezone.utc
+                ).isoformat(),
+                "window_seconds": round(state.last_seen - state.first_seen, 3),
+            },
+        }
+        self._clear_transient_error_state(name)
+
+        logger.warning(
+            "self-coding disabled for %s after %s repeated transient import failures: %s",
+            name,
+            state.count,
+            exc,
+        )
+
+        if self.event_bus:
+            payload = {
+                "bot": name,
+                "missing": missing,
+                "reason": reason,
+                "transient_error": node["self_coding_disabled"]["transient_error"],
+            }
+            try:
+                self.event_bus.publish("bot:self_coding_disabled", payload)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to publish bot:self_coding_disabled event after transient errors",
+                    exc_info=True,
+                )
 
     def _record_internalization_blocked(self, name: str, exc: Exception) -> None:
         """Record a non-recoverable internalisation failure for ``name``."""
@@ -535,6 +641,7 @@ class BotRegistry:
                     "Failed to publish bot:internalization_blocked event: %s",
                     pub_exc,
                 )
+        self._clear_transient_error_state(name)
 
     def _retry_internalization(self, name: str) -> None:
         """Attempt to internalise a bot that previously failed to import."""
@@ -571,6 +678,15 @@ class BotRegistry:
                 if _is_transient_internalization_error(exc) and (
                     attempts < self._max_internalization_retries
                 ):
+                    state = self._register_transient_failure(name, exc)
+                    if (
+                        state.count
+                        >= self._max_transient_error_signature_repeats
+                    ):
+                        self._disable_self_coding_due_to_transient_errors(
+                            name, exc, state
+                        )
+                        return
                     logger.debug(
                         "retrying internalization for %s after transient error (attempt %s)",
                         name,
@@ -584,6 +700,7 @@ class BotRegistry:
 
             node.pop("pending_internalization", None)
             self._internalization_retry_attempts.pop(name, None)
+            self._clear_transient_error_state(name)
             logger.info(
                 "internalization retry for %s succeeded after %s attempt(s)",
                 name,
@@ -705,6 +822,7 @@ class BotRegistry:
                                     "failed to cancel retry timer after disabling self-coding",
                                     exc_info=True,
                                 )
+                        self._clear_transient_error_state(name)
                         logger.warning(
                             "self-coding disabled for %s: %s", name, exc
                         )
@@ -738,6 +856,15 @@ class BotRegistry:
                                 )
                         node.setdefault("internalization_errors", []).append(str(exc))
                         if _is_transient_internalization_error(exc):
+                            state = self._register_transient_failure(name, exc)
+                            if (
+                                state.count
+                                >= self._max_transient_error_signature_repeats
+                            ):
+                                self._disable_self_coding_due_to_transient_errors(
+                                    name, exc, state
+                                )
+                                return
                             node["pending_internalization"] = True
                             self._schedule_internalization_retry(name)
                             logger.debug(
@@ -746,6 +873,7 @@ class BotRegistry:
                             return
                         self._record_internalization_blocked(name, exc)
                         return
+            self._clear_transient_error_state(name)
             if roi_threshold is not None:
                 node["roi_threshold"] = float(roi_threshold)
             if error_threshold is not None:
