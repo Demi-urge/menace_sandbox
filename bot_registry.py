@@ -31,6 +31,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 import networkx as nx
 import logging
+import traceback
+from datetime import datetime, timezone
 
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
@@ -84,6 +86,40 @@ logger = logging.getLogger(__name__)
 _REGISTERED_BOTS = {}
 
 
+def _resolved_module_exists(module_name: str | None) -> bool:
+    """Return ``True`` when ``module_name`` can be resolved locally."""
+
+    if not module_name:
+        return False
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, AttributeError, ValueError):  # pragma: no cover - best effort
+        spec = None
+    if spec is not None:
+        return True
+
+    parts = module_name.replace(".", os.sep)
+    base = Path(__file__).resolve().parent
+    for candidate in (base / f"{parts}.py", base / parts / "__init__.py"):
+        if candidate.exists():
+            return True
+    return False
+
+
+def _missing_module_name(exc: ModuleNotFoundError) -> str | None:
+    name = getattr(exc, "name", None)
+    if name:
+        return name
+    if exc.args:
+        msg = str(exc)
+        prefix = "No module named "
+        if msg.startswith(prefix):
+            remainder = msg[len(prefix) :].strip("'\"")
+            if remainder:
+                return remainder
+    return None
+
+
 def _is_transient_internalization_error(exc: Exception) -> bool:
     """Return ``True`` for import errors that are likely transient.
 
@@ -98,7 +134,10 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     """
 
     if isinstance(exc, ModuleNotFoundError):
-        return True
+        module_name = _missing_module_name(exc)
+        if module_name is None:
+            return True
+        return _resolved_module_exists(module_name)
     if isinstance(exc, ImportError) and "partially initialized" in str(exc):
         return True
     return False
@@ -232,6 +271,52 @@ class BotRegistry:
         except Exception:  # pragma: no cover - timer creation best effort
             logger.exception("failed to start internalization retry timer for %s", name)
 
+    def _record_internalization_blocked(self, name: str, exc: Exception) -> None:
+        """Record a non-recoverable internalisation failure for ``name``."""
+
+        node = self.graph.nodes.get(name)
+        if node is None:
+            return
+
+        node["pending_internalization"] = False
+        node["internalization_blocked"] = {
+            "error": str(exc),
+            "exception": exc.__class__.__name__,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "traceback": "".join(
+                traceback.format_exception(exc.__class__, exc, exc.__traceback__)
+            ),
+        }
+        self._internalization_retry_attempts.pop(name, None)
+        handle = self._internalization_retry_handles.pop(name, None)
+        if handle is not None:
+            try:
+                handle.cancel()
+            except Exception:  # pragma: no cover - timer cleanup best effort
+                logger.debug(
+                    "failed to cancel retry timer while recording blocked internalization",
+                    exc_info=True,
+                )
+
+        logger.error(
+            "internalization for %s blocked after non-recoverable error: %s",
+            name,
+            exc,
+            exc_info=exc,
+        )
+
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "bot:internalization_blocked",
+                    {"bot": name, "error": node["internalization_blocked"]},
+                )
+            except Exception as pub_exc:  # pragma: no cover - best effort
+                logger.error(
+                    "Failed to publish bot:internalization_blocked event: %s",
+                    pub_exc,
+                )
+
     def _retry_internalization(self, name: str) -> None:
         """Attempt to internalise a bot that previously failed to import."""
 
@@ -275,14 +360,7 @@ class BotRegistry:
                     self._schedule_internalization_retry(name)
                     return
 
-                node.pop("pending_internalization", None)
-                self._internalization_retry_attempts.pop(name, None)
-                logger.error(
-                    "internalization retry for %s failed after %s attempts: %s",
-                    name,
-                    attempts,
-                    exc,
-                )
+                self._record_internalization_blocked(name, exc)
                 return
 
             node.pop("pending_internalization", None)
@@ -384,17 +462,16 @@ class BotRegistry:
                                     "Failed to publish bot:internalization_failed event: %s",
                                     exc2,
                                 )
+                        node.setdefault("internalization_errors", []).append(str(exc))
                         if _is_transient_internalization_error(exc):
-                            node.setdefault("internalization_errors", []).append(str(exc))
                             node["pending_internalization"] = True
                             self._schedule_internalization_retry(name)
                             logger.debug(
                                 "deferring internalization for %s due to import error", name
                             )
                             return
-                        raise RuntimeError(
-                            "coding bot could not be internalized"
-                        ) from exc
+                        self._record_internalization_blocked(name, exc)
+                        return
             if roi_threshold is not None:
                 node["roi_threshold"] = float(roi_threshold)
             if error_threshold is not None:
