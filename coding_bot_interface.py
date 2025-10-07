@@ -26,6 +26,9 @@ from functools import wraps
 import inspect
 import json
 import logging
+import os
+import hashlib
+import threading
 from types import SimpleNamespace
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
@@ -55,6 +58,74 @@ import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
 logger = logging.getLogger(__name__)
+
+_UNSIGNED_COMMIT_PREFIX = "unsigned:"
+_UNSIGNED_WARNING_CACHE: set[str] = set()
+_UNSIGNED_WARNING_LOCK = threading.Lock()
+
+
+def _unsigned_provenance_allowed() -> bool:
+    """Return ``True`` when the runtime permits unsigned provenance fallbacks."""
+
+    override = os.getenv("MENACE_ALLOW_UNSIGNED_PROVENANCE")
+    if override and override.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+
+    strict = os.getenv("MENACE_REQUIRE_SIGNED_PROVENANCE")
+    if strict and strict.strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+
+    prov_file = os.getenv("PATCH_PROVENANCE_FILE")
+    pubkey = os.getenv("PATCH_PROVENANCE_PUBKEY") or os.getenv(
+        "PATCH_PROVENANCE_PUBLIC_KEY"
+    )
+    return not (prov_file and pubkey)
+
+
+def _warn_unsigned_once(name: str) -> None:
+    """Log a single warning per *name* when unsigned provenance is generated."""
+
+    with _UNSIGNED_WARNING_LOCK:
+        if name in _UNSIGNED_WARNING_CACHE:
+            return
+        _UNSIGNED_WARNING_CACHE.add(name)
+    logger.warning(
+        "Provenance metadata unavailable; generating unsigned fingerprint for %s. "
+        "Set PATCH_PROVENANCE_FILE and PATCH_PROVENANCE_PUBKEY to enable signed provenance.",
+        name,
+    )
+
+
+def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int, str]:
+    """Return a deterministic ``(patch_id, commit)`` pair for unsigned updates."""
+
+    identifier = module_path or name
+    path = Path(module_path) if module_path else None
+    hasher = hashlib.sha256()
+
+    if path and path.exists():
+        try:
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(131072), b""):
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+        except OSError as exc:  # pragma: no cover - filesystem specific
+            logger.warning(
+                "Failed to read %s while deriving unsigned provenance: %s", identifier, exc
+            )
+            seed = f"{identifier}:{time.time_ns()}".encode("utf-8", "replace")
+            hasher.update(seed)
+    else:
+        fallback = identifier.encode("utf-8", "replace")
+        hasher.update(fallback)
+
+    digest = hasher.hexdigest()
+    seed_bytes = hashlib.blake2s(identifier.encode("utf-8", "replace"), digest_size=4).digest()
+    seed_value = int.from_bytes(seed_bytes, "big") or 1
+    patch_id = -abs(seed_value)
+    commit = f"{_UNSIGNED_COMMIT_PREFIX}{digest}"
+    return patch_id, commit
 
 create_context_builder = load_internal("context_builder_util").create_context_builder
 
@@ -630,11 +701,27 @@ def self_coding_managed(
                         exc_info=True,
                     )
 
+            metadata_missing = False
+            fallback_used = False
+
             if patch_id is not None and commit is not None:
                 update_kwargs["patch_id"] = patch_id
                 update_kwargs["commit"] = commit
             else:
-                should_update = False
+                metadata_missing = True
+                if _unsigned_provenance_allowed():
+                    fallback_patch, fallback_commit = _derive_unsigned_provenance(
+                        name, module_path or None
+                    )
+                    update_kwargs["patch_id"] = fallback_patch
+                    update_kwargs["commit"] = fallback_commit
+                    should_update = True
+                    fallback_used = True
+                    _warn_unsigned_once(name)
+                else:
+                    should_update = False
+
+            if metadata_missing and not fallback_used:
                 logger.info(
                     "skipping bot update for %s due to missing provenance metadata",
                     name,
