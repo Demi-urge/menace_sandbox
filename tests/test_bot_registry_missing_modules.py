@@ -44,3 +44,22 @@ def test_circular_imports_not_treated_as_transient_errors():
         "'menace_sandbox.task_validation_bot' (most likely due to a circular import)"
     )
     assert _is_transient_internalization_error(err) is False
+
+
+def test_collect_missing_modules_infers_from_windows_path():
+    err = ImportError(
+        "DLL load failed: The specified module could not be found.",
+        name=None,
+        path=r"C:\\Python\\Lib\\site-packages\\win32api.pyd",
+    )
+    missing = _collect_missing_modules(err)
+    assert "win32api" in missing
+
+
+def test_collect_missing_modules_handles_dll_error_without_module():
+    err = ImportError(
+        'DLL load failed: The specified module could not be found. Error loading "api-ms-win-core-path-l1-1-0.dll"',
+        name=None,
+    )
+    missing = _collect_missing_modules(err)
+    assert "api-ms-win-core-path-l1-1-0" in missing
