@@ -539,6 +539,10 @@ class ContextBuilder:
         stack_config: Any | None = None,
         stack_score_weight: float | None = None,
         stack_penalty_weight: float | None = None,
+        bots_db: str | os.PathLike[str] | None = None,
+        code_db: str | os.PathLike[str] | None = None,
+        errors_db: str | os.PathLike[str] | None = None,
+        workflows_db: str | os.PathLike[str] | None = None,
     ) -> None:
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -632,6 +636,27 @@ class ContextBuilder:
                 self.stack_config.penalty = float(stack_penalty_weight)
             except Exception:
                 logger.exception("invalid stack_penalty_weight override")
+        # Normalise optional database paths provided by external helpers.  The
+        # paths are stored verbatim so downstream components can introspect or
+        # reuse them when opening the various SQLite databases.
+        def _normalise_db_path(value: str | os.PathLike[str] | None) -> str | None:
+            if value is None:
+                return None
+            try:
+                return os.fspath(value)
+            except TypeError:
+                return str(value)
+
+        self.bots_db = _normalise_db_path(bots_db)
+        self.code_db = _normalise_db_path(code_db)
+        self.errors_db = _normalise_db_path(errors_db)
+        self.workflows_db = _normalise_db_path(workflows_db)
+        self._db_paths = {
+            "bots": self.bots_db,
+            "code": self.code_db,
+            "errors": self.errors_db,
+            "workflows": self.workflows_db,
+        }
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
         # in configuration, while ``STACK_CONTEXT_DISABLED`` always forces the

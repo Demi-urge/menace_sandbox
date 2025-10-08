@@ -108,6 +108,9 @@ def create_context_builder(*args, **kwargs):  # type: ignore[override]
     unreadable: list[str] = []
     for attr, path in paths.items():
         candidate: Path | None = path
+        if not path.exists():
+            missing.append(path.name)
+            continue
         if callable(ensure_readable):
             try:
                 ensured = ensure_readable(path, path.name)
