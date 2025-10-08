@@ -145,6 +145,7 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
     monkeypatch.setattr(
         bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
     )
+    monkeypatch.setattr(bot_registry, "_collect_missing_modules", lambda exc: set())
 
     def _boom(*_a, **_k):  # pragma: no cover - monkeypatched in test
         raise ImportError(
@@ -185,6 +186,40 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
     assert disabled["transient_error"]["unique_signatures"] == 1
     assert node.get("pending_internalization") is False
     assert "internalization_blocked" in node
+
+
+def test_missing_modules_abort_transient_retry(monkeypatch):
+    registry = _make_registry()
+
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
+    name = "TaskValidationBot"
+    registry.graph.add_node(name)
+    node = registry.graph.nodes[name]
+    node["pending_internalization"] = True
+    registry._internalization_retry_attempts[name] = 0
+
+    def _raise_import_error(*_args, **_kwargs):
+        raise ImportError(
+            "cannot import name 'Helper' from partially initialized module "
+            "'menace_sandbox.quick_fix_engine' (most likely due to a circular import)"
+        )
+
+    monkeypatch.setattr(registry, "_internalize_missing_coding_bot", _raise_import_error)
+
+    registry._retry_internalization(name)
+
+    node = registry.graph.nodes[name]
+    assert node.get("pending_internalization") is False
+    blocked = node.get("internalization_blocked")
+    assert blocked is not None
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    deps = disabled.get("missing_dependencies", [])
+    assert any(dep.endswith("quick_fix_engine") for dep in deps)
+    assert name not in registry._internalization_retry_attempts
 
 
 def test_transient_import_error_purges_partial_modules(monkeypatch):
@@ -240,6 +275,7 @@ def test_transient_import_errors_with_varying_signatures(monkeypatch):
     monkeypatch.setattr(
         bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
     )
+    monkeypatch.setattr(bot_registry, "_collect_missing_modules", lambda exc: set())
 
     attempts = {"count": 0}
 
