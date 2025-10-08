@@ -32,7 +32,7 @@ import re
 import subprocess
 import threading
 from typing import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
 import time
@@ -70,7 +70,8 @@ _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
 _PATCH_PROVENANCE_SERVICE_SENTINEL = object()
 _PATCH_PROVENANCE_SERVICE: Any = _PATCH_PROVENANCE_SERVICE_SENTINEL
-_SIGNED_PROVENANCE_CACHE: dict[Path, tuple[int, int, tuple[tuple[int | None, str | None], ...]]] = {}
+_SIGNED_PROVENANCE_CACHE: dict[Path, tuple[int, int, tuple["_SignedProvenanceEntry", ...]]] = {}
+_PATH_KEY_HINTS: tuple[str, ...] = ("path", "file", "module", "target", "artifact", "source")
 _SIGNED_PROVENANCE_CACHE_LOCK = threading.Lock()
 
 
@@ -87,6 +88,43 @@ class _ProvenanceDecision:
     @property
     def available(self) -> bool:
         return self.mode != "missing"
+
+
+@dataclass(frozen=True)
+class _SignedProvenanceEntry:
+    """Structured representation of signed provenance metadata."""
+
+    patch_id: int | None
+    commit: str | None
+    paths: tuple[str, ...] = ()
+    path_index: frozenset[str] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:  # pragma: no cover - trivial
+        object.__setattr__(
+            self,
+            "path_index",
+            frozenset(path.casefold() for path in self.paths if path),
+        )
+
+    def matches_path(self, candidate: str | None) -> bool:
+        """Return ``True`` when *candidate* matches any recorded path."""
+
+        if not candidate:
+            return False
+        if candidate in self.paths:
+            return True
+        return candidate.casefold() in self.path_index
+
+
+@dataclass(frozen=True)
+class _RepositoryContext:
+    """Captured repository metadata for provenance resolution."""
+
+    patch_id: int | None
+    commit: str | None
+    repo_root: Path | None
+    relative_path: Path | None
+    canonical_path: str | None
 
 
 def _unsigned_provenance_allowed() -> bool:
@@ -199,8 +237,81 @@ def _iter_provenance_dicts(root: Any) -> Iterable[dict[str, Any]]:
             stack.extend(current)
 
 
-def _extract_signed_candidate(entry: dict[str, Any]) -> tuple[int | None, str | None]:
-    """Extract ``(patch_id, commit)`` pair from a provenance ``entry``."""
+def _canonicalise_repo_path(value: str | os.PathLike[str] | None) -> str | None:
+    """Return a repository-relative representation for *value* when possible."""
+
+    if value is None:
+        return None
+    try:
+        text = os.fspath(value)
+    except TypeError:
+        text = str(value)
+    text = text.strip().strip("\"'")
+    if not text:
+        return None
+
+    if "\\" not in text and "/" not in text and "." in text:
+        module_parts = [part for part in text.split(".") if part]
+        if module_parts:
+            module_path = "/".join(module_parts)
+            if not module_path.endswith(".py"):
+                module_path = f"{module_path}.py"
+            text = module_path
+
+    parts = _split_path_parts(text)
+    if not parts:
+        return None
+
+    normalised: list[str] = []
+    for part in parts:
+        cleaned = part.strip()
+        if not cleaned or cleaned == ".":
+            continue
+        if cleaned == "..":
+            if normalised:
+                normalised.pop()
+            continue
+        normalised.append(cleaned)
+
+    if not normalised:
+        return None
+
+    return "/".join(normalised)
+
+
+def _extract_candidate_paths(entry: dict[str, Any]) -> tuple[str, ...]:
+    """Derive repository relative path candidates from ``entry`` metadata."""
+
+    seen: set[str] = set()
+    stack: list[tuple[Any, str | None]] = [(entry, None)]
+    while stack:
+        current, hint = stack.pop()
+        if isinstance(current, dict):
+            for key, value in current.items():
+                key_hint = key.lower() if isinstance(key, str) else None
+                stack.append((value, key_hint))
+        elif isinstance(current, (list, tuple, set)):
+            for item in current:
+                stack.append((item, hint))
+        else:
+            if hint is None or not any(token in hint for token in _PATH_KEY_HINTS):
+                continue
+            try:
+                candidate = os.fspath(current)
+            except TypeError:
+                if isinstance(current, str):
+                    candidate = current
+                else:
+                    continue
+            canonical = _canonicalise_repo_path(candidate)
+            if canonical:
+                seen.add(canonical)
+
+    return tuple(sorted(seen))
+
+
+def _extract_signed_candidate(entry: dict[str, Any]) -> _SignedProvenanceEntry:
+    """Extract structured provenance details from ``entry``."""
 
     patch_id = _coerce_patch_id(
         entry.get("patch_id")
@@ -228,11 +339,13 @@ def _extract_signed_candidate(entry: dict[str, Any]) -> tuple[int | None, str | 
             or nested.get("hash")
         )
 
-    return patch_id, commit
+    paths = _extract_candidate_paths(entry)
+
+    return _SignedProvenanceEntry(patch_id, commit, paths)
 
 
-def _load_signed_provenance_candidates() -> tuple[tuple[int | None, str | None], ...]:
-    """Return cached provenance pairs derived from the signed metadata file."""
+def _load_signed_provenance_candidates() -> tuple[_SignedProvenanceEntry, ...]:
+    """Return cached provenance entries derived from the signed metadata file."""
 
     prov_file = os.getenv("PATCH_PROVENANCE_FILE")
     if not prov_file:
@@ -264,17 +377,17 @@ def _load_signed_provenance_candidates() -> tuple[tuple[int | None, str | None],
         )
         return tuple()
 
-    seen_pairs: set[tuple[int | None, str | None]] = set()
-    candidates: list[tuple[int | None, str | None]] = []
+    seen_keys: set[tuple[int | None, str | None, tuple[str, ...]]] = set()
+    candidates: list[_SignedProvenanceEntry] = []
     for entry in _iter_provenance_dicts(payload):
-        patch_id, commit = _extract_signed_candidate(entry)
-        if patch_id is None and commit is None:
+        candidate = _extract_signed_candidate(entry)
+        if candidate.patch_id is None and candidate.commit is None:
             continue
-        pair = (patch_id, commit)
-        if pair in seen_pairs:
+        key = (candidate.patch_id, candidate.commit, candidate.paths)
+        if key in seen_keys:
             continue
-        seen_pairs.add(pair)
-        candidates.append(pair)
+        seen_keys.add(key)
+        candidates.append(candidate)
 
     result = tuple(candidates)
     with _SIGNED_PROVENANCE_CACHE_LOCK:
@@ -732,21 +845,23 @@ def _lookup_patch_by_commit(commit: str, *, log_hint: str) -> tuple[int | None, 
     return patch_id, commit_hash
 
 
-def _derive_repository_provenance(
+def _resolve_repository_context(
     name: str, module_path: str | os.PathLike[str] | None
-) -> tuple[int | None, str | None]:
-    """Attempt to recover signed provenance by inspecting the git repository."""
+) -> _RepositoryContext:
+    """Collect repository provenance hints for ``module_path``."""
 
     path = _normalise_module_path(module_path)
     if path is None:
-        return (None, None)
+        return _RepositoryContext(None, None, None, None, None)
 
     repo_root = _resolve_git_repository(path)
     if repo_root is None:
-        return (None, None)
+        return _RepositoryContext(None, None, None, None, None)
 
     rel_path = _relative_repo_path(path, repo_root)
     rel_path_posix = rel_path.as_posix()
+    canonical_path = _canonicalise_repo_path(rel_path_posix)
+
     try:
         output = subprocess.check_output(
             [
@@ -773,20 +888,31 @@ def _derive_repository_provenance(
         )
         commit = _read_git_head_commit(repo_root)
         if not commit:
-            return (None, None)
+            return _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
         logger.debug(
             "using HEAD commit fallback for %s because git log invocation failed", name
         )
     else:
         commit = _coerce_commit(output.decode("utf-8", "replace").strip())
         if not commit:
-            return (None, None)
+            return _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
 
-    patch_id, commit_hash = _lookup_patch_by_commit(commit, log_hint=f"{name}@{rel_path_posix}")
+    patch_id, commit_hash = _lookup_patch_by_commit(
+        commit, log_hint=f"{name}@{rel_path_posix}"
+    )
     if patch_id is None:
-        return (None, commit)
+        return _RepositoryContext(None, commit, repo_root, rel_path, canonical_path)
 
-    return patch_id, commit_hash or commit
+    return _RepositoryContext(patch_id, commit_hash or commit, repo_root, rel_path, canonical_path)
+
+
+def _derive_repository_provenance(
+    name: str, module_path: str | os.PathLike[str] | None
+) -> tuple[int | None, str | None]:
+    """Attempt to recover signed provenance by inspecting the git repository."""
+
+    ctx = _resolve_repository_context(name, module_path)
+    return ctx.patch_id, ctx.commit
 
 
 def _coerce_patch_id(value: object) -> int | None:
@@ -919,7 +1045,7 @@ def _resolve_provenance_decision(
             return _ProvenanceDecision(patch_id, commit, "signed", source="manager")
 
     module_patch, module_commit = module_provenance
-    signed_candidates = _load_signed_provenance_candidates()
+    signed_entries = _load_signed_provenance_candidates()
     if module_patch is not None:
         commit_candidate = module_commit or _backfill_commit_from_history(
             module_patch, log_hint=name
@@ -936,9 +1062,10 @@ def _resolve_provenance_decision(
         if (
             patch_candidate is None
             and commit_candidate is not None
-            and signed_candidates
+            and signed_entries
         ):
-            for cand_patch, cand_commit in signed_candidates:
+            for entry in signed_entries:
+                cand_patch, cand_commit = entry.patch_id, entry.commit
                 if cand_patch is not None and _commit_matches(
                     commit_candidate, cand_commit
                 ):
@@ -955,12 +1082,44 @@ def _resolve_provenance_decision(
                 patch_candidate, commit_candidate, "signed", source="module"
             )
 
-    repo_patch, repo_commit = _derive_repository_provenance(name, module_path)
+    repo_ctx = _resolve_repository_context(name, module_path)
+    repo_patch = repo_ctx.patch_id
+    repo_commit = repo_ctx.commit
+    repo_path = repo_ctx.canonical_path
     if repo_patch is not None and repo_commit is not None:
         return _ProvenanceDecision(repo_patch, repo_commit, "signed", source="repository")
 
-    if repo_commit is not None and signed_candidates:
-        for cand_patch, cand_commit in signed_candidates:
+    if repo_path and signed_entries:
+        for entry in signed_entries:
+            if entry.patch_id is None:
+                continue
+            if entry.matches_path(repo_path):
+                base_commit = entry.commit or repo_commit
+                if base_commit is None:
+                    continue
+                if entry.commit and repo_commit:
+                    commit_value = (
+                        repo_commit
+                        if len(repo_commit) >= len(entry.commit or "")
+                        else entry.commit
+                    )
+                else:
+                    commit_value = base_commit
+                logger.debug(
+                    "resolved signed provenance for %s via repository path match (%s)",
+                    name,
+                    repo_path,
+                )
+                return _ProvenanceDecision(
+                    entry.patch_id,
+                    commit_value,
+                    "signed",
+                    source="signed:path",
+                )
+
+    if repo_commit is not None and signed_entries:
+        for entry in signed_entries:
+            cand_patch, cand_commit = entry.patch_id, entry.commit
             if cand_patch is not None and _commit_matches(repo_commit, cand_commit):
                 commit_value = (
                     repo_commit
@@ -971,8 +1130,9 @@ def _resolve_provenance_decision(
                     cand_patch, commit_value, "signed", source="signed"
                 )
 
-    if module_commit is not None and signed_candidates:
-        for cand_patch, cand_commit in signed_candidates:
+    if module_commit is not None and signed_entries:
+        for entry in signed_entries:
+            cand_patch, cand_commit = entry.patch_id, entry.commit
             if cand_patch is not None and _commit_matches(module_commit, cand_commit):
                 commit_value = (
                     module_commit
@@ -983,11 +1143,11 @@ def _resolve_provenance_decision(
                     cand_patch, commit_value, "signed", source="signed"
                 )
 
-    if signed_candidates:
-        for cand_patch, cand_commit in signed_candidates:
-            if cand_patch is not None and cand_commit is not None:
+    if signed_entries:
+        for entry in signed_entries:
+            if entry.patch_id is not None and entry.commit is not None:
                 return _ProvenanceDecision(
-                    cand_patch, cand_commit, "signed", source="signed"
+                    entry.patch_id, entry.commit, "signed", source="signed"
                 )
 
     allow_unsigned = _unsigned_provenance_allowed()
