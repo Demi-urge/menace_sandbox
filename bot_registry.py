@@ -548,6 +548,11 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
 
     missing: set[str] = set()
     for item in _iter_exception_chain(exc):
+        modules_attr = getattr(item, "missing_modules", None)
+        if modules_attr:
+            for module in modules_attr:
+                if isinstance(module, str) and module.strip():
+                    missing.add(module.strip())
         if isinstance(item, ModuleNotFoundError):
             name = _missing_module_name(item)
             if name:

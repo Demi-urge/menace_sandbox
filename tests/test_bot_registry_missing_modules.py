@@ -1,6 +1,7 @@
 """Regression tests for Windows-specific import error parsing in bot registry."""
 
 from menace_sandbox.bot_registry import (
+    SelfCodingUnavailableError,
     _collect_missing_modules,
     _is_probable_filesystem_path,
     _is_transient_internalization_error,
@@ -37,6 +38,24 @@ def test_collect_missing_modules_detects_circular_import_without_partial_hint():
     )
     missing = _collect_missing_modules(err)
     assert "menace_sandbox.task_validation_bot" in missing
+
+
+def test_collect_missing_modules_honours_self_coding_unavailable_error():
+    err = SelfCodingUnavailableError(
+        "self-coding bootstrap failed",
+        missing=(
+            "menace_sandbox.task_validation_bot",
+            "quick_fix_engine",
+            "  sklearn.feature_extraction.text  ",
+            None,
+        ),
+    )
+    missing = _collect_missing_modules(err)
+    assert missing == {
+        "menace_sandbox.task_validation_bot",
+        "quick_fix_engine",
+        "sklearn.feature_extraction.text",
+    }
 
 
 def test_circular_imports_not_treated_as_transient_errors():
