@@ -1,5 +1,7 @@
 """Regression tests for Windows-specific import error parsing in bot registry."""
 
+import types
+
 from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
     _collect_missing_modules,
@@ -61,6 +63,28 @@ def test_collect_missing_modules_handles_import_halted_message():
         "menace_sandbox",
         "menace_sandbox.future_prediction_bots",
     }
+
+
+def test_collect_missing_modules_infers_from_traceback(tmp_path):
+    module = types.ModuleType("menace_sandbox.traceback_hint")
+    module_path = tmp_path / "menace_sandbox" / "traceback_hint.py"
+    module_path.parent.mkdir(parents=True, exist_ok=True)
+    module.__file__ = str(module_path)
+    code = compile(
+        "def trigger():\n    raise ImportError('generic import failure')\n",
+        str(module_path),
+        "exec",
+    )
+    exec(code, module.__dict__)
+
+    try:
+        module.trigger()
+    except ImportError as err:
+        missing = _collect_missing_modules(err)
+    else:  # pragma: no cover - defensive
+        missing = set()
+
+    assert "menace_sandbox.traceback_hint" in missing
 
 
 def test_collect_missing_modules_honours_self_coding_unavailable_error():
