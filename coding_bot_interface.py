@@ -288,6 +288,33 @@ def _load_signed_provenance_candidates() -> tuple[tuple[int | None, str | None],
     return result
 
 
+def _commit_matches(reference: str | None, candidate: str | None) -> bool:
+    """Return ``True`` when two commit identifiers likely refer to the same commit."""
+
+    if not reference or not candidate:
+        return False
+
+    ref = reference.strip().lower()
+    cand = candidate.strip().lower()
+    if not ref or not cand:
+        return False
+
+    if ref == cand:
+        return True
+
+    # Allow matching shortened commit hashes (e.g. 7-12 chars) against the full
+    # 40 character value.  Git consistently treats prefixes of length >= 7 as
+    # unambiguous identifiers, so we mirror that heuristic to honour signed
+    # provenance files that only embed abbreviated commits.
+    min_length = 7
+    if len(ref) >= len(cand) and len(cand) >= min_length and ref.startswith(cand):
+        return True
+    if len(cand) > len(ref) and len(ref) >= min_length and cand.startswith(ref):
+        return True
+
+    return False
+
+
 def _looks_like_path(value: str) -> bool:
     """Heuristically determine whether *value* represents a filesystem path."""
 
@@ -912,9 +939,16 @@ def _resolve_provenance_decision(
             and signed_candidates
         ):
             for cand_patch, cand_commit in signed_candidates:
-                if cand_patch is not None and cand_commit == commit_candidate:
+                if cand_patch is not None and _commit_matches(
+                    commit_candidate, cand_commit
+                ):
+                    commit_value = (
+                        commit_candidate
+                        if len(commit_candidate or "") >= len(cand_commit or "")
+                        else cand_commit
+                    )
                     return _ProvenanceDecision(
-                        cand_patch, cand_commit, "signed", source="signed"
+                        cand_patch, commit_value, "signed", source="signed"
                     )
         if patch_candidate is not None and commit_candidate is not None:
             return _ProvenanceDecision(
@@ -927,16 +961,26 @@ def _resolve_provenance_decision(
 
     if repo_commit is not None and signed_candidates:
         for cand_patch, cand_commit in signed_candidates:
-            if cand_patch is not None and cand_commit == repo_commit:
+            if cand_patch is not None and _commit_matches(repo_commit, cand_commit):
+                commit_value = (
+                    repo_commit
+                    if len(repo_commit) >= len(cand_commit or "")
+                    else cand_commit
+                )
                 return _ProvenanceDecision(
-                    cand_patch, cand_commit, "signed", source="signed"
+                    cand_patch, commit_value, "signed", source="signed"
                 )
 
     if module_commit is not None and signed_candidates:
         for cand_patch, cand_commit in signed_candidates:
-            if cand_patch is not None and cand_commit == module_commit:
+            if cand_patch is not None and _commit_matches(module_commit, cand_commit):
+                commit_value = (
+                    module_commit
+                    if len(module_commit) >= len(cand_commit or "")
+                    else cand_commit
+                )
                 return _ProvenanceDecision(
-                    cand_patch, cand_commit, "signed", source="signed"
+                    cand_patch, commit_value, "signed", source="signed"
                 )
 
     if signed_candidates:

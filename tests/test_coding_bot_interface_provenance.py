@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
 import sys
@@ -70,3 +71,41 @@ def test_signed_provenance_configuration_short_circuits_unsigned_fallback(
     module = _reload_coding_bot_interface()
 
     assert module._unsigned_provenance_allowed() is False  # type: ignore[attr-defined]
+
+
+def test_signed_provenance_matches_abbreviated_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Signed provenance should match when commits are abbreviated."""
+
+    _clear_provenance_env(monkeypatch)
+
+    full_commit = "0123456789abcdef0123456789abcdef01234567"
+    short_commit = full_commit[:12]
+    prov_payload = {
+        "data": {"patch_id": 915, "commit": short_commit},
+        "signature": "deadbeef",  # content is irrelevant for the cache loader
+    }
+    prov_file = tmp_path / "signed.json"
+    prov_file.write_text(json.dumps(prov_payload), encoding="utf-8")
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", os.fspath(prov_file))
+    monkeypatch.setenv("PATCH_PROVENANCE_PUBKEY", "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ")
+
+    module = _reload_coding_bot_interface()
+    monkeypatch.setattr(
+        module,
+        "_derive_repository_provenance",
+        lambda *_, **__: (None, full_commit),
+    )
+
+    decision = module._resolve_provenance_decision(
+        "ExampleBot",
+        "module.py",
+        [],
+        (None, None),
+    )
+
+    assert decision.available is True
+    assert decision.mode == "signed"
+    assert decision.patch_id == 915
+    assert decision.commit == full_commit
