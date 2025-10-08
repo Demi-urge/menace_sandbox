@@ -496,6 +496,24 @@ def _normalise_module_path(module_path: str | os.PathLike[str] | None) -> Path |
     return None
 
 
+def _discover_repo_root_from_fs(search_root: Path) -> Path | None:
+    """Walk up the directory tree looking for a ``.git`` entry."""
+
+    for candidate in (search_root, *search_root.parents):
+        git_entry = candidate / ".git"
+        try:
+            if git_entry.exists():
+                return candidate
+        except OSError:  # pragma: no cover - filesystem dependent
+            logger.debug(
+                "failed to stat potential git entry %s while discovering repository root",
+                git_entry,
+                exc_info=True,
+            )
+            continue
+    return None
+
+
 def _resolve_git_repository(path: Path) -> Path | None:
     """Return the git repository root for ``path`` or ``None`` when unavailable."""
 
@@ -506,12 +524,152 @@ def _resolve_git_repository(path: Path) -> Path | None:
             stderr=subprocess.STDOUT,
         )
     except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
-        logger.debug("failed to resolve git repository for %s: %s", path, exc, exc_info=True)
+        logger.debug(
+            "failed to resolve git repository for %s using git executable: %s",
+            path,
+            exc,
+            exc_info=True,
+        )
+        fallback_root = _discover_repo_root_from_fs(search_root)
+        if fallback_root is not None:
+            logger.debug(
+                "resolved git repository for %s via filesystem fallback: %s",
+                path,
+                fallback_root,
+            )
+            return fallback_root
         return None
     root = output.decode("utf-8", "replace").strip()
     if not root:
+        fallback_root = _discover_repo_root_from_fs(search_root)
+        if fallback_root is not None:
+            return fallback_root
         return None
     return Path(root)
+
+
+def _resolve_git_dir_for_repo(repo_root: Path) -> Path | None:
+    """Return the git metadata directory for ``repo_root`` when available."""
+
+    git_entry = repo_root / ".git"
+    try:
+        if git_entry.is_dir():
+            return git_entry
+        if git_entry.is_file():
+            try:
+                content = git_entry.read_text(encoding="utf-8")
+            except OSError as exc:  # pragma: no cover - filesystem dependent
+                logger.debug(
+                    "failed to read indirection file %s while resolving git dir: %s",
+                    git_entry,
+                    exc,
+                    exc_info=True,
+                )
+                return None
+            match = re.search(r"gitdir:\s*(.+)", content)
+            if match:
+                candidate = (git_entry.parent / match.group(1)).expanduser()
+                try:
+                    resolved = candidate.resolve(strict=False)
+                except (RuntimeError, OSError):  # pragma: no cover - resolution failure
+                    resolved = candidate
+                if resolved.exists():
+                    return resolved
+    except OSError:  # pragma: no cover - filesystem dependent
+        logger.debug(
+            "failed to inspect git metadata entry for %s",
+            repo_root,
+            exc_info=True,
+        )
+    return None
+
+
+def _read_git_ref(git_dir: Path, ref: str) -> str | None:
+    """Read ``ref`` from ``git_dir`` returning the stored commit hash."""
+
+    ref_path = git_dir.joinpath(*PurePosixPath(ref).parts)
+    try:
+        data = ref_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return data or None
+
+
+def _read_git_packed_ref(git_dir: Path, ref: str) -> str | None:
+    """Read ``ref`` from ``packed-refs`` when the loose ref is absent."""
+
+    packed = git_dir / "packed-refs"
+    try:
+        with packed.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith(("#", "^")):
+                    continue
+                try:
+                    commit_hash, ref_name = line.split(" ", 1)
+                except ValueError:
+                    continue
+                if ref_name == ref:
+                    return commit_hash
+    except OSError:  # pragma: no cover - filesystem dependent
+        return None
+    return None
+
+
+def _read_git_reflog_commit(git_dir: Path, ref: str) -> str | None:
+    """Return the newest commit recorded in the reflog for ``ref``."""
+
+    log_path = git_dir / "logs"
+    log_path = log_path.joinpath(*PurePosixPath(ref).parts)
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            last_line = None
+            for line in handle:
+                if line.strip():
+                    last_line = line
+    except OSError:
+        return None
+    if not last_line:
+        return None
+    parts = last_line.strip().split()
+    if len(parts) >= 2:
+        return parts[1]
+    return None
+
+
+def _read_git_head_commit(repo_root: Path) -> str | None:
+    """Best-effort resolution of ``HEAD`` commit without invoking ``git``."""
+
+    git_dir = _resolve_git_dir_for_repo(repo_root)
+    if git_dir is None:
+        return None
+
+    head_path = git_dir / "HEAD"
+    try:
+        head_data = head_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:  # pragma: no cover - filesystem dependent
+        logger.debug(
+            "failed to read HEAD file from %s while deriving commit fallback: %s",
+            head_path,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+    if not head_data:
+        return None
+
+    if head_data.startswith("ref:"):
+        ref = head_data.partition(":")[2].strip()
+        commit = _read_git_ref(git_dir, ref) or _read_git_packed_ref(git_dir, ref)
+        if commit:
+            return _coerce_commit(commit)
+        commit = _read_git_reflog_commit(git_dir, ref)
+        if commit:
+            return _coerce_commit(commit)
+        return None
+
+    return _coerce_commit(head_data)
 
 
 def _relative_repo_path(path: Path, repo_root: Path) -> Path:
@@ -586,11 +744,16 @@ def _derive_repository_provenance(
             exc,
             exc_info=True,
         )
-        return (None, None)
-
-    commit = _coerce_commit(output.decode("utf-8", "replace").strip())
-    if not commit:
-        return (None, None)
+        commit = _read_git_head_commit(repo_root)
+        if not commit:
+            return (None, None)
+        logger.debug(
+            "using HEAD commit fallback for %s because git log invocation failed", name
+        )
+    else:
+        commit = _coerce_commit(output.decode("utf-8", "replace").strip())
+        if not commit:
+            return (None, None)
 
     patch_id, commit_hash = _lookup_patch_by_commit(commit, log_hint=f"{name}@{rel_path_posix}")
     if patch_id is None:

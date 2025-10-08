@@ -73,3 +73,60 @@ def test_repository_provenance_resolution(tmp_path, monkeypatch):
     assert decision.source == "repository"
     assert decision.patch_id == 712
     assert decision.commit == commit
+
+
+def test_repository_provenance_without_git_binary(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+
+    package_root = repo / "menace_sandbox"
+    package_root.mkdir()
+    module_path = package_root / "example_bot.py"
+    module_path.write_text("print('fallback')\n", encoding="utf-8")
+
+    subprocess.run(["git", "add", "menace_sandbox/example_bot.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "test: add fallback bot"], cwd=repo, check=True)
+
+    commit = (
+        subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo)
+        .decode("utf-8")
+        .strip()
+    )
+
+    class DummyService:
+        def get(self, commit_hash: str):
+            assert commit_hash == commit
+            return {"patch_id": 911, "commit": commit}
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_PATCH_PROVENANCE_SERVICE",
+        DummyService(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_unsigned_provenance_allowed",
+        lambda: False,
+    )
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+
+    def _fake_check_output(*_args, **_kwargs):
+        raise FileNotFoundError("git binary not available")
+
+    monkeypatch.setattr(subprocess, "check_output", _fake_check_output)
+
+    decision = coding_bot_interface._resolve_provenance_decision(
+        "ExampleBot",
+        module_path.as_posix(),
+        [],
+        (None, None),
+    )
+
+    assert decision.available is True
+    assert decision.mode == "signed"
+    assert decision.source == "repository"
+    assert decision.patch_id == 911
+    assert decision.commit == commit
