@@ -7,8 +7,8 @@ import importlib.util
 import sys
 from pathlib import Path
 from dataclasses import asdict
-from functools import lru_cache
 from typing import Callable, Iterable, List
+import threading
 import logging
 
 _HELPER_NAME = "import_compat"
@@ -53,12 +53,20 @@ def _noop_self_coding(**_kwargs):
     return decorator
 
 
-def _resolve_management() -> tuple[
+_ManagementTuple = tuple[
     Callable[..., Callable[[type], type]],
     object | None,
     object | None,
     object | None,
-]:
+]
+
+_management_cache: _ManagementTuple | None = None
+_management_lock = threading.Lock()
+
+
+def _resolve_management(
+    cls: type | None = None,
+) -> _ManagementTuple:
     """Initialise self-coding integration helpers when dependencies permit.
 
     The self-coding stack is extremely dependency heavy.  On Windows the
@@ -108,11 +116,44 @@ def _resolve_management() -> tuple[
         data_bot = data_bot_cls(start_server=False)
         context_builder = ctx_util.create_context_builder()
 
-        def _validator_factory() -> "TaskValidationBot":
+        validator_cls_ref: type | None = cls
+
+        def _current_validator_cls() -> type | None:
+            nonlocal validator_cls_ref
+            if isinstance(validator_cls_ref, type):
+                return validator_cls_ref
             module = sys.modules.get(__name__)
-            if module is None or getattr(module, "TaskValidationBot", None) is None:
+            candidate = getattr(module, "TaskValidationBot", None) if module else None
+            if isinstance(candidate, type):
+                validator_cls_ref = candidate
+                return candidate
+            try:
                 module = load_internal("task_validation_bot")
-            validator_cls = getattr(module, "TaskValidationBot")
+            except Exception as exc:  # pragma: no cover - defensive diagnostic
+                logger.debug(
+                    "Deferred TaskValidationBot import failed during validator bootstrap: %s",
+                    exc,
+                    exc_info=True,
+                )
+                return None
+            candidate = getattr(module, "TaskValidationBot", None)
+            if isinstance(candidate, type):
+                validator_cls_ref = candidate
+                return candidate
+            return None
+
+        if _current_validator_cls() is None:
+            logger.warning(
+                "Self-coding integration disabled for TaskValidationBot due to unresolved class reference during bootstrap"
+            )
+            return _noop_self_coding, None, None, None
+
+        def _validator_factory() -> "TaskValidationBot":
+            validator_cls = _current_validator_cls()
+            if validator_cls is None:
+                raise RuntimeError(
+                    "TaskValidationBot class unavailable while constructing validator"
+                )
             return validator_cls([])
 
         engine = engine_mod.SelfCodingEngine(
@@ -141,27 +182,32 @@ def _resolve_management() -> tuple[
     return decorator, registry, data_bot, manager
 
 
-@lru_cache(maxsize=1)
-def _cached_management() -> tuple[
-    Callable[..., Callable[[type], type]], object | None, object | None, object | None
-]:
+def _cached_management(
+    cls: type,
+) -> _ManagementTuple:
     """Resolve and cache self-coding helpers on first use.
 
     Windows command prompt environments frequently observe slow module imports
     which caused the previous eager initialisation to race the
-    :class:`TaskValidationBot` definition.  By deferring the resolution until
-    the decorator is actually applied we guarantee the class has been defined
-    and avoid the circular-import induced internalisation stalls reported by
-    users.
+    :class:`TaskValidationBot` definition.  The manual cache protects against
+    that race by ensuring the resolver only executes once the fully constructed
+    class object is available, preventing follow-up imports from observing a
+    partially initialised module and hanging the sandbox.
     """
 
-    return _resolve_management()
+    global _management_cache
+    if _management_cache is not None:
+        return _management_cache
+    with _management_lock:
+        if _management_cache is None:
+            _management_cache = _resolve_management(cls)
+        return _management_cache
 
 
 def _apply_self_coding(cls: type) -> type:
     """Decorate ``cls`` using the lazily resolved self-coding helpers."""
 
-    decorator, registry, data_bot, manager = _cached_management()
+    decorator, registry, data_bot, manager = _cached_management(cls)
     return decorator(bot_registry=registry, data_bot=data_bot, manager=manager)(cls)
 
 
