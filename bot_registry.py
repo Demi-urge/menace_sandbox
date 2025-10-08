@@ -461,6 +461,10 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_CANNOT_IMPORT_RE = re.compile(
+    r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from ['\"](?P<module>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 _IMPORT_HALTED_RE = re.compile(
     r"import of ['\"](?P<module>[^'\"]+)['\"] halted",
     re.IGNORECASE,
@@ -628,6 +632,12 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
     missing: set[str] = set()
     for item in _iter_exception_chain(exc):
         message = str(item)
+        cannot_import = _CANNOT_IMPORT_RE.search(message)
+        if cannot_import:
+            module_hint = cannot_import.group("module")
+            symbol_hint = cannot_import.group("symbol")
+            missing.update(_normalise_module_aliases(module_hint))
+            missing.update(_normalise_module_aliases(symbol_hint))
         modules_attr = getattr(item, "missing_modules", None)
         resources_attr = getattr(item, "missing_resources", None)
         dependencies_attr = getattr(item, "missing_dependencies", None)
@@ -762,6 +772,8 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     """
 
     message = str(exc)
+    if _CANNOT_IMPORT_RE.search(message):
+        return False
     if _CIRCULAR_HINT_RE.search(message):
         return False
 

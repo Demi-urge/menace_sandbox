@@ -41,6 +41,18 @@ def test_collect_missing_modules_detects_circular_import_without_partial_hint():
     assert "menace_sandbox.task_validation_bot" in missing
 
 
+def test_collect_missing_modules_handles_cannot_import_without_hint():
+    err = ImportError(
+        "cannot import name 'TaskValidationBot' from 'menace_sandbox.task_validation_bot' (unknown location)"
+    )
+    missing = _collect_missing_modules(err)
+    assert missing >= {
+        "menace_sandbox.task_validation_bot",
+        "TaskValidationBot",
+        "menace_sandbox",
+    }
+
+
 def test_collect_missing_modules_handles_import_halted_message():
     err = ImportError("import of 'menace_sandbox.future_prediction_bots' halted; None")
     missing = _collect_missing_modules(err)
@@ -73,6 +85,13 @@ def test_circular_imports_not_treated_as_transient_errors():
     err = ImportError(
         "cannot import name 'TaskValidationBot' from partially initialized module "
         "'menace_sandbox.task_validation_bot' (most likely due to a circular import)"
+    )
+    assert _is_transient_internalization_error(err) is False
+
+
+def test_cannot_import_without_hint_not_transient():
+    err = ImportError(
+        "cannot import name 'FutureLucrativityBot' from 'menace_sandbox.future_prediction_bots' (unknown location)"
     )
     assert _is_transient_internalization_error(err) is False
 
