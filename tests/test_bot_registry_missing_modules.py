@@ -40,6 +40,16 @@ def test_collect_missing_modules_detects_circular_import_without_partial_hint():
     assert "menace_sandbox.task_validation_bot" in missing
 
 
+def test_collect_missing_modules_handles_import_halted_message():
+    err = ImportError("import of 'menace_sandbox.future_prediction_bots' halted; None")
+    missing = _collect_missing_modules(err)
+    assert missing == {
+        "future_prediction_bots",
+        "menace_sandbox",
+        "menace_sandbox.future_prediction_bots",
+    }
+
+
 def test_collect_missing_modules_honours_self_coding_unavailable_error():
     err = SelfCodingUnavailableError(
         "self-coding bootstrap failed",
