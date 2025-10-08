@@ -168,3 +168,42 @@ def test_signed_provenance_matches_windows_paths(
     assert decision.patch_id == 321
     assert decision.commit == "abc123def456"
     assert decision.source == "signed:path"
+
+
+def test_empty_signed_provenance_degrades_to_unsigned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Strict provenance configuration should degrade gracefully when empty."""
+
+    _clear_provenance_env(monkeypatch)
+
+    prov_file = tmp_path / "signed.json"
+    prov_file.write_text("{}", encoding="utf-8")
+    module_path = tmp_path / "example_bot.py"
+    module_path.write_text("print('hello world')\n", encoding="utf-8")
+
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", os.fspath(prov_file))
+    monkeypatch.setenv(
+        "PATCH_PROVENANCE_PUBKEY",
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDUMMYKEY",
+    )
+    monkeypatch.setenv("MENACE_REQUIRE_SIGNED_PROVENANCE", "1")
+
+    caplog.set_level(logging.WARNING)
+    module = _reload_coding_bot_interface()
+
+    decision = module._resolve_provenance_decision(  # type: ignore[attr-defined]
+        "ExampleBot",
+        os.fspath(module_path),
+        [],
+        (None, None),
+    )
+
+    assert decision.available is True
+    assert decision.mode == "unsigned"
+    assert decision.commit and decision.commit.startswith(
+        module._UNSIGNED_COMMIT_PREFIX  # type: ignore[attr-defined]
+    )
+    assert "does not contain usable entries" in caplog.text

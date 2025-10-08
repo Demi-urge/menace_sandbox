@@ -1046,6 +1046,19 @@ def _resolve_provenance_decision(
 
     module_patch, module_commit = module_provenance
     signed_entries = _load_signed_provenance_candidates()
+    allow_unsigned = _unsigned_provenance_allowed()
+    if not signed_entries and not allow_unsigned:
+        prov_file = os.getenv("PATCH_PROVENANCE_FILE", "")
+        pubkey = os.getenv("PATCH_PROVENANCE_PUBKEY") or os.getenv(
+            "PATCH_PROVENANCE_PUBLIC_KEY",
+            "",
+        )
+        _warn_signed_provenance_misconfigured(
+            prov_file,
+            pubkey or "",
+            "signed provenance file does not contain usable entries",
+        )
+        allow_unsigned = True
     if module_patch is not None:
         commit_candidate = module_commit or _backfill_commit_from_history(
             module_patch, log_hint=name
@@ -1150,7 +1163,6 @@ def _resolve_provenance_decision(
                     entry.patch_id, entry.commit, "signed", source="signed"
                 )
 
-    allow_unsigned = _unsigned_provenance_allowed()
     if allow_unsigned:
         unsigned_patch, unsigned_commit = _derive_unsigned_provenance(name, module_path)
         return _ProvenanceDecision(
