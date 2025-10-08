@@ -103,6 +103,52 @@ def test_register_bot_marks_self_coding_disabled_when_dependencies_missing(monke
     assert node.get("pending_internalization") is False
 
 
+def test_manual_registration_clears_stale_self_coding_state(monkeypatch):
+    registry = _make_registry()
+
+    name = "TaskValidationBot"
+    registry.graph.add_node(name)
+    node = registry.graph.nodes[name]
+    node.update(
+        {
+            "pending_internalization": True,
+            "internalization_errors": ["boom"],
+            "internalization_blocked": {"error": "boom"},
+            "selfcoding_manager": SimpleNamespace(),
+            "manager": SimpleNamespace(),
+            "data_bot": SimpleNamespace(),
+        }
+    )
+    registry._internalization_retry_attempts[name] = 3
+
+    class _Handle:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    handle = _Handle()
+    registry._internalization_retry_handles[name] = handle
+
+    registry.register_bot(
+        name,
+        module_path="C:/bots/task_validation_bot.py",
+        is_coding_bot=False,
+    )
+
+    assert registry._internalization_retry_attempts.get(name) is None
+    assert name not in registry._internalization_retry_handles
+    assert handle.cancelled is True
+    assert node.get("pending_internalization") is None
+    assert node.get("internalization_errors") is None
+    assert node.get("internalization_blocked") is None
+    assert node.get("selfcoding_manager") is None
+    assert node.get("manager") is None
+    assert node.get("data_bot") is None
+    assert node.get("is_coding_bot") is False
+
+
 def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     monkeypatch.setattr(
         bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
