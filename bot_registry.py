@@ -503,6 +503,14 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_MODULE_REQUIRED_RE = re.compile(
+    r"(?P<module>[A-Za-z0-9_.-]+)\s+(?:module\s+)?is\s+required(?:\s+for|\s+by)?\s+(?P<context>[A-Za-z0-9_.-]+)?",
+    re.IGNORECASE,
+)
+_PIP_INSTALL_RE = re.compile(
+    r"pip\s+install\s+(?P<package>[A-Za-z0-9_.-]+(?:\[[^\]]+\])?)",
+    re.IGNORECASE,
+)
 _MODULE_GRAPH_INIT_RE = re.compile(
     r"module graph still initialis(?:ing|zing)",
     re.IGNORECASE,
@@ -754,6 +762,8 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 dll_match = _DLL_LOAD_FAILED_RE.search(message)
                 if dll_match:
                     missing.add(dll_match.group(1))
+            if "QuickFixEngine failed to initialise" in message:
+                missing.update({"quick_fix_engine", "menace_sandbox.quick_fix_engine"})
             path_tokens: set[str] = set()
             path_hint = getattr(item, "path", None)
             if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
@@ -796,6 +806,21 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
         for pattern, modules in _KNOWN_DEPENDENCY_HINTS:
             if pattern.search(message):
                 missing.update(modules)
+        for match in _MODULE_REQUIRED_RE.finditer(message):
+            module_hint = match.group("module")
+            context_hint = match.group("context")
+            if module_hint:
+                missing.update(_normalise_module_aliases(module_hint))
+            if context_hint:
+                missing.update(_normalise_module_aliases(context_hint))
+        for match in _PIP_INSTALL_RE.finditer(message):
+            package = match.group("package")
+            if not package:
+                continue
+            canonical = package.split("[", 1)[0]
+            missing.update(_normalise_module_aliases(canonical))
+        if "QuickFixEngine is required" in message:
+            missing.update({"quick_fix_engine", "menace_sandbox.quick_fix_engine"})
         circular_match = _CIRCULAR_IMPORT_RE.search(message)
         if circular_match:
             missing.add(circular_match.group("module"))
