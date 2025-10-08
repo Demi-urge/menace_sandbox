@@ -1370,6 +1370,11 @@ class _DisabledSelfCodingManager:
         self._last_patch_id = None
         self._last_commit_hash = None
 
+    def __bool__(self) -> bool:
+        """Report ``False`` so helper heuristics treat the manager as disabled."""
+
+        return False
+
     def register_patch_cycle(self, *_args: Any, **_kwargs: Any) -> None:
         logger.debug(
             "self-coding disabled; ignoring register_patch_cycle invocation"
