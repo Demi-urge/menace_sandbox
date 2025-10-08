@@ -2,71 +2,126 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Protocol, cast
 
 from db_router import GLOBAL_ROUTER
 from dynamic_path_router import resolve_path
 
-from typing import TYPE_CHECKING
+logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:  # pragma: no cover - for type hints
-    from .preliminary_research_bot import PreliminaryResearchBot
-else:  # pragma: no cover - lightweight fallback implementation
-    from .preliminary_research_bot import BusinessData
-    from .bot_registry import BotRegistry
-    from .coding_bot_interface import self_coding_managed
-    from .data_bot import DataBot
-    from .self_coding_manager import SelfCodingManager
 
-    bot_registry = BotRegistry()
-    data_bot = DataBot(start_server=False)
+class BusinessDataProtocol(Protocol):
+    """Protocol describing the attributes required from research data."""
 
-    @self_coding_managed(
-        bot_registry=bot_registry, data_bot=data_bot, manager=SelfCodingManager
-    )
-    class PreliminaryResearchBot:
-        """Minimal fallback that attempts a basic scrape for metrics."""
+    profit_margin: float | None
+    operational_cost: float | None
+    market_saturation: float | None
+    roi_score: float | None
+    keywords: Iterable[str]
 
-        def _extract(self, text: str, term: str) -> float | None:
-            import re
-            m = re.search(rf"{term}[^0-9]*(\d+(?:\.\d+)?)", text, flags=re.I)
-            return float(m.group(1)) if m else None
 
-        def process_model(self, name: str, urls: Iterable[str]) -> BusinessData:
+class PreliminaryResearchBotProtocol(Protocol):
+    """Protocol for the research bot used in idea evaluation flows."""
+
+    def process_model(
+        self, name: str, urls: Iterable[str]
+    ) -> BusinessDataProtocol:  # pragma: no cover - protocol definition
+        ...
+
+
+class _FallbackBusinessData:
+    """Lightweight container mirroring ``BusinessData`` attributes."""
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        profit_margin: float | None = None,
+        operational_cost: float | None = None,
+        market_saturation: float | None = None,
+        keywords: Iterable[str] | None = None,
+        roi_score: float | None = None,
+    ) -> None:
+        self.model_name = model_name
+        self.profit_margin = profit_margin
+        self.operational_cost = operational_cost
+        self.market_saturation = market_saturation
+        self.keywords = list(keywords or [])
+        self.roi_score = roi_score
+        self.competitors: list[str] = []
+
+
+class _FallbackPreliminaryResearchBot:
+    """Minimal implementation used when the real bot cannot be imported."""
+
+    def _extract(self, text: str, term: str) -> float | None:
+        import re
+
+        match = re.search(rf"{term}[^0-9]*(\d+(?:\.\d+)?)", text, flags=re.I)
+        return float(match.group(1)) if match else None
+
+    def process_model(
+        self, name: str, urls: Iterable[str]
+    ) -> BusinessDataProtocol:
+        texts: List[str] = []
+        try:
+            import requests  # type: ignore
+        except Exception:
+            requests = None  # type: ignore
+            from urllib.request import urlopen
+        else:
+            urlopen = None  # type: ignore
+
+        for url in urls:
             try:
-                from .preliminary_research_bot import PreliminaryResearchBot as _Real
-                return _Real().process_model(name, urls)
+                if requests is not None:
+                    resp = requests.get(url, timeout=5)
+                    texts.append(resp.text)
+                elif urlopen is not None:
+                    with urlopen(url, timeout=5) as fh:  # type: ignore[arg-type]
+                        texts.append(fh.read().decode())
             except Exception:
-                texts: List[str] = []
-                try:
-                    import requests  # type: ignore
-                except Exception:
-                    requests = None  # type: ignore
-                    from urllib.request import urlopen
-                for url in urls:
-                    try:
-                        if requests:
-                            resp = requests.get(url, timeout=5)
-                            texts.append(resp.text)
-                        else:
-                            with urlopen(url, timeout=5) as fh:
-                                texts.append(fh.read().decode())
-                    except Exception:
-                        continue
-                combined = " ".join(texts)
-                return BusinessData(
-                    model_name=name,
-                    profit_margin=self._extract(combined, "profit margin"),
-                    operational_cost=self._extract(combined, "operational cost"),
-                    market_saturation=self._extract(combined, "market saturation"),
-                    competitors=[],
-                    keywords=[],
-                    roi_score=None,
-                )
+                continue
+
+        combined = " ".join(texts)
+        return _FallbackBusinessData(
+            model_name=name,
+            profit_margin=self._extract(combined, "profit margin"),
+            operational_cost=self._extract(combined, "operational cost"),
+            market_saturation=self._extract(combined, "market saturation"),
+            keywords=[],
+            roi_score=None,
+        )
+
+
+@lru_cache(maxsize=1)
+def _preliminary_research_bot_cls():
+    """Return the ``PreliminaryResearchBot`` class avoiding circular imports."""
+
+    try:
+        from .preliminary_research_bot import PreliminaryResearchBot  # type: ignore
+
+        return PreliminaryResearchBot
+    except Exception as exc:  # pragma: no cover - best effort fallback
+        logger.debug(
+            "Falling back to lightweight PreliminaryResearchBot due to import error",
+            exc_info=exc,
+        )
+        return _FallbackPreliminaryResearchBot
+
+
+def _create_preliminary_research_bot() -> PreliminaryResearchBotProtocol:
+    """Instantiate a research bot using the cached class helper."""
+
+    cls = _preliminary_research_bot_cls()
+    return cast(PreliminaryResearchBotProtocol, cls())
+
 
 DB_PATH = resolve_path("models.db")
 
@@ -304,7 +359,7 @@ def calculate_threshold(energy_score: float, base: float = 70.0) -> float:
     return base - energy_score * 10.0
 
 
-def compute_profitability_score(data: "BusinessData") -> float:
+def compute_profitability_score(data: BusinessDataProtocol) -> float:
     """Derive a simple profitability score from research data."""
     margin = data.profit_margin or 0.0
     cost = data.operational_cost or 0.0
@@ -316,7 +371,7 @@ def compute_profitability_score(data: "BusinessData") -> float:
 def evaluate_candidate(
     name: str,
     urls: Iterable[str],
-    prelim: "PreliminaryResearchBot",
+    prelim: PreliminaryResearchBotProtocol,
     threshold: float,
     db_path: Path = DB_PATH,
 ) -> str:
@@ -367,7 +422,7 @@ def process_idea(
     tags: Iterable[str],
     source: str,
     urls: Iterable[str],
-    prelim: "PreliminaryResearchBot",
+    prelim: PreliminaryResearchBotProtocol,
     energy_score: float,
     *,
     db_path: Path = DB_PATH,
@@ -413,7 +468,7 @@ def submit_idea(
     db_path: Path = DB_PATH,
 ) -> str:
     """Receive an idea from ChatGPT Idea Bot and forward it for research."""
-    prelim = PreliminaryResearchBot()
+    prelim = _create_preliminary_research_bot()
     return process_idea(
         name,
         tags=tags,
