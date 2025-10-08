@@ -503,6 +503,22 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_MODULE_GRAPH_INIT_RE = re.compile(
+    r"module graph still initialis(?:ing|zing)",
+    re.IGNORECASE,
+)
+_TRACEBACK_IGNORED_PREFIXES: tuple[str, ...] = (
+    "tests",
+    "menace_sandbox.tests",
+    "menace.tests",
+)
+_TRACEBACK_IGNORED_MODULES: frozenset[str] = frozenset(
+    {
+        "bot_registry",
+        "menace.bot_registry",
+        "menace_sandbox.bot_registry",
+    }
+)
 _CANNOT_IMPORT_RE = re.compile(
     r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
@@ -564,6 +580,22 @@ def _normalise_module_aliases(module: str) -> set[str]:
             cumulative.append(part)
             aliases.add(".".join(cumulative))
     return {alias for alias in aliases if alias}
+
+
+def _is_traceback_only_module(name: str) -> bool:
+    """Return ``True`` when *name* only references test or bootstrap modules."""
+
+    if not name:
+        return False
+    candidate = name.strip()
+    if not candidate:
+        return False
+    if candidate in _TRACEBACK_IGNORED_MODULES:
+        return True
+    for prefix in _TRACEBACK_IGNORED_PREFIXES:
+        if candidate == prefix or candidate.startswith(prefix + "."):
+            return True
+    return False
 
 
 def _extract_partial_modules(exc: BaseException) -> set[str]:
@@ -672,8 +704,12 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
     """Return a best-effort set of import targets missing for *exc*."""
 
     missing: set[str] = set()
+    module_graph_unstable = False
     for item in _iter_exception_chain(exc):
         message = str(item)
+        if _MODULE_GRAPH_INIT_RE.search(message):
+            module_graph_unstable = True
+            continue
         cannot_import = _CANNOT_IMPORT_RE.search(message)
         if cannot_import:
             module_hint = cannot_import.group("module")
@@ -770,9 +806,50 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             missing.update(
                 _normalise_module_aliases(halted_match.group("module"))
             )
-    if not missing:
+    if not missing and not module_graph_unstable:
         missing.update(_infer_modules_from_traceback(exc))
     return missing
+
+
+def _derive_import_error_hints(exc: BaseException) -> set[str]:
+    """Return candidate module names implicated by an unresolved import error."""
+
+    hints: set[str] = set()
+    for item in _iter_exception_chain(exc):
+        if not isinstance(item, ImportError):
+            continue
+        name_attr = getattr(item, "name", None)
+        if isinstance(name_attr, str) and name_attr.strip():
+            hints.update(_normalise_module_aliases(name_attr.strip()))
+        path_attr = getattr(item, "path", None)
+        if isinstance(path_attr, str) and _is_probable_filesystem_path(path_attr):
+            hints.update(_normalise_token(path_attr))
+        filename_attr = getattr(item, "filename", None)
+        if isinstance(filename_attr, str) and _is_probable_filesystem_path(
+            filename_attr
+        ):
+            hints.update(_normalise_token(filename_attr))
+        for arg in getattr(item, "args", ()):  # pragma: no cover - defensive
+            if not isinstance(arg, str):
+                continue
+            for regex in (
+                _WINDOWS_DLL_TOKEN_RE,
+                _WINDOWS_ERROR_LOADING_RE,
+                _WINDOWS_COULD_NOT_FIND_RE,
+            ):
+                match = regex.search(arg)
+                if not match:
+                    continue
+                token = match.groupdict().get("token") or match.groupdict().get(
+                    "module"
+                )
+                if token:
+                    hints.update(_normalise_token(token))
+    hints.update(_infer_modules_from_traceback(exc))
+    hints = {hint for hint in hints if not _is_traceback_only_module(hint)}
+    if not hints or all(_is_traceback_only_module(hint) for hint in hints):
+        hints.add("self_coding_runtime")
+    return hints
 
 
 def _infer_modules_from_traceback(exc: BaseException) -> set[str]:
@@ -1459,7 +1536,13 @@ class BotRegistry:
                 name_attr = getattr(exc, "name", None)
                 if isinstance(name_attr, str) and name_attr.strip():
                     missing_modules.add(name_attr.strip())
-            if missing_modules or missing_resources:
+            actionable_modules = {
+                module
+                for module in missing_modules
+                if not _is_traceback_only_module(module)
+            }
+            missing_modules = actionable_modules
+            if actionable_modules or missing_resources:
                 if missing_modules and missing_resources:
                     reason = (
                         "self-coding bootstrap failed: missing dependencies and runtime resources"
@@ -1474,7 +1557,7 @@ class BotRegistry:
                     reason = "self-coding bootstrap failed: missing runtime resources"
                 raise SelfCodingUnavailableError(
                     reason,
-                    missing=missing_modules,
+                    missing=actionable_modules or missing_modules,
                     missing_resources=missing_resources,
                 ) from exc
 
@@ -1490,6 +1573,20 @@ class BotRegistry:
                         "self-coding bootstrap failed: runtime component unavailable",
                         missing=hinted,
                     ) from exc
+
+            if (
+                not missing_modules
+                and not missing_resources
+                and isinstance(exc, ImportError)
+                and not _is_transient_internalization_error(exc)
+            ):
+                signature_type, signature_msg = _exception_signature(exc)
+                hints = _derive_import_error_hints(exc)
+                reason = (
+                    "self-coding bootstrap failed: unresolved import error "
+                    f"({signature_type}: {signature_msg})"
+                )
+                raise SelfCodingUnavailableError(reason, missing=hints) from exc
 
             raise
         node.pop("pending_internalization", None)

@@ -340,3 +340,64 @@ def test_dependency_probe_used_when_import_error_ambiguous(monkeypatch):
     disabled = node["self_coding_disabled"]
     assert disabled["missing_dependencies"] == ["helper_lib"]
     assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)
+
+
+def test_import_error_without_hints_disables_self_coding(monkeypatch):
+    bus = DummyBus()
+    reg = bot_registry.BotRegistry(event_bus=bus)
+
+    monkeypatch.setattr(
+        bot_registry,
+        "_load_self_coding_thresholds",
+        lambda _name: types.SimpleNamespace(
+            roi_drop=None, error_increase=None, test_failure_increase=None
+        ),
+    )
+
+    components = bot_registry._SelfCodingComponents(
+        internalize_coding_bot=lambda *a, **k: (_ for _ in ()).throw(
+            ImportError("loader returned NULL without setting an error")
+        ),
+        engine_cls=lambda *a, **k: object(),
+        pipeline_cls=lambda *a, **k: object(),
+        data_bot_cls=lambda *a, **k: DummyDataBot(),
+        code_db_cls=lambda *a, **k: object(),
+        memory_manager_cls=lambda *a, **k: object(),
+        context_builder_factory=lambda: DummyContext(),
+    )
+
+    monkeypatch.setattr(
+        bot_registry,
+        "_load_self_coding_components",
+        lambda: components,
+    )
+
+    monkeypatch.setattr(
+        bot_registry,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    scheduled: list[str] = []
+
+    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+        self._internalization_retry_attempts.setdefault(name, 0)
+        scheduled.append(name)
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_schedule_internalization_retry",
+        _schedule,
+        raising=False,
+    )
+
+    reg.register_bot("NullImportBot", is_coding_bot=True)
+
+    for name in list(scheduled):
+        reg._retry_internalization(name)
+
+    node = reg.graph.nodes["NullImportBot"]
+    disabled = node["self_coding_disabled"]
+    assert "self_coding_runtime" in disabled["missing_dependencies"]
+    assert "unresolved import error" in disabled["reason"]
+    assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)

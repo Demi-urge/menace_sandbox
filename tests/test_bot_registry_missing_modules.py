@@ -6,6 +6,7 @@ from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
     _collect_missing_modules,
     _collect_missing_resources,
+    _derive_import_error_hints,
     _exception_signature,
     _is_probable_filesystem_path,
     _is_transient_internalization_error,
@@ -212,6 +213,26 @@ def test_collect_missing_modules_handles_runtime_quick_fix_failure():
     missing = _collect_missing_modules(err)
     assert "quick_fix_engine" in missing
     assert "context_builder_util" in missing
+
+
+def test_derive_import_error_hints_fallbacks_to_runtime_marker():
+    err = ImportError("loader returned NULL without setting an error")
+    hints = _derive_import_error_hints(err)
+    assert hints == {"self_coding_runtime"}
+
+
+def test_derive_import_error_hints_uses_name_and_path(tmp_path):
+    dll = tmp_path / "quick_fix_engine.cp311-win_amd64.pyd"
+    err = ImportError(
+        "DLL load failed",
+        name="menace_sandbox.quick_fix_engine",
+        path=str(dll),
+    )
+    hints = _derive_import_error_hints(err)
+    assert {
+        "quick_fix_engine",
+        "menace_sandbox.quick_fix_engine",
+    }.issubset(hints)
 
 
 def test_transient_detection_uses_windows_path_hint():
