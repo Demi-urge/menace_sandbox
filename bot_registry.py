@@ -450,7 +450,11 @@ _WINDOWS_DLL_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _WINDOWS_LIBRARY_HINT_RE = re.compile(
-    r"(?:module|library) ['\"](?P<module>[\w.\-]+)['\"] (?:could not|not) be found",
+    r"(?:module|library) ['\"](?P<module>[^'\"\r\n]+)['\"] (?:could not|not) be found",
+    re.IGNORECASE,
+)
+_WINDOWS_COULD_NOT_FIND_RE = re.compile(
+    r"could not find module ['\"](?P<module>[^'\"\r\n]+)['\"]",
     re.IGNORECASE,
 )
 _WINDOWS_ERROR_LOADING_RE = re.compile(
@@ -591,6 +595,20 @@ def _normalise_token(token: str | None) -> set[str]:
         candidates.add(base)
     if stem:
         candidates.add(stem.replace("-", "_"))
+        if "." in stem:
+            candidates.add(stem.split(".", 1)[0])
+    if base:
+        cleaned_base = base.replace("-", "_")
+        if cleaned_base != base:
+            candidates.add(cleaned_base)
+        if "." in base:
+            candidates.add(base.split(".", 1)[0])
+    enriched: set[str] = set()
+    for token in tuple(candidates):
+        if token.lower().endswith((".dll", ".pyd", ".so", ".dylib")):
+            enriched.add(Path(token).stem)
+    if enriched:
+        candidates.update(enriched)
     return {candidate for candidate in candidates if candidate}
 
 
@@ -674,6 +692,10 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             if error_load_match:
                 path_tokens.update(_normalise_token(error_load_match.group("module")))
             if path_tokens:
+                missing.update(path_tokens)
+            ctor_match = _WINDOWS_COULD_NOT_FIND_RE.search(message)
+            if ctor_match:
+                path_tokens.update(_normalise_token(ctor_match.group("module")))
                 missing.update(path_tokens)
             circular_match = _CIRCULAR_IMPORT_RE.search(str(item))
             if circular_match:
