@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import menace_sandbox.bot_registry as bot_registry
@@ -220,6 +222,46 @@ def test_missing_modules_abort_transient_retry(monkeypatch):
     deps = disabled.get("missing_dependencies", [])
     assert any(dep.endswith("quick_fix_engine") for dep in deps)
     assert name not in registry._internalization_retry_attempts
+
+
+def test_internalize_missing_coding_bot_handles_runtime_dependency(monkeypatch):
+    registry = _make_registry()
+
+    registry.graph.add_node("TaskValidationBot")
+
+    components = SimpleNamespace(
+        context_builder_factory=lambda: object(),
+        engine_cls=lambda *a, **k: object(),
+        pipeline_cls=lambda *a, **k: object(),
+        data_bot_cls=lambda *a, **k: object(),
+        code_db_cls=lambda: object(),
+        memory_manager_cls=lambda: object(),
+    )
+
+    def _raise_runtime(*_a, **_k):
+        raise RuntimeError(
+            "context_builder_util helpers are required for quick_fix_engine"
+        )
+
+    components.internalize_coding_bot = _raise_runtime
+
+    monkeypatch.setattr(
+        bot_registry, "_load_self_coding_components", lambda: components
+    )
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
+    with pytest.raises(bot_registry.SelfCodingUnavailableError) as excinfo:
+        registry._internalize_missing_coding_bot(
+            "TaskValidationBot",
+            manager=object(),
+            data_bot=object(),
+        )
+
+    missing = set(excinfo.value.missing_modules)
+    assert "quick_fix_engine" in missing
+    assert "context_builder_util" in missing
 
 
 def test_retry_internalization_records_missing_resources(monkeypatch):

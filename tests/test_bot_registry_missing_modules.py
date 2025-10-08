@@ -161,6 +161,15 @@ def test_collect_missing_modules_detects_quick_fix_engine_install_hint():
     assert "quick_fix_engine" in missing
 
 
+def test_collect_missing_modules_handles_runtime_quick_fix_failure():
+    err = RuntimeError(
+        "context_builder_util helpers are required for quick_fix_engine"
+    )
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
+    assert "context_builder_util" in missing
+
+
 def test_transient_detection_uses_windows_path_hint():
     err = ModuleNotFoundError(
         "module import failed", name=None, path=r"C:\\bots\\future_lucrativity_bot.py"
