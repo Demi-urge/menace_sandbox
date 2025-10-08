@@ -187,6 +187,48 @@ def test_register_bot_internalization_retry(monkeypatch):
     assert "BarBot" not in reg._internalization_retry_attempts
 
 
+def test_retry_skips_when_self_coding_disabled(monkeypatch):
+    _install_stub_modules(monkeypatch)
+    reg = bot_registry.BotRegistry()
+
+    # Simulate a previously scheduled retry that races with a manual
+    # ``register_bot(..., is_coding_bot=False)`` downgrade.  The node mirrors the
+    # post-downgrade state by clearing the self-coding helpers while retaining
+    # stale retry bookkeeping.
+    name = "ManualBot"
+    reg.graph.add_node(name)
+    node = reg.graph.nodes[name]
+    node.update(
+        {
+            "is_coding_bot": False,
+            "pending_internalization": True,
+            "internalization_errors": ["import failure"],
+        }
+    )
+    reg._internalization_retry_attempts[name] = 3
+
+    called: dict[str, int] = {"count": 0}
+
+    def fail_internalize(self, bot_name, *, manager=None, data_bot=None):
+        called["count"] += 1
+        raise AssertionError("_internalize_missing_coding_bot should not run")
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_internalize_missing_coding_bot",
+        fail_internalize,
+        raising=False,
+    )
+
+    reg._retry_internalization(name)
+
+    assert called["count"] == 0
+    assert name not in reg._internalization_retry_attempts
+    node = reg.graph.nodes[name]
+    assert "pending_internalization" not in node
+    assert "internalization_errors" not in node
+
+
 def test_register_bot_blocks_on_missing_dependency(monkeypatch):
     bus = DummyBus()
     reg = bot_registry.BotRegistry(event_bus=bus)

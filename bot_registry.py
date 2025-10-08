@@ -1379,6 +1379,29 @@ class BotRegistry:
                 self._internalization_retry_attempts.pop(name, None)
                 return
 
+            if not node.get("is_coding_bot", True):
+                # Manual registrations or strict provenance policies can disable
+                # self-coding after a retry was already scheduled.  Windows
+                # command prompt executions in particular hit this race when the
+                # provenance check downgrades a bot moments after the initial
+                # internalisation failure.  Without the guard we would keep
+                # invoking ``_internalize_missing_coding_bot`` even though the
+                # bot is now intentionally operating in manual mode which
+                # repeatedly surfaces the original import error and stalls the
+                # sandbox start-up sequence.  Clearing the retry bookkeeping here
+                # mirrors the behaviour of ``register_bot(..., is_coding_bot=False)``
+                # and keeps the retry loop quiescent.
+                self._internalization_retry_attempts.pop(name, None)
+                node.pop("pending_internalization", None)
+                node.pop("internalization_errors", None)
+                node.pop("internalization_blocked", None)
+                self._clear_transient_error_state(name)
+                logger.debug(
+                    "skipping internalization retry for %s because self-coding is disabled",
+                    name,
+                )
+                return
+
             attempts = self._internalization_retry_attempts.get(name, 0) + 1
             self._internalization_retry_attempts[name] = attempts
 
