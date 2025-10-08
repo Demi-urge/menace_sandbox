@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Callable, Mapping
 
-from ..composite_workflow_scorer import CompositeWorkflowScorer
-from ..roi_results_db import ROIResultsDB
-from ..workflow_scorer_core import EvaluationResult
-from .. import mutation_logger as MutationLogger
+from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+from menace_sandbox.roi_results_db import ROIResultsDB
+from menace_sandbox.workflow_scorer_core import EvaluationResult
+from menace_sandbox import mutation_logger as MutationLogger
 
 
 def benchmark_workflow_variants(

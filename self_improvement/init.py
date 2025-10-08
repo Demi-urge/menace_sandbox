@@ -39,18 +39,18 @@ from sandbox_runner.bootstrap import initialize_autonomous_sandbox
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from metrics_exporter import self_improvement_failure_total
 except ImportError:  # pragma: no cover - fallback to package-relative import
-    from ..metrics_exporter import self_improvement_failure_total  # type: ignore
+    from menace_sandbox.metrics_exporter import self_improvement_failure_total  # type: ignore
 
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback to package-relative import
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 
 try:
     from logging_utils import get_logger, setup_logging, log_record  # type: ignore
 except (ImportError, AttributeError):  # pragma: no cover - fallback to package layout
     try:
-        from ..logging_utils import get_logger, setup_logging, log_record
+        from menace_sandbox.logging_utils import get_logger, setup_logging, log_record
     except (ImportError, AttributeError) as exc:  # pragma: no cover - simplified environments
         logging.getLogger(__name__).warning(
             "logging utils unavailable",

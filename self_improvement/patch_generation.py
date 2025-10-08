@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
     from .target_region import TargetRegion
     from vector_service.context_builder import ContextBuilder
-    from ..self_coding_manager import SelfCodingManager
+    from menace_sandbox.self_coding_manager import SelfCodingManager
 
 try:  # pragma: no cover - simplified environments
-    from ..logging_utils import log_record
+    from menace_sandbox.logging_utils import log_record
 except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort
     logging.getLogger(__name__).warning(
         "log_record unavailable", extra={"component": __name__}, exc_info=exc

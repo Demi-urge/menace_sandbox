@@ -6,7 +6,7 @@ import logging
 import sqlite3
 
 try:  # pragma: no cover - optional dependency location
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 

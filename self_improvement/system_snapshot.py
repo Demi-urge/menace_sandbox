@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict
 import time
 
-from ..sandbox_settings import SandboxSettings
+from menace_sandbox.sandbox_settings import SandboxSettings
 from .baseline_tracker import BaselineTracker
 from .sandbox_score import get_latest_sandbox_score
 from . import metrics as _si_metrics

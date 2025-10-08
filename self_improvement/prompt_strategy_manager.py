@@ -241,7 +241,7 @@ class PromptStrategyManager:
     def best_strategy(self, strategies: Sequence[str]) -> str | None:
         """Return the strategy with the highest average ROI."""
 
-        from ..sandbox_settings import SandboxSettings
+        from menace_sandbox.sandbox_settings import SandboxSettings
 
         self._load_stats()
         self._load_state()

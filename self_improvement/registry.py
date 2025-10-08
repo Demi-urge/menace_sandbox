@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from typing import Callable, Optional
 
-from ..model_automation_pipeline import AutomationResult
-from ..capital_management_bot import CapitalManagementBot
-from ..data_bot import DataBot
+from menace_sandbox.model_automation_pipeline import AutomationResult
+from menace_sandbox.capital_management_bot import CapitalManagementBot
+from menace_sandbox.data_bot import DataBot
 
 try:  # pragma: no cover - simplified environments
-    from ..logging_utils import get_logger
+    from menace_sandbox.logging_utils import get_logger
 except Exception:  # pragma: no cover - fallback
     import logging
 

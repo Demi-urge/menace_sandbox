@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dynamic_path_router import resolve_path
-from ..sandbox_settings import SandboxSettings
+from menace_sandbox.sandbox_settings import SandboxSettings
 from .prompt_strategy_manager import (
     KEYWORD_MAP as BASE_KEYWORD_MAP,
     PromptStrategyManager,

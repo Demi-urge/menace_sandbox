@@ -31,7 +31,7 @@ if __package__ in {None, ""}:  # pragma: no cover - script execution compatibili
             break
 
 try:  # pragma: no cover - optional dependency location
-    from .. import dynamic_path_router as _dynamic_path_router
+    from menace_sandbox import dynamic_path_router as _dynamic_path_router
 except Exception:  # pragma: no cover
     import dynamic_path_router as _dynamic_path_router  # type: ignore
 resolve_path = _dynamic_path_router.resolve_path  # type: ignore
@@ -43,12 +43,12 @@ if "menace.logging_utils" in sys.modules and not hasattr(
     sys.modules["menace.logging_utils"].setup_logging = lambda *a, **k: None
 
 try:  # pragma: no cover - allow flat package layout
-    from ..logging_utils import get_logger, log_record
+    from menace_sandbox.logging_utils import get_logger, log_record
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from logging_utils import get_logger, log_record  # type: ignore
 
 try:  # pragma: no cover - allow flat package layout
-    from ..sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
+    from menace_sandbox.sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from sandbox_settings import (  # type: ignore
         SandboxSettings,
@@ -58,24 +58,24 @@ except (ImportError, ValueError):  # pragma: no cover - fallback for manual_boot
 from . import init as _init
 
 try:  # pragma: no cover - allow flat package layout
-    from ..workflow_stability_db import WorkflowStabilityDB
+    from menace_sandbox.workflow_stability_db import WorkflowStabilityDB
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
 
 try:  # pragma: no cover - allow flat package layout
-    from ..roi_results_db import ROIResultsDB
+    from menace_sandbox.roi_results_db import ROIResultsDB
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from roi_results_db import ROIResultsDB  # type: ignore
 
 try:  # pragma: no cover - allow flat package layout
-    from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
+    from menace_sandbox.lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT  # type: ignore
 
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 
 try:  # pragma: no cover - allow flat package layout
-    from ..error_logger import TelemetryEvent
+    from menace_sandbox.error_logger import TelemetryEvent
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from error_logger import TelemetryEvent  # type: ignore
 
@@ -89,7 +89,7 @@ _stop_event: threading.Event | None = None
 
 if __package__:  # pragma: no cover - support package imports
     try:  # pragma: no cover - optional dependency
-        from ..unified_event_bus import UnifiedEventBus
+        from menace_sandbox.unified_event_bus import UnifiedEventBus
     except (ImportError, ValueError):  # pragma: no cover - fallback when event bus missing
         try:
             from unified_event_bus import UnifiedEventBus  # type: ignore
@@ -1396,7 +1396,7 @@ def start_self_improvement_cycle(
                     extra=log_record(reason=reason),
                 )
                 try:  # pragma: no cover - metrics are best effort
-                    from ..metrics_exporter import self_improvement_failure_total
+                    from menace_sandbox.metrics_exporter import self_improvement_failure_total
 
                     self_improvement_failure_total.labels(reason=reason).inc()
                 except Exception as exc:

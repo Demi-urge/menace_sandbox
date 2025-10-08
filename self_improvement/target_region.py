@@ -6,7 +6,7 @@ executed outside the package context.
 """
 
 try:
-    from ..target_region import TargetRegion, region_from_frame, extract_target_region
+    from menace_sandbox.target_region import TargetRegion, region_from_frame, extract_target_region
 except Exception:  # pragma: no cover - fallback for direct execution
     import importlib.util
     import sys

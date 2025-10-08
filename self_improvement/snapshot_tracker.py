@@ -18,16 +18,16 @@ from .metrics import collect_snapshot_metrics, compute_call_graph_complexity
 from .prompt_strategy_manager import PromptStrategyManager
 
 try:  # pragma: no cover - prefer package-relative import when available
-    from ..sandbox_settings import SandboxSettings
+    from menace_sandbox.sandbox_settings import SandboxSettings
 except ImportError:  # pragma: no cover - support flat execution layout
     from sandbox_settings import SandboxSettings  # type: ignore
 
 try:  # pragma: no cover - prefer package-relative import when available
-    from ..audit_logger import log_event as audit_log_event
+    from menace_sandbox.audit_logger import log_event as audit_log_event
 except ImportError:  # pragma: no cover - support flat execution layout
     from audit_logger import log_event as audit_log_event  # type: ignore
 try:  # pragma: no cover - optional dependency location
-    from ..snapshot_history_db import (
+    from menace_sandbox.snapshot_history_db import (
         log_regression,
         record_snapshot,
         record_delta,
@@ -40,17 +40,17 @@ except Exception:  # pragma: no cover
     )
 
 try:  # pragma: no cover - optional dependency location
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 
 try:  # pragma: no cover - optional module
-    from .. import relevancy_radar
+    from menace_sandbox import relevancy_radar
 except Exception:  # pragma: no cover
     relevancy_radar = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from ..module_index_db import ModuleIndexDB
+    from menace_sandbox.module_index_db import ModuleIndexDB
 except Exception:  # pragma: no cover
     ModuleIndexDB = None  # type: ignore
 
