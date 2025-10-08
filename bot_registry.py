@@ -436,6 +436,10 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_IMPORT_HALTED_RE = re.compile(
+    r"import of ['\"](?P<module>[^'\"]+)['\"] halted",
+    re.IGNORECASE,
+)
 
 # High level ImportError messages occasionally hide the underlying module
 # name which prevents ``_collect_missing_modules`` from surfacing actionable
@@ -632,6 +636,11 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             partial_match = _PARTIAL_MODULE_RE.search(str(item))
             if partial_match:
                 missing.add(partial_match.group("module"))
+            halted_match = _IMPORT_HALTED_RE.search(message)
+            if halted_match:
+                missing.update(
+                    _normalise_module_aliases(halted_match.group("module"))
+                )
     return missing
 
 
