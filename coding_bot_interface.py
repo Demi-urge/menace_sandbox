@@ -21,13 +21,15 @@ Example:
 import contextvars
 import importlib.util
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from functools import wraps
 import inspect
 import json
 import logging
 import os
 import hashlib
+import re
+import subprocess
 import threading
 from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
@@ -65,6 +67,8 @@ _UNSIGNED_WARNING_CACHE: set[str] = set()
 _UNSIGNED_WARNING_LOCK = threading.Lock()
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
+_PATCH_PROVENANCE_SERVICE_SENTINEL = object()
+_PATCH_PROVENANCE_SERVICE: Any = _PATCH_PROVENANCE_SERVICE_SENTINEL
 
 
 @dataclass(slots=True)
@@ -230,6 +234,45 @@ def _warn_unsigned_once(name: str) -> None:
     )
 
 
+def _reset_patch_provenance_service() -> None:
+    """Reset the cached :class:`PatchProvenanceService` instance."""
+
+    global _PATCH_PROVENANCE_SERVICE
+    _PATCH_PROVENANCE_SERVICE = _PATCH_PROVENANCE_SERVICE_SENTINEL
+
+
+def _get_patch_provenance_service() -> Any | None:
+    """Return a cached ``PatchProvenanceService`` instance when available."""
+
+    global _PATCH_PROVENANCE_SERVICE
+    if _PATCH_PROVENANCE_SERVICE is _PATCH_PROVENANCE_SERVICE_SENTINEL:
+        try:
+            module = load_internal("patch_provenance")
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
+            logger.debug(
+                "patch_provenance unavailable while resolving provenance metadata", exc_info=exc
+            )
+            _PATCH_PROVENANCE_SERVICE = None
+        except Exception as exc:  # pragma: no cover - defensive best effort
+            logger.warning(
+                "failed to import patch_provenance while resolving provenance metadata: %s",
+                exc,
+                exc_info=True,
+            )
+            _PATCH_PROVENANCE_SERVICE = None
+        else:
+            try:
+                _PATCH_PROVENANCE_SERVICE = module.PatchProvenanceService()  # type: ignore[attr-defined]
+            except Exception as exc:  # pragma: no cover - service initialisation failure
+                logger.warning(
+                    "failed to initialise PatchProvenanceService while resolving provenance metadata: %s",
+                    exc,
+                    exc_info=True,
+                )
+                _PATCH_PROVENANCE_SERVICE = None
+    return _PATCH_PROVENANCE_SERVICE
+
+
 def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int, str]:
     """Return a deterministic ``(patch_id, commit)`` pair for unsigned updates."""
 
@@ -260,6 +303,189 @@ def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int
     patch_id = -abs(seed_value)
     commit = f"{_UNSIGNED_COMMIT_PREFIX}{digest}"
     return patch_id, commit
+
+
+def _split_path_parts(raw_path: str) -> tuple[str, ...]:
+    """Return normalised path components for ``raw_path`` across platforms."""
+
+    if not raw_path:
+        return ()
+
+    if "\\" in raw_path or re.match(r"^[A-Za-z]:", raw_path):
+        pure = PureWindowsPath(raw_path)
+        drive = pure.drive
+        return tuple(part for part in pure.parts if part and part not in {drive, f"{drive}\\"})
+
+    pure = PurePosixPath(raw_path)
+    return pure.parts
+
+
+def _normalise_module_path(module_path: str | os.PathLike[str] | None) -> Path | None:
+    """Attempt to resolve ``module_path`` to an existing :class:`Path` instance."""
+
+    if module_path is None:
+        return None
+
+    try:
+        raw_path = os.fspath(module_path)
+    except TypeError:
+        return None
+
+    raw_path = raw_path.strip()
+    if not raw_path:
+        return None
+
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(raw_path))
+    except (TypeError, ValueError, OSError):  # pragma: no cover - invalid representation
+        pass
+
+    alt = raw_path.replace("\\", os.sep)
+    if alt != raw_path:
+        try:
+            candidates.append(Path(alt))
+        except (TypeError, ValueError, OSError):
+            pass
+
+    repo_hints: list[str] = []
+    for var in ("SANDBOX_REPO_PATH", "MENACE_ROOT"):
+        value = os.getenv(var)
+        if value:
+            repo_hints.append(value)
+    for var in ("SANDBOX_REPO_PATHS", "MENACE_ROOTS"):
+        value = os.getenv(var)
+        if value:
+            repo_hints.extend([item for item in value.split(os.pathsep) if item])
+
+    parts = _split_path_parts(raw_path)
+    for hint in repo_hints:
+        try:
+            base = Path(hint)
+        except (TypeError, ValueError, OSError):
+            continue
+        for index in range(len(parts)):
+            candidate = base.joinpath(*parts[index:])
+            candidates.append(candidate)
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            expanded = candidate.expanduser()
+        except (RuntimeError, ValueError):  # pragma: no cover - expansion failure
+            continue
+        try:
+            canonical = expanded.resolve(strict=False)
+        except (RuntimeError, OSError):  # pragma: no cover - resolution failure
+            canonical = expanded
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        if canonical.exists():
+            return canonical
+    return None
+
+
+def _resolve_git_repository(path: Path) -> Path | None:
+    """Return the git repository root for ``path`` or ``None`` when unavailable."""
+
+    search_root = path if path.is_dir() else path.parent
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", str(search_root), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.STDOUT,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+        logger.debug("failed to resolve git repository for %s: %s", path, exc, exc_info=True)
+        return None
+    root = output.decode("utf-8", "replace").strip()
+    if not root:
+        return None
+    return Path(root)
+
+
+def _relative_repo_path(path: Path, repo_root: Path) -> Path:
+    """Return ``path`` relative to ``repo_root`` without filesystem access."""
+
+    try:
+        return path.resolve().relative_to(repo_root.resolve())
+    except Exception:  # pragma: no cover - fall back to os.path.relpath semantics
+        rel = os.path.relpath(str(path), str(repo_root))
+        return Path(rel)
+
+
+def _lookup_patch_by_commit(commit: str, *, log_hint: str) -> tuple[int | None, str | None]:
+    """Return ``(patch_id, commit)`` for ``commit`` when recorded."""
+
+    service = _get_patch_provenance_service()
+    if service is None:
+        return (None, None)
+
+    try:
+        record = service.get(commit)
+    except Exception as exc:  # pragma: no cover - database access failure
+        logger.debug(
+            "patch provenance lookup failed for %s (commit=%s): %s", log_hint, commit, exc, exc_info=True
+        )
+        return (None, None)
+
+    if not record:
+        return (None, None)
+
+    patch_id = _coerce_patch_id(record.get("patch_id") or record.get("id"))
+    commit_hash = _coerce_commit(record.get("commit") or commit)
+    return patch_id, commit_hash
+
+
+def _derive_repository_provenance(
+    name: str, module_path: str | os.PathLike[str] | None
+) -> tuple[int | None, str | None]:
+    """Attempt to recover signed provenance by inspecting the git repository."""
+
+    path = _normalise_module_path(module_path)
+    if path is None:
+        return (None, None)
+
+    repo_root = _resolve_git_repository(path)
+    if repo_root is None:
+        return (None, None)
+
+    rel_path = _relative_repo_path(path, repo_root)
+    try:
+        output = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "log",
+                "-n",
+                "1",
+                "--pretty=format:%H",
+                "--",
+                str(rel_path),
+            ],
+            stderr=subprocess.STDOUT,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+        logger.debug(
+            "failed to derive git commit for %s from %s (repo=%s): %s",
+            name,
+            path,
+            repo_root,
+            exc,
+            exc_info=True,
+        )
+        return (None, None)
+
+    commit = _coerce_commit(output.decode("utf-8", "replace").strip())
+    if not commit:
+        return (None, None)
+
+    patch_id, commit_hash = _lookup_patch_by_commit(commit, log_hint=f"{name}@{rel_path}")
+    if patch_id is None or commit_hash is None:
+        return (None, None)
+
+    return patch_id, commit_hash
 
 
 def _coerce_patch_id(value: object) -> int | None:
@@ -400,6 +626,19 @@ def _resolve_provenance_decision(
             return _ProvenanceDecision(
                 module_patch, commit_candidate, "signed", source="module"
             )
+
+    if module_patch is None and module_commit is not None:
+        patch_candidate, commit_candidate = _lookup_patch_by_commit(
+            module_commit, log_hint=f"{name}:module"
+        )
+        if patch_candidate is not None and commit_candidate is not None:
+            return _ProvenanceDecision(
+                patch_candidate, commit_candidate, "signed", source="module"
+            )
+
+    repo_patch, repo_commit = _derive_repository_provenance(name, module_path)
+    if repo_patch is not None and repo_commit is not None:
+        return _ProvenanceDecision(repo_patch, repo_commit, "signed", source="repository")
 
     allow_unsigned = _unsigned_provenance_allowed()
     if allow_unsigned:
