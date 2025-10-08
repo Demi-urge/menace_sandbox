@@ -232,6 +232,26 @@ def test_derive_import_error_hints_fallbacks_to_runtime_marker():
     assert hints == {"self_coding_runtime"}
 
 
+def test_dll_load_failed_without_module_not_transient():
+    err = ModuleNotFoundError(
+        "DLL load failed: The specified module could not be found.",
+        name=None,
+    )
+    assert _is_transient_internalization_error(err) is False
+    hints = _derive_import_error_hints(err)
+    assert "self_coding_runtime" in hints
+
+
+def test_winerror_missing_module_not_transient():
+    err = ModuleNotFoundError(
+        "[WinError 126] The specified module could not be found",
+        name=None,
+    )
+    assert _is_transient_internalization_error(err) is False
+    hints = _derive_import_error_hints(err)
+    assert "self_coding_runtime" in hints
+
+
 def test_derive_import_error_hints_uses_name_and_path(tmp_path):
     dll = tmp_path / "quick_fix_engine.cp311-win_amd64.pyd"
     err = ImportError(

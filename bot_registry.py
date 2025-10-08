@@ -651,6 +651,13 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_WINDOWS_FATAL_DLL_HINTS: tuple[str, ...] = (
+    "dll load failed",
+    "the specified module could not be found",
+    "the specified procedure could not be found",
+    "winerror",
+    "%1 is not a valid win32 application",
+)
 _MODULE_REQUIRED_RE = re.compile(
     r"(?P<module>[A-Za-z0-9_.-]+)\s+(?:module\s+)?is\s+required(?:\s+for|\s+by)?\s+(?P<context>[A-Za-z0-9_.-]+)?",
     re.IGNORECASE,
@@ -1123,6 +1130,9 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
 
         module_name = _missing_module_name(exc)
         if module_name is None:
+            lowered = message.lower()
+            if any(hint in lowered for hint in _WINDOWS_FATAL_DLL_HINTS):
+                return False
             path_hint = getattr(exc, "path", None)
             if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
                 return False
