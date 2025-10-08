@@ -768,6 +768,19 @@ class BotRegistry:
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to schedule unmanaged bot scan")
 
+    def _cancel_internalization_retry(self, name: str) -> None:
+        """Best-effort cancellation for a pending internalisation retry timer."""
+
+        handle = self._internalization_retry_handles.pop(name, None)
+        if handle is None:
+            return
+        try:
+            handle.cancel()
+        except Exception:  # pragma: no cover - timer cleanup best effort
+            logger.debug(
+                "failed to cancel internalization retry timer for %s", name, exc_info=True
+            )
+
     def _schedule_internalization_retry(
         self,
         name: str,
@@ -975,14 +988,7 @@ class BotRegistry:
         """Attempt to internalise a bot that previously failed to import."""
 
         with self._lock:
-            handle = self._internalization_retry_handles.pop(name, None)
-            if handle is not None:
-                try:
-                    handle.cancel()
-                except Exception:  # pragma: no cover - best effort cleanup
-                    logger.debug(
-                        "cleanup cancel failed for internalization retry timer", exc_info=True
-                    )
+            self._cancel_internalization_retry(name)
 
             node = self.graph.nodes.get(name)
             if node is None:
@@ -1164,6 +1170,7 @@ class BotRegistry:
         with self._lock:
             self.graph.add_node(name)
             node = self.graph.nodes[name]
+            resolved_path: str | None = None
             if module_path is not None:
                 try:
                     resolved_path = os.fspath(module_path)
@@ -1171,6 +1178,49 @@ class BotRegistry:
                     resolved_path = str(module_path)
                 node["module"] = resolved_path
                 self.modules[name] = resolved_path
+            if not is_coding_bot:
+                self._internalization_retry_attempts.pop(name, None)
+                self._cancel_internalization_retry(name)
+                self._clear_transient_error_state(name)
+                node.pop("pending_internalization", None)
+                node.pop("internalization_errors", None)
+                node.pop("internalization_blocked", None)
+                previous_disabled = node.get("self_coding_disabled")
+                timestamp = datetime.now(timezone.utc).isoformat()
+                manual_reason = (
+                    "self-coding disabled: manual registration without autonomous patching"
+                )
+                disabled_payload: dict[str, Any] = {
+                    "reason": manual_reason,
+                    "timestamp": timestamp,
+                    "source": "manual_registration",
+                    "manual_override": True,
+                }
+                if resolved_path:
+                    disabled_payload["module"] = resolved_path
+                if isinstance(previous_disabled, dict) and previous_disabled:
+                    disabled_payload["previous_reason"] = previous_disabled.get("reason")
+                    if previous_disabled.get("missing_dependencies"):
+                        disabled_payload["missing_dependencies"] = list(
+                            previous_disabled.get("missing_dependencies", ())
+                        )
+                node["self_coding_disabled"] = disabled_payload
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:self_coding_disabled",
+                            {
+                                "bot": name,
+                                "reason": manual_reason,
+                                "source": "manual_registration",
+                            },
+                        )
+                    except Exception:  # pragma: no cover - best effort event
+                        logger.debug(
+                            "failed to publish bot:self_coding_disabled event for manual registration",
+                            exc_info=True,
+                        )
+                return
             existing_mgr = node.get("selfcoding_manager") or node.get("manager")
             existing_data = node.get("data_bot")
             is_coding_bot = bool(is_coding_bot)
@@ -1192,15 +1242,7 @@ class BotRegistry:
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         }
                         self._internalization_retry_attempts.pop(name, None)
-                        handle = self._internalization_retry_handles.pop(name, None)
-                        if handle is not None:
-                            try:
-                                handle.cancel()
-                            except Exception:  # pragma: no cover - best effort
-                                logger.debug(
-                                    "failed to cancel retry timer after disabling self-coding",
-                                    exc_info=True,
-                                )
+                        self._cancel_internalization_retry(name)
                         self._clear_transient_error_state(name)
                         logger.warning(
                             "self-coding disabled for %s: missing dependencies: %s",
@@ -1295,7 +1337,7 @@ class BotRegistry:
                                     "failed to subscribe degradation callback for %s: %s",
                                     name,
                                     exc,
-                                )
+                            )
                     else:
                         def _on_degraded(event: dict, _bot=name, _mgr=manager):
                             if str(event.get("bot")) != _bot:
