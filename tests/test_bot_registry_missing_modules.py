@@ -1,6 +1,7 @@
 """Regression tests for Windows-specific import error parsing in bot registry."""
 
 import types
+from pathlib import Path
 
 from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
@@ -10,6 +11,8 @@ from menace_sandbox.bot_registry import (
     _exception_signature,
     _is_probable_filesystem_path,
     _is_transient_internalization_error,
+    _module_name_from_path,
+    _module_spec_from_path,
 )
 
 
@@ -281,6 +284,25 @@ def test_is_probable_filesystem_path_detects_unc_prefix():
 
 def test_is_probable_filesystem_path_rejects_module_names():
     assert _is_probable_filesystem_path("menace_sandbox.task_validation_bot") is False
+
+
+def test_module_name_from_path_detects_package_modules():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "task_validation_bot.py"
+    assert _module_name_from_path(module_path) == "menace_sandbox.task_validation_bot"
+
+
+def test_module_name_from_path_handles_package_init():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "vector_service" / "__init__.py"
+    assert _module_name_from_path(module_path) == "menace_sandbox.vector_service"
+
+
+def test_module_spec_from_path_provides_submodule_search_locations():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "vector_service" / "__init__.py"
+    _, kwargs = _module_spec_from_path(str(module_path))
+    assert kwargs["submodule_search_locations"] == [str(module_path.parent)]
 
 
 def test_collect_missing_resources_parses_context_builder_hint():

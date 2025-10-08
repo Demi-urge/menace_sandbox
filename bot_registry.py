@@ -271,6 +271,154 @@ def _is_probable_filesystem_path(value: str | os.PathLike[str] | None) -> bool:
     return False
 
 
+def _iter_module_search_roots() -> list[tuple[Path, str | None]]:
+    """Return import roots and their associated package names.
+
+    Windows deployments frequently execute the sandbox from unpacked archives
+    where ``sys.path`` contains both the project root and namespace package
+    directories.  Mapping filesystem paths back to their dotted module names
+    therefore requires awareness of both the import system's search roots and
+    already-imported packages.  The helper yields a deterministic list of
+    ``(Path, package_name)`` tuples with the longest package-prefixed matches
+    appearing first so callers can favour canonical package names like
+    ``menace_sandbox`` over ad-hoc fallbacks.
+    """
+
+    roots: list[tuple[Path, str | None]] = []
+    seen: set[Path] = set()
+
+    def _add_root(candidate: Path, package: str | None) -> None:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except (OSError, RuntimeError):
+            resolved = candidate.absolute()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        roots.append((resolved, package))
+
+    for module in list(sys.modules.values()):
+        pkg_path = getattr(module, "__path__", None)
+        if not pkg_path:
+            continue
+        package_name = getattr(module, "__name__", None)
+        for entry in pkg_path:
+            try:
+                path_obj = Path(entry)
+            except TypeError:
+                continue
+            _add_root(path_obj, package_name)
+
+    for entry in sys.path:
+        try:
+            path_obj = Path(entry)
+        except TypeError:
+            continue
+        _add_root(path_obj, None)
+
+    # Sort roots to prefer longer (more specific) paths which ensures that a
+    # package nested inside another namespace (``menace_sandbox.vector_service``)
+    # wins over broader prefixes such as the workspace directory.
+    roots.sort(key=lambda item: (-len(item[0].parts), item[1] or ""))
+    return roots
+
+
+def _module_name_from_path(path: Path) -> str:
+    """Infer a stable module name for *path*.
+
+    Registry persistence stores raw filesystem paths on Windows which breaks the
+    traditional dotted-module import flow.  This helper reconstructs the
+    canonical module name by combining two strategies:
+
+    * Walk up the directory hierarchy while ``__init__`` modules are present to
+      honour regular packages.
+    * Fall back to already-imported package roots and ``sys.path`` entries to
+      support namespace packages and editable installs.
+
+    The returned name deliberately favours ``menace_sandbox`` prefixed modules so
+    the sandbox behaves consistently between Windows and Linux environments.
+    """
+
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        resolved = path.absolute()
+
+    suffixless = resolved.with_suffix("") if resolved.suffix else resolved
+    leaf = suffixless.name
+
+    package_parts: list[str] = []
+    current = suffixless.parent
+    while current and current != current.parent:
+        init_py = current / "__init__.py"
+        init_pyc = current / "__init__.pyc"
+        if init_py.exists() or init_pyc.exists():
+            package_parts.append(current.name)
+            current = current.parent
+            continue
+        break
+
+    if package_parts:
+        package_parts.reverse()
+        if leaf == "__init__":
+            candidate = ".".join(package_parts)
+        else:
+            candidate = ".".join((*package_parts, leaf))
+        if candidate:
+            return candidate
+
+    best_candidate: str | None = None
+    best_score: tuple[int, int, int, int] = (-1, -1, -1, -1)
+    for root, package_name in _iter_module_search_roots():
+        try:
+            relative = suffixless.relative_to(root)
+        except ValueError:
+            continue
+        parts = list(relative.parts)
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        if not parts and not package_name:
+            continue
+        if package_name:
+            candidate_parts = [package_name, *parts]
+        else:
+            candidate_parts = parts
+        candidate = ".".join(candidate_parts)
+        if not candidate:
+            continue
+        score = (
+            2 if candidate.startswith("menace_sandbox") else 1 if candidate.startswith("menace") else 0,
+            candidate.count("."),
+            len(candidate_parts),
+            len(candidate),
+        )
+        if score > best_score:
+            best_score = score
+            best_candidate = candidate
+
+    if best_candidate:
+        return best_candidate
+
+    fallback_parts = [part for part in suffixless.parts if part not in {"", os.sep, os.altsep}]
+    if fallback_parts and fallback_parts[-1] == "__init__":
+        fallback_parts = fallback_parts[:-1]
+    if not fallback_parts:
+        fallback_parts = [leaf or resolved.stem or resolved.name]
+    fallback = ".".join(part for part in fallback_parts if part)
+    return fallback.replace("/", ".").replace("\\", ".") or (leaf or resolved.stem or resolved.name)
+
+
+def _module_spec_from_path(module_path: str) -> tuple[str, dict[str, object]]:
+    """Return an importable module name and ``spec_from_file_location`` kwargs."""
+
+    path_obj = Path(module_path)
+    module_name = _module_name_from_path(path_obj)
+    kwargs: dict[str, object] = {}
+    if path_obj.name.startswith("__init__.py") or path_obj.name == "__init__":
+        kwargs["submodule_search_locations"] = [str(path_obj.parent)]
+    return module_name, kwargs
+
+
 @dataclass(slots=True)
 class _TransientErrorState:
     """Track repeated transient import failures for a single bot."""
@@ -2490,9 +2638,9 @@ class BotRegistry:
         try:
             path_obj = Path(module_path)
             if _is_probable_filesystem_path(module_path):
-                module_name = path_obj.stem or path_obj.name
+                module_name, spec_kwargs = _module_spec_from_path(module_path)
                 spec = importlib.util.spec_from_file_location(
-                    module_name, module_path
+                    module_name, module_path, **spec_kwargs
                 )
                 if not spec or not spec.loader:
                     raise ImportError(f"cannot load module from {module_path}")
@@ -2506,6 +2654,8 @@ class BotRegistry:
                     module = importlib.util.module_from_spec(spec)
                     sys.modules[module_name] = module
                     spec.loader.exec_module(module)
+                for alias in _normalise_module_aliases(module_name):
+                    sys.modules.setdefault(alias, module)
             else:
                 if module_path in sys.modules:
                     importlib.reload(sys.modules[module_path])
@@ -2563,11 +2713,28 @@ class BotRegistry:
         try:
             path_obj = Path(module_path)
             if _is_probable_filesystem_path(module_path):
-                module_name = path_obj.stem or path_obj.name
+                module_name, spec_kwargs = _module_spec_from_path(module_path)
+                spec = importlib.util.spec_from_file_location(
+                    module_name, module_path, **spec_kwargs
+                )
+                if not spec or not spec.loader:
+                    raise ImportError(f"cannot load module from {module_path}")
+                importlib.invalidate_caches()
+                if module_name in sys.modules:
+                    module = sys.modules[module_name]
+                    module.__file__ = module_path
+                    module.__spec__ = spec
+                    spec.loader.exec_module(module)
+                else:
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
+                for alias in _normalise_module_aliases(module_name):
+                    sys.modules.setdefault(alias, module)
             else:
                 module_name = module_path
-            importlib.invalidate_caches()
-            importlib.import_module(module_name)
+                importlib.invalidate_caches()
+                importlib.import_module(module_name)
             self.record_heartbeat(name)
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Health check failed for bot %s: %s", name, exc)
