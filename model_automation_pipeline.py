@@ -216,6 +216,7 @@ class ModelAutomationPipeline:
         event_bus: UnifiedEventBus | None = None,
         bot_registry: "BotRegistry | None" = None,
         context_builder: ContextBuilder,
+        validator_factory: Callable[[], TaskValidationBot] | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         if context_builder is None:
@@ -242,7 +243,10 @@ class ModelAutomationPipeline:
                 context_builder=self.context_builder,
             )
         self.synthesis_bot = synthesis_bot
-        self.validator = validator or _build_default_validator()
+        self._validator_factory: Callable[[], TaskValidationBot] | None = validator_factory
+        self._validator: TaskValidationBot | None = validator
+        self._validator_wrapped = False
+        self._bots_primed = False
         self.planner = planner or BotPlanningBot()
         self.hierarchy = hierarchy or HierarchyAssessmentBot()
         self.data_bot = data_bot or DataBot()
@@ -325,7 +329,6 @@ class ModelAutomationPipeline:
         self._bots = [
             self.aggregator,
             self.synthesis_bot,
-            self.validator,
             self.planner,
             self.hierarchy,
             self.predictor,
@@ -361,6 +364,65 @@ class ModelAutomationPipeline:
         ]
         for bot in self._bots:
             wrap_bot_methods(bot, self.db_router, self.bot_registry)
+        if self._validator is not None and not self._validator_wrapped:
+            self._register_validator(self._validator)
+
+    # ------------------------------------------------------------------
+
+    @property
+    def validator(self) -> TaskValidationBot:
+        """Return the task validator, instantiating it lazily when required."""
+
+        return self._ensure_validator()
+
+    @validator.setter
+    def validator(self, value: TaskValidationBot | None) -> None:
+        """Inject a validator instance and register it with pipeline helpers."""
+
+        if value is None:
+            bots = getattr(self, "_bots", None)
+            if self._validator_wrapped and bots and self._validator in bots:
+                try:
+                    bots.remove(self._validator)
+                except ValueError:  # pragma: no cover - best effort cleanup
+                    pass
+            self._validator = None
+            self._validator_wrapped = False
+            return
+        self._validator = value
+        self._register_validator(value)
+
+    # ------------------------------------------------------------------
+
+    def _ensure_validator(self) -> TaskValidationBot:
+        """Create and register the validator if it has not been resolved yet."""
+
+        if self._validator is None:
+            factory = self._validator_factory or _build_default_validator
+            validator = factory()
+            self._validator = validator
+            self._register_validator(validator)
+        return self._validator
+
+    # ------------------------------------------------------------------
+
+    def _register_validator(self, validator: TaskValidationBot) -> None:
+        """Wrap and register *validator* without triggering circular imports."""
+
+        if self._validator_wrapped:
+            return
+        # Preserve historical ordering by inserting the validator after the
+        # synthesis bot once it becomes available.
+        self._bots.insert(2, validator)
+        wrap_bot_methods(validator, self.db_router, self.bot_registry)
+        self._validator_wrapped = True
+        if self._bots_primed:
+            prime = getattr(validator, "prime", None)
+            if callable(prime):
+                try:
+                    prime()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    self.logger.exception("prime() failed for %s: %s", validator.__class__.__name__, exc)
 
     # ------------------------------------------------------------------
 
@@ -373,6 +435,7 @@ class ModelAutomationPipeline:
                     prime()
                 except Exception as exc:
                     self.logger.exception("prime() failed for %s: %s", bot.__class__.__name__, exc)
+        self._bots_primed = True
 
     # ------------------------------------------------------------------
 
@@ -428,7 +491,8 @@ class ModelAutomationPipeline:
     def _validate_tasks(
         self, tasks: Iterable["SynthesisTask"]
     ) -> List["SynthesisTask"]:
-        return self.validator.validate_tasks(list(tasks))
+        validator = self._ensure_validator()
+        return validator.validate_tasks(list(tasks))
 
     def _plan_bots(
         self,
