@@ -437,6 +437,68 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def _normalise_module_aliases(module: str) -> set[str]:
+    """Return a set of candidate module names for cache invalidation."""
+
+    aliases = {module}
+    if module.startswith("menace_sandbox."):
+        aliases.add(module[len("menace_sandbox."):])
+    if module.startswith("menace."):
+        aliases.add(module[len("menace."):])
+    if "." in module:
+        parts = module.split(".")
+        cumulative = []
+        for part in parts:
+            cumulative.append(part)
+            aliases.add(".".join(cumulative))
+    return {alias for alias in aliases if alias}
+
+
+def _extract_partial_modules(exc: BaseException) -> set[str]:
+    """Return modules referenced by partial import or circular import errors."""
+
+    modules: set[str] = set()
+    for item in _iter_exception_chain(exc):
+        if not isinstance(item, ImportError):
+            continue
+        message = str(item)
+        match = _PARTIAL_MODULE_RE.search(message)
+        if match:
+            modules.add(match.group("module"))
+        match = _CIRCULAR_IMPORT_RE.search(message)
+        if match:
+            modules.add(match.group("module"))
+    return modules
+
+
+def _purge_partial_modules(exc: BaseException) -> list[str]:
+    """Remove partially initialised modules from :mod:`sys.modules`.
+
+    When Windows interleaves multiple concurrent imports the interpreter often
+    leaves behind module placeholders whose ``__spec__`` is ``None``.  Subsequent
+    imports then continue to observe the incomplete module and raise
+    ``ImportError`` with "partially initialized" hints.  Clearing the affected
+    entries gives the loader a clean slate on the next retry instead of
+    repeatedly cycling through the half-imported module.
+    """
+
+    candidates = _extract_partial_modules(exc)
+    removed: list[str] = []
+    for module in candidates:
+        for alias in _normalise_module_aliases(module):
+            if alias in {"menace_sandbox", "menace"}:
+                continue
+            if alias in sys.modules:
+                removed.append(alias)
+                sys.modules.pop(alias, None)
+    if removed:
+        logger.debug(
+            "purged partially initialised modules after import error: %s",
+            ", ".join(sorted(set(removed))),
+        )
+    return removed
+
 # Import failures originating from these modules indicate that the self-coding
 # runtime itself is unavailable rather than a temporary race with the module
 # graph.  Treating them as non-transient prevents the registry from retrying
@@ -1035,6 +1097,7 @@ class BotRegistry:
                 return
             except Exception as exc:
                 node.setdefault("internalization_errors", []).append(str(exc))
+                _purge_partial_modules(exc)
                 if _is_transient_internalization_error(exc) and (
                     attempts < self._max_internalization_retries
                 ):
