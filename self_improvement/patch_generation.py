@@ -11,8 +11,8 @@ generation.  Callers must supply a ready-to-use
 import logging
 
 from .utils import _load_callable, _call_with_retries
-from ..sandbox_settings import SandboxSettings
-from ..metrics_exporter import self_improvement_failure_total
+from menace_sandbox.sandbox_settings import SandboxSettings
+from menace_sandbox.metrics_exporter import self_improvement_failure_total
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
