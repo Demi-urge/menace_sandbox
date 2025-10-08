@@ -127,6 +127,20 @@ def test_collect_missing_modules_handles_procedure_not_found():
     assert "quick_fix_engine" in missing
 
 
+def test_collect_missing_modules_detects_quick_fix_engine_hint():
+    err = ImportError("QuickFixEngine is required but could not be imported")
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
+
+
+def test_collect_missing_modules_detects_quick_fix_engine_install_hint():
+    err = ImportError(
+        "QuickFixEngine is required but could not be imported; pip install menace[quickfix]"
+    )
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
+
+
 def test_transient_detection_uses_windows_path_hint():
     err = ModuleNotFoundError(
         "module import failed", name=None, path=r"C:\\bots\\future_lucrativity_bot.py"

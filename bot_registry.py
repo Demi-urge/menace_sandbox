@@ -437,6 +437,18 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
     re.IGNORECASE,
 )
 
+# High level ImportError messages occasionally hide the underlying module
+# name which prevents ``_collect_missing_modules`` from surfacing actionable
+# diagnostics.  ``QuickFixEngine`` is a common example on Windows where the
+# optional quick-fix extension is missing; the resulting ImportError only
+# references the class name or installation hint.  Mapping these textual
+# signatures to their canonical modules keeps the dependency inference
+# deterministic and avoids repeated transient retries during sandbox start-up.
+_KNOWN_DEPENDENCY_HINTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"\bQuickFixEngine\b", re.IGNORECASE), ("quick_fix_engine",)),
+    (re.compile(r"menace\[quickfix\]", re.IGNORECASE), ("quick_fix_engine",)),
+)
+
 
 def _normalise_module_aliases(module: str) -> set[str]:
     """Return a set of candidate module names for cache invalidation."""
@@ -576,6 +588,9 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 if dll_match:
                     missing.add(dll_match.group(1))
             message = str(item)
+            for pattern, modules in _KNOWN_DEPENDENCY_HINTS:
+                if pattern.search(message):
+                    missing.update(modules)
             path_tokens: set[str] = set()
             path_hint = getattr(item, "path", None)
             if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
