@@ -153,6 +153,11 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_settings import SandboxSettings, normalize_workflow_tests  # type: ignore
 
+try:  # pragma: no cover - prefer package aware import helper when available
+    from .import_compat import load_internal as _load_internal_module
+except Exception:  # pragma: no cover - fallback for flat execution
+    from import_compat import load_internal as _load_internal_module  # type: ignore
+
 try:  # pragma: no cover - allow flat imports
     from .threshold_service import threshold_service
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -2712,30 +2717,63 @@ def _load_self_coding_components() -> _SelfCodingComponents:
             missing=missing,
         )
 
-    try:
-        from .self_coding_manager import internalize_coding_bot
-        from .self_coding_engine import SelfCodingEngine
-        from .model_automation_pipeline import ModelAutomationPipeline
-        from .data_bot import DataBot
-        from .code_database import CodeDB
-        from .gpt_memory import GPTMemoryManager
-        from context_builder_util import create_context_builder
-    except ImportError as exc:
-        modules = _collect_missing_modules(exc)
-        if modules:
+    def _load(name: str) -> Any:
+        try:
+            return _load_internal_module(name)
+        except (ImportError, ModuleNotFoundError) as exc:
+            modules = set(_collect_missing_modules(exc))
+            if name not in modules and f"menace_sandbox.{name}" not in modules:
+                modules.add(name)
             raise SelfCodingUnavailableError(
                 "self-coding bootstrap failed: missing runtime dependencies",
                 missing=modules,
             ) from exc
+
+    try:
+        manager_mod = _load("self_coding_manager")
+        engine_mod = _load("self_coding_engine")
+        pipeline_mod = _load("model_automation_pipeline")
+        data_bot_mod = _load("data_bot")
+        code_db_mod = _load("code_database")
+        memory_mod = _load("gpt_memory")
+        ctx_util_mod = _load("context_builder_util")
+    except SelfCodingUnavailableError:
         raise
+    except Exception as exc:  # pragma: no cover - defensive catch-all
+        modules = _collect_missing_modules(exc)
+        raise SelfCodingUnavailableError(
+            "self-coding bootstrap failed: unexpected runtime error",
+            missing=modules or ("self_coding_runtime",),
+        ) from exc
+
+    missing_attrs: list[str] = []
+    components = {
+        "internalize_coding_bot": getattr(manager_mod, "internalize_coding_bot", None),
+        "engine_cls": getattr(engine_mod, "SelfCodingEngine", None),
+        "pipeline_cls": getattr(pipeline_mod, "ModelAutomationPipeline", None),
+        "data_bot_cls": getattr(data_bot_mod, "DataBot", None),
+        "code_db_cls": getattr(code_db_mod, "CodeDB", None),
+        "memory_manager_cls": getattr(memory_mod, "GPTMemoryManager", None),
+        "context_builder_factory": getattr(ctx_util_mod, "create_context_builder", None),
+    }
+
+    for attr, value in components.items():
+        if value is None:
+            missing_attrs.append(attr)
+
+    if missing_attrs:
+        raise SelfCodingUnavailableError(
+            "self-coding bootstrap failed: missing runtime dependencies",
+            missing=tuple(sorted(missing_attrs)),
+        )
 
     return _SelfCodingComponents(
-        internalize_coding_bot,
-        SelfCodingEngine,
-        ModelAutomationPipeline,
-        DataBot,
-        CodeDB,
-        GPTMemoryManager,
-        create_context_builder,
+        components["internalize_coding_bot"],
+        components["engine_cls"],
+        components["pipeline_cls"],
+        components["data_bot_cls"],
+        components["code_db_cls"],
+        components["memory_manager_cls"],
+        components["context_builder_factory"],
     )
 
