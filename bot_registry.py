@@ -1097,7 +1097,16 @@ class BotRegistry:
                 return
             except Exception as exc:
                 node.setdefault("internalization_errors", []).append(str(exc))
+                missing_modules = _collect_missing_modules(exc)
                 _purge_partial_modules(exc)
+                if missing_modules:
+                    logger.debug(
+                        "blocking internalization for %s due to missing dependencies: %s",
+                        name,
+                        ", ".join(sorted(missing_modules)),
+                    )
+                    self._record_internalization_blocked(name, exc)
+                    return
                 if _is_transient_internalization_error(exc) and (
                     attempts < self._max_internalization_retries
                 ):
@@ -1111,6 +1120,12 @@ class BotRegistry:
                             name, exc, state
                         )
                         return
+                    logger.debug(
+                        "deferring internalization for %s due to %s: %s",
+                        name,
+                        exc.__class__.__name__,
+                        exc,
+                    )
                     logger.debug(
                         "retrying internalization for %s after transient error (attempt %s)",
                         name,
