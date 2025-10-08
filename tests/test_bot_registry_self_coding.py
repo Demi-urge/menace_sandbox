@@ -187,6 +187,50 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
     assert "internalization_blocked" in node
 
 
+def test_transient_import_error_purges_partial_modules(monkeypatch):
+    registry = _make_registry()
+
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
+    registry.graph.add_node("TaskValidationBot")
+    node = registry.graph.nodes["TaskValidationBot"]
+    node["pending_internalization"] = True
+    registry._internalization_retry_attempts["TaskValidationBot"] = 0
+
+    partial_msg = (
+        "cannot import name 'TaskValidationBot' from partially initialized module "
+        "'menace_sandbox.task_validation_bot' (most likely due to a circular import)"
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise ImportError(partial_msg)
+
+    monkeypatch.setattr(
+        registry,
+        "_internalize_missing_coding_bot",
+        _boom,
+    )
+
+    import sys
+    import types
+
+    sys.modules.setdefault("menace_sandbox", types.ModuleType("menace_sandbox"))
+    partial = types.ModuleType("menace_sandbox.task_validation_bot")
+    sys.modules["menace_sandbox.task_validation_bot"] = partial
+    sys.modules["task_validation_bot"] = partial
+
+    registry._retry_internalization("TaskValidationBot")
+
+    assert "task_validation_bot" not in sys.modules
+    assert "menace_sandbox.task_validation_bot" not in sys.modules
+    assert "menace_sandbox" in sys.modules
+    assert "TaskValidationBot" not in registry._internalization_retry_attempts
+    assert node.get("pending_internalization") is False
+    assert "internalization_blocked" in node
+
+
 def test_transient_import_errors_with_varying_signatures(monkeypatch):
     registry = _make_registry()
     registry._max_transient_error_signature_repeats = 99
