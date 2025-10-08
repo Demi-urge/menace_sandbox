@@ -89,14 +89,30 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
 
 from context_builder_util import ensure_fresh_weights, create_context_builder
 
-try:  # pragma: no cover - allow flat and package imports
-    from .coding_bot_interface import (
-        manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,
-    )
-except Exception:  # pragma: no cover - fallback for flat layout
-    from coding_bot_interface import (
-        manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,  # type: ignore
-    )
+if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .coding_bot_interface import manager_generate_helper as _ManagerGenerateHelperProto
+else:  # pragma: no cover - runtime fallback type to avoid import cycle
+    _ManagerGenerateHelperProto = Callable[..., str]
+
+_BASE_MANAGER_GENERATE_HELPER: _ManagerGenerateHelperProto | None = None
+
+
+def _get_base_manager_generate_helper() -> _ManagerGenerateHelperProto:
+    """Lazily import ``manager_generate_helper`` to avoid circular imports."""
+
+    global _BASE_MANAGER_GENERATE_HELPER
+    if _BASE_MANAGER_GENERATE_HELPER is not None:
+        return _BASE_MANAGER_GENERATE_HELPER
+
+    try:  # pragma: no cover - prefer relative import when packaged
+        from .coding_bot_interface import manager_generate_helper as _imported_helper
+    except Exception:  # pragma: no cover - support flat execution layouts
+        from coding_bot_interface import (  # type: ignore
+            manager_generate_helper as _imported_helper,
+        )
+
+    _BASE_MANAGER_GENERATE_HELPER = _imported_helper
+    return _imported_helper
 
 
 _DEFAULT_CREATE_CONTEXT_BUILDER = create_context_builder
@@ -117,15 +133,17 @@ def _manager_generate_helper_with_builder(
 
     builder = context_builder
     ensure_fresh_weights(builder)
+    base_helper = _get_base_manager_generate_helper()
+
     try:
-        return _BASE_MANAGER_GENERATE_HELPER(
+        return base_helper(
             manager,
             description,
             context_builder=builder,
             **kwargs,
         )
     except TypeError:  # pragma: no cover - backwards compatibility for stubs
-        return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
+        return base_helper(manager, description, **kwargs)
 
 
 for _mod_name in ("quick_fix_engine", "menace.quick_fix_engine"):
