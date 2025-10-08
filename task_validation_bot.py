@@ -107,6 +107,14 @@ def _resolve_management() -> tuple[
         registry = registry_cls()
         data_bot = data_bot_cls(start_server=False)
         context_builder = ctx_util.create_context_builder()
+
+        def _validator_factory() -> "TaskValidationBot":
+            module = sys.modules.get(__name__)
+            if module is None or getattr(module, "TaskValidationBot", None) is None:
+                module = load_internal("task_validation_bot")
+            validator_cls = getattr(module, "TaskValidationBot")
+            return validator_cls([])
+
         engine = engine_mod.SelfCodingEngine(
             code_db_cls(),
             memory_cls(),
@@ -115,6 +123,7 @@ def _resolve_management() -> tuple[
         pipeline = pipeline_mod.ModelAutomationPipeline(
             context_builder=context_builder,
             bot_registry=registry,
+            validator_factory=_validator_factory,
         )
         manager = manager_mod.SelfCodingManager(
             engine,
