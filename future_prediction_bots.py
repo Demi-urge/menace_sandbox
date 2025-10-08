@@ -1,9 +1,11 @@
+"""Future prediction bots with resilient self-coding bootstrap logic."""
+
 from __future__ import annotations
 
 import importlib
 import logging
 import os
-from typing import Any, Callable, Iterable, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar
 
 try:  # pragma: no cover - prefer package import when available
     from .self_coding_dependency_probe import ensure_self_coding_ready
