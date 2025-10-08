@@ -107,10 +107,8 @@ def create_context_builder(*args, **kwargs):  # type: ignore[override]
     missing: list[str] = []
     unreadable: list[str] = []
     for attr, path in paths.items():
-        candidate: Path | None = path
-        if not path.exists():
-            missing.append(path.name)
-            continue
+        candidate: Path | None = None
+
         if callable(ensure_readable):
             try:
                 ensured = ensure_readable(path, path.name)
@@ -122,8 +120,14 @@ def create_context_builder(*args, **kwargs):  # type: ignore[override]
                 continue
             else:
                 candidate = Path(ensured)
+        else:
+            candidate = path
 
         if not candidate.exists():
+            # ``ensure_readable`` in ``config.create_context_builder`` touches the
+            # database file on demand.  When running without that helper (for
+            # example in bespoke test setups) we still want to surface a clear
+            # missing-file error.
             missing.append(path.name)
             continue
         if not candidate.is_file():
