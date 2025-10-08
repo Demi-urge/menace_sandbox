@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover - optional dependency
         ValidationError,
     )
 
-from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
 from .hierarchy_assessment_bot import HierarchyAssessmentBot
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .data_bot import DataBot
@@ -75,11 +74,15 @@ from .action_planner import ActionPlanner
 from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from .bot_registry import BotRegistry
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
 else:  # pragma: no cover - runtime fallback
+    BotPlanningBot = Any  # type: ignore
+    PlanningTask = Any  # type: ignore
+    BotPlan = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
 
@@ -247,7 +250,9 @@ class ModelAutomationPipeline:
         self._validator: TaskValidationBot | None = validator
         self._validator_wrapped = False
         self._bots_primed = False
-        self.planner = planner or BotPlanningBot()
+        planner_cls, planning_task_cls, _ = _planning_components()
+        self._planning_task_cls = planning_task_cls
+        self.planner = planner or planner_cls()
         self.hierarchy = hierarchy or HierarchyAssessmentBot()
         self.data_bot = data_bot or DataBot()
         self.capital_manager = capital_manager or CapitalManagementBot()
@@ -501,7 +506,7 @@ class ModelAutomationPipeline:
         trust_weight: float = 1.0,
     ) -> List[BotPlan]:
         planning = [
-            PlanningTask(
+            self._planning_task_cls(
                 description=t.description,
                 complexity=t.complexity,
                 frequency=1,
@@ -837,6 +842,17 @@ class ModelAutomationPipeline:
         except Exception as exc:
             self.logger.exception("bot registry save failed: %s", exc)
         return result
+
+
+@lru_cache(maxsize=1)
+def _planning_components() -> tuple[type["BotPlanningBot"], type["PlanningTask"], type["BotPlan"]]:
+    """Load planning helpers lazily to avoid circular imports."""
+
+    from .bot_planning_bot import BotPlanningBot as _BotPlanningBot
+    from .bot_planning_bot import BotPlan as _BotPlan
+    from .bot_planning_bot import PlanningTask as _PlanningTask
+
+    return _BotPlanningBot, _PlanningTask, _BotPlan
 
 
 __all__ = ["AutomationResult", "ModelAutomationPipeline"]
