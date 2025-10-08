@@ -3,6 +3,7 @@
 from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
     _collect_missing_modules,
+    _collect_missing_resources,
     _is_probable_filesystem_path,
     _is_transient_internalization_error,
 )
@@ -173,3 +174,17 @@ def test_is_probable_filesystem_path_detects_unc_prefix():
 
 def test_is_probable_filesystem_path_rejects_module_names():
     assert _is_probable_filesystem_path("menace_sandbox.task_validation_bot") is False
+
+
+def test_collect_missing_resources_parses_context_builder_hint():
+    err = FileNotFoundError(
+        "Missing required context builder database(s): bots.db, errors.db"
+    )
+    missing = _collect_missing_resources(err)
+    assert {"bots.db", "errors.db"}.issubset(missing)
+
+
+def test_collect_missing_resources_uses_filename_attributes():
+    err = FileNotFoundError(2, "No such file", "C:/sandbox/data/code.db")
+    missing = _collect_missing_resources(err)
+    assert "code.db" in missing
