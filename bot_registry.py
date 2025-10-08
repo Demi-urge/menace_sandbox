@@ -432,6 +432,10 @@ _WINDOWS_LIBRARY_HINT_RE = re.compile(
     r"(?:module|library) ['\"](?P<module>[\w.\-]+)['\"] (?:could not|not) be found",
     re.IGNORECASE,
 )
+_WINDOWS_ERROR_LOADING_RE = re.compile(
+    r"Error loading ['\"](?P<module>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 
 # Import failures originating from these modules indicate that the self-coding
 # runtime itself is unavailable rather than a temporary race with the module
@@ -505,6 +509,18 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 if dll_match:
                     missing.add(dll_match.group(1))
             message = str(item)
+            path_tokens: set[str] = set()
+            path_hint = getattr(item, "path", None)
+            if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
+                path_tokens.update(_normalise_token(path_hint))
+            filename_hint = getattr(item, "filename", None)
+            if isinstance(filename_hint, str) and _is_probable_filesystem_path(
+                filename_hint
+            ):
+                path_tokens.update(_normalise_token(filename_hint))
+            for arg in getattr(item, "args", ()):  # pragma: no cover - defensive
+                if isinstance(arg, str) and _is_probable_filesystem_path(arg):
+                    path_tokens.update(_normalise_token(arg))
             if _DLL_LOAD_FAILED_PREFIX_RE.search(message):
                 # ``ImportError`` instances raised by ``importlib`` on Windows
                 # frequently omit the module name altogether when the failure
@@ -513,16 +529,21 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                 # error message allows us to surface a deterministic
                 # ``SelfCodingUnavailableError`` instead of looping on
                 # transient retries.
-                path_tokens = _normalise_token(getattr(item, "path", None))
-                missing.update(path_tokens)
+                if not path_tokens:
+                    path_tokens.update(_normalise_token(getattr(item, "path", None)))
                 for match in _WINDOWS_DLL_TOKEN_RE.finditer(message):
-                    missing.update(_normalise_token(match.group("token")))
+                    path_tokens.update(_normalise_token(match.group("token")))
                 lib_match = _WINDOWS_LIBRARY_HINT_RE.search(message)
                 if lib_match:
-                    missing.update(_normalise_token(lib_match.group("module")))
+                    path_tokens.update(_normalise_token(lib_match.group("module")))
                 cause = getattr(item, "__cause__", None)
                 if isinstance(cause, OSError):
-                    missing.update(_normalise_token(getattr(cause, "filename", None)))
+                    path_tokens.update(_normalise_token(getattr(cause, "filename", None)))
+            error_load_match = _WINDOWS_ERROR_LOADING_RE.search(message)
+            if error_load_match:
+                path_tokens.update(_normalise_token(error_load_match.group("module")))
+            if path_tokens:
+                missing.update(path_tokens)
             circular_match = _CIRCULAR_IMPORT_RE.search(str(item))
             if circular_match:
                 missing.add(circular_match.group("module"))
@@ -556,6 +577,20 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
 
         module_name = _missing_module_name(exc)
         if module_name is None:
+            path_hint = getattr(exc, "path", None)
+            if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
+                return False
+            filename_hint = getattr(exc, "filename", None)
+            if isinstance(filename_hint, str) and _is_probable_filesystem_path(
+                filename_hint
+            ):
+                return False
+            for arg in getattr(exc, "args", ()):  # pragma: no cover - defensive
+                if isinstance(arg, str):
+                    if _WINDOWS_DLL_TOKEN_RE.search(arg) or _WINDOWS_ERROR_LOADING_RE.search(arg):
+                        return False
+                    if _is_probable_filesystem_path(arg):
+                        return False
             return True
         root_name = module_name.split(".", 1)[0]
         if module_name.startswith(("menace_sandbox.", "menace.")) or root_name in _INTERNAL_SELF_CODING_MODULES:

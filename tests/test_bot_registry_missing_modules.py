@@ -75,6 +75,14 @@ def test_collect_missing_modules_handles_module_not_found_without_name():
     assert "quick_fix_engine" in missing
 
 
+def test_collect_missing_modules_uses_windows_path_hint():
+    err = ModuleNotFoundError(
+        "module import failed", name=None, path=r"C:\\bots\\future_profitability_bot.py"
+    )
+    missing = _collect_missing_modules(err)
+    assert "future_profitability_bot" in missing
+
+
 def test_transient_detection_with_inferred_missing_module():
     err = ModuleNotFoundError(
         "DLL load failed while importing quick_fix_engine: The specified module could not be found.",
@@ -98,6 +106,13 @@ def test_collect_missing_modules_handles_procedure_not_found():
     )
     missing = _collect_missing_modules(err)
     assert "quick_fix_engine" in missing
+
+
+def test_transient_detection_uses_windows_path_hint():
+    err = ModuleNotFoundError(
+        "module import failed", name=None, path=r"C:\\bots\\future_lucrativity_bot.py"
+    )
+    assert _is_transient_internalization_error(err) is False
 
 
 def test_is_probable_filesystem_path_detects_windows_drive(tmp_path):
