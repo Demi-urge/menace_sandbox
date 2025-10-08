@@ -239,3 +239,48 @@ def test_transient_import_errors_with_varying_signatures(monkeypatch):
     assert error_meta["repeat_count"] == 1
     assert node.get("pending_internalization") is False
 
+
+def test_manual_registration_clears_pending_state(tmp_path):
+    registry = _make_registry()
+
+    registry.graph.add_node("TaskValidationBot")
+    node = registry.graph.nodes["TaskValidationBot"]
+    node["pending_internalization"] = True
+    node["self_coding_disabled"] = {
+        "reason": "previous failure",
+        "missing_dependencies": ["quick_fix_engine"],
+    }
+    registry._internalization_retry_attempts["TaskValidationBot"] = 3
+
+    cancelled: list[str] = []
+
+    class _Handle:
+        def cancel(self) -> None:  # pragma: no cover - invoked by test
+            cancelled.append("cancelled")
+
+    registry._internalization_retry_handles["TaskValidationBot"] = _Handle()
+
+    module_file = tmp_path / "task_validation_bot.py"
+    module_file.write_text("# stub\n", encoding="utf-8")
+
+    registry.register_bot(
+        "TaskValidationBot",
+        module_path=module_file,
+        is_coding_bot=False,
+    )
+
+    node = registry.graph.nodes["TaskValidationBot"]
+    assert "pending_internalization" not in node
+    assert "internalization_blocked" not in node
+    assert "internalization_errors" not in node
+    assert registry._internalization_retry_attempts.get("TaskValidationBot") is None
+    assert cancelled == ["cancelled"]
+
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    assert disabled["manual_override"] is True
+    assert disabled["source"] == "manual_registration"
+    assert disabled["module"].endswith("task_validation_bot.py")
+    assert disabled.get("previous_reason") == "previous failure"
+    assert disabled.get("missing_dependencies") == ["quick_fix_engine"]
+
