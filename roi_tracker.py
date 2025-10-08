@@ -32,7 +32,7 @@ import sqlite3
 import sys
 from pathlib import Path
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -180,6 +180,24 @@ from scope_utils import Scope, build_scope_clause, apply_scope
 # Reuse a pre-configured router when available, otherwise create a local one
 # for standalone execution.
 router = GLOBAL_ROUTER or init_db_router("roi_tracker")
+
+
+def _resolve_telemetry_db_path() -> str:
+    """Return a filesystem path for the telemetry database.
+
+    ``resolve_path`` normally locates existing resources inside the repository
+    roots.  When the telemetry database has not been created yet we create an
+    empty file inside the primary project root so the ``TelemetryBackend`` can
+    bootstrap its schema on first use.  This mirrors the behaviour of other
+    SQLite-backed components which initialise their databases lazily.
+    """
+
+    try:
+        return str(resolve_path("telemetry.db"))
+    except FileNotFoundError:
+        candidate = get_project_root() / "telemetry.db"
+        candidate.touch(exist_ok=True)
+        return str(candidate)
 
 # Critical test suites that significantly impact safety if they fail. The
 # collection may be extended as the project grows but defaults cover the most
@@ -354,7 +372,7 @@ class ROITracker:
         self.raroi_borderline_threshold = float(raroi_borderline_threshold)
         self.borderline_bucket = borderline_bucket or BorderlineBucket()
         self.telemetry = telemetry_backend or TelemetryBackend(
-            str(resolve_path("telemetry.db"))
+            _resolve_telemetry_db_path()
         )
         self.results_db = results_db
         self.current_workflow_id: str | None = None
