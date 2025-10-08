@@ -6,6 +6,7 @@ from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
     _collect_missing_modules,
     _collect_missing_resources,
+    _exception_signature,
     _is_probable_filesystem_path,
     _is_transient_internalization_error,
 )
@@ -218,6 +219,22 @@ def test_transient_detection_uses_windows_path_hint():
         "module import failed", name=None, path=r"C:\\bots\\future_lucrativity_bot.py"
     )
     assert _is_transient_internalization_error(err) is False
+
+
+def test_exception_signature_normalises_windows_paths():
+    err1 = ImportError(
+        "Failed while loading 'C:/menace/runtime/quick_fix_engine.cp311-win_amd64.pyd'"
+    )
+    err2 = ImportError(
+        "Failed while loading 'D:/sandbox/runtime/quick_fix_engine.cp311-win_amd64.pyd'"
+    )
+    assert _exception_signature(err1) == _exception_signature(err2)
+
+
+def test_exception_signature_normalises_hex_addresses():
+    err1 = RuntimeError("quick_fix_engine handle at 0x7FFABCD")
+    err2 = RuntimeError("quick_fix_engine handle at 0x7FF0123")
+    assert _exception_signature(err1) == _exception_signature(err2)
 
 
 def test_is_probable_filesystem_path_detects_windows_drive(tmp_path):

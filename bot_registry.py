@@ -193,6 +193,12 @@ _REGISTERED_BOTS = {}
 _PATH_SEPARATORS: tuple[str, ...] = tuple(
     sorted({sep for sep in (os.sep, os.altsep, "/", "\\") if sep})
 )
+_QUOTED_TOKEN_RE = re.compile(r"([\'\"])(?P<token>[^\'\"\r\n]+)\1")
+_HEX_ADDRESS_RE = re.compile(r"0x[0-9A-Fa-f]+")
+_WINDOWS_ABS_PATH_RE = re.compile(
+    r"(?<![\w.])(?:[A-Za-z]:\\|\\\\)(?:[^\\/:*?\"<>|\r\n]+\\)*[^\\/:*?\"<>|\r\n]+"
+)
+_POSIX_ABS_PATH_RE = re.compile(r"(?<![\w.])/(?:[^\s\'\":]+/)*[^\s\'\":]+")
 
 
 def _is_probable_filesystem_path(value: str | os.PathLike[str] | None) -> bool:
@@ -317,10 +323,41 @@ class _TransientErrorState:
         return False
 
 
+def _normalise_exception_message(exc: BaseException) -> str:
+    """Return ``exc``'s message with volatile runtime details stripped."""
+
+    message = str(exc)
+    if not message:
+        return ""
+
+    def _strip_token(match: re.Match[str]) -> str:
+        token = match.group("token")
+        quote = match.group(1)
+        if _HEX_ADDRESS_RE.fullmatch(token):
+            return f"{quote}0x<addr>{quote}"
+        if _is_probable_filesystem_path(token):
+            return f"{quote}<path>{quote}"
+        return match.group(0)
+
+    # Normalise quoted tokens first so path heuristics see unescaped values.
+    normalised = _QUOTED_TOKEN_RE.sub(_strip_token, message)
+
+    def _replace_posix(match: re.Match[str]) -> str:
+        token = match.group(0)
+        return "<path>" if _is_probable_filesystem_path(token) else token
+
+    # Replace explicit filesystem paths that were not quoted.
+    normalised = _WINDOWS_ABS_PATH_RE.sub("<path>", normalised)
+    normalised = _POSIX_ABS_PATH_RE.sub(_replace_posix, normalised)
+    normalised = _HEX_ADDRESS_RE.sub("0x<addr>", normalised)
+
+    return normalised
+
+
 def _exception_signature(exc: BaseException) -> tuple[str, str]:
     """Return a stable signature describing *exc* for retry heuristics."""
 
-    return (exc.__class__.__name__, str(exc))
+    return (exc.__class__.__name__, _normalise_exception_message(exc))
 
 def _default_thresholds() -> SimpleNamespace:
     """Return conservative default self-coding thresholds.
