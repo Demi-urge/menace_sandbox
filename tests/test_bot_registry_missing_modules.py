@@ -113,6 +113,15 @@ def test_collect_missing_modules_uses_windows_path_hint():
     assert "future_profitability_bot" in missing
 
 
+def test_collect_missing_modules_handles_constructor_hint():
+    err = ImportError(
+        "Could not find module 'C:\\menace\\quick_fix_engine.cp311-win_amd64.pyd' "
+        "(or one of its dependencies). Try using the full path with constructor syntax.",
+    )
+    missing = _collect_missing_modules(err)
+    assert "quick_fix_engine" in missing
+
+
 def test_transient_detection_with_inferred_missing_module():
     err = ModuleNotFoundError(
         "DLL load failed while importing quick_fix_engine: The specified module could not be found.",
