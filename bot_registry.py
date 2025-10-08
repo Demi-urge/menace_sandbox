@@ -728,7 +728,53 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             missing.update(
                 _normalise_module_aliases(halted_match.group("module"))
             )
+    if not missing:
+        missing.update(_infer_modules_from_traceback(exc))
     return missing
+
+
+def _infer_modules_from_traceback(exc: BaseException) -> set[str]:
+    """Infer sandbox module names from traceback frames when messages are vague."""
+
+    inferred: set[str] = set()
+    repo_root = Path(__file__).resolve().parent
+
+    for item in _iter_exception_chain(exc):
+        tb = getattr(item, "__traceback__", None)
+        while tb is not None:
+            frame = tb.tb_frame
+            module_name = frame.f_globals.get("__name__")
+            if isinstance(module_name, str) and module_name.startswith(
+                ("menace_sandbox.", "menace.")
+            ):
+                inferred.update(_normalise_module_aliases(module_name))
+
+            filename = frame.f_code.co_filename
+            if filename:
+                try:
+                    path = Path(filename)
+                except (TypeError, ValueError):
+                    path = None
+                if path is not None:
+                    try:
+                        resolved = (
+                            path if path.is_absolute() else (repo_root / path)
+                        ).resolve(strict=False)
+                    except (RuntimeError, OSError):
+                        resolved = path
+                    try:
+                        relative = resolved.relative_to(repo_root)
+                    except ValueError:
+                        pass
+                    else:
+                        module_hint = ".".join(relative.with_suffix("").parts)
+                        if module_hint.startswith(("menace_sandbox.", "menace.")):
+                            inferred.update(_normalise_module_aliases(module_hint))
+            tb = tb.tb_next
+
+    inferred.discard("menace_sandbox")
+    inferred.discard("menace")
+    return inferred
 
 
 def _collect_missing_resources(exc: BaseException) -> set[str]:
