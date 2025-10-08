@@ -122,6 +122,14 @@ def test_cannot_import_without_hint_not_transient():
     assert _is_transient_internalization_error(err) is False
 
 
+def test_partial_initialised_cannot_import_without_circular_hint_not_transient():
+    err = ImportError(
+        "cannot import name 'TaskValidationBot' from partially initialized module "
+        "'menace_sandbox.task_validation_bot' (unknown location)"
+    )
+    assert _is_transient_internalization_error(err) is False
+
+
 def test_collect_missing_modules_infers_from_windows_path():
     err = ImportError(
         "DLL load failed: The specified module could not be found.",

@@ -520,7 +520,8 @@ _TRACEBACK_IGNORED_MODULES: frozenset[str] = frozenset(
     }
 )
 _CANNOT_IMPORT_RE = re.compile(
-    r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from ['\"](?P<module>[^'\"]+)['\"]",
+    r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from "
+    r"(?:partially init(?:ialized|ialised) module |module )?['\"](?P<module>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
 _IMPORT_HALTED_RE = re.compile(
