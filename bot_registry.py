@@ -1535,6 +1535,19 @@ class BotRegistry:
                 node.pop("pending_internalization", None)
                 node.pop("internalization_errors", None)
                 node.pop("internalization_blocked", None)
+                # Persist the manual override so future restarts do not attempt to
+                # revive stale self-coding infrastructure.  Windows command prompt
+                # executions frequently restart the sandbox without cleaning up
+                # the registry which previously left ``selfcoding_manager`` and
+                # ``data_bot`` references dangling.  That state triggered
+                # background internalisation retries even though the bot was
+                # intentionally operating in manual mode, effectively stalling
+                # start-up while import errors looped indefinitely.  Clearing the
+                # cached helpers ensures manual registrations remain passive.
+                node.pop("selfcoding_manager", None)
+                node.pop("manager", None)
+                node.pop("data_bot", None)
+                node["is_coding_bot"] = False
                 previous_disabled = node.get("self_coding_disabled")
                 timestamp = datetime.now(timezone.utc).isoformat()
                 manual_reason = (
