@@ -1118,9 +1118,16 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
     """
 
     message = str(exc)
-    if _CANNOT_IMPORT_RE.search(message):
-        return False
+    lowered = message.lower()
+    has_partial_hint = "partially init" in lowered or _MODULE_GRAPH_INIT_RE.search(lowered)
+
     if _CIRCULAR_HINT_RE.search(message):
+        return False
+
+    cannot_import = _CANNOT_IMPORT_RE.search(message)
+    if cannot_import:
+        if has_partial_hint:
+            return True
         return False
 
     if isinstance(exc, ModuleNotFoundError):
@@ -1152,7 +1159,7 @@ def _is_transient_internalization_error(exc: Exception) -> bool:
         if module_name.startswith(("menace_sandbox.", "menace.")) or root_name in _INTERNAL_SELF_CODING_MODULES:
             return False
         return _resolved_module_exists(module_name)
-    if isinstance(exc, ImportError) and "partially initialized" in message:
+    if isinstance(exc, ImportError) and has_partial_hint:
         return True
     return False
 
