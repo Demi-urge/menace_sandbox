@@ -3,24 +3,26 @@ from __future__ import annotations
 """System-wide GA-driven evolution manager."""
 
 from dataclasses import dataclass
-from typing import Iterable, Dict, Any, List
+from typing import Iterable, Dict, List, TYPE_CHECKING
 import logging
 
 from .ga_clone_manager import GALearningManager
-from .structural_evolution_bot import (
-    StructuralEvolutionBot,
-    EvolutionRecord,
-    SystemSnapshot,
-)
 from .data_bot import MetricsDB
 from .relevancy_radar import flagged_modules
 from .relevancy_radar_service import RelevancyRadarService
+
+if TYPE_CHECKING:  # pragma: no cover - import for type hints only
+    from .structural_evolution_bot import (
+        EvolutionRecord,
+        StructuralEvolutionBot,
+        SystemSnapshot,
+    )
 
 
 @dataclass
 class EvolutionCycleResult:
     ga_results: Dict[str, float]
-    predictions: Iterable[EvolutionRecord]
+    predictions: Iterable["EvolutionRecord"]
 
 
 @dataclass
@@ -42,6 +44,8 @@ class SystemEvolutionManager:
     ) -> None:
         self.bots = list(bots)
         self.ga_manager = GALearningManager(self.bots)
+        from .structural_evolution_bot import StructuralEvolutionBot
+
         self.struct_bot = StructuralEvolutionBot()
         self.metrics_db = metrics_db or MetricsDB()
         self.last_error_rate = 0.0
@@ -85,7 +89,7 @@ class SystemEvolutionManager:
         return proposals
 
     def run_cycle(self) -> EvolutionCycleResult:
-        snap: SystemSnapshot = self.struct_bot.take_snapshot()
+        snap: "SystemSnapshot" = self.struct_bot.take_snapshot()
         preds = self.struct_bot.predict_changes(snap)
         ga_results = {}
         for b in self.bots:
