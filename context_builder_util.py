@@ -101,30 +101,42 @@ def create_context_builder(*args, **kwargs):  # type: ignore[override]
     """Proxy to :func:`config.create_context_builder.create_context_builder`."""
 
     module = _load_builder_module()
+    ensure_readable = getattr(module, "_ensure_readable", None)
+    builder_kwargs: dict[str, str] = {}
     paths = _expected_db_paths(module)
     missing: list[str] = []
     unreadable: list[str] = []
     for attr, path in paths.items():
-        if not path.exists():
+        candidate: Path | None = path
+        if callable(ensure_readable):
+            try:
+                ensured = ensure_readable(path, path.name)
+            except FileNotFoundError:
+                missing.append(path.name)
+                continue
+            except OSError:
+                unreadable.append(path.name)
+                continue
+            else:
+                candidate = Path(ensured)
+
+        if not candidate.exists():
             missing.append(path.name)
-        elif not path.is_file():
+            continue
+        if not candidate.is_file():
             unreadable.append(path.name)
+            continue
+
+        builder_kwargs[attr] = str(candidate)
+
     if missing:
         raise FileNotFoundError(
-            f"Missing required context builder database(s): {', '.join(sorted(missing))}"
+            f"Missing required context builder database(s): {', '.join(sorted(set(missing)))}"
         )
     if unreadable:
         raise OSError(
-            f"Context builder database paths are not files: {', '.join(sorted(unreadable))}"
+            f"Context builder database paths are not files: {', '.join(sorted(set(unreadable)))}"
         )
-
-    ensure_readable = getattr(module, "_ensure_readable", None)
-    builder_kwargs: dict[str, str] = {}
-    for attr, path in paths.items():
-        if callable(ensure_readable):
-            builder_kwargs[attr] = ensure_readable(path, path.name)
-        else:  # pragma: no cover - legacy fallback
-            builder_kwargs[attr] = str(path)
 
     stack_overrides: dict[str, object] = {}
     enabled_env = os.getenv("STACK_CONTEXT_ENABLED")
