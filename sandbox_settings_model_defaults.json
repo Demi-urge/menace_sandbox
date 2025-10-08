@@ -1,0 +1,112 @@
+{
+  "ActorCriticSettings": {
+    "actor_lr": 0.01,
+    "batch_size": 32,
+    "buffer_size": 100,
+    "checkpoint_interval": 100,
+    "checkpoint_path": "actor_critic_state.json",
+    "critic_lr": 0.02,
+    "epsilon": 0.1,
+    "epsilon_decay": 0.99,
+    "eval_interval": 100,
+    "gamma": 0.95,
+    "normalize_states": true,
+    "reward_scale": 1.0
+  },
+  "AlignmentRules": {
+    "allowed_network_calls": 0,
+    "comment_density_severity": 2,
+    "max_comment_density_drop": 0.1,
+    "max_complexity_score": 10,
+    "network_call_severity": 3,
+    "rule_modules": []
+  },
+  "AlignmentSettings": {
+    "baseline_metrics_path": "/workspace/menace_sandbox/sandbox_metrics.yaml",
+    "enable_flagger": true,
+    "failure_threshold": 0.9,
+    "improvement_failure_threshold": 0.9,
+    "improvement_warning_threshold": 0.5,
+    "rules": {
+      "allowed_network_calls": 0,
+      "comment_density_severity": 2,
+      "max_comment_density_drop": 0.1,
+      "max_complexity_score": 10,
+      "network_call_severity": 3,
+      "rule_modules": []
+    },
+    "warning_threshold": 0.5
+  },
+  "AutoMergeSettings": {
+    "coverage_threshold": 1.0,
+    "roi_threshold": 0.0
+  },
+  "BotThresholds": {
+    "error_threshold": null,
+    "patch_success_drop": null,
+    "roi_drop": null,
+    "test_command": null,
+    "test_failure_threshold": null,
+    "workflow_tests": []
+  },
+  "PolicySettings": {
+    "alpha": 0.5,
+    "epsilon": 0.1,
+    "exploration": "epsilon_greedy",
+    "gamma": 0.9,
+    "temperature": 1.0
+  },
+  "ROISettings": {
+    "baseline_window": 5,
+    "compounding_weight": 1.0,
+    "confidence": null,
+    "deviation_tolerance": 0.05,
+    "ema_alpha": 0.1,
+    "entropy_ceiling_consecutive": null,
+    "entropy_ceiling_threshold": null,
+    "entropy_plateau_consecutive": null,
+    "entropy_plateau_threshold": null,
+    "entropy_threshold": null,
+    "entropy_weight": 0.1,
+    "entropy_window": 5,
+    "min_integration_roi": 0.0,
+    "momentum_dev_multiplier": 1.0,
+    "momentum_window": 5,
+    "roi_stagnation_dev_multiplier": 1.0,
+    "stagnation_cycles": 3,
+    "stagnation_threshold": 0.01,
+    "threshold": null
+  },
+  "SynergySettings": {
+    "batch_size": 32,
+    "checkpoint_interval": 50,
+    "confidence": null,
+    "deviation_tolerance": 0.0,
+    "gamma": 0.99,
+    "hidden_size": 32,
+    "layers": 1,
+    "ma_window": null,
+    "noise": 0.1,
+    "optimizer": "adam",
+    "python_fallback": true,
+    "python_max_replay": 1000,
+    "replay_size": 100,
+    "stationarity_confidence": null,
+    "std_threshold": null,
+    "strategy": "dqn",
+    "target_sync": 10,
+    "threshold": null,
+    "threshold_weight": null,
+    "threshold_window": null,
+    "train_interval": 10,
+    "variance_confidence": null,
+    "weight_antifragility": 1.0,
+    "weight_efficiency": 1.0,
+    "weight_maintainability": 1.0,
+    "weight_reliability": 1.0,
+    "weight_resilience": 1.0,
+    "weight_roi": 1.0,
+    "weight_throughput": 1.0,
+    "weights_lr": 0.1
+  }
+}
