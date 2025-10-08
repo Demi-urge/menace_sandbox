@@ -488,8 +488,18 @@ _RESOURCE_ERRNOS: tuple[int, ...] = (
 # signatures to their canonical modules keeps the dependency inference
 # deterministic and avoids repeated transient retries during sandbox start-up.
 _KNOWN_DEPENDENCY_HINTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
-    (re.compile(r"\bQuickFixEngine\b", re.IGNORECASE), ("quick_fix_engine",)),
-    (re.compile(r"menace\[quickfix\]", re.IGNORECASE), ("quick_fix_engine",)),
+    (
+        re.compile(r"\bquick[_\s-]?fix[_\s-]?engine\b", re.IGNORECASE),
+        ("quick_fix_engine",),
+    ),
+    (
+        re.compile(r"menace\[quickfix\]", re.IGNORECASE),
+        ("quick_fix_engine",),
+    ),
+    (
+        re.compile(r"\bcontext_builder_util\b", re.IGNORECASE),
+        ("context_builder_util",),
+    ),
 )
 
 
@@ -617,6 +627,7 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
 
     missing: set[str] = set()
     for item in _iter_exception_chain(exc):
+        message = str(item)
         modules_attr = getattr(item, "missing_modules", None)
         resources_attr = getattr(item, "missing_resources", None)
         dependencies_attr = getattr(item, "missing_dependencies", None)
@@ -647,17 +658,13 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
         if isinstance(item, ImportError):
             if getattr(item, "name", None):
                 missing.add(str(item.name))
-            match = _MISSING_MODULE_RE.search(str(item))
+            match = _MISSING_MODULE_RE.search(message)
             if match:
                 missing.add(match.group(1))
             else:
-                dll_match = _DLL_LOAD_FAILED_RE.search(str(item))
+                dll_match = _DLL_LOAD_FAILED_RE.search(message)
                 if dll_match:
                     missing.add(dll_match.group(1))
-            message = str(item)
-            for pattern, modules in _KNOWN_DEPENDENCY_HINTS:
-                if pattern.search(message):
-                    missing.update(modules)
             path_tokens: set[str] = set()
             path_hint = getattr(item, "path", None)
             if isinstance(path_hint, str) and _is_probable_filesystem_path(path_hint):
@@ -697,17 +704,20 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
             if ctor_match:
                 path_tokens.update(_normalise_token(ctor_match.group("module")))
                 missing.update(path_tokens)
-            circular_match = _CIRCULAR_IMPORT_RE.search(str(item))
-            if circular_match:
-                missing.add(circular_match.group("module"))
-            partial_match = _PARTIAL_MODULE_RE.search(str(item))
-            if partial_match:
-                missing.add(partial_match.group("module"))
-            halted_match = _IMPORT_HALTED_RE.search(message)
-            if halted_match:
-                missing.update(
-                    _normalise_module_aliases(halted_match.group("module"))
-                )
+        for pattern, modules in _KNOWN_DEPENDENCY_HINTS:
+            if pattern.search(message):
+                missing.update(modules)
+        circular_match = _CIRCULAR_IMPORT_RE.search(message)
+        if circular_match:
+            missing.add(circular_match.group("module"))
+        partial_match = _PARTIAL_MODULE_RE.search(message)
+        if partial_match:
+            missing.add(partial_match.group("module"))
+        halted_match = _IMPORT_HALTED_RE.search(message)
+        if halted_match:
+            missing.update(
+                _normalise_module_aliases(halted_match.group("module"))
+            )
     return missing
 
 
@@ -1332,23 +1342,23 @@ class BotRegistry:
         except Exception as exc:
             missing_modules = _collect_missing_modules(exc)
             missing_resources = _collect_missing_resources(exc)
-            if not missing_modules and isinstance(exc, (ImportError, ModuleNotFoundError)):
-                # Windows frequently surfaces dependency issues via generic
-                # ``ImportError`` exceptions that do not expose the missing
-                # module via ``exc.name``.  Re-running the dependency probe lets
-                # us convert those errors into a deterministic
-                # ``SelfCodingUnavailableError`` so the registry can disable
-                # self-coding instead of retrying indefinitely.
+            if not missing_modules and not missing_resources:
+                # When the import heuristics cannot determine the missing
+                # component we fall back to the dependency probe.  This guards
+                # against runtime errors raised from deep inside the self-coding
+                # stack (for example ``quick_fix_engine`` complaining about
+                # ``context_builder_util``) which otherwise surface as
+                # transient failures and stall the sandbox on Windows.
                 try:
                     ready, missing = ensure_self_coding_ready()
                 except Exception:  # pragma: no cover - defensive best effort
                     ready, missing = (False, tuple())
                 if not ready and missing:
                     missing_modules.update(missing)
-                else:
-                    name_attr = getattr(exc, "name", None)
-                    if isinstance(name_attr, str) and name_attr.strip():
-                        missing_modules.add(name_attr.strip())
+            if not missing_modules and isinstance(exc, (ImportError, ModuleNotFoundError)):
+                name_attr = getattr(exc, "name", None)
+                if isinstance(name_attr, str) and name_attr.strip():
+                    missing_modules.add(name_attr.strip())
             if missing_modules or missing_resources:
                 if missing_modules and missing_resources:
                     reason = (
