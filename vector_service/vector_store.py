@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Mapping, Sequence, Tuple, Protocol
 import json
 import math
 import uuid
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 
 try:  # pragma: no cover - optional dependency
     import faiss  # type: ignore
@@ -64,13 +64,31 @@ class VectorStore(Protocol):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_or_prepare_path(path: Path | str) -> Path:
+    """Return an absolute path, creating parents when missing."""
+
+    candidate = Path(path)
+    try:
+        return resolve_path(candidate.as_posix())
+    except FileNotFoundError:
+        if not candidate.is_absolute():
+            try:
+                base = get_project_root()
+            except Exception:
+                base = Path.cwd()
+            candidate = base / candidate
+        candidate = candidate.expanduser()
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        return candidate
+
+
 @dataclass
 class FaissVectorStore:
     dim: int
     path: Path
 
     def __post_init__(self) -> None:
-        self.path = resolve_path(self.path)
+        self.path = _resolve_or_prepare_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
         if self.path.exists():
             self.load()
@@ -147,7 +165,7 @@ class AnnoyVectorStore:
     metric: str = "angular"
 
     def __post_init__(self) -> None:
-        self.path = resolve_path(self.path)
+        self.path = _resolve_or_prepare_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
         self.index = AnnoyIndex(self.dim, self.metric)
         self.ids: List[str] = []
