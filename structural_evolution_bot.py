@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Callable
+from typing import Dict, List, Tuple, Callable, TYPE_CHECKING, Any
 
 try:  # pragma: no cover - optional dependency
     import yaml
@@ -26,18 +26,19 @@ from .evolution_approval_policy import EvolutionApprovalPolicy
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .bot_registry import BotRegistry
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
-from typing import TYPE_CHECKING
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .model_automation_pipeline import ModelAutomationPipeline
     from .evolution_orchestrator import EvolutionOrchestrator
+else:  # pragma: no cover - runtime fallback avoids circular import on load
+    ModelAutomationPipeline = Any  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,17 @@ data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+
+
+def _build_pipeline() -> "ModelAutomationPipeline":
+    """Construct the automation pipeline without triggering circular imports."""
+
+    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
+
+    return _Pipeline(context_builder=_context_builder)
+
+
+pipeline = _build_pipeline()
 evolution_orchestrator = get_orchestrator("StructuralEvolutionBot", data_bot, engine)
 _th = get_thresholds("StructuralEvolutionBot")
 persist_sc_thresholds(
