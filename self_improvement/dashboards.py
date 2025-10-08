@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 try:  # pragma: no cover - simplified environments
-    from ..logging_utils import get_logger
+    from menace_sandbox.logging_utils import get_logger
 except Exception:  # pragma: no cover - fallback
     import logging
 

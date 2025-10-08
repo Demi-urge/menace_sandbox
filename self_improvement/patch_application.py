@@ -16,10 +16,10 @@ import shutil
 
 from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
-from ..sandbox_settings import SandboxSettings
+from menace_sandbox.sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - fallback for flat layout
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback
     from dynamic_path_router import resolve_path  # type: ignore
 

@@ -29,7 +29,7 @@ try:
     from logging_utils import log_record, get_logger, setup_logging, set_correlation_id
 except ImportError:  # pragma: no cover - allow package-relative import
     try:
-        from ..logging_utils import (  # type: ignore
+        from menace_sandbox.logging_utils import (  # type: ignore
             log_record,
             get_logger,
             setup_logging,
@@ -70,7 +70,7 @@ from .init import (
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from dynamic_path_router import resolve_path, resolve_module_path
 except Exception:  # pragma: no cover - fallback for package-relative layout
-    from ..dynamic_path_router import resolve_path, resolve_module_path
+    from menace_sandbox.dynamic_path_router import resolve_path, resolve_module_path
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from metrics_exporter import (
         synergy_weight_updates_total,
@@ -88,7 +88,7 @@ try:  # pragma: no cover - prefer absolute imports when running from repo root
         self_improvement_failure_total,
     )
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..metrics_exporter import (
+    from menace_sandbox.metrics_exporter import (
         synergy_weight_updates_total,
         synergy_weight_update_failures_total,
         synergy_weight_update_alerts_total,
@@ -107,37 +107,37 @@ except ImportError:  # pragma: no cover - fallback for package-relative layout
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from composite_workflow_scorer import CompositeWorkflowScorer
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..composite_workflow_scorer import CompositeWorkflowScorer
+    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from neuroplasticity import PathwayDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..neuroplasticity import PathwayDB
+    from menace_sandbox.neuroplasticity import PathwayDB
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from data_bot import MetricsDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..data_bot import MetricsDB
+    from menace_sandbox.data_bot import MetricsDB
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from roi_results_db import ROIResultsDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..roi_results_db import ROIResultsDB
+    from menace_sandbox.roi_results_db import ROIResultsDB
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from workflow_scorer_core import EvaluationResult
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..workflow_scorer_core import EvaluationResult
+    from menace_sandbox.workflow_scorer_core import EvaluationResult
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from workflow_stability_db import WorkflowStabilityDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from ..workflow_stability_db import WorkflowStabilityDB
+    from menace_sandbox.workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except ImportError:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
 try:  # pragma: no cover - optional dependency
-    from ..workflow_summary_db import WorkflowSummaryDB
+    from menace_sandbox.workflow_summary_db import WorkflowSummaryDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 try:  # pragma: no cover - optional dependency
-    from ..workflow_synergy_comparator import WorkflowSynergyComparator
+    from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
 
@@ -191,11 +191,11 @@ from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
-    from ..module_synergy_grapher import get_synergy_cluster
+    from menace_sandbox.module_synergy_grapher import get_synergy_cluster
 except ImportError:  # pragma: no cover - fallback for flat layout
     from module_synergy_grapher import get_synergy_cluster  # type: ignore
 try:
-    from .. import security_auditor
+    from menace_sandbox import security_auditor
 except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
@@ -230,9 +230,9 @@ from .sandbox_score import get_latest_sandbox_score
 from db_router import DBRouter
 
 
-from ..self_test_service import SelfTestService
+from menace_sandbox.self_test_service import SelfTestService
 try:
-    from .. import self_test_service as sts
+    from menace_sandbox import self_test_service as sts
 except ImportError:  # pragma: no cover - fallback for flat layout
     import self_test_service as sts  # type: ignore
 from orphan_analyzer import classify_module, analyze_redundancy
@@ -242,30 +242,30 @@ import socket
 import contextlib
 import subprocess
 from collections import deque
-from ..error_cluster_predictor import ErrorClusterPredictor
-from ..error_logger import TelemetryEvent
-from .. import mutation_logger as MutationLogger
-from ..gpt_memory import GPTMemoryManager
-from ..local_knowledge_module import init_local_knowledge
+from menace_sandbox.error_cluster_predictor import ErrorClusterPredictor
+from menace_sandbox.error_logger import TelemetryEvent
+from menace_sandbox import mutation_logger as MutationLogger
+from menace_sandbox.gpt_memory import GPTMemoryManager
+from menace_sandbox.local_knowledge_module import init_local_knowledge
 from gpt_memory_interface import GPTMemoryInterface
 try:
-    from ..gpt_knowledge_service import GPTKnowledgeService
+    from menace_sandbox.gpt_knowledge_service import GPTKnowledgeService
 except ImportError:  # pragma: no cover - fallback for flat layout
     from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 try:  # canonical tag constants
-    from ..log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    from menace_sandbox.log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # helper for standardised GPT memory logging
-    from ..memory_logging import log_with_tags, ensure_tags
+    from menace_sandbox.memory_logging import log_with_tags, ensure_tags
 except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags, ensure_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..local_knowledge_module import LocalKnowledgeModule
+    from menace_sandbox.local_knowledge_module import LocalKnowledgeModule
 except ImportError:  # pragma: no cover - fallback for flat layout
     from local_knowledge_module import LocalKnowledgeModule  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..knowledge_retriever import (
+    from menace_sandbox.knowledge_retriever import (
         get_feedback,
         get_error_fixes,
         recent_feedback,
@@ -281,44 +281,44 @@ except ImportError:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
     )
 try:  # pragma: no cover - allow flat imports
-    from ..relevancy_radar import RelevancyRadar, scan as radar_scan, radar
+    from menace_sandbox.relevancy_radar import RelevancyRadar, scan as radar_scan, radar
 except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_radar import RelevancyRadar, scan as radar_scan, radar  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..module_retirement_service import ModuleRetirementService
+    from menace_sandbox.module_retirement_service import ModuleRetirementService
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from module_retirement_service import ModuleRetirementService  # type: ignore
     except ImportError:  # pragma: no cover - last resort
         ModuleRetirementService = object  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..relevancy_metrics_db import RelevancyMetricsDB
+    from menace_sandbox.relevancy_metrics_db import RelevancyMetricsDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..intent_clusterer import IntentClusterer
+    from menace_sandbox.intent_clusterer import IntentClusterer
 except ImportError:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..universal_retriever import UniversalRetriever
+    from menace_sandbox.universal_retriever import UniversalRetriever
 except ImportError:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 try:  # pragma: no cover - optional planner integration
-    from ..workflow_chain_suggester import WorkflowChainSuggester
+    from menace_sandbox.workflow_chain_suggester import WorkflowChainSuggester
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
     except ImportError:  # pragma: no cover - best effort
         WorkflowChainSuggester = None  # type: ignore
 try:  # pragma: no cover - optional planner integration
-    from ..meta_workflow_planner import MetaWorkflowPlanner
+    from menace_sandbox.meta_workflow_planner import MetaWorkflowPlanner
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
     except ImportError:  # pragma: no cover - best effort
         MetaWorkflowPlanner = None  # type: ignore
 try:  # pragma: no cover - optional consumer
-    from ..workflow_synthesizer import consume_planner_suggestions
+    from menace_sandbox.workflow_synthesizer import consume_planner_suggestions
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_synthesizer import consume_planner_suggestions  # type: ignore
@@ -332,26 +332,26 @@ try:  # pragma: no cover - optional dependency
     )
 except ImportError:  # pragma: no cover - best effort fallback
     append_orphan_classifications = append_orphan_cache = append_orphan_traces = None  # type: ignore
-from ..human_alignment_flagger import (
+from menace_sandbox.human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
     flag_alignment_issues,
     _collect_diff_data,
 )
-from ..human_alignment_agent import HumanAlignmentAgent
-from ..audit_logger import log_event as audit_log_event, get_recent_events
-from ..violation_logger import log_violation
-from ..alignment_review_agent import AlignmentReviewAgent
-from ..governance import check_veto, load_rules
+from menace_sandbox.human_alignment_agent import HumanAlignmentAgent
+from menace_sandbox.audit_logger import log_event as audit_log_event, get_recent_events
+from menace_sandbox.violation_logger import log_violation
+from menace_sandbox.alignment_review_agent import AlignmentReviewAgent
+from menace_sandbox.governance import check_veto, load_rules
 try:  # pragma: no cover - allow flat imports
-    from ..evaluation_dashboard import append_governance_result
+    from menace_sandbox.evaluation_dashboard import append_governance_result
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from evaluation_dashboard import append_governance_result  # type: ignore
     except ImportError:  # pragma: no cover - best effort fallback
         append_governance_result = lambda *a, **k: None  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..deployment_governance import evaluate as deployment_evaluate
+    from menace_sandbox.deployment_governance import evaluate as deployment_evaluate
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from deployment_governance import evaluate as deployment_evaluate  # type: ignore
@@ -360,27 +360,27 @@ except ImportError:  # pragma: no cover - fallback for flat layout or missing de
             """Fallback deployment evaluation used when governance tools are missing."""
             return None
 try:
-    from ..borderline_bucket import BorderlineBucket
+    from menace_sandbox.borderline_bucket import BorderlineBucket
 except ImportError:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..foresight_gate import ForesightDecision, is_foresight_safe_to_promote
+    from menace_sandbox.foresight_gate import ForesightDecision, is_foresight_safe_to_promote
 except ImportError:  # pragma: no cover - fallback for flat layout
     from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..upgrade_forecaster import UpgradeForecaster
+    from menace_sandbox.upgrade_forecaster import UpgradeForecaster
 except ImportError:  # pragma: no cover - fallback for flat layout
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..workflow_graph import WorkflowGraph
+    from menace_sandbox.workflow_graph import WorkflowGraph
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_graph import WorkflowGraph  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..forecast_logger import ForecastLogger, log_forecast_record
+    from menace_sandbox.forecast_logger import ForecastLogger, log_forecast_record
 except ImportError:  # pragma: no cover - fallback for flat layout
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from ..workflow_evolution_manager import WorkflowEvolutionManager
+    from menace_sandbox.workflow_evolution_manager import WorkflowEvolutionManager
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
 
@@ -389,7 +389,7 @@ logger = get_logger(__name__)
 
 
 try:  # optional dependency
-    from ..self_model_bootstrap import bootstrap
+    from menace_sandbox.self_model_bootstrap import bootstrap
 except ImportError as exc:
     get_logger(__name__).warning(
         "self_model_bootstrap unavailable",  # noqa: TRY300
@@ -413,12 +413,12 @@ except ImportError as exc:
         raise RuntimeError(
             "self_model_bootstrap module is required for bootstrapping"
         ) from exc
-from ..research_aggregator_bot import (
+from menace_sandbox.research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
     InfoDB,
 )
-from ..model_automation_pipeline import (
+from menace_sandbox.model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
@@ -426,23 +426,23 @@ from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from vector_service.context_builder import ContextBuilder
-from ..diagnostic_manager import DiagnosticManager
-from ..error_bot import ErrorBot, ErrorDB
-from ..data_bot import MetricsDB, DataBot
-from ..code_database import PatchHistoryDB
-from ..patch_score_backend import PatchScoreBackend, backend_from_url
-from ..capital_management_bot import CapitalManagementBot
-from ..learning_engine import LearningEngine
-from ..unified_event_bus import UnifiedEventBus
-from ..neuroplasticity import PathwayRecord, Outcome
-from ..self_coding_engine import SelfCodingEngine
+from menace_sandbox.diagnostic_manager import DiagnosticManager
+from menace_sandbox.error_bot import ErrorBot, ErrorDB
+from menace_sandbox.data_bot import MetricsDB, DataBot
+from menace_sandbox.code_database import PatchHistoryDB
+from menace_sandbox.patch_score_backend import PatchScoreBackend, backend_from_url
+from menace_sandbox.capital_management_bot import CapitalManagementBot
+from menace_sandbox.learning_engine import LearningEngine
+from menace_sandbox.unified_event_bus import UnifiedEventBus
+from menace_sandbox.neuroplasticity import PathwayRecord, Outcome
+from menace_sandbox.self_coding_engine import SelfCodingEngine
 from .target_region import TargetRegion
-from ..action_planner import ActionPlanner
-from ..evolution_history_db import EvolutionHistoryDB
-from .. import synergy_weight_cli
-from .. import synergy_history_db as shd
+from menace_sandbox.action_planner import ActionPlanner
+from menace_sandbox.evolution_history_db import EvolutionHistoryDB
+from menace_sandbox import synergy_weight_cli
+from menace_sandbox import synergy_history_db as shd
 try:  # pragma: no cover - optional dependency
-    from ..adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+    from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
     _HAS_ADAPTIVE_ROI_PREDICTOR = True
 except ImportError as exc:  # pragma: no cover - fallback for tests
     get_logger(__name__).warning(
@@ -456,12 +456,12 @@ except ImportError as exc:  # pragma: no cover - fallback for tests
         return []
 
     _HAS_ADAPTIVE_ROI_PREDICTOR = False
-from ..adaptive_roi_dataset import build_dataset
-from ..roi_tracker import ROITracker
-from ..foresight_tracker import ForesightTracker
-from ..truth_adapter import TruthAdapter
-from ..evaluation_history_db import EvaluationHistoryDB
-from ..self_improvement_policy import (
+from menace_sandbox.adaptive_roi_dataset import build_dataset
+from menace_sandbox.roi_tracker import ROITracker
+from menace_sandbox.foresight_tracker import ForesightTracker
+from menace_sandbox.truth_adapter import TruthAdapter
+from menace_sandbox.evaluation_history_db import EvaluationHistoryDB
+from menace_sandbox.self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
     DQNStrategy,
@@ -469,8 +469,8 @@ from ..self_improvement_policy import (
     ActorCriticStrategy,
     torch as sip_torch,
 )
-from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
-from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
+from menace_sandbox.pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
+from menace_sandbox.env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 from .dashboards import SynergyDashboard, load_synergy_history
 from . import metrics as _si_metrics
 from .baseline_tracker import BaselineTracker, TRACKER as GLOBAL_BASELINE_TRACKER
@@ -975,7 +975,7 @@ class SelfImprovementEngine:
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
-        from ..module_index_db import ModuleIndexDB
+        from menace_sandbox.module_index_db import ModuleIndexDB
 
         auto_map = SandboxSettings().sandbox_auto_map
         if not auto_map and SandboxSettings().sandbox_autodiscover_modules:
@@ -1305,7 +1305,7 @@ class SelfImprovementEngine:
                     )
             if self.evolution_history:
                 try:
-                    from ..evolution_history_db import EvolutionEvent
+                    from menace_sandbox.evolution_history_db import EvolutionEvent
 
                     self.evolution_history.add(
                         EvolutionEvent(
@@ -8032,7 +8032,7 @@ class SelfImprovementEngine:
                         self.logger.exception("patch rollback failed")
             if self.evolution_history:
                 try:
-                    from ..evolution_history_db import EvolutionEvent
+                    from menace_sandbox.evolution_history_db import EvolutionEvent
 
                     event_id = self.evolution_history.add(
                         EvolutionEvent(

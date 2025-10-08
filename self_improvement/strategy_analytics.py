@@ -15,7 +15,7 @@ import json
 import time
 
 try:  # pragma: no cover - allow flat imports
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 

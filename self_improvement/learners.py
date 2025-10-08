@@ -26,7 +26,7 @@ from abc import ABC, abstractmethod
 from sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - simplified environments
-    from ..logging_utils import get_logger, log_record
+    from menace_sandbox.logging_utils import get_logger, log_record
 except Exception:  # pragma: no cover - fallback when logging helpers missing
     def get_logger(name: str) -> logging.Logger:  # type: ignore
         return logging.getLogger(name)
@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - fallback when logging helpers missing
         return fields
 
 from .init import _atomic_write, get_default_synergy_weights
-from ..self_improvement_policy import (
+from menace_sandbox.self_improvement_policy import (
     ActorCriticStrategy,
     DQNStrategy,
     DoubleDQNStrategy,
@@ -43,7 +43,7 @@ from ..self_improvement_policy import (
     torch as sip_torch,
 )
 try:  # pragma: no cover - simplified environments
-    from ..dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback when helper missing
     from dynamic_path_router import resolve_path  # type: ignore
 
