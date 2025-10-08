@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,65 @@ def _clear_provenance_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PATCH_PROVENANCE_PUBLIC_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_disabled_manager_is_falsey() -> None:
+    """The disabled manager must evaluate to ``False`` for manual fallbacks."""
+
+    module = importlib.import_module("menace_sandbox.coding_bot_interface")
+    manager = module._DisabledSelfCodingManager(  # type: ignore[attr-defined]
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert bool(manager) is False
+
+
+def test_disabled_manager_does_not_trigger_coding_registration() -> None:
+    """``wrap_bot_methods`` should register bots as manual when disabled."""
+
+    module = importlib.import_module("menace_sandbox.coding_bot_interface")
+    bot_db_utils = importlib.import_module("menace_sandbox.bot_db_utils")
+
+    class _DummyRouter:
+        class _Conn:
+            def execute(self, *_args, **_kwargs) -> None:  # pragma: no cover - stub
+                return None
+
+        def get_connection(self, *_args, **_kwargs) -> "_DummyRouter._Conn":
+            return self._Conn()
+
+    class _RecordingRegistry:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool]] = []
+
+        def register_bot(self, name: str, **kwargs: object) -> None:
+            self.calls.append((name, bool(kwargs.get("is_coding_bot", False))))
+
+        def register_interaction(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    registry = _RecordingRegistry()
+    manager = module._DisabledSelfCodingManager(  # type: ignore[attr-defined]
+        bot_registry=registry,
+        data_bot=SimpleNamespace(),
+    )
+
+    class _Bot:
+        def __init__(self) -> None:
+            self.name = "TaskValidationBot"
+            self.manager = manager
+            self.data_bot = SimpleNamespace()
+
+        def act(self, *_args: object, **_kwargs: object) -> str:
+            return "done"
+
+    bot = _Bot()
+    bot_db_utils.wrap_bot_methods(bot, _DummyRouter(), registry)
+
+    assert bot.act() == "done"
+    assert registry.calls
+    assert all(is_coding is False for _, is_coding in registry.calls)
 
 
 def test_unsigned_provenance_enabled_when_signed_artifacts_missing(
