@@ -29,6 +29,7 @@ import json
 import os
 import re
 import threading
+import errno
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
 
@@ -373,12 +374,32 @@ def _missing_module_name(exc: ModuleNotFoundError) -> str | None:
 class SelfCodingUnavailableError(RuntimeError):
     """Raised when the self-coding stack cannot be initialised safely."""
 
-    def __init__(self, message: str, *, missing: Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        missing: Iterable[str] | None = None,
+        missing_resources: Iterable[str] | None = None,
+    ) -> None:
         super().__init__(message)
-        missing_set = {
+        module_set = {
             m for m in (missing or ()) if isinstance(m, str) and m.strip()
         }
-        self.missing_modules: tuple[str, ...] = tuple(sorted(missing_set))
+        resource_set = {
+            r for r in (missing_resources or ()) if isinstance(r, str) and r.strip()
+        }
+        self.missing_modules: tuple[str, ...] = tuple(sorted(module_set))
+        self.missing_resources: tuple[str, ...] = tuple(sorted(resource_set))
+
+    @property
+    def missing_dependencies(self) -> tuple[str, ...]:
+        """Return the union of missing modules and runtime resources."""
+
+        if not self.missing_modules and not self.missing_resources:
+            return tuple()
+        combined = set(self.missing_modules)
+        combined.update(self.missing_resources)
+        return tuple(sorted(combined))
 
 
 class _SelfCodingComponents(NamedTuple):
@@ -439,6 +460,20 @@ _WINDOWS_ERROR_LOADING_RE = re.compile(
 _IMPORT_HALTED_RE = re.compile(
     r"import of ['\"](?P<module>[^'\"]+)['\"] halted",
     re.IGNORECASE,
+)
+_RESOURCE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<token>[A-Za-z0-9_.-]+\.(?:db|json|ya?ml|pkl|bin|dat))",
+    re.IGNORECASE,
+)
+_RESOURCE_LIST_PREFIXES: tuple[str, ...] = (
+    "Missing required",
+    "Context builder database paths are not files",
+)
+_RESOURCE_ERRNOS: tuple[int, ...] = (
+    errno.ENOENT,
+    errno.EACCES,
+    errno.ENOTDIR,
+    errno.EISDIR,
 )
 
 # High level ImportError messages occasionally hide the underlying module
@@ -565,10 +600,20 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
     missing: set[str] = set()
     for item in _iter_exception_chain(exc):
         modules_attr = getattr(item, "missing_modules", None)
+        resources_attr = getattr(item, "missing_resources", None)
+        dependencies_attr = getattr(item, "missing_dependencies", None)
         if modules_attr:
             for module in modules_attr:
                 if isinstance(module, str) and module.strip():
                     missing.add(module.strip())
+        if resources_attr:
+            for resource in resources_attr:
+                if isinstance(resource, str) and resource.strip():
+                    missing.add(resource.strip())
+        if dependencies_attr:
+            for dependency in dependencies_attr:
+                if isinstance(dependency, str) and dependency.strip():
+                    missing.add(dependency.strip())
         if isinstance(item, ModuleNotFoundError):
             name = _missing_module_name(item)
             if name:
@@ -642,6 +687,33 @@ def _collect_missing_modules(exc: BaseException) -> set[str]:
                     _normalise_module_aliases(halted_match.group("module"))
                 )
     return missing
+
+
+def _collect_missing_resources(exc: BaseException) -> set[str]:
+    """Return runtime resources inferred from filesystem related errors."""
+
+    resources: set[str] = set()
+    for item in _iter_exception_chain(exc):
+        if isinstance(item, FileNotFoundError):
+            resources.update(_normalise_token(getattr(item, "filename", None)))
+            resources.update(_normalise_token(getattr(item, "filename2", None)))
+        if isinstance(item, OSError):
+            err_no = getattr(item, "errno", None)
+            if err_no in _RESOURCE_ERRNOS:
+                resources.update(_normalise_token(getattr(item, "filename", None)))
+                resources.update(_normalise_token(getattr(item, "filename2", None)))
+        message = str(item)
+        for prefix in _RESOURCE_LIST_PREFIXES:
+            if prefix in message:
+                try:
+                    _, remainder = message.split(":", 1)
+                except ValueError:
+                    remainder = ""
+                for token in remainder.split(","):
+                    resources.update(_normalise_token(token))
+        for match in _RESOURCE_TOKEN_RE.finditer(message):
+            resources.update(_normalise_token(match.group("token")))
+    return {resource for resource in resources if resource}
 
 
 def _is_transient_internalization_error(exc: Exception) -> bool:
@@ -928,7 +1000,9 @@ class BotRegistry:
             self._clear_transient_error_state(name)
             return
 
-        missing = sorted(_collect_missing_modules(exc))
+        missing_modules = sorted(_collect_missing_modules(exc))
+        missing_resources = sorted(_collect_missing_resources(exc))
+        missing = sorted({*missing_modules, *missing_resources})
         timestamp = datetime.now(timezone.utc).isoformat()
         reason = (
             "self-coding disabled after repeated transient import failures"
@@ -965,6 +1039,8 @@ class BotRegistry:
                 "signature_counts": signature_history,
             },
         }
+        if missing_resources:
+            node["self_coding_disabled"]["missing_resources"] = missing_resources
         self._clear_transient_error_state(name)
 
         logger.warning(
@@ -985,6 +1061,8 @@ class BotRegistry:
                 "reason": reason,
                 "transient_error": node["self_coding_disabled"]["transient_error"],
             }
+            if missing_resources:
+                payload["resources"] = missing_resources
             try:
                 self.event_bus.publish("bot:self_coding_disabled", payload)
             except Exception:  # pragma: no cover - best effort
@@ -1029,16 +1107,20 @@ class BotRegistry:
         # and emitting the ``bot:self_coding_disabled`` event keeps the sandbox
         # responsive while providing operators with actionable diagnostics.
         missing_modules = sorted(_collect_missing_modules(exc))
-        if missing_modules and not node.get("self_coding_disabled"):
+        missing_resources = sorted(_collect_missing_resources(exc))
+        combined_missing = sorted({*missing_modules, *missing_resources})
+        if combined_missing and not node.get("self_coding_disabled"):
             disable_payload = {
                 "reason": (
                     "self-coding disabled after unrecoverable import failure: "
                     f"{exc}"
                 ),
-                "missing_dependencies": missing_modules,
+                "missing_dependencies": combined_missing,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "source": "internalization_blocked",
             }
+            if missing_resources:
+                disable_payload["missing_resources"] = missing_resources
             node["self_coding_disabled"] = disable_payload
 
         logger.error(
@@ -1057,10 +1139,12 @@ class BotRegistry:
                 if disable_payload is not None:
                     payload = {
                         "bot": name,
-                        "missing": missing_modules,
+                        "missing": combined_missing,
                         "reason": disable_payload["reason"],
                         "source": "internalization_blocked",
                     }
+                    if missing_resources:
+                        payload["resources"] = missing_resources
                     try:
                         self.event_bus.publish("bot:self_coding_disabled", payload)
                     except Exception:  # pragma: no cover - best effort
@@ -1100,11 +1184,17 @@ class BotRegistry:
                 )
             except SelfCodingUnavailableError as exc:
                 node["pending_internalization"] = False
-                node["self_coding_disabled"] = {
+                missing = list(exc.missing_dependencies)
+                disabled_payload: dict[str, Any] = {
                     "reason": str(exc),
-                    "missing_dependencies": list(exc.missing_modules),
+                    "missing_dependencies": missing,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
+                if exc.missing_resources:
+                    disabled_payload["missing_resources"] = list(
+                        exc.missing_resources
+                    )
+                node["self_coding_disabled"] = disabled_payload
                 self._internalization_retry_attempts.pop(name, None)
                 self._clear_transient_error_state(name)
                 logger.warning("self-coding disabled for %s: %s", name, exc)
@@ -1114,7 +1204,10 @@ class BotRegistry:
                             "bot:self_coding_disabled",
                             {
                                 "bot": name,
-                                "missing": list(exc.missing_modules),
+                                "missing": missing,
+                                "resources": list(exc.missing_resources)
+                                if exc.missing_resources
+                                else None,
                                 "reason": str(exc),
                             },
                         )
@@ -1127,12 +1220,21 @@ class BotRegistry:
             except Exception as exc:
                 node.setdefault("internalization_errors", []).append(str(exc))
                 missing_modules = _collect_missing_modules(exc)
+                missing_resources = _collect_missing_resources(exc)
                 _purge_partial_modules(exc)
                 if missing_modules:
                     logger.debug(
                         "blocking internalization for %s due to missing dependencies: %s",
                         name,
                         ", ".join(sorted(missing_modules)),
+                    )
+                    self._record_internalization_blocked(name, exc)
+                    return
+                if missing_resources:
+                    logger.debug(
+                        "blocking internalization for %s due to missing resources: %s",
+                        name,
+                        ", ".join(sorted(missing_resources)),
                     )
                     self._record_internalization_blocked(name, exc)
                     return
@@ -1207,6 +1309,7 @@ class BotRegistry:
             )
         except Exception as exc:
             missing_modules = _collect_missing_modules(exc)
+            missing_resources = _collect_missing_resources(exc)
             if not missing_modules and isinstance(exc, (ImportError, ModuleNotFoundError)):
                 # Windows frequently surfaces dependency issues via generic
                 # ``ImportError`` exceptions that do not expose the missing
@@ -1224,15 +1327,23 @@ class BotRegistry:
                     name_attr = getattr(exc, "name", None)
                     if isinstance(name_attr, str) and name_attr.strip():
                         missing_modules.add(name_attr.strip())
-            if missing_modules:
-                reason = (
-                    "self-coding bootstrap failed: circular import detected"
-                    if _CIRCULAR_HINT_RE.search(str(exc))
-                    else "self-coding bootstrap failed: missing runtime dependencies"
-                )
+            if missing_modules or missing_resources:
+                if missing_modules and missing_resources:
+                    reason = (
+                        "self-coding bootstrap failed: missing dependencies and runtime resources"
+                    )
+                elif missing_modules:
+                    reason = (
+                        "self-coding bootstrap failed: circular import detected"
+                        if _CIRCULAR_HINT_RE.search(str(exc))
+                        else "self-coding bootstrap failed: missing runtime dependencies"
+                    )
+                else:
+                    reason = "self-coding bootstrap failed: missing runtime resources"
                 raise SelfCodingUnavailableError(
                     reason,
                     missing=missing_modules,
+                    missing_resources=missing_resources,
                 ) from exc
 
             if isinstance(exc, ImportError):

@@ -222,6 +222,35 @@ def test_missing_modules_abort_transient_retry(monkeypatch):
     assert name not in registry._internalization_retry_attempts
 
 
+def test_retry_internalization_records_missing_resources(monkeypatch):
+    registry = _make_registry()
+
+    registry.graph.add_node("TaskValidationBot")
+    node = registry.graph.nodes["TaskValidationBot"]
+    node["pending_internalization"] = True
+    registry._internalization_retry_attempts["TaskValidationBot"] = 0
+
+    def _raise_resources(*_args, **_kwargs):
+        raise bot_registry.SelfCodingUnavailableError(
+            "self-coding bootstrap failed: missing runtime resources",
+            missing_resources={"bots.db", "errors.db"},
+        )
+
+    monkeypatch.setattr(
+        registry,
+        "_internalize_missing_coding_bot",
+        _raise_resources,
+    )
+
+    registry._retry_internalization("TaskValidationBot")
+
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    assert set(disabled.get("missing_dependencies", ())) == {"bots.db", "errors.db"}
+    assert set(disabled.get("missing_resources", ())) == {"bots.db", "errors.db"}
+    assert node.get("pending_internalization") is False
+
+
 def test_transient_import_error_purges_partial_modules(monkeypatch):
     registry = _make_registry()
 
