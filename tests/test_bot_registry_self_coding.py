@@ -435,3 +435,75 @@ def test_manual_registration_clears_pending_state(tmp_path):
     assert disabled.get("previous_reason") == "previous failure"
     assert disabled.get("missing_dependencies") == ["quick_fix_engine"]
 
+
+def test_load_self_coding_components_uses_import_helper(monkeypatch):
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
+    loaded: list[str] = []
+
+    def _fake_loader(name: str):
+        loaded.append(name)
+        if name == "self_coding_manager":
+            return SimpleNamespace(
+                internalize_coding_bot=lambda *a, **k: None,
+                SelfCodingManager=object,
+            )
+        if name == "self_coding_engine":
+            return SimpleNamespace(SelfCodingEngine=type("_Engine", (), {}))
+        if name == "model_automation_pipeline":
+            return SimpleNamespace(
+                ModelAutomationPipeline=type("_Pipeline", (), {})
+            )
+        if name == "data_bot":
+            return SimpleNamespace(DataBot=type("_DataBot", (), {}))
+        if name == "code_database":
+            return SimpleNamespace(CodeDB=type("_CodeDB", (), {}))
+        if name == "gpt_memory":
+            return SimpleNamespace(GPTMemoryManager=type("_Memory", (), {}))
+        if name == "context_builder_util":
+            return SimpleNamespace(create_context_builder=lambda: object())
+        raise AssertionError(f"unexpected module request: {name}")
+
+    monkeypatch.setattr(bot_registry, "_load_internal_module", _fake_loader)
+
+    components = bot_registry._load_self_coding_components()
+
+    assert components.engine_cls is not None
+    assert components.pipeline_cls is not None
+    assert components.data_bot_cls is not None
+    assert components.memory_manager_cls is not None
+    assert components.context_builder_factory() is not None
+    assert sorted(loaded) == [
+        "code_database",
+        "context_builder_util",
+        "data_bot",
+        "gpt_memory",
+        "model_automation_pipeline",
+        "self_coding_engine",
+        "self_coding_manager",
+    ]
+
+
+def test_load_self_coding_components_handles_flat_import_error(monkeypatch):
+    monkeypatch.setattr(
+        bot_registry, "ensure_self_coding_ready", lambda modules=None: (True, ())
+    )
+
+    calls: list[str] = []
+
+    def _loader(name: str):
+        calls.append(name)
+        raise ImportError(
+            "attempted relative import with no known parent package", name=None
+        )
+
+    monkeypatch.setattr(bot_registry, "_load_internal_module", _loader)
+
+    with pytest.raises(bot_registry.SelfCodingUnavailableError) as excinfo:
+        bot_registry._load_self_coding_components()
+
+    assert calls == ["self_coding_manager"]
+    assert "self_coding_manager" in excinfo.value.missing_dependencies
+
