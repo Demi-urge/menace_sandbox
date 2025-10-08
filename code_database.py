@@ -332,9 +332,6 @@ class CodeDB(EmbeddableDBMixin):
             global ``GLOBAL_ROUTER`` is used.
         """
         self.engine = engine
-        self.router = router or GLOBAL_ROUTER
-        if self.engine is None and self.router is None:
-            raise ValueError("router must be provided when engine is None")
 
         if self.engine is None:
             if path is None:
@@ -346,6 +343,14 @@ class CodeDB(EmbeddableDBMixin):
                     self.path = Path(path)
         else:
             self.path = Path("")
+
+        self.router = router or GLOBAL_ROUTER
+        if self.engine is None and self.router is None:
+            resolved = str(self.path.resolve()) if self.path else "code.db"
+            self.router = init_db_router("code_db", resolved, resolved)
+
+        if self.engine is None and self.router is None:
+            raise ValueError("router must be provided when engine is None")
         self.event_bus = event_bus
         _ensure_backfill_watcher(self.event_bus)
         self._lock = threading.Lock()
