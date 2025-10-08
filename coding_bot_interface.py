@@ -31,6 +31,7 @@ import hashlib
 import re
 import subprocess
 import threading
+from typing import Iterable
 from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
@@ -69,6 +70,8 @@ _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
 _PATCH_PROVENANCE_SERVICE_SENTINEL = object()
 _PATCH_PROVENANCE_SERVICE: Any = _PATCH_PROVENANCE_SERVICE_SENTINEL
+_SIGNED_PROVENANCE_CACHE: dict[Path, tuple[int, int, tuple[tuple[int | None, str | None], ...]]] = {}
+_SIGNED_PROVENANCE_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(slots=True)
@@ -176,6 +179,113 @@ def _signed_provenance_available(prov_file: str, pubkey: str) -> bool:
             return False
 
     return True
+
+
+def _iter_provenance_dicts(root: Any) -> Iterable[dict[str, Any]]:
+    """Yield dictionaries found within ``root`` using an explicit stack."""
+
+    stack: list[Any] = [root]
+    seen: set[int] = set()
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            ident = id(current)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            yield current
+            stack.extend(current.values())
+        elif isinstance(current, list):
+            stack.extend(current)
+
+
+def _extract_signed_candidate(entry: dict[str, Any]) -> tuple[int | None, str | None]:
+    """Extract ``(patch_id, commit)`` pair from a provenance ``entry``."""
+
+    patch_id = _coerce_patch_id(
+        entry.get("patch_id")
+        or entry.get("patch")
+        or entry.get("id")
+        or entry.get("vector_id")
+    )
+    commit = _coerce_commit(
+        entry.get("commit")
+        or entry.get("commit_hash")
+        or entry.get("hash")
+        or entry.get("commitId")
+    )
+
+    nested = entry.get("patch") or entry.get("metadata") or entry.get("data")
+    if isinstance(nested, dict):
+        patch_id = patch_id or _coerce_patch_id(
+            nested.get("patch_id")
+            or nested.get("patch")
+            or nested.get("id")
+        )
+        commit = commit or _coerce_commit(
+            nested.get("commit")
+            or nested.get("commit_hash")
+            or nested.get("hash")
+        )
+
+    return patch_id, commit
+
+
+def _load_signed_provenance_candidates() -> tuple[tuple[int | None, str | None], ...]:
+    """Return cached provenance pairs derived from the signed metadata file."""
+
+    prov_file = os.getenv("PATCH_PROVENANCE_FILE")
+    if not prov_file:
+        return tuple()
+
+    path = Path(prov_file).expanduser()
+    try:
+        stat_result = path.stat()
+    except OSError as exc:  # pragma: no cover - filesystem dependent
+        logger.debug("failed to stat signed provenance file %s: %s", path, exc, exc_info=True)
+        return tuple()
+
+    mtime_ns = getattr(stat_result, "st_mtime_ns", int(stat_result.st_mtime * 1_000_000_000))
+    size = getattr(stat_result, "st_size", 0)
+
+    with _SIGNED_PROVENANCE_CACHE_LOCK:
+        cached = _SIGNED_PROVENANCE_CACHE.get(path)
+        if cached and cached[0] == mtime_ns and cached[1] == size:
+            return cached[2]
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "failed to load signed provenance metadata from %s: %s",
+            path,
+            exc,
+        )
+        return tuple()
+
+    seen_pairs: set[tuple[int | None, str | None]] = set()
+    candidates: list[tuple[int | None, str | None]] = []
+    for entry in _iter_provenance_dicts(payload):
+        patch_id, commit = _extract_signed_candidate(entry)
+        if patch_id is None and commit is None:
+            continue
+        pair = (patch_id, commit)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        candidates.append(pair)
+
+    result = tuple(candidates)
+    with _SIGNED_PROVENANCE_CACHE_LOCK:
+        _SIGNED_PROVENANCE_CACHE[path] = (mtime_ns, size, result)
+
+    if not result:
+        logger.debug(
+            "signed provenance file %s did not yield usable patch metadata", path
+        )
+
+    return result
 
 
 def _looks_like_path(value: str) -> bool:
@@ -451,6 +561,7 @@ def _derive_repository_provenance(
         return (None, None)
 
     rel_path = _relative_repo_path(path, repo_root)
+    rel_path_posix = rel_path.as_posix()
     try:
         output = subprocess.check_output(
             [
@@ -462,7 +573,7 @@ def _derive_repository_provenance(
                 "1",
                 "--pretty=format:%H",
                 "--",
-                str(rel_path),
+                rel_path_posix,
             ],
             stderr=subprocess.STDOUT,
         )
@@ -481,11 +592,11 @@ def _derive_repository_provenance(
     if not commit:
         return (None, None)
 
-    patch_id, commit_hash = _lookup_patch_by_commit(commit, log_hint=f"{name}@{rel_path}")
-    if patch_id is None or commit_hash is None:
-        return (None, None)
+    patch_id, commit_hash = _lookup_patch_by_commit(commit, log_hint=f"{name}@{rel_path_posix}")
+    if patch_id is None:
+        return (None, commit)
 
-    return patch_id, commit_hash
+    return patch_id, commit_hash or commit
 
 
 def _coerce_patch_id(value: object) -> int | None:
@@ -618,6 +729,7 @@ def _resolve_provenance_decision(
             return _ProvenanceDecision(patch_id, commit, "signed", source="manager")
 
     module_patch, module_commit = module_provenance
+    signed_candidates = _load_signed_provenance_candidates()
     if module_patch is not None:
         commit_candidate = module_commit or _backfill_commit_from_history(
             module_patch, log_hint=name
@@ -631,6 +743,16 @@ def _resolve_provenance_decision(
         patch_candidate, commit_candidate = _lookup_patch_by_commit(
             module_commit, log_hint=f"{name}:module"
         )
+        if (
+            patch_candidate is None
+            and commit_candidate is not None
+            and signed_candidates
+        ):
+            for cand_patch, cand_commit in signed_candidates:
+                if cand_patch is not None and cand_commit == commit_candidate:
+                    return _ProvenanceDecision(
+                        cand_patch, cand_commit, "signed", source="signed"
+                    )
         if patch_candidate is not None and commit_candidate is not None:
             return _ProvenanceDecision(
                 patch_candidate, commit_candidate, "signed", source="module"
@@ -639,6 +761,27 @@ def _resolve_provenance_decision(
     repo_patch, repo_commit = _derive_repository_provenance(name, module_path)
     if repo_patch is not None and repo_commit is not None:
         return _ProvenanceDecision(repo_patch, repo_commit, "signed", source="repository")
+
+    if repo_commit is not None and signed_candidates:
+        for cand_patch, cand_commit in signed_candidates:
+            if cand_patch is not None and cand_commit == repo_commit:
+                return _ProvenanceDecision(
+                    cand_patch, cand_commit, "signed", source="signed"
+                )
+
+    if module_commit is not None and signed_candidates:
+        for cand_patch, cand_commit in signed_candidates:
+            if cand_patch is not None and cand_commit == module_commit:
+                return _ProvenanceDecision(
+                    cand_patch, cand_commit, "signed", source="signed"
+                )
+
+    if signed_candidates:
+        for cand_patch, cand_commit in signed_candidates:
+            if cand_patch is not None and cand_commit is not None:
+                return _ProvenanceDecision(
+                    cand_patch, cand_commit, "signed", source="signed"
+                )
 
     allow_unsigned = _unsigned_provenance_allowed()
     if allow_unsigned:

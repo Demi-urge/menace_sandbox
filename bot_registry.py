@@ -1797,6 +1797,8 @@ class BotRegistry:
 
             if not verify_signature(data, signature, pubkey):
                 raise RuntimeError("invalid signature")
+            if logger.disabled:
+                logger.disabled = False
             logger.info(
                 "verified signed provenance for patch_id=%s commit=%s",
                 patch_id,
