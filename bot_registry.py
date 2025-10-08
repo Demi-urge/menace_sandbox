@@ -1316,22 +1316,41 @@ class BotRegistry:
         # "internalization blocked" state.  Surfacing the missing dependencies
         # and emitting the ``bot:self_coding_disabled`` event keeps the sandbox
         # responsive while providing operators with actionable diagnostics.
-        missing_modules = sorted(_collect_missing_modules(exc))
-        missing_resources = sorted(_collect_missing_resources(exc))
-        combined_missing = sorted({*missing_modules, *missing_resources})
-        if combined_missing and not node.get("self_coding_disabled"):
-            disable_payload = {
-                "reason": (
-                    "self-coding disabled after unrecoverable import failure: "
-                    f"{exc}"
-                ),
-                "missing_dependencies": combined_missing,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "source": "internalization_blocked",
-            }
-            if missing_resources:
-                disable_payload["missing_resources"] = missing_resources
-            node["self_coding_disabled"] = disable_payload
+        existing_disabled = node.get("self_coding_disabled")
+        existing_missing: set[str] = set()
+        existing_resources: set[str] = set()
+        if isinstance(existing_disabled, dict):
+            existing_missing.update(
+                str(item).strip()
+                for item in existing_disabled.get("missing_dependencies", ())
+                if str(item).strip()
+            )
+            existing_resources.update(
+                str(item).strip()
+                for item in existing_disabled.get("missing_resources", ())
+                if str(item).strip()
+            )
+
+        missing_modules = set(_collect_missing_modules(exc))
+        missing_resources = set(_collect_missing_resources(exc))
+        dependency_hints = set(_derive_import_error_hints(exc))
+
+        combined_missing = sorted({*existing_missing, *missing_modules, *dependency_hints})
+        combined_resources = sorted({*existing_resources, *missing_resources})
+
+        disable_payload = {
+            "reason": (
+                "self-coding disabled after unrecoverable import failure: "
+                f"{exc}"
+            ),
+            "missing_dependencies": combined_missing,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "internalization_blocked",
+        }
+        if combined_resources:
+            disable_payload["missing_resources"] = combined_resources
+
+        node["self_coding_disabled"] = disable_payload
 
         logger.error(
             "internalization for %s blocked after non-recoverable error: %s",
@@ -1346,22 +1365,21 @@ class BotRegistry:
                     "bot:internalization_blocked",
                     {"bot": name, "error": node["internalization_blocked"]},
                 )
-                if disable_payload is not None:
-                    payload = {
-                        "bot": name,
-                        "missing": combined_missing,
-                        "reason": disable_payload["reason"],
-                        "source": "internalization_blocked",
-                    }
-                    if missing_resources:
-                        payload["resources"] = missing_resources
-                    try:
-                        self.event_bus.publish("bot:self_coding_disabled", payload)
-                    except Exception:  # pragma: no cover - best effort
-                        logger.debug(
-                            "failed to publish bot:self_coding_disabled event after blocked internalization",
-                            exc_info=True,
-                        )
+                payload = {
+                    "bot": name,
+                    "missing": disable_payload.get("missing_dependencies"),
+                    "reason": disable_payload["reason"],
+                    "source": "internalization_blocked",
+                }
+                if combined_resources:
+                    payload["resources"] = combined_resources
+                try:
+                    self.event_bus.publish("bot:self_coding_disabled", payload)
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug(
+                        "failed to publish bot:self_coding_disabled event after blocked internalization",
+                        exc_info=True,
+                    )
             except Exception as pub_exc:  # pragma: no cover - best effort
                 logger.error(
                     "Failed to publish bot:internalization_blocked event: %s",

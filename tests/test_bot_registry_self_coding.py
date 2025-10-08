@@ -339,6 +339,48 @@ def test_retry_internalization_records_missing_resources(monkeypatch):
     assert node.get("pending_internalization") is False
 
 
+def test_internalization_blocked_without_missing_disables(monkeypatch):
+    registry = _make_registry()
+
+    registry.graph.add_node("TaskValidationBot")
+    node = registry.graph.nodes["TaskValidationBot"]
+    node["pending_internalization"] = True
+    registry._internalization_retry_attempts["TaskValidationBot"] = 0
+
+    monkeypatch.setattr(
+        bot_registry,
+        "_collect_missing_modules",
+        lambda exc: set(),
+    )
+    monkeypatch.setattr(
+        bot_registry,
+        "_collect_missing_resources",
+        lambda exc: set(),
+    )
+    monkeypatch.setattr(
+        bot_registry,
+        "_derive_import_error_hints",
+        lambda exc: {"mysterious.module"},
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise ImportError("bootstrap failed unexpectedly")
+
+    monkeypatch.setattr(
+        registry,
+        "_internalize_missing_coding_bot",
+        _boom,
+    )
+
+    registry._retry_internalization("TaskValidationBot")
+
+    disabled = node.get("self_coding_disabled")
+    assert disabled is not None
+    assert disabled.get("source") == "internalization_blocked"
+    assert "mysterious.module" in disabled.get("missing_dependencies", [])
+    assert node.get("pending_internalization") is False
+
+
 def test_transient_import_error_purges_partial_modules(monkeypatch):
     registry = _make_registry()
 
