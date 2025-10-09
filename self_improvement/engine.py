@@ -388,31 +388,47 @@ logger = get_logger(__name__)
 
 
 
-try:  # optional dependency
-    from menace_sandbox.self_model_bootstrap import bootstrap
-except ImportError as exc:
-    get_logger(__name__).warning(
-        "self_model_bootstrap unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="self_model_bootstrap"),
-        exc_info=exc,
-    )
+_BOOTSTRAP_FN: Callable[..., int] | None = None
 
-    def bootstrap(*_a: object, **_k: object) -> int:  # type: ignore
-        """Bootstrap the system model.
 
-        This helper requires :mod:`self_model_bootstrap`.  When that module
-        cannot be imported a descriptive :class:`RuntimeError` is raised to
-        alert the caller that bootstrapping is unavailable.
+def _load_bootstrap() -> Callable[..., int]:
+    """Resolve the optional :func:`self_model_bootstrap.bootstrap` helper."""
 
-        Returns
-        -------
-        int
-            Identifier of the bootstrapped model.
-        """
+    global _BOOTSTRAP_FN
+    if _BOOTSTRAP_FN is not None:
+        return _BOOTSTRAP_FN
 
-        raise RuntimeError(
-            "self_model_bootstrap module is required for bootstrapping"
-        ) from exc
+    try:  # pragma: no cover - optional dependency
+        module = importlib.import_module("menace_sandbox.self_model_bootstrap")
+    except ImportError as exc:
+        try:  # pragma: no cover - fallback for flat layout
+            module = importlib.import_module("self_model_bootstrap")
+        except ImportError:
+            logger.warning(
+                "self_model_bootstrap unavailable",  # noqa: TRY300
+                extra=log_record(
+                    module=__name__, dependency="self_model_bootstrap"
+                ),
+                exc_info=exc,
+            )
+
+            def _missing(*_a: object, **_k: object) -> int:  # type: ignore
+                raise RuntimeError(
+                    "self_model_bootstrap module is required for bootstrapping"
+                ) from exc
+
+            _BOOTSTRAP_FN = _missing
+            return _BOOTSTRAP_FN
+
+    _BOOTSTRAP_FN = getattr(module, "bootstrap")
+    return _BOOTSTRAP_FN
+
+
+def bootstrap(*args: object, **kwargs: object) -> int:  # type: ignore[override]
+    """Proxy that lazily imports :mod:`self_model_bootstrap` when required."""
+
+    bootstrap_fn = _load_bootstrap()
+    return bootstrap_fn(*args, **kwargs)
 from menace_sandbox.research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
