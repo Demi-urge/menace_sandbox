@@ -185,7 +185,7 @@ import tempfile
 import math
 import shutil
 import ast
-import yaml
+from yaml_fallback import get_yaml
 import traceback
 from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_CHECKING
 from datetime import datetime
@@ -194,6 +194,8 @@ try:  # pragma: no cover - allow flat imports
     from menace_sandbox.module_synergy_grapher import get_synergy_cluster
 except ImportError:  # pragma: no cover - fallback for flat layout
     from module_synergy_grapher import get_synergy_cluster  # type: ignore
+yaml = get_yaml("self_improvement.engine")
+
 try:
     from menace_sandbox import security_auditor
 except ImportError:  # pragma: no cover - fallback for flat layout

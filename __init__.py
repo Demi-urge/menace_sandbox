@@ -30,6 +30,20 @@ sys.modules.setdefault(
     ),
 )
 
+try:  # pragma: no cover - ensure YAML stub registration in minimal envs
+    from .yaml_fallback import get_yaml as _ensure_yaml
+except Exception:  # pragma: no cover - support legacy alias import
+    try:
+        from yaml_fallback import get_yaml as _ensure_yaml  # type: ignore
+    except Exception:
+        _ensure_yaml = None  # type: ignore
+
+if _ensure_yaml is not None:  # pragma: no cover - simple guard
+    try:
+        _ensure_yaml(__name__, warn=False)
+    except Exception:
+        pass
+
 # Provide a legacy alias expected by some bootstrapping utilities.
 sys.modules.setdefault("menace", sys.modules[__name__])
 
