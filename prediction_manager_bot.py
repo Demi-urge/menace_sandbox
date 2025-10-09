@@ -6,13 +6,16 @@ from .bot_registry import BotRegistry
 from .coding_bot_interface import self_coding_managed
 from .data_bot import DataBot, MetricsDB
 
+import importlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
 from uuid import uuid4
 import os
 import logging
+from types import ModuleType
+from functools import lru_cache
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -22,24 +25,93 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from .future_prediction_bots import (
-    FutureLucrativityBot,
-    FutureProfitabilityBot,
-    FutureAntifragilityBot,
-    FutureShannonEntropyBot,
-    FutureSynergyProfitBot,
-    FutureSynergyMaintainabilityBot,
-    FutureSynergyCodeQualityBot,
-    FutureSynergyNetworkLatencyBot,
-    FutureSynergyThroughputBot,
-)
-from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .future_prediction_bots import (
+        FutureLucrativityBot,
+        FutureProfitabilityBot,
+        FutureAntifragilityBot,
+        FutureShannonEntropyBot,
+        FutureSynergyProfitBot,
+        FutureSynergyMaintainabilityBot,
+        FutureSynergyCodeQualityBot,
+        FutureSynergyNetworkLatencyBot,
+        FutureSynergyThroughputBot,
+    )
+else:  # pragma: no cover - runtime fallback without importing lazily
+    FutureLucrativityBot = FutureProfitabilityBot = None  # type: ignore
+    FutureAntifragilityBot = FutureShannonEntropyBot = None  # type: ignore
+    FutureSynergyProfitBot = FutureSynergyMaintainabilityBot = None  # type: ignore
+    FutureSynergyCodeQualityBot = FutureSynergyNetworkLatencyBot = None  # type: ignore
+    FutureSynergyThroughputBot = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - avoid circular imports at runtime
     from .capital_management_bot import CapitalManagementBot
 if TYPE_CHECKING:
     from .ga_prediction_bot import GAPredictionBot
     from .genetic_algorithm_bot import GeneticAlgorithmBot
+
+
+def _module_prefix() -> str:
+    """Return the module prefix used for dynamic imports."""
+
+    if __package__:
+        return __package__.split(".")[0]
+    return "menace_sandbox"
+
+
+def _import_future_prediction_bots() -> ModuleType | None:
+    """Import the future prediction bots module without creating cycles."""
+
+    candidates = []
+    if __package__:
+        candidates.append(f"{__package__}.future_prediction_bots")
+    prefix = _module_prefix()
+    candidates.extend(
+        [
+            f"{prefix}.future_prediction_bots",
+            "menace.future_prediction_bots",
+            "future_prediction_bots",
+        ]
+    )
+
+    seen = set()
+    for name in candidates:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            return importlib.import_module(name)
+        except ModuleNotFoundError:
+            continue
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "future prediction bots import failed for %s", name, exc_info=True
+            )
+            return None
+    return None
+
+
+FUTURE_PREDICTION_EXPORTS = (
+    "FutureLucrativityBot",
+    "FutureProfitabilityBot",
+    "FutureAntifragilityBot",
+    "FutureShannonEntropyBot",
+    "FutureSynergyProfitBot",
+    "FutureSynergyMaintainabilityBot",
+    "FutureSynergyCodeQualityBot",
+    "FutureSynergyNetworkLatencyBot",
+    "FutureSynergyThroughputBot",
+)
+
+
+@lru_cache(maxsize=1)
+def _future_prediction_classes() -> Dict[str, Any]:
+    """Return available future prediction bot classes, importing lazily."""
+
+    module = _import_future_prediction_bots()
+    if module is None:
+        return {}
+    return {name: getattr(module, name, None) for name in FUTURE_PREDICTION_EXPORTS}
 
 
 @self_coding_managed(bot_registry=registry, data_bot=data_bot)
@@ -498,136 +570,98 @@ class PredictionManager:
                     self.register_bot(bot, {"metric": [metric]})
                 except Exception:
                     logging.getLogger(__name__).exception("default bot failed")
+        future_classes = _future_prediction_classes()
+        if self.data_bot and future_classes:
+            logger = logging.getLogger(__name__)
+
+            def _register_future_bot(
+                cls_name: str, profile: Dict[str, Iterable[str]],
+            ) -> None:
+                cls = future_classes.get(cls_name)
+                if not cls:
+                    return
+                try:
+                    bot = cls(self.data_bot)
+                    self.register_bot(bot, profile)
+                except Exception:
+                    logger.exception("init %s failed", cls_name)
+
+            _register_future_bot(
+                "FutureLucrativityBot",
+                {
+                    "metric": ["projected_lucrativity", "lucrativity"],
+                    "scope": ["lucrativity"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureProfitabilityBot",
+                {
+                    "metric": ["profitability"],
+                    "scope": ["profitability"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureAntifragilityBot",
+                {
+                    "metric": ["antifragility"],
+                    "scope": ["antifragility"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureShannonEntropyBot",
+                {
+                    "metric": ["shannon_entropy"],
+                    "scope": ["entropy"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureSynergyProfitBot",
+                {
+                    "metric": [
+                        "synergy_profitability",
+                        "synergy_projected_lucrativity",
+                    ],
+                    "scope": ["synergy"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureSynergyMaintainabilityBot",
+                {
+                    "metric": ["synergy_maintainability"],
+                    "scope": ["synergy"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureSynergyCodeQualityBot",
+                {
+                    "metric": ["synergy_code_quality"],
+                    "scope": ["synergy"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureSynergyNetworkLatencyBot",
+                {
+                    "metric": ["synergy_network_latency"],
+                    "scope": ["synergy"],
+                    "risk": ["low"],
+                },
+            )
+            _register_future_bot(
+                "FutureSynergyThroughputBot",
+                {
+                    "metric": ["synergy_throughput"],
+                    "scope": ["synergy"],
+                    "risk": ["low"],
+                },
+            )
         if self.data_bot:
-            try:
-                flb = FutureLucrativityBot(self.data_bot)
-                self.register_bot(
-                    flb,
-                    {
-                        "metric": ["projected_lucrativity", "lucrativity"],
-                        "scope": ["lucrativity"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureLucrativityBot failed"
-                )
-            try:
-                fpb = FutureProfitabilityBot(self.data_bot)
-                self.register_bot(
-                    fpb,
-                    {
-                        "metric": ["profitability"],
-                        "scope": ["profitability"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureProfitabilityBot failed"
-                )
-            try:
-                afb = FutureAntifragilityBot(self.data_bot)
-                self.register_bot(
-                    afb,
-                    {
-                        "metric": ["antifragility"],
-                        "scope": ["antifragility"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureAntifragilityBot failed"
-                )
-            try:
-                seb = FutureShannonEntropyBot(self.data_bot)
-                self.register_bot(
-                    seb,
-                    {
-                        "metric": ["shannon_entropy"],
-                        "scope": ["entropy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureShannonEntropyBot failed"
-                )
-            try:
-                syb = FutureSynergyProfitBot(self.data_bot)
-                self.register_bot(
-                    syb,
-                    {
-                        "metric": [
-                            "synergy_profitability",
-                            "synergy_projected_lucrativity",
-                        ],
-                        "scope": ["synergy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureSynergyProfitBot failed"
-                )
-            try:
-                smb = FutureSynergyMaintainabilityBot(self.data_bot)
-                self.register_bot(
-                    smb,
-                    {
-                        "metric": ["synergy_maintainability"],
-                        "scope": ["synergy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureSynergyMaintainabilityBot failed"
-                )
-            try:
-                scqb = FutureSynergyCodeQualityBot(self.data_bot)
-                self.register_bot(
-                    scqb,
-                    {
-                        "metric": ["synergy_code_quality"],
-                        "scope": ["synergy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureSynergyCodeQualityBot failed"
-                )
-            try:
-                snlb = FutureSynergyNetworkLatencyBot(self.data_bot)
-                self.register_bot(
-                    snlb,
-                    {
-                        "metric": ["synergy_network_latency"],
-                        "scope": ["synergy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureSynergyNetworkLatencyBot failed"
-                )
-            try:
-                stpb = FutureSynergyThroughputBot(self.data_bot)
-                self.register_bot(
-                    stpb,
-                    {
-                        "metric": ["synergy_throughput"],
-                        "scope": ["synergy"],
-                        "risk": ["low"],
-                    },
-                )
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "init FutureSynergyThroughputBot failed"
-                )
             try:
                 flxb = FlexibilityPredictionBot(self.data_bot)
                 self.register_bot(
