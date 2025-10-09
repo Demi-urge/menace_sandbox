@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Predict modules with elevated error probabilities using clustering."""
 
-from typing import List, Dict
+from typing import List, Dict, TYPE_CHECKING
 import logging
 import uuid
 
@@ -17,7 +17,8 @@ except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
 from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
-from .error_bot import ErrorDB
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .error_bot import ErrorDB
 from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
