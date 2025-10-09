@@ -59,9 +59,31 @@ except Exception:  # pragma: no cover - fallback when event bus unavailable
     UnifiedEventBus = None  # type: ignore
 
 MENACE_ID = "universal_retriever"
-LOCAL_DB_PATH = os.getenv(
-    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
-)
+
+def _default_local_db_path(menace_id: str) -> str:
+    """Return a writable fallback path for the local sqlite database.
+
+    ``resolve_path`` raises ``FileNotFoundError`` when the requested file does
+    not yet exist inside the repository tree.  Many unit tests and lightweight
+    entry points expect the resolver to *create* an empty sqlite file on
+    demand.  Prior to this change the import of :mod:`universal_retriever`
+    failed before any application code could run, because the module level
+    import attempted to resolve the database eagerly.  Instead we now
+    opportunistically create the file next to this module when the dynamic
+    resolver cannot locate one.
+    """
+
+    default_path = Path(__file__).resolve().with_name(f"menace_{menace_id}_local.db")
+
+    try:
+        return str(resolve_path(f"menace_{menace_id}_local.db"))
+    except FileNotFoundError:
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+        default_path.touch(exist_ok=True)
+        return str(default_path)
+
+
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", _default_local_db_path(MENACE_ID))
 SHARED_DB_PATH = os.getenv(
     "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
 )
