@@ -46,7 +46,6 @@ from .memory_bot import MemoryBot
 from .communication_testing_bot import CommunicationTestingBot
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .finance_router_bot import FinanceRouterBot
-from .bot_creation_bot import BotCreationBot
 from .meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 from .offer_testing_bot import OfferTestingBot
 from .research_fallback_bot import ResearchFallbackBot
@@ -75,6 +74,7 @@ from vector_service.context_builder import ContextBuilder
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from .bot_registry import BotRegistry
+    from .bot_creation_bot import BotCreationBot
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
@@ -83,6 +83,7 @@ else:  # pragma: no cover - runtime fallback
     BotPlanningBot = Any  # type: ignore
     PlanningTask = Any  # type: ignore
     BotPlan = Any  # type: ignore
+    BotCreationBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
 
@@ -301,9 +302,11 @@ class ModelAutomationPipeline:
         self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
         self.finance_bot = finance_bot or FinanceRouterBot()
-        self.creation_bot = creation_bot or BotCreationBot(
-            context_builder=self.context_builder
-        )
+        if creation_bot is None:
+            from .bot_creation_bot import BotCreationBot as _BotCreationBot
+
+            creation_bot = _BotCreationBot(context_builder=self.context_builder)
+        self.creation_bot = creation_bot
         self.meta_ga_bot = meta_ga_bot or MetaGeneticAlgorithmBot()
         self.offer_bot = offer_bot or OfferTestingBot()
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
