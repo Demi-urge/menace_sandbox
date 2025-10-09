@@ -22,20 +22,41 @@ from pathlib import Path
 import json
 import yaml
 
-try:  # pragma: no cover - allow execution without package context
-    from .roi_tracker import ROITracker
-    from .roi_calculator import ROICalculator
-    from .roi_results_db import ROIResultsDB
-    from . import sandbox_runner
-    from .dynamic_path_router import resolve_path
-    from .workflow_scorer_core import (
-        ROIScorer as BaseROIScorer,
-        EvaluationResult,
-        compute_workflow_synergy,
-        compute_bottleneck_index,
-        compute_patchability,
-    )
-except ImportError:  # pragma: no cover - fallback when imported flat
+# ``__package__`` is ``None`` when the module is executed as a script (the
+# Windows sandbox frequently exercises this path).  In that scenario attempting
+# a relative import immediately raises ``ImportError`` which previously escaped
+# the defensive ``try``/``except`` block under the ``relevancy_radar`` import
+# hook.  Guarding on ``__package__`` ensures we only attempt relative imports
+# when the module is part of the ``menace_sandbox`` package while still
+# supporting flat execution in bespoke environments.
+if __package__:
+    try:  # pragma: no cover - allow execution without package context
+        from .roi_tracker import ROITracker
+        from .roi_calculator import ROICalculator
+        from .roi_results_db import ROIResultsDB
+        from . import sandbox_runner
+        from .dynamic_path_router import resolve_path
+        from .workflow_scorer_core import (
+            ROIScorer as BaseROIScorer,
+            EvaluationResult,
+            compute_workflow_synergy,
+            compute_bottleneck_index,
+            compute_patchability,
+        )
+    except ImportError:  # pragma: no cover - fallback when imported flat
+        from roi_tracker import ROITracker  # type: ignore
+        from roi_calculator import ROICalculator  # type: ignore
+        from roi_results_db import ROIResultsDB  # type: ignore
+        import sandbox_runner  # type: ignore
+        from dynamic_path_router import resolve_path  # type: ignore
+        from workflow_scorer_core import (  # type: ignore
+            ROIScorer as BaseROIScorer,
+            EvaluationResult,
+            compute_workflow_synergy,
+            compute_bottleneck_index,
+            compute_patchability,
+        )
+else:  # pragma: no cover - executed when run as a script
     from roi_tracker import ROITracker  # type: ignore
     from roi_calculator import ROICalculator  # type: ignore
     from roi_results_db import ROIResultsDB  # type: ignore

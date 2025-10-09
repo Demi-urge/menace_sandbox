@@ -9,66 +9,111 @@ import logging
 import os
 from pathlib import Path
 
-try:  # pragma: no cover - prefer package relative import
-    from .composite_workflow_scorer import CompositeWorkflowScorer
-except ImportError:  # pragma: no cover - allow execution as script
+_HAS_PACKAGE = bool(__package__)
+
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .composite_workflow_scorer import CompositeWorkflowScorer
+    except ImportError:  # pragma: no cover - allow execution as script
+        from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .workflow_evolution_bot import WorkflowEvolutionBot
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .workflow_evolution_bot import WorkflowEvolutionBot
+    except ImportError:  # pragma: no cover - allow execution as script
+        from workflow_evolution_bot import WorkflowEvolutionBot  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from workflow_evolution_bot import WorkflowEvolutionBot  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .roi_results_db import ROIResultsDB
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .roi_results_db import ROIResultsDB
+    except ImportError:  # pragma: no cover - allow execution as script
+        from roi_results_db import ROIResultsDB  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from roi_results_db import ROIResultsDB  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .roi_tracker import ROITracker
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .roi_tracker import ROITracker
+    except ImportError:  # pragma: no cover - allow execution as script
+        from roi_tracker import ROITracker  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from roi_tracker import ROITracker  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .workflow_stability_db import WorkflowStabilityDB
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .workflow_stability_db import WorkflowStabilityDB
+    except ImportError:  # pragma: no cover - allow execution as script
+        from workflow_stability_db import WorkflowStabilityDB  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .workflow_summary_db import WorkflowSummaryDB
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .workflow_summary_db import WorkflowSummaryDB
+    except ImportError:  # pragma: no cover - allow execution as script
+        from workflow_summary_db import WorkflowSummaryDB  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .sandbox_settings import SandboxSettings
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .sandbox_settings import SandboxSettings
+    except ImportError:  # pragma: no cover - allow execution as script
+        from sandbox_settings import SandboxSettings  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from sandbox_settings import SandboxSettings  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .workflow_synthesizer import save_workflow
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .workflow_synthesizer import save_workflow
+    except ImportError:  # pragma: no cover - allow execution as script
+        from workflow_synthesizer import save_workflow  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from workflow_synthesizer import save_workflow  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from . import workflow_run_summary
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from . import workflow_run_summary
+    except ImportError:  # pragma: no cover - allow execution as script
+        import workflow_run_summary  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     import workflow_run_summary  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from . import sandbox_runner
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from . import sandbox_runner
+    except ImportError:  # pragma: no cover - allow execution as script
+        import sandbox_runner  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     import sandbox_runner  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .workflow_synergy_comparator import WorkflowSynergyComparator
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .workflow_synergy_comparator import WorkflowSynergyComparator
+    except ImportError:  # pragma: no cover - allow execution as script
+        from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
 
-try:  # pragma: no cover - prefer package relative import
-    from .meta_workflow_planner import MetaWorkflowPlanner
-except ImportError:  # pragma: no cover - allow execution as script
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .meta_workflow_planner import MetaWorkflowPlanner
+    except ImportError:  # pragma: no cover - allow execution as script
+        from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
+else:  # pragma: no cover - executed when run as a script
     from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
-from context_builder_util import create_context_builder
+
+if _HAS_PACKAGE:
+    try:  # pragma: no cover - prefer package relative import
+        from .context_builder_util import create_context_builder
+    except ImportError:  # pragma: no cover - allow execution as script
+        from context_builder_util import create_context_builder  # type: ignore
+else:  # pragma: no cover - executed when run as a script
+    from context_builder_util import create_context_builder  # type: ignore
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without builder
