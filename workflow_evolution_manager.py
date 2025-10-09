@@ -9,18 +9,65 @@ import logging
 import os
 from pathlib import Path
 
-from .composite_workflow_scorer import CompositeWorkflowScorer
-from .workflow_evolution_bot import WorkflowEvolutionBot
-from .roi_results_db import ROIResultsDB
-from .roi_tracker import ROITracker
-from .workflow_stability_db import WorkflowStabilityDB
-from .workflow_summary_db import WorkflowSummaryDB
-from .sandbox_settings import SandboxSettings
-from .workflow_synthesizer import save_workflow
-from . import workflow_run_summary
-from . import sandbox_runner
-from .workflow_synergy_comparator import WorkflowSynergyComparator
-from .meta_workflow_planner import MetaWorkflowPlanner
+try:  # pragma: no cover - prefer package relative import
+    from .composite_workflow_scorer import CompositeWorkflowScorer
+except ImportError:  # pragma: no cover - allow execution as script
+    from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .workflow_evolution_bot import WorkflowEvolutionBot
+except ImportError:  # pragma: no cover - allow execution as script
+    from workflow_evolution_bot import WorkflowEvolutionBot  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .roi_results_db import ROIResultsDB
+except ImportError:  # pragma: no cover - allow execution as script
+    from roi_results_db import ROIResultsDB  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .roi_tracker import ROITracker
+except ImportError:  # pragma: no cover - allow execution as script
+    from roi_tracker import ROITracker  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .workflow_stability_db import WorkflowStabilityDB
+except ImportError:  # pragma: no cover - allow execution as script
+    from workflow_stability_db import WorkflowStabilityDB  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .workflow_summary_db import WorkflowSummaryDB
+except ImportError:  # pragma: no cover - allow execution as script
+    from workflow_summary_db import WorkflowSummaryDB  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .sandbox_settings import SandboxSettings
+except ImportError:  # pragma: no cover - allow execution as script
+    from sandbox_settings import SandboxSettings  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .workflow_synthesizer import save_workflow
+except ImportError:  # pragma: no cover - allow execution as script
+    from workflow_synthesizer import save_workflow  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from . import workflow_run_summary
+except ImportError:  # pragma: no cover - allow execution as script
+    import workflow_run_summary  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from . import sandbox_runner
+except ImportError:  # pragma: no cover - allow execution as script
+    import sandbox_runner  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .workflow_synergy_comparator import WorkflowSynergyComparator
+except ImportError:  # pragma: no cover - allow execution as script
+    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+
+try:  # pragma: no cover - prefer package relative import
+    from .meta_workflow_planner import MetaWorkflowPlanner
+except ImportError:  # pragma: no cover - allow execution as script
+    from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
 from context_builder_util import create_context_builder
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder  # type: ignore
@@ -37,22 +84,39 @@ except Exception:  # pragma: no cover - allow running without retriever
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
-    WorkflowGraph = None  # type: ignore
+    try:  # pragma: no cover - allow execution as script
+        from workflow_graph import WorkflowGraph  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        WorkflowGraph = None  # type: ignore
 try:  # pragma: no cover - optional at runtime
     from .workflow_lineage import load_specs as _load_specs
 except Exception:  # pragma: no cover - best effort
-    _load_specs = None  # type: ignore
+    try:  # pragma: no cover - allow execution as script
+        from workflow_lineage import load_specs as _load_specs  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        _load_specs = None  # type: ignore
 try:
     from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 except Exception:  # pragma: no cover - optional dependency
-    EvolutionHistoryDB = None  # type: ignore
-    EvolutionEvent = None  # type: ignore
-from . import mutation_logger as MutationLogger
+    try:  # pragma: no cover - allow execution as script
+        from evolution_history_db import EvolutionHistoryDB, EvolutionEvent  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        EvolutionHistoryDB = None  # type: ignore
+        EvolutionEvent = None  # type: ignore
+try:  # pragma: no cover - prefer package relative import
+    from . import mutation_logger as MutationLogger
+except ImportError:  # pragma: no cover - allow execution as script
+    import mutation_logger as MutationLogger  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .workflow_branch_manager import merge_sibling_branches as _merge_sibling_branches
 except Exception:  # pragma: no cover - best effort
-    _merge_sibling_branches = None  # type: ignore
+    try:  # pragma: no cover - allow execution as script
+        from workflow_branch_manager import (  # type: ignore
+            merge_sibling_branches as _merge_sibling_branches,
+        )
+    except Exception:  # pragma: no cover - best effort
+        _merge_sibling_branches = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
