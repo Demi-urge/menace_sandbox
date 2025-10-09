@@ -499,7 +499,30 @@ class CodeDB(EmbeddableDBMixin):
 
     def _ensure_schema(self, conn: Any) -> None:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()]
+        missing_code_table = False
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()]
+        except sqlite3.OperationalError:
+            cols = []
+            missing_code_table = True
+
+        if not cols:
+            missing_code_table = True
+            # ``code`` may not exist on freshly provisioned databases.  Create the
+            # base table ahead of running migrations so statements referencing the
+            # table (for example foreign keys) do not fail with ``no such table``
+            # errors.  ``SQL_CREATE_CODE_TABLE`` already guards with
+            # ``IF NOT EXISTS`` making the call idempotent.
+            self._execute(conn, SQL_CREATE_CODE_TABLE)
+            cols = [
+                r[1]
+                for r in conn.execute("PRAGMA table_info(code)").fetchall()
+            ]
+            if missing_code_table and version > 0:
+                # The schema was unexpectedly absent even though a migration version
+                # was recorded.  Reset the version so migrations below can recreate
+                # auxiliary tables and indexes consistently.
+                version = 0
         for target, stmts in MIGRATIONS:
             if version < target:
                 for stmt in stmts:
