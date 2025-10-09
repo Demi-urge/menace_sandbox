@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
+from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
@@ -23,7 +24,6 @@ import pulp
 
 logger = logging.getLogger(__name__)
 
-from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 try:
     import risky  # type: ignore
