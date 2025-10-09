@@ -30,9 +30,36 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-import yaml
+from yaml_fallback import get_yaml
 
-from filelock import FileLock
+try:  # pragma: no cover - optional dependency in minimal environments
+    from filelock import FileLock
+    _MISSING_FILELOCK: ModuleNotFoundError | None = None
+except ModuleNotFoundError as exc:  # pragma: no cover - graceful degradation
+    _MISSING_FILELOCK = exc
+
+    class FileLock:  # type: ignore[override]
+        """Minimal in-memory lock used when :mod:`filelock` is unavailable."""
+
+        def __init__(self, _path: str, *_: object, **__: object) -> None:
+            self._locked = False
+
+        def acquire(self, *_: object, **__: object) -> None:
+            self._locked = True
+
+        def release(self, *_: object, **__: object) -> None:
+            self._locked = False
+
+        def __enter__(self) -> "FileLock":
+            self.acquire()
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            self.release()
+
+        @property
+        def is_locked(self) -> bool:
+            return self._locked
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
@@ -96,7 +123,15 @@ except (ImportError, AttributeError):  # pragma: no cover - fallback to package 
             return safe
 
 
+yaml = get_yaml("self_improvement.init")
+
 logger = get_logger(__name__)
+if _MISSING_FILELOCK:
+    logger.warning(
+        "filelock unavailable; using in-memory stub",  # noqa: TRY400
+        extra=log_record(module=__name__, dependency="filelock"),
+        exc_info=_MISSING_FILELOCK,
+    )
 settings = SandboxSettings()
 
 
