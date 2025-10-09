@@ -13,8 +13,12 @@ from itertools import combinations
 
 import numpy as np
 
-from .roi_tracker import ROITracker
-from .roi_calculator import ROICalculator
+try:  # pragma: no cover - prefer package relative import
+    from .roi_tracker import ROITracker
+    from .roi_calculator import ROICalculator
+except ImportError:  # pragma: no cover - allow execution as script
+    from roi_tracker import ROITracker  # type: ignore
+    from roi_calculator import ROICalculator  # type: ignore
 
 
 # ---------------------------------------------------------------------------
