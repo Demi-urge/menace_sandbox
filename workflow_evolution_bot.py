@@ -2,35 +2,207 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 import logging
-
-from .neuroplasticity import PathwayDB
-from . import mutation_logger as MutationLogger
-from .bot_registry import BotRegistry
-from .data_bot import DataBot, persist_sc_thresholds
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
-from .threshold_service import ThresholdService
-from .code_database import CodeDB
-from .gpt_memory import GPTMemoryManager
-from .self_coding_thresholds import get_thresholds
-from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
-from .shared_evolution_orchestrator import get_orchestrator
-from context_builder_util import create_context_builder
+from importlib import import_module
+from pathlib import Path
+import sys
+
+_HAS_PACKAGE = bool(__package__)
+
+logger = logging.getLogger(__name__)
+
+
+def _flat_import(module: str) -> object:
+    """Import ``module`` from the top-level package when executed flat."""
+
+    package_root = Path(__file__).resolve().parent
+    package_name = package_root.name
+    qualified = f"{package_name}.{module}"
+    try:
+        return import_module(qualified)
+    except ModuleNotFoundError:
+        parent = str(package_root.parent)
+        if parent not in sys.path:
+            sys.path.append(parent)
+        return import_module(qualified)
+
+if _HAS_PACKAGE:
+    from .coding_bot_interface import self_coding_managed
+else:  # pragma: no cover - execution as a script
+    self_coding_managed = _flat_import("coding_bot_interface").self_coding_managed  # type: ignore[attr-defined]
+
+if _HAS_PACKAGE:
+    from .neuroplasticity import PathwayDB
+else:  # pragma: no cover - execution as a script
+    PathwayDB = _flat_import("neuroplasticity").PathwayDB  # type: ignore[attr-defined]
+
+try:  # pragma: no cover - prefer package relative import
+    from . import mutation_logger as MutationLogger
+except ImportError:  # pragma: no cover - allow execution as a script
+    MutationLogger = _flat_import("mutation_logger")  # type: ignore[assignment]
+
+if _HAS_PACKAGE:
+    from .bot_registry import BotRegistry
+else:  # pragma: no cover - execution as a script
+    BotRegistry = _flat_import("bot_registry").BotRegistry  # type: ignore[attr-defined]
+
+if _HAS_PACKAGE:
+    from .data_bot import DataBot, persist_sc_thresholds
+else:  # pragma: no cover - execution as a script
+    _data_bot = _flat_import("data_bot")
+    DataBot = _data_bot.DataBot  # type: ignore[attr-defined]
+    persist_sc_thresholds = _data_bot.persist_sc_thresholds  # type: ignore[attr-defined]
+
+try:
+    if _HAS_PACKAGE:
+        from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+    else:  # pragma: no cover - execution as a script
+        _scm = _flat_import("self_coding_manager")
+        SelfCodingManager = _scm.SelfCodingManager  # type: ignore[attr-defined]
+        internalize_coding_bot = _scm.internalize_coding_bot  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "SelfCodingManager unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+
+    class _FallbackManager:  # pragma: no cover - simplified stub
+        engine: Any | None = None
+
+    SelfCodingManager = _FallbackManager  # type: ignore[misc, assignment]
+
+    def internalize_coding_bot(*_args: Any, **_kwargs: Any) -> Any:  # type: ignore[override]
+        return None
+
+try:
+    if _HAS_PACKAGE:
+        from .self_coding_engine import SelfCodingEngine
+    else:  # pragma: no cover - execution as a script
+        SelfCodingEngine = _flat_import("self_coding_engine").SelfCodingEngine  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "SelfCodingEngine unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+    SelfCodingEngine = type("_FallbackEngine", (), {})  # type: ignore[misc, assignment]
+
+try:
+    if _HAS_PACKAGE:
+        from .model_automation_pipeline import ModelAutomationPipeline
+    else:  # pragma: no cover - execution as a script
+        ModelAutomationPipeline = _flat_import("model_automation_pipeline").ModelAutomationPipeline  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "ModelAutomationPipeline unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+    ModelAutomationPipeline = type("_FallbackPipeline", (), {})  # type: ignore[misc, assignment]
+
+try:
+    if _HAS_PACKAGE:
+        from .threshold_service import ThresholdService
+    else:  # pragma: no cover - execution as a script
+        ThresholdService = _flat_import("threshold_service").ThresholdService  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "ThresholdService unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+
+    class ThresholdService:  # type: ignore[no-redef]
+        pass
+
+try:
+    if _HAS_PACKAGE:
+        from .code_database import CodeDB
+    else:  # pragma: no cover - execution as a script
+        CodeDB = _flat_import("code_database").CodeDB  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning("CodeDB unavailable for WorkflowEvolutionBot: %s", exc)
+    CodeDB = type("_FallbackCodeDB", (), {})  # type: ignore[misc, assignment]
+
+try:
+    if _HAS_PACKAGE:
+        from .gpt_memory import GPTMemoryManager
+    else:  # pragma: no cover - execution as a script
+        GPTMemoryManager = _flat_import("gpt_memory").GPTMemoryManager  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning("GPTMemoryManager unavailable for WorkflowEvolutionBot: %s", exc)
+    GPTMemoryManager = type("_FallbackGPTMemory", (), {})  # type: ignore[misc, assignment]
+
+try:
+    if _HAS_PACKAGE:
+        from .self_coding_thresholds import get_thresholds
+    else:  # pragma: no cover - execution as a script
+        get_thresholds = _flat_import("self_coding_thresholds").get_thresholds  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning("get_thresholds unavailable for WorkflowEvolutionBot: %s", exc)
+
+    def get_thresholds(*_args: Any, **_kwargs: Any) -> Any:  # type: ignore[override]
+        raise RuntimeError("thresholds unavailable")
+
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+except Exception:  # pragma: no cover - allow running without builder
+    ContextBuilder = None  # type: ignore[misc]
+
+try:
+    if _HAS_PACKAGE:
+        from .shared_evolution_orchestrator import get_orchestrator
+    else:  # pragma: no cover - execution as a script
+        get_orchestrator = _flat_import("shared_evolution_orchestrator").get_orchestrator  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "get_orchestrator unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+
+    def get_orchestrator(*_args: Any, **_kwargs: Any) -> Any:  # type: ignore[override]
+        return None
+
+if _HAS_PACKAGE:
+    from .context_builder_util import create_context_builder
+else:  # pragma: no cover - execution as a script
+    create_context_builder = _flat_import("context_builder_util").create_context_builder  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
-try:  # pragma: no cover - allow flat imports
-    from .intent_clusterer import IntentClusterer
-    from .universal_retriever import UniversalRetriever
-except Exception:  # pragma: no cover - fallback for flat layout
-    from intent_clusterer import IntentClusterer  # type: ignore
-    from universal_retriever import UniversalRetriever  # type: ignore
+
+try:
+    if _HAS_PACKAGE:
+        from .intent_clusterer import IntentClusterer
+    else:  # pragma: no cover - execution as a script
+        IntentClusterer = _flat_import("intent_clusterer").IntentClusterer  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning("IntentClusterer unavailable for WorkflowEvolutionBot: %s", exc)
+
+    class IntentClusterer:  # type: ignore[no-redef]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def cluster(self, *_args: Any, **_kwargs: Any) -> list[str]:
+            return []
+
+try:
+    if _HAS_PACKAGE:
+        from .universal_retriever import UniversalRetriever
+    else:  # pragma: no cover - execution as a script
+        UniversalRetriever = _flat_import("universal_retriever").UniversalRetriever  # type: ignore[attr-defined]
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "UniversalRetriever unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+
+    class UniversalRetriever:  # type: ignore[no-redef]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def retrieve(self, *_args: Any, **_kwargs: Any) -> list[str]:
+            return []
 
 try:  # Optional helpers for variant generation
     from .module_synergy_grapher import get_synergy_cluster
@@ -64,34 +236,98 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - best effort
         get_io_signature = None  # type: ignore[misc]
 
-logger = logging.getLogger(__name__)
-
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator = get_orchestrator("WorkflowEvolutionBot", data_bot, engine)
-_th = get_thresholds("WorkflowEvolutionBot")
-persist_sc_thresholds(
-    "WorkflowEvolutionBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "WorkflowEvolutionBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
+try:
+    _context_builder = create_context_builder()
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "Context builder unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+    _context_builder = None
+
+if _context_builder is not None:
+    try:
+        engine = SelfCodingEngine(
+            CodeDB(),
+            GPTMemoryManager(),
+            context_builder=_context_builder,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "SelfCodingEngine unavailable; WorkflowEvolutionBot will run without self-coding manager: %s",
+            exc,
+        )
+        engine = None  # type: ignore[assignment]
+else:
+    engine = None  # type: ignore[assignment]
+
+if _context_builder is not None and engine is not None:
+    try:
+        pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "ModelAutomationPipeline unavailable for WorkflowEvolutionBot: %s",
+            exc,
+        )
+        pipeline = None
+else:
+    pipeline = None
+
+try:
+    evolution_orchestrator = (
+        get_orchestrator("WorkflowEvolutionBot", data_bot, engine)
+        if engine is not None
+        else None
+    )
+except Exception as exc:  # pragma: no cover - orchestrator optional
+    logger.warning(
+        "EvolutionOrchestrator unavailable for WorkflowEvolutionBot: %s",
+        exc,
+    )
+    evolution_orchestrator = None
+
+try:
+    _th = get_thresholds("WorkflowEvolutionBot")
+except Exception as exc:  # pragma: no cover - thresholds optional
+    logger.warning("Threshold lookup failed for WorkflowEvolutionBot: %s", exc)
+    _th = None
+
+if _th is not None:
+    try:
+        persist_sc_thresholds(
+            "WorkflowEvolutionBot",
+            roi_drop=_th.roi_drop,
+            error_increase=_th.error_increase,
+            test_failure_increase=_th.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - best effort persistence
+        logger.warning("failed to persist WorkflowEvolutionBot thresholds: %s", exc)
+
+if engine is not None and pipeline is not None and _th is not None:
+    try:
+        manager = internalize_coding_bot(
+            "WorkflowEvolutionBot",
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=_th.roi_drop,
+            error_threshold=_th.error_increase,
+            test_failure_threshold=_th.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "failed to initialise self-coding manager for WorkflowEvolutionBot: %s",
+            exc,
+        )
+        manager = None
+else:
+    manager = None
 
 
 @dataclass
