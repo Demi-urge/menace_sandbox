@@ -7,7 +7,7 @@ from .bot_registry import BotRegistry
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Dict, List, Callable, Optional, Any
+from typing import TYPE_CHECKING, Iterable, Dict, List, Callable, Optional, Any
 import logging
 
 registry = BotRegistry()
@@ -29,13 +29,15 @@ from .implementation_optimiser_bot import ImplementationOptimiserBot
 from .chatgpt_enhancement_bot import EnhancementDB
 from .task_handoff_bot import WorkflowDB
 from .database_manager import DB_PATH, update_model, init_db
-from .prediction_manager_bot import PredictionManager
 from .unified_event_bus import UnifiedEventBus
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - optional dependency
     from .adaptive_roi_predictor import AdaptiveROIPredictor
 except Exception:  # pragma: no cover - predictor missing
     AdaptiveROIPredictor = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from .prediction_manager_bot import PredictionManager
 
 
 logger = logging.getLogger(__name__)
