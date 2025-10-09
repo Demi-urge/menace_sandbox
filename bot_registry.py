@@ -163,7 +163,10 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from threshold_service import threshold_service  # type: ignore
 
-from .self_coding_dependency_probe import ensure_self_coding_ready
+try:  # pragma: no cover - allow flat imports
+    from .self_coding_dependency_probe import ensure_self_coding_ready
+except Exception:  # pragma: no cover - fallback for flat layout
+    from self_coding_dependency_probe import ensure_self_coding_ready  # type: ignore
 
 try:  # pragma: no cover - allow flat imports
     from .retry_utils import with_retry
