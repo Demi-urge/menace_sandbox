@@ -99,7 +99,18 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
         "ModelAutomationPipeline unavailable for WorkflowEvolutionBot: %s",
         exc,
     )
-    ModelAutomationPipeline = type("_FallbackPipeline", (), {})  # type: ignore[misc, assignment]
+
+    class _FallbackPipeline:  # pragma: no cover - lightweight stub
+        """Gracefully surface pipeline unavailability when imported flat."""
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            # ``ModelAutomationPipeline`` is optional for degraded bootstrap
+            # modes.  Provide a helpful error instead of the confusing default
+            # ``TypeError`` raised by ``object.__init__`` when keyword
+            # arguments are supplied.
+            raise RuntimeError("ModelAutomationPipeline is unavailable")
+
+    ModelAutomationPipeline = _FallbackPipeline  # type: ignore[misc, assignment]
 
 try:
     if _HAS_PACKAGE:
