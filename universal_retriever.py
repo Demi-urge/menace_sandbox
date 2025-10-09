@@ -17,7 +17,7 @@ from governed_retrieval import govern_retrieval
 import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_roots, resolve_path
 
 _ALIASES = (
     "universal_retriever",
@@ -63,24 +63,41 @@ MENACE_ID = "universal_retriever"
 def _default_local_db_path(menace_id: str) -> str:
     """Return a writable fallback path for the local sqlite database.
 
-    ``resolve_path`` raises ``FileNotFoundError`` when the requested file does
-    not yet exist inside the repository tree.  Many unit tests and lightweight
-    entry points expect the resolver to *create* an empty sqlite file on
-    demand.  Prior to this change the import of :mod:`universal_retriever`
-    failed before any application code could run, because the module level
-    import attempted to resolve the database eagerly.  Instead we now
-    opportunistically create the file next to this module when the dynamic
-    resolver cannot locate one.
+    The historical behaviour attempted to resolve the sqlite file at import
+    time via :func:`dynamic_path_router.resolve_path`.  On fresh checkouts where
+    the database had not yet been created this raised ``FileNotFoundError`` and
+    prevented ``universal_retriever`` from importing at all.  We still prefer a
+    repository-managed location when present, but fall back to creating an
+    empty sqlite file in a writable directory so importers can proceed.
     """
 
-    default_path = Path(__file__).resolve().with_name(f"menace_{menace_id}_local.db")
+    db_name = f"menace_{menace_id}_local.db"
 
     try:
-        return str(resolve_path(f"menace_{menace_id}_local.db"))
+        return str(resolve_path(db_name))
     except FileNotFoundError:
-        default_path.parent.mkdir(parents=True, exist_ok=True)
-        default_path.touch(exist_ok=True)
-        return str(default_path)
+        pass
+
+    module_dir = Path(__file__).resolve().parent
+    module_path = module_dir / db_name
+
+    if module_path.exists():
+        return str(module_path)
+
+    try:
+        module_dir.mkdir(parents=True, exist_ok=True)
+        module_path.touch(exist_ok=True)
+        return str(module_path)
+    except OSError:
+        for root in get_project_roots():
+            candidate = root / db_name
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.touch(exist_ok=True)
+                return str(candidate)
+            except OSError:
+                continue
+        raise
 
 
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", _default_local_db_path(MENACE_ID))
