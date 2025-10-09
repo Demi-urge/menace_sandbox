@@ -303,9 +303,32 @@ class ModelAutomationPipeline:
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
         self.finance_bot = finance_bot or FinanceRouterBot()
         if creation_bot is None:
-            from .bot_creation_bot import BotCreationBot as _BotCreationBot
+            _bot_creation_cls: type["BotCreationBot"] | None
+            try:
+                from .bot_creation_bot import (  # type: ignore
+                    BotCreationBot as _BotCreationBot,
+                )
+            except Exception as exc:  # pragma: no cover - degraded bootstrap
+                self.logger.warning(
+                    "BotCreationBot unavailable for ModelAutomationPipeline: %s",
+                    exc,
+                )
+                _bot_creation_cls = None
+            else:
+                _bot_creation_cls = _BotCreationBot
 
-            creation_bot = _BotCreationBot(context_builder=self.context_builder)
+            if _bot_creation_cls is not None:
+                try:
+                    creation_bot = _bot_creation_cls(
+                        context_builder=self.context_builder
+                    )
+                except Exception as exc:  # pragma: no cover - degraded bootstrap
+                    self.logger.warning(
+                        "BotCreationBot initialisation failed for ModelAutomationPipeline: %s",
+                        exc,
+                    )
+                    creation_bot = None
+
         self.creation_bot = creation_bot
         self.meta_ga_bot = meta_ga_bot or MetaGeneticAlgorithmBot()
         self.offer_bot = offer_bot or OfferTestingBot()
