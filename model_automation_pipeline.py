@@ -34,7 +34,6 @@ from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
-from .implementation_optimiser_bot import ImplementationOptimiserBot
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from .efficiency_bot import EfficiencyBot
 from .performance_assessment_bot import PerformanceAssessmentBot
@@ -79,6 +78,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
+    from .implementation_optimiser_bot import ImplementationOptimiserBot
 else:  # pragma: no cover - runtime fallback
     BotPlanningBot = Any  # type: ignore
     PlanningTask = Any  # type: ignore
@@ -123,6 +123,14 @@ def _make_research_item(**kwargs: Any) -> "ResearchItem":
     from .research_aggregator_bot import ResearchItem
 
     return ResearchItem(**kwargs)
+
+
+def _implementation_optimiser_cls() -> Type["ImplementationOptimiserBot"]:
+    """Return the optimiser class without importing during module initialisation."""
+
+    from .implementation_optimiser_bot import ImplementationOptimiserBot as _ImplementationOptimiserBot
+
+    return _ImplementationOptimiserBot
 
 MENACE_ID = "model_automation_pipeline"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -275,9 +283,10 @@ class ModelAutomationPipeline:
                 self.roi_bot.handoff = self.handoff
         else:
             self.roi_bot = PreExecutionROIBot(handoff=self.handoff)
-        self.optimiser = optimiser or ImplementationOptimiserBot(
-            context_builder=self.context_builder
-        )
+        if optimiser is None:
+            optimiser_cls = _implementation_optimiser_cls()
+            optimiser = optimiser_cls(context_builder=self.context_builder)
+        self.optimiser = optimiser
         self.funds = funds
         self.roi_threshold = roi_threshold
 
