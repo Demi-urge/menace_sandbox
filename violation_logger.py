@@ -7,12 +7,17 @@ import os
 import time
 import logging
 from datetime import datetime
+from pathlib import Path
 from threading import Thread, Lock
 from typing import Any, List, Dict, Optional
 
-from dynamic_path_router import resolve_dir, resolve_path
+from dynamic_path_router import get_project_root, resolve_dir
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
-from .retry_utils import publish_with_retry
+if __package__:
+    from .retry_utils import publish_with_retry
+else:  # pragma: no cover - fallback for direct execution
+    from retry_utils import publish_with_retry  # type: ignore
 from db_router import GLOBAL_ROUTER
 import sqlite3
 from sandbox_settings import SandboxSettings
@@ -27,13 +32,21 @@ except Exception:  # pragma: no cover - bus optional
     UnifiedEventBus = None  # type: ignore
 
 # Directory and file path for violation logs
-LOG_DIR = resolve_dir("logs")
-LOG_PATH = resolve_path("logs/violation_log.jsonl")
-ALIGNMENT_DB_PATH = resolve_path("logs/alignment_warnings.db")
+try:
+    LOG_DIR = Path(resolve_dir("logs"))
+except (FileNotFoundError, NotADirectoryError):
+    LOG_DIR = (get_project_root() / "logs").resolve()
+
+LOG_PATH: Path | str = LOG_DIR / "violation_log.jsonl"
+DEFAULT_ALIGNMENT_DB_PATH = LOG_DIR / "alignment_warnings.db"
+ALIGNMENT_DB_PATH: Path | str = DEFAULT_ALIGNMENT_DB_PATH
 
 logger = logging.getLogger(__name__)
 _logger_lock = Lock()
 _loggers: Dict[str, logging.Logger] = {}
+_alignment_conn_cache: sqlite3.Connection | None = None
+_alignment_conn_path: Path | None = None
+_alignment_conn_lock = Lock()
 
 _event_bus: Optional[UnifiedEventBus]
 if UnifiedEventBus is not None:
@@ -53,44 +66,92 @@ def set_event_bus(bus: Optional[UnifiedEventBus]) -> None:
 
 def _ensure_log_dir() -> None:
     """Create the log directory if it doesn't exist."""
-    os.makedirs(LOG_DIR, exist_ok=True)
+    Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
 
 
-def _get_logger(path: str) -> logging.Logger:
+def _get_logger(path: Path | str) -> logging.Logger:
+    path_obj = Path(path)
+    path_str = os.fspath(path_obj)
     with _logger_lock:
-        lg = _loggers.get(path)
+        lg = _loggers.get(path_str)
         if lg is None:
             settings = SandboxSettings()
-            lg = logging.getLogger(f"violation_logger_{path}")
+            lg = logging.getLogger(f"violation_logger_{path_str}")
             lg.setLevel(logging.INFO)
             rotate_seconds = settings.log_rotation_seconds
-            if rotate_seconds:
-                handler = LockedTimedRotatingFileHandler(
-                    path,
-                    when="s",
-                    interval=rotate_seconds,
-                    backupCount=settings.log_rotation_backup_count,
-                    encoding="utf-8",
-                )
-            else:
-                handler = LockedRotatingFileHandler(
-                    path,
-                    maxBytes=settings.log_rotation_max_bytes,
-                    backupCount=settings.log_rotation_backup_count,
-                    encoding="utf-8",
-                )
+            handler = _build_file_handler(path_str, settings, rotate_seconds)
             handler.setFormatter(logging.Formatter("%(message)s"))
             lg.addHandler(handler)
             lg.propagate = False
-            _loggers[path] = lg
+            _loggers[path_str] = lg
         return lg
+
+
+def _build_file_handler(
+    path_str: str, settings: SandboxSettings, rotate_seconds: int | None
+) -> logging.Handler:
+    """Return a file handler, falling back when ``filelock`` is unavailable."""
+
+    if rotate_seconds:
+        handler_cls = LockedTimedRotatingFileHandler
+        fallback_cls = TimedRotatingFileHandler
+        kwargs = dict(
+            when="s",
+            interval=rotate_seconds,
+            backupCount=settings.log_rotation_backup_count,
+            encoding="utf-8",
+        )
+    else:
+        handler_cls = LockedRotatingFileHandler
+        fallback_cls = RotatingFileHandler
+        kwargs = dict(
+            maxBytes=settings.log_rotation_max_bytes,
+            backupCount=settings.log_rotation_backup_count,
+            encoding="utf-8",
+        )
+
+    try:
+        return handler_cls(path_str, **kwargs)
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+        if exc.name != "filelock":
+            raise
+        logger.warning(
+            "filelock dependency missing; falling back to unlocked file handler"
+        )
+        return fallback_cls(path_str, **kwargs)
+
+
+def _use_router_for_alignment(alignment_db_path: Path) -> bool:
+    """Return ``True`` when the global router should service alignment logs."""
+
+    return (
+        GLOBAL_ROUTER is not None
+        and alignment_db_path.resolve() == Path(DEFAULT_ALIGNMENT_DB_PATH).resolve()
+    )
 
 
 def _alignment_conn() -> sqlite3.Connection:
     """Return a connection for alignment warnings."""
-    if GLOBAL_ROUTER is None:
-        raise RuntimeError("Database router is not initialised")
-    return GLOBAL_ROUTER.get_connection("errors")
+    global _alignment_conn_cache, _alignment_conn_path
+
+    alignment_db_path = Path(ALIGNMENT_DB_PATH)
+
+    if _use_router_for_alignment(alignment_db_path):
+        return GLOBAL_ROUTER.get_connection("errors")
+
+    alignment_db_path.parent.mkdir(parents=True, exist_ok=True)
+    with _alignment_conn_lock:
+        if _alignment_conn_cache is None or _alignment_conn_path != alignment_db_path:
+            if _alignment_conn_cache is not None:
+                try:
+                    _alignment_conn_cache.close()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    pass
+            _alignment_conn_cache = sqlite3.connect(
+                alignment_db_path, check_same_thread=False
+            )
+            _alignment_conn_path = alignment_db_path
+        return _alignment_conn_cache
 
 
 def persist_alignment_warning(record: Dict[str, Any]) -> None:
@@ -147,7 +208,8 @@ def load_persisted_alignment_warnings(
 
     if limit <= 0:
         return []
-    if GLOBAL_ROUTER is None and not os.path.exists(ALIGNMENT_DB_PATH):
+    alignment_db_path = Path(ALIGNMENT_DB_PATH)
+    if (not _use_router_for_alignment(alignment_db_path)) and not alignment_db_path.exists():
         return []
     conn = _alignment_conn()
     query = (
@@ -278,9 +340,10 @@ def load_recent_violations(limit: int = 50) -> List[Dict[str, Any]]:
     """Return the most recent *limit* violation records."""
     if limit <= 0:
         return []
-    if not os.path.exists(LOG_PATH):
+    log_path = Path(LOG_PATH)
+    if not log_path.exists():
         return []
-    with open(LOG_PATH, "r", encoding="utf-8") as fh:
+    with log_path.open("r", encoding="utf-8") as fh:
         lines = fh.readlines()
     records: List[Dict[str, Any]] = []
     for line in lines[-limit:]:
@@ -298,9 +361,10 @@ def load_recent_alignment_warnings(limit: int = 50) -> List[Dict[str, Any]]:
     """Return the most recent *limit* alignment warnings."""
     if limit <= 0:
         return []
-    if not os.path.exists(LOG_PATH):
+    log_path = Path(LOG_PATH)
+    if not log_path.exists():
         return []
-    with open(LOG_PATH, "r", encoding="utf-8") as fh:
+    with log_path.open("r", encoding="utf-8") as fh:
         lines = fh.readlines()
     warnings: List[Dict[str, Any]] = []
     for line in reversed(lines):
@@ -331,10 +395,11 @@ def recent_alignment_warnings(limit: int = 50) -> List[Dict[str, Any]]:
 
 def violation_summary(entry_id: str) -> str:
     """Return a brief summary of all violations for *entry_id*."""
-    if not os.path.exists(LOG_PATH):
+    log_path = Path(LOG_PATH)
+    if not log_path.exists():
         return "No violations logged."
     summaries = []
-    with open(LOG_PATH, "r", encoding="utf-8") as fh:
+    with log_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             if not line.strip():
                 continue
