@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, TYPE_CHECKING, Any, Callable
+
+import importlib
+import ast
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
-import ast
-import logging
-import time
 from vector_service.context_builder import ContextBuilder
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
@@ -24,14 +27,63 @@ from .task_handoff_bot import TaskPackage, TaskInfo
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .model_automation_pipeline import ModelAutomationPipeline
+else:  # pragma: no cover - runtime fallback
+    ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
+
+
+def _resolve_pipeline_cls() -> type["ModelAutomationPipeline"] | None:
+    """Return the ``ModelAutomationPipeline`` class when available."""
+
+    module_candidates: tuple[str, ...] = (
+        "menace_sandbox.model_automation_pipeline",
+        "model_automation_pipeline",
+    )
+    for dotted in module_candidates:
+        try:
+            module = importlib.import_module(dotted)
+        except ModuleNotFoundError:
+            continue
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("failed to import %s: %s", dotted, exc)
+            continue
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if isinstance(pipeline_cls, type):
+            return pipeline_cls
+    return None
+
+
+def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPipeline | None"]:
+    """Build a factory that lazily instantiates the automation pipeline."""
+
+    pipeline_cls = _resolve_pipeline_cls()
+
+    def factory(context_builder: ContextBuilder) -> "ModelAutomationPipeline | None":
+        if pipeline_cls is None:
+            return None
+        try:
+            return pipeline_cls(context_builder=context_builder)
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "ModelAutomationPipeline initialisation failed for ImplementationOptimiserBot: %s",
+                exc,
+            )
+            return None
+
+    return factory
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+_pipeline_factory = _create_pipeline_factory()
+pipeline: ModelAutomationPipeline | None = _pipeline_factory(_context_builder)
+if pipeline is None:
+    logger.warning(
+        "ModelAutomationPipeline unavailable; ImplementationOptimiserBot will run without self-coding manager"
+    )
 evolution_orchestrator = get_orchestrator(
     "ImplementationOptimiserBot", data_bot, engine
 )
@@ -42,18 +94,21 @@ persist_sc_thresholds(
     error_increase=_th.error_increase,
     test_failure_increase=_th.test_failure_increase,
 )
-manager = internalize_coding_bot(
-    "ImplementationOptimiserBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-    threshold_service=ThresholdService(),
-)
+if pipeline is not None:
+    manager: SelfCodingManager | None = internalize_coding_bot(
+        "ImplementationOptimiserBot",
+        engine,
+        pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        evolution_orchestrator=evolution_orchestrator,
+        roi_threshold=_th.roi_drop,
+        error_threshold=_th.error_increase,
+        test_failure_threshold=_th.test_failure_increase,
+        threshold_service=ThresholdService(),
+    )
+else:
+    manager = None
 
 
 @dataclass
