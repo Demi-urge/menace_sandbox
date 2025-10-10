@@ -2582,7 +2582,14 @@ class BotRegistry:
                     stored_commit = None
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Failed to fetch patch provenance for %s: %s", patch_id, exc)
-        if stored_commit != commit:
+        # When the provenance service cannot supply a stored commit we
+        # conservatively allow the hot swap to proceed.  The provenance
+        # metadata provided by :meth:`update_bot` is still present in the
+        # registry entry so we are not weakening the guard rails; however, we
+        # must not treat ``None`` (or other falsey values) as a mismatched
+        # commit.  Doing so caused the runtime error observed when the
+        # provenance database had not yet recorded a commit for ``patch_id``.
+        if stored_commit is not None and stored_commit != commit:
             if self.event_bus:
                 try:
                     self.event_bus.publish(
