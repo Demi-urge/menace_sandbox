@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import sqlite3
 import json
+import logging
+import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Sequence, Any
-import logging
+from typing import Any, Callable, Iterable, List, Optional, Sequence
 
-from db_router import GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
 try:
     from sklearn.cluster import KMeans  # type: ignore
@@ -137,9 +138,10 @@ class MenaceMemoryManager(GPTMemoryInterface):
         summary_interval: int = 50,
     ) -> None:
         # allow connections to be shared across threads
-        if GLOBAL_ROUTER is None:
-            raise RuntimeError("Database router is not initialised")
-        with GLOBAL_ROUTER.get_connection("memory") as conn:
+        router = GLOBAL_ROUTER or init_db_router(
+            os.getenv("MENACE_ID", "memory_manager")
+        )
+        with router.get_connection("memory") as conn:
             self.conn = conn
         self.subscribers: List[Callable[[MemoryEntry], None]] = []
         self.event_bus = event_bus
