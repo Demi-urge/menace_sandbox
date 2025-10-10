@@ -40,6 +40,9 @@ DEFAULT_REMEDIATION_HINTS: dict[str, str] = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 def _load_remediation_hints() -> dict[str, str]:
     """Return remediation hints loaded from ``configs/roi_fix_rules.yaml``.
 
@@ -53,6 +56,12 @@ def _load_remediation_hints() -> dict[str, str]:
         ) as fh:
             file_hints: dict[str, str] = yaml.safe_load(fh) or {}
     except FileNotFoundError:
+        file_hints = {}
+    except (yaml.YAMLError, ModuleNotFoundError) as exc:
+        logger.warning(
+            "Failed to load ROI remediation hints; using built-in defaults.",
+            exc_info=exc,
+        )
         file_hints = {}
     return {**DEFAULT_REMEDIATION_HINTS, **file_hints}
 
@@ -111,8 +120,16 @@ class ROICalculator:
             path = Path(resolve_path(profiles_path))
         else:
             path = Path(profiles_path)
-        with path.open("r", encoding="utf-8") as fh:
-            self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
+        except (yaml.YAMLError, ModuleNotFoundError) as exc:
+            logger.warning(
+                "Failed to load ROI profiles from %s; continuing with empty profiles.",
+                path,
+                exc_info=exc,
+            )
+            self.profiles = {}
         self._validate_profiles()
         self.logger = logger or logging.getLogger(__name__)
 

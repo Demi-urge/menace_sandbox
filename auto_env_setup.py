@@ -20,6 +20,20 @@ from .dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
+try:
+    _DEFAULT_SANDBOX_DATA_DIR = str(resolve_path("sandbox_data"))
+except FileNotFoundError as exc:
+    fallback_dir = Path(__file__).resolve().parent / "sandbox_data"
+    try:
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Directory creation is best-effort; use parent as final fallback
+        fallback_dir = fallback_dir.parent
+    logger.warning(
+        "sandbox_data directory not found; using fallback path %s", fallback_dir, exc_info=exc
+    )
+    _DEFAULT_SANDBOX_DATA_DIR = str(fallback_dir)
+
 # Shared defaults
 RECURSIVE_ISOLATED_DEFAULT = "1"
 RECURSIVE_ISOLATED_VARS = (
@@ -44,7 +58,7 @@ DEFAULT_VARS: Dict[str, str] = {
     "OVERRIDE_UPDATE_INTERVAL": "600",
     "AUTO_BACKUP": "0",
     "MAINTENANCE_DB": "maintenance.db",
-    "SANDBOX_DATA_DIR": str(resolve_path("sandbox_data")),
+    "SANDBOX_DATA_DIR": _DEFAULT_SANDBOX_DATA_DIR,
     "SELF_TEST_DISABLE_ORPHANS": "0",
     "SELF_TEST_DISCOVER_ORPHANS": "1",
     "SELF_TEST_RECURSIVE_ORPHANS": "1",

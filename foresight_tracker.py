@@ -34,8 +34,18 @@ from collections import deque
 from pathlib import Path
 from typing import Deque, Dict, List, Mapping, Tuple, TYPE_CHECKING
 from numbers import Number
+import logging
+import math
 
-import numpy as np
+try:  # pragma: no cover - optional dependency
+    import numpy as np
+    _NUMPY_ERROR: Exception | None = None
+except ModuleNotFoundError as exc:  # pragma: no cover - executed without numpy
+    np = None  # type: ignore[assignment]
+    _NUMPY_ERROR = exc
+else:  # pragma: no cover - keep annotation when numpy available
+    _NUMPY_ERROR = None
+
 import yaml
 import os
 
@@ -48,6 +58,49 @@ try:  # pragma: no cover - optional dependency
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+if _NUMPY_ERROR is not None:  # pragma: no cover - informational log
+    logger.warning(
+        "NumPy unavailable; using approximate statistical routines (%s).",
+        _NUMPY_ERROR,
+    )
+
+
+def _std(values: List[float], ddof: int = 0) -> float:
+    n = len(values)
+    if n == 0 or n <= ddof:
+        return 0.0
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values)
+    denom = n - ddof if ddof else n
+    if denom <= 0:
+        return 0.0
+    return math.sqrt(variance / denom)
+
+
+def _linear_slope(x: List[int], y: List[float]) -> float:
+    n = len(x)
+    if n < 2:
+        return 0.0
+    mean_x = sum(x) / n
+    mean_y = sum(y) / n
+    denom = sum((xi - mean_x) ** 2 for xi in x)
+    if denom == 0:
+        return 0.0
+    num = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+    return num / denom
+
+
+def _finite_second_derivative(values: List[float]) -> float:
+    if len(values) < 3:
+        return 0.0
+    return values[-1] - 2.0 * values[-2] + values[-3]
+
+
+def _diff(values: List[float]) -> List[float]:
+    return [b - a for a, b in zip(values, values[1:])]
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from roi_tracker import ROITracker
@@ -498,24 +551,35 @@ class ForesightTracker:
         if not data or len(data) < 2:
             return 0.0, 0.0, 0.0
 
-        averages = []
+        averages: List[float] = []
         for entry in data:
             numeric_vals = [
                 float(v) for v in entry.values() if isinstance(v, Number)
             ]
-            averages.append(float(np.mean(numeric_vals)) if numeric_vals else 0.0)
-        averages = np.array(averages, dtype=float)
-        x = np.arange(len(averages))
-        slope = float(np.polyfit(x, averages, 1)[0])
+            if np is not None:
+                averages.append(float(np.mean(numeric_vals)) if numeric_vals else 0.0)
+            else:
+                averages.append(
+                    sum(numeric_vals) / len(numeric_vals) if numeric_vals else 0.0
+                )
 
-        if len(averages) >= 3:
-            coeff = np.polyfit(x, averages, 2)[0]
-            second_derivative = float(2.0 * coeff)
+        if np is not None:
+            arr = np.array(averages, dtype=float)
+            x = np.arange(len(arr))
+            slope = float(np.polyfit(x, arr, 1)[0])
+            if len(arr) >= 3:
+                coeff = np.polyfit(x, arr, 2)[0]
+                second_derivative = float(2.0 * coeff)
+            else:
+                second_derivative = 0.0
+            window = min(self.max_cycles, len(arr))
+            std = float(np.std(arr[-window:], ddof=1)) if window > 1 else 0.0
         else:
-            second_derivative = 0.0
-
-        window = min(self.max_cycles, len(averages))
-        std = float(np.std(averages[-window:], ddof=1)) if window > 1 else 0.0
+            x_vals = list(range(len(averages)))
+            slope = _linear_slope(x_vals, averages)
+            second_derivative = _finite_second_derivative(averages)
+            window = min(self.max_cycles, len(averages))
+            std = _std(averages[-window:], ddof=1) if window > 1 else 0.0
         avg_stability = 1.0 / (1.0 + std)
         return slope, second_derivative, avg_stability
 
@@ -533,16 +597,17 @@ class ForesightTracker:
             return False
 
         slope, _, _ = self.get_trend_curve(workflow_id)
-        all_values = np.array(
-            [
-                float(v)
-                for entry in data
-                for v in entry.values()
-                if isinstance(v, Number)
-            ],
-            dtype=float,
-        )
-        std = float(np.std(all_values, ddof=1)) if all_values.size > 1 else 0.0
+        values = [
+            float(v)
+            for entry in data
+            for v in entry.values()
+            if isinstance(v, Number)
+        ]
+        if np is not None:
+            all_values = np.array(values, dtype=float)
+            std = float(np.std(all_values, ddof=1)) if all_values.size > 1 else 0.0
+        else:
+            std = _std(values, ddof=1) if len(values) > 1 else 0.0
         return slope > 0 and std < self.volatility_threshold
 
     # ------------------------------------------------------------------
@@ -601,7 +666,10 @@ class ForesightTracker:
 
         roi_values = [float(e.get("roi_delta", 0.0)) for e in history]
         if len(roi_values) > 1:
-            volatility = float(np.std(np.diff(roi_values), ddof=1))
+            if np is not None:
+                volatility = float(np.std(np.diff(roi_values), ddof=1))
+            else:
+                volatility = _std(_diff(roi_values), ddof=1)
         else:
             volatility = 0.0
 
