@@ -1817,13 +1817,24 @@ def self_coding_managed(
                         "failed to initialise thresholds for %s", name_local
                     )
             manual_mode = getattr(cls, "_self_coding_manual_mode", False)
+            manager_is_active = isinstance(manager_local, SelfCodingManager)
             if (
                 _self_coding_runtime_available()
                 and not manual_mode
-                and not isinstance(manager_local, SelfCodingManager)
+                and not manager_is_active
             ):
-                raise RuntimeError("SelfCodingManager instance is required")
+                logger.warning(
+                    "%s: self-coding runtime detected but manager unavailable; "
+                    "running without autonomous patching",
+                    name_local,
+                )
+                manual_mode = True
             self.manager = manager_local
+
+            if not manager_is_active:
+                if orchestrator is not None:
+                    self.evolution_orchestrator = orchestrator
+                return
 
             if not _self_coding_runtime_available():
                 if orchestrator is not None:
