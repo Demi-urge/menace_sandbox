@@ -9,7 +9,17 @@ from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Callable, Tuple, cast, Literal
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Callable,
+    Tuple,
+    cast,
+    Literal,
+    TYPE_CHECKING,
+)
 from enum import Enum
 import os
 import threading
@@ -37,10 +47,6 @@ from .alert_dispatcher import send_discord_alert
 from .database_manager import DB_PATH
 from .neuroplasticity import PathwayDB
 try:  # pragma: no cover - optional dependency
-    from .prediction_manager_bot import PredictionManager
-except Exception:  # pragma: no cover - fallback when unavailable
-    PredictionManager = None  # type: ignore
-try:  # pragma: no cover - optional dependency
     from .trend_predictor import TrendPredictor
 except Exception:  # pragma: no cover - fallback when unavailable
     TrendPredictor = None  # type: ignore
@@ -49,6 +55,9 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when unavailable
     ErrorBot = None  # type: ignore
 from .retry_utils import retry
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .prediction_manager_bot import PredictionManager
 
 logger = logging.getLogger(__name__)
 
