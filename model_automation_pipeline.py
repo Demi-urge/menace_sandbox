@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover - optional dependency
         ValidationError,
     )
 
-from .hierarchy_assessment_bot import HierarchyAssessmentBot
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
@@ -72,6 +71,7 @@ from .action_planner import ActionPlanner
 from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .hierarchy_assessment_bot import HierarchyAssessmentBot
     from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from .bot_registry import BotRegistry
     from .bot_creation_bot import BotCreationBot
@@ -80,6 +80,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .synthesis_models import SynthesisTask
     from .implementation_optimiser_bot import ImplementationOptimiserBot
 else:  # pragma: no cover - runtime fallback
+    HierarchyAssessmentBot = Any  # type: ignore
     BotPlanningBot = Any  # type: ignore
     PlanningTask = Any  # type: ignore
     BotPlan = Any  # type: ignore
@@ -176,6 +177,22 @@ def _build_default_validator() -> "TaskValidationBot":
     return cast("TaskValidationBot", validator_cls([]))
 
 
+@lru_cache(maxsize=1)
+def _hierarchy_bot_cls() -> Type["HierarchyAssessmentBot"]:
+    """Return ``HierarchyAssessmentBot`` lazily to avoid circular imports."""
+
+    from .hierarchy_assessment_bot import HierarchyAssessmentBot as _HierarchyAssessmentBot
+
+    return _HierarchyAssessmentBot
+
+
+def _build_default_hierarchy() -> "HierarchyAssessmentBot":
+    """Instantiate the default hierarchy bot using the cached class."""
+
+    hierarchy_cls = _hierarchy_bot_cls()
+    return cast("HierarchyAssessmentBot", hierarchy_cls())
+
+
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -262,7 +279,7 @@ class ModelAutomationPipeline:
         planner_cls, planning_task_cls, _ = _planning_components()
         self._planning_task_cls = planning_task_cls
         self.planner = planner or planner_cls()
-        self.hierarchy = hierarchy or HierarchyAssessmentBot()
+        self.hierarchy = hierarchy or _build_default_hierarchy()
         self.data_bot = data_bot or DataBot()
         self.capital_manager = capital_manager or CapitalManagementBot()
 
