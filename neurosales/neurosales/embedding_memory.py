@@ -47,6 +47,9 @@ class EmbeddingConversationMemory:
     def __post_init__(self) -> None:
         if SentenceTransformer is None or faiss is None:
             return
+        from huggingface_hub import login
+
+        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         self._model = SentenceTransformer(self.model_name)
         dim = self._model.get_sentence_embedding_dimension()
         self._index = faiss.IndexFlatL2(dim)

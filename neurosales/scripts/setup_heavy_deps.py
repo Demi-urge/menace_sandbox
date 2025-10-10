@@ -41,7 +41,10 @@ def main() -> None:
 
     try:
         from sentence_transformers import SentenceTransformer
+        from huggingface_hub import login
+        import os
 
+        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         print("Prefetching embedding model weights...")
         SentenceTransformer("all-MiniLM-L6-v2")
     except Exception as exc:  # pragma: no cover - optional dependency

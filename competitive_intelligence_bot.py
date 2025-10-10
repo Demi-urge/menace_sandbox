@@ -190,6 +190,9 @@ _EMBEDDER = None
 _AI_EMBEDDINGS: List[List[float]] | None = None
 if SentenceTransformer is not None:
     try:
+        from huggingface_hub import login
+
+        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         _EMBEDDER = SentenceTransformer(_EMBED_MODEL)
         _AI_EMBEDDINGS = []
         for kw in _AI_KEYWORDS:

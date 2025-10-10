@@ -38,6 +38,10 @@ class IntentVectorizer:
         self._model: SentenceTransformer | None = None
         if SentenceTransformer is not None:
             try:  # pragma: no cover - model load heavy
+                from huggingface_hub import login
+                import os
+
+                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
                 self._model = SentenceTransformer(self.model_name)
             except Exception:  # pragma: no cover - best effort
                 self._model = None

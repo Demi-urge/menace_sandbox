@@ -34,6 +34,9 @@ _MODEL = None
 EMBED_DIM = 384
 if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
     try:
+        from huggingface_hub import login
+
+        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
         EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
     except Exception:
@@ -92,6 +95,9 @@ def get_text_embeddings(
                 embedder = None
                 if SentenceTransformer is not None:
                     try:
+                        from huggingface_hub import login
+
+                        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
                         embedder = SentenceTransformer("all-MiniLM-L6-v2")
                     except Exception:
                         embedder = None
