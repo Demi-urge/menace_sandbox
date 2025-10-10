@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, TYPE_CHECKING
+from typing import Deque, Dict, Iterable, List, Optional, TYPE_CHECKING, Type, cast
 from difflib import SequenceMatcher
 from collections import deque
 import re
@@ -26,7 +26,6 @@ from .code_database import CodeRecord
 from .error_bot import ErrorBot
 from .scalability_assessment_bot import ScalabilityAssessmentBot
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .threshold_service import ThresholdService
@@ -43,8 +42,18 @@ from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 
+
+def _load_model_automation_pipeline() -> Type["ModelAutomationPipeline"]:
+    """Return the pipeline class without importing it at module load."""
+
+    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
+
+    return cast("Type[ModelAutomationPipeline]", _Pipeline)
+
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
+    from .model_automation_pipeline import ModelAutomationPipeline
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
@@ -71,7 +80,7 @@ data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+pipeline = _load_model_automation_pipeline()(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("BotCreationBot", data_bot, engine)
 _th = get_thresholds("BotCreationBot")
 persist_sc_thresholds(
