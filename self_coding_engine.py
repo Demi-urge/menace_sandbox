@@ -879,11 +879,18 @@ class SelfCodingEngine:
                 "Failed to load audit private key; audit trail entries will be unsigned"
             )
             priv = None
+        logger = logging.getLogger(__name__)
         if not priv:
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "AUDIT_PRIVKEY not set; audit trail entries will not be signed"
             )
-        self.audit_trail = AuditTrail(path, priv)
+        try:
+            self.audit_trail = AuditTrail(path, priv)
+        except ValueError:
+            logger.exception(
+                "Invalid audit private key; audit trail will continue without signatures"
+            )
+            self.audit_trail = AuditTrail(path, None)
         self.logger = logging.getLogger("SelfCodingEngine")
         self._patch_tracker = PatchAttemptTracker(
             logger=self.logger, escalation_counter=_PATCH_ESCALATIONS
