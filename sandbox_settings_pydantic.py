@@ -1577,6 +1577,11 @@ class SandboxSettings(BaseSettings):
         env="AUDIT_PRIVKEY",
         description="Base64-encoded private key for signing audit entries.",
     )
+    audit_privkey_path: str | None = Field(
+        None,
+        env="AUDIT_PRIVKEY_PATH",
+        description="Filesystem path to the private key for signing audit entries.",
+    )
     prompt_success_log_path: str = Field(
         "sandbox_data/prompt_success_log.jsonl",
         env="PROMPT_SUCCESS_LOG_PATH",

@@ -6,7 +6,6 @@ import json
 import logging
 import logging.config
 import os
-import base64
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict
@@ -147,11 +146,18 @@ def _central_handler() -> logging.Handler | None:
         km = KafkaMetaLogger(brokers=os.getenv("KAFKA_HOSTS"), topic_prefix="menace.logs")
         return KafkaLogHandler(km)
     try:
-        from audit_trail import AuditTrail
+        from audit_trail import AuditTrail, load_private_key_material
     except Exception:  # pragma: no cover - optional dependency
         return None
-    key_b64 = os.getenv("AUDIT_PRIVKEY")
-    priv = base64.b64decode(key_b64) if key_b64 else None
+    key_source = os.getenv("AUDIT_PRIVKEY")
+    key_path = None if key_source else os.getenv("AUDIT_PRIVKEY_PATH")
+    try:
+        priv = load_private_key_material(key_source, path=key_path)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to load audit private key for central logging"
+        )
+        priv = None
     path = os.getenv("AUDIT_LOG_PATH", "audit.log")
     trail = AuditTrail(path, priv)
     return AuditTrailHandler(trail)

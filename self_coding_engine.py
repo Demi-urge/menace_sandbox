@@ -8,7 +8,6 @@ components.  If ``vector_service`` is unavailable an informative
 from __future__ import annotations
 
 import ast
-import base64
 import contextvars
 import importlib.util
 import json
@@ -151,6 +150,7 @@ except Exception:  # pragma: no cover - degrade gracefully
 
 _audit_trail = load_internal("audit_trail")
 AuditTrail = _audit_trail.AuditTrail
+load_private_key_material = _audit_trail.load_private_key_material
 
 _access_control = load_internal("access_control")
 READ = _access_control.READ
@@ -869,15 +869,20 @@ class SelfCodingEngine:
             path = resolve_path(path_setting)
         except FileNotFoundError:
             path = Path(path_setting)
-        key_b64 = audit_privkey or getattr(_settings, "audit_privkey", None)
+        key_source = audit_privkey or getattr(_settings, "audit_privkey", None)
+        key_path = None if key_source else getattr(_settings, "audit_privkey_path", None)
         # Fallback to unsigned logging when no key is provided
-        if key_b64:
-            priv = base64.b64decode(key_b64) if isinstance(key_b64, str) else key_b64
-        else:
+        try:
+            priv = load_private_key_material(key_source, path=key_path)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to load audit private key; audit trail entries will be unsigned"
+            )
+            priv = None
+        if not priv:
             logging.getLogger(__name__).warning(
                 "AUDIT_PRIVKEY not set; audit trail entries will not be signed"
             )
-            priv = None
         self.audit_trail = AuditTrail(path, priv)
         self.logger = logging.getLogger("SelfCodingEngine")
         self._patch_tracker = PatchAttemptTracker(

@@ -30,6 +30,7 @@
   "alignment_warning_threshold": 0.5,
   "audit_log_path": "audit.log",
   "audit_privkey": null,
+  "audit_privkey_path": null,
   "auto_dashboard_port": null,
   "auto_include_isolated": true,
   "auto_install_dependencies": false,

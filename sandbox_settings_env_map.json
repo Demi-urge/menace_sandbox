@@ -25,6 +25,7 @@
   "alignment_warning_threshold": "ALIGNMENT_WARNING_THRESHOLD",
   "audit_log_path": "AUDIT_LOG_PATH",
   "audit_privkey": "AUDIT_PRIVKEY",
+  "audit_privkey_path": "AUDIT_PRIVKEY_PATH",
   "auto_dashboard_port": "AUTO_DASHBOARD_PORT",
   "auto_include_isolated": "SANDBOX_AUTO_INCLUDE_ISOLATED",
   "auto_install_dependencies": "AUTO_INSTALL_DEPENDENCIES",
