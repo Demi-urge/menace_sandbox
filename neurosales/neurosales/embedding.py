@@ -20,6 +20,10 @@ _DEFAULT_DIM = 384
 def get_model() -> SentenceTransformer | None:
     global _MODEL
     if _MODEL is None and SentenceTransformer is not None:
+        from huggingface_hub import login
+        import os
+
+        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
     return _MODEL
 

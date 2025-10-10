@@ -67,6 +67,10 @@ class ResearchFallbackBot:
         self.backoff = backoff
         if SentenceTransformer:
             try:
+                from huggingface_hub import login
+                import os
+
+                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
                 self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
             except Exception:  # pragma: no cover - runtime download issues
                 self.embedder = None

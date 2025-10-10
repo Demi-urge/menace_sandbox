@@ -58,6 +58,10 @@ class IntentClassifier:
         self._use = None
         if self.backend == "sbert" and SentenceTransformer is not None:
             try:
+                from huggingface_hub import login
+                import os
+
+                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
                 self._sbert = SentenceTransformer("all-MiniLM-L6-v2")
             except Exception:
                 self.backend = "tfidf"

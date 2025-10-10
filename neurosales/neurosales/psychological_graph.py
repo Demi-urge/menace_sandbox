@@ -66,6 +66,9 @@ class PsychologicalGraph:
         self._index = None
         self._ids: List[str] = []
         if SentenceTransformer is not None and faiss is not None:
+            from huggingface_hub import login
+
+            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
             dim = self._model.get_sentence_embedding_dimension()
             self._index = faiss.IndexFlatL2(dim)

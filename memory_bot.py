@@ -90,9 +90,19 @@ class VectorMemoryStorage(MemoryStorage):
         embedder: SentenceTransformer | None = None,
     ) -> None:
         super().__init__(path, mongo_url)
-        self.embedder = embedder or (
-            SentenceTransformer("all-MiniLM-L6-v2") if SentenceTransformer else None
-        )
+        if embedder is not None:
+            self.embedder = embedder
+        elif SentenceTransformer:
+            try:
+                from huggingface_hub import login
+                import os
+
+                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
+                self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception:
+                self.embedder = None
+        else:
+            self.embedder = None
 
     def _embed(self, text: str) -> Optional[List[float]]:
         if not self.embedder:

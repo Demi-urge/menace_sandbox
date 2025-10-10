@@ -80,6 +80,10 @@ class EnhancementVectorizer:
         desc = str(enh.get("description", ""))
         if SentenceTransformer is not None:
             if self._model is None:
+                from huggingface_hub import login
+                import os
+
+                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
                 self._model = SentenceTransformer("all-MiniLM-L6-v2")
             emb = governed_embed(desc, self._model) or []
             vec.extend(float(x) for x in emb)

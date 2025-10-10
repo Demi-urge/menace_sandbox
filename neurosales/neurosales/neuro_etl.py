@@ -109,6 +109,10 @@ class InMemoryFaiss:
         self.ids: List[int] = []
         self.alerts: List[Optional[List[tuple[str, str, float]]]] = []
         if faiss is not None and SentenceTransformer is not None:
+            from huggingface_hub import login
+            import os
+
+            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
             dim = self.model.get_sentence_embedding_dimension()
             self.index = faiss.IndexFlatL2(dim)

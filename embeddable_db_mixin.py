@@ -292,7 +292,10 @@ class EmbeddableDBMixin:
         """Lazily loaded `SentenceTransformer` instance."""
         if self._model is None:  # pragma: no cover - heavy dependency
             from sentence_transformers import SentenceTransformer
+            from huggingface_hub import login
+            import os
 
+            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             self._model = SentenceTransformer(self.model_name)
         return self._model
 

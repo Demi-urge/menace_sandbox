@@ -31,6 +31,10 @@ def get_embedder() -> SentenceTransformer | None:
     global _EMBEDDER
     if _EMBEDDER is None and SentenceTransformer is not None:
         try:  # pragma: no cover - heavy model download
+            from huggingface_hub import login
+            import os
+
+            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
         except Exception:
             _EMBEDDER = None
