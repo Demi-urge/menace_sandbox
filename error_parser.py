@@ -25,19 +25,26 @@ try:
         extract_target_region as _extract_target_region,
     )
 except Exception:  # pragma: no cover - fallback for direct execution
-    import importlib.util
-    import sys
+    try:
+        from import_compat import load_internal
 
-    spec = importlib.util.spec_from_file_location(
-        "_target_region_fallback",
-        resolve_path("self_improvement/target_region.py"),
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["_target_region_fallback"] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)  # type: ignore[attr-defined]
-    TargetRegion = module.TargetRegion  # type: ignore
-    _extract_target_region = module.extract_target_region  # type: ignore
+        module = load_internal("self_improvement.target_region")
+        TargetRegion = module.TargetRegion  # type: ignore[attr-defined]
+        _extract_target_region = module.extract_target_region  # type: ignore[attr-defined]
+    except Exception:
+        from dataclasses import dataclass as _dataclass
+
+        @_dataclass
+        class _TargetRegionFallback:  # pragma: no cover - minimal stub
+            module: str | None = None
+            function: str | None = None
+            start_line: int | None = None
+            end_line: int | None = None
+
+        TargetRegion = _TargetRegionFallback  # type: ignore
+
+        def _extract_target_region(trace: str):  # type: ignore
+            return None
 
 
 @dataclass

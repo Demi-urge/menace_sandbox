@@ -10,19 +10,30 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from dynamic_path_router import resolve_path
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - executed during import
     import orphan_analyzer
-except ModuleNotFoundError as exc:  # pragma: no cover - import-time guard
-    logging.getLogger(__name__).error(
-        "Failed to import 'orphan_analyzer'. Please install or configure the module.",
+except ModuleNotFoundError as exc:  # pragma: no cover - minimal environments
+    logger.warning(
+        "'orphan_analyzer' unavailable; orphan discovery will use simplified heuristics.",
+        exc_info=exc,
     )
-    raise RuntimeError(
-        "orphan_analyzer is required for orphan discovery. "
-        "Ensure it is installed and properly configured.",
-    ) from exc
 
+    class _OrphanAnalyzerStub:
+        """Fallback implementation used when the optional dependency is missing."""
 
-logger = logging.getLogger(__name__)
+        def classify_module(self, path: Path, *, include_meta: bool = False):
+            """Return default classification without performing graph analysis."""
+
+            return ("candidate", {}) if include_meta else "candidate"
+
+        def analyze_redundancy(self, path: Path) -> bool:
+            """Assume modules are not redundant when analysis is unavailable."""
+
+            return False
+
+    orphan_analyzer = _OrphanAnalyzerStub()  # type: ignore[assignment]
 
 
 class EvaluationError(Exception):

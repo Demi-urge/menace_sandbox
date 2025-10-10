@@ -51,7 +51,12 @@ except Exception:  # pragma: no cover - fallback when scipy is missing
         return types.SimpleNamespace(pvalue=1.0)
 from threading import Thread
 
-from menace.metrics_dashboard import MetricsDashboard
+try:  # optional dependency
+    from menace.metrics_dashboard import MetricsDashboard
+    _METRICS_DASHBOARD_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - fallback when Flask is unavailable
+    MetricsDashboard = None  # type: ignore[assignment]
+    _METRICS_DASHBOARD_ERROR = exc
 from logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
@@ -781,12 +786,18 @@ def full_autonomous_run(
     """Execute sandbox cycles until all modules show diminishing returns."""
     settings = get_settings()
     if getattr(args, "dashboard_port", None):
-        history_dir = resolve_path(args.sandbox_data_dir or "sandbox_data")
-        history_file = history_dir / "roi_history.json"
-        dash = MetricsDashboard(str(history_file))
-        Thread(
-            target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True
-        ).start()
+        if MetricsDashboard is None:
+            logger.warning(
+                "MetricsDashboard unavailable; install Flask to enable the dashboard.",
+                extra={"error": str(_METRICS_DASHBOARD_ERROR)},
+            )
+        else:
+            history_dir = resolve_path(args.sandbox_data_dir or "sandbox_data")
+            history_file = history_dir / "roi_history.json"
+            dash = MetricsDashboard(str(history_file))
+            Thread(
+                target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True
+            ).start()
 
     module_history: dict[str, list[float]] = {}
     module_entropy_history: dict[str, list[float]] = {}
