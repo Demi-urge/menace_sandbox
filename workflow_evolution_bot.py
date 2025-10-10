@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Callable
 import logging
 from typing import TYPE_CHECKING
 from importlib import import_module
@@ -89,6 +89,47 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
     )
     SelfCodingEngine = type("_FallbackEngine", (), {})  # type: ignore[misc, assignment]
 
+def _resolve_model_automation_pipeline() -> type | None:
+    """Return the real ``ModelAutomationPipeline`` when imports stabilise."""
+
+    candidates: list[tuple[str, Callable[[], object]]] = []
+    if _HAS_PACKAGE:
+        dotted = f"{__package__}.model_automation_pipeline"
+        candidates.append((dotted, lambda d=dotted: import_module(d)))
+    candidates.extend(
+        [
+            (
+                "menace_sandbox.model_automation_pipeline",
+                lambda: import_module("menace_sandbox.model_automation_pipeline"),
+            ),
+            (
+                "model_automation_pipeline",
+                lambda: import_module("model_automation_pipeline"),
+            ),
+        ]
+    )
+    if not _HAS_PACKAGE:
+        candidates.append(("flat:model_automation_pipeline", lambda: _flat_import("model_automation_pipeline")))
+
+    for label, loader in candidates:
+        try:
+            module = loader()
+        except ModuleNotFoundError:  # pragma: no cover - dependency missing in environment
+            continue
+        except Exception as exc:  # pragma: no cover - defensive diagnostics
+            logger.debug(
+                "Deferred ModelAutomationPipeline import via %s failed: %s",
+                label,
+                exc,
+                exc_info=True,
+            )
+            continue
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if isinstance(pipeline_cls, type):
+            return pipeline_cls
+    return None
+
+
 try:
     if _HAS_PACKAGE:
         from .model_automation_pipeline import ModelAutomationPipeline
@@ -100,17 +141,16 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
         exc,
     )
 
-    class _FallbackPipeline:  # pragma: no cover - lightweight stub
-        """Gracefully surface pipeline unavailability when imported flat."""
+    class _DeferredPipeline:  # pragma: no cover - lightweight stub
+        """Retry locating the automation pipeline once circular imports settle."""
 
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            # ``ModelAutomationPipeline`` is optional for degraded bootstrap
-            # modes.  Provide a helpful error instead of the confusing default
-            # ``TypeError`` raised by ``object.__init__`` when keyword
-            # arguments are supplied.
-            raise RuntimeError("ModelAutomationPipeline is unavailable")
+        def __new__(cls, *_args: Any, **_kwargs: Any) -> Any:
+            pipeline_cls = _resolve_model_automation_pipeline()
+            if pipeline_cls is None:
+                raise RuntimeError("ModelAutomationPipeline is unavailable")
+            return pipeline_cls(*_args, **_kwargs)
 
-    ModelAutomationPipeline = _FallbackPipeline  # type: ignore[misc, assignment]
+    ModelAutomationPipeline = _DeferredPipeline  # type: ignore[misc, assignment]
 
 try:
     if _HAS_PACKAGE:
