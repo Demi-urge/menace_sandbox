@@ -20,8 +20,15 @@ import logging
 import re
 
 import sqlite3
-from .unified_event_bus import UnifiedEventBus
-from .workflow_graph import WorkflowGraph
+try:  # pragma: no cover - prefer package-relative import when available
+    from .unified_event_bus import UnifiedEventBus
+except ImportError:  # pragma: no cover - fallback for script execution
+    from unified_event_bus import UnifiedEventBus
+
+try:  # pragma: no cover - prefer package-relative import when available
+    from .workflow_graph import WorkflowGraph
+except ImportError:  # pragma: no cover - fallback for script execution
+    from workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import generalise
 from db_router import (
