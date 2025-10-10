@@ -48,10 +48,6 @@ from vector_service.context_builder import (
 from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
 from .self_coding_engine import SelfCodingEngine
-try:  # pragma: no cover - optional dependency
-    from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-except Exception:  # pragma: no cover - provide stubs in trimmed environments
-    ModelAutomationPipeline = AutomationResult = None  # type: ignore
 from .data_bot import DataBot, persist_sc_thresholds
 try:  # pragma: no cover - optional dependency
     from .error_bot import ErrorDB
@@ -88,6 +84,34 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
     ) from exc
 
 from context_builder_util import ensure_fresh_weights, create_context_builder
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .model_automation_pipeline import AutomationResult, ModelAutomationPipeline
+
+_MODEL_AUTOMATION_PIPELINE_CLS: type["ModelAutomationPipeline"] | None = None
+_AUTOMATION_RESULT_CLS: type["AutomationResult"] | None = None
+
+
+def _load_pipeline_components() -> tuple[type["ModelAutomationPipeline"], type["AutomationResult"]]:
+    """Import ``ModelAutomationPipeline`` and ``AutomationResult`` lazily."""
+
+    global _MODEL_AUTOMATION_PIPELINE_CLS, _AUTOMATION_RESULT_CLS
+    if _MODEL_AUTOMATION_PIPELINE_CLS is None or _AUTOMATION_RESULT_CLS is None:
+        from .model_automation_pipeline import (  # Local import avoids circular dependency
+            ModelAutomationPipeline as _Pipeline,
+            AutomationResult as _AutomationResult,
+        )
+
+        _MODEL_AUTOMATION_PIPELINE_CLS = _Pipeline
+        _AUTOMATION_RESULT_CLS = _AutomationResult
+    return _MODEL_AUTOMATION_PIPELINE_CLS, _AUTOMATION_RESULT_CLS
+
+
+def _automation_result(*args: Any, **kwargs: Any) -> "AutomationResult":
+    """Return an ``AutomationResult`` instance importing lazily when required."""
+
+    _, result_cls = _load_pipeline_components()
+    return result_cls(*args, **kwargs)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
     from .coding_bot_interface import manager_generate_helper as _ManagerGenerateHelperProto
@@ -2023,7 +2047,7 @@ class SelfCodingManager:
             self.bot_name, roi, errors, failures
         ):
             self.logger.info("ROI and error thresholds not met; skipping patch")
-            return AutomationResult(None, None)
+            return _automation_result(None, None)
         before_roi = roi
         err_before = errors
         repo_root = Path.cwd().resolve()
@@ -2347,7 +2371,7 @@ class SelfCodingManager:
                             self.logger.exception(
                                 "failed to publish patch_skipped event",
                             )
-                    return AutomationResult(None, None)
+                    return _automation_result(None, None)
                 if self.quick_fix is None:
                     raise RuntimeError("QuickFixEngine validation unavailable")
                 try:
