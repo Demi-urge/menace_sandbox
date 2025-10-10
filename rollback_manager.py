@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Dict, Iterable, Optional
 import os
 import json
-import base64
 import logging
 
 # ``rollback_manager`` needs to function whether it is imported as part of the
@@ -26,12 +25,12 @@ except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
 try:  # pragma: no cover - import path handling
-    from .audit_trail import AuditTrail
+    from .audit_trail import AuditTrail, load_private_key_material
     from .access_control import READ, WRITE, check_permission
     from .unified_event_bus import UnifiedEventBus
     from .governance import evaluate_rules
 except ImportError:  # pragma: no cover - script execution fallback
-    from audit_trail import AuditTrail  # type: ignore
+    from audit_trail import AuditTrail, load_private_key_material  # type: ignore
     from access_control import READ, WRITE, check_permission  # type: ignore
     from unified_event_bus import UnifiedEventBus  # type: ignore
     from governance import evaluate_rules  # type: ignore
@@ -73,15 +72,20 @@ class RollbackManager:
         self._ensure()
         self.bot_roles: Dict[str, str] = bot_roles or {}
         log_path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
-        key_b64 = audit_privkey or os.getenv("AUDIT_PRIVKEY")
+        key_source = audit_privkey or os.getenv("AUDIT_PRIVKEY")
+        key_path = None if key_source else os.getenv("AUDIT_PRIVKEY_PATH")
         # If no key is provided, disable signing with a warning
-        if key_b64:
-            priv = base64.b64decode(key_b64) if isinstance(key_b64, str) else key_b64
-        else:
+        try:
+            priv = load_private_key_material(key_source, path=key_path)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to load audit private key; audit trail entries will be unsigned"
+            )
+            priv = None
+        if not priv:
             logging.getLogger(__name__).warning(
                 "AUDIT_PRIVKEY not set; audit trail entries will not be signed"
             )
-            priv = None
         self.audit_trail = AuditTrail(log_path, priv)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.event_bus = event_bus

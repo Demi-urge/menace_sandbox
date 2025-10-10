@@ -2021,6 +2021,10 @@ QEMU must be installed separately for cross-platform tests. Place your QCOW2 fil
   entries. Both raw 32-byte keys and DER-encoded keys are supported. The
   following command generates a DER-encoded key that can be used directly:
 
+- `AUDIT_PRIVKEY_PATH` – optional filesystem location for the private key.
+  When provided, the loader reads the referenced file (PEM, DER, or raw bytes)
+  and uses it in place of `AUDIT_PRIVKEY`.
+
 ```bash
 openssl genpkey -algorithm Ed25519 | \
   openssl pkey -outform DER | base64 -w 0

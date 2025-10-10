@@ -7,9 +7,11 @@ verification.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import shutil
-from typing import Iterable
+from os import PathLike
+from pathlib import Path
 
 import logging
 
@@ -167,4 +169,58 @@ class AuditTrail:
         shutil.copyfile(self.path, dest)
 
 
-__all__ = ["AuditTrail"]
+def load_private_key_material(
+    key: bytes | str | None,
+    *,
+    path: str | PathLike[str] | None = None,
+) -> bytes | None:
+    """Return raw private key bytes from *key* or *path*.
+
+    ``key`` may already be bytes, or a base64-encoded string.  When ``key`` is
+    falsy and ``path`` is provided the key material is read from that
+    filesystem location.  PEM-encoded files are supported in addition to raw or
+    base64-encoded contents.
+    """
+
+    if isinstance(key, bytes):
+        return key
+
+    if isinstance(key, str) and key.strip():
+        token = key.strip()
+        try:
+            return base64.b64decode(token)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("AUDIT_PRIVKEY must be base64-encoded") from exc
+
+    if not path:
+        return None
+
+    file_path = Path(path).expanduser()
+    try:
+        data = file_path.read_bytes()
+    except FileNotFoundError as exc:  # pragma: no cover - configuration error
+        raise FileNotFoundError(f"Audit private key file not found: {file_path}") from exc
+
+    payload = data.strip()
+    if not payload:
+        raise ValueError(f"Audit private key file {file_path} is empty")
+
+    # PEM-encoded keys contain header/footer lines which should be removed
+    if b"-----BEGIN" in payload and b"-----END" in payload:
+        body = b"".join(
+            line.strip()
+            for line in payload.splitlines()
+            if line and not line.startswith(b"-----")
+        )
+        try:
+            return base64.b64decode(body)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Invalid PEM payload in {file_path}") from exc
+
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        return payload
+
+
+__all__ = ["AuditTrail", "load_private_key_material"]
