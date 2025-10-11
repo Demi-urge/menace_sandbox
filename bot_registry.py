@@ -10,6 +10,7 @@ change.
 
 from typing import (
     Any,
+    ClassVar,
     Dict,
     Iterable,
     List,
@@ -19,6 +20,7 @@ from typing import (
     TYPE_CHECKING,
     Union,
 )
+from collections.abc import MutableMapping
 from pathlib import Path
 import time
 import importlib
@@ -1329,6 +1331,11 @@ def _collect_workflow_tests(
 class BotRegistry:
     """Store connections between bots using a directed graph."""
 
+    _BROKEN_PATCHES: ClassVar[dict[str, set[int]]] = {
+        "TaskHandoffBot": {-2020412472},
+    }
+    _PATCH_STATUS_KEY: ClassVar[str] = "provenance_patch_status"
+
     def __init__(
         self,
         *,
@@ -1372,6 +1379,47 @@ class BotRegistry:
             self.schedule_unmanaged_scan()
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to schedule unmanaged bot scan")
+
+    @classmethod
+    def _is_blacklisted_patch(cls, name: str, patch_id: int) -> bool:
+        patches = cls._BROKEN_PATCHES.get(name)
+        return bool(patches and patch_id in patches)
+
+    def _get_patch_status_entry(
+        self, node: MutableMapping[str, Any], patch_id: int
+    ) -> Optional[Dict[str, Any]]:
+        status_map = node.get(self._PATCH_STATUS_KEY)
+        if not isinstance(status_map, dict):
+            return None
+        entry = status_map.get(str(patch_id))
+        return entry if isinstance(entry, dict) else None
+
+    def _set_patch_status(
+        self,
+        target: MutableMapping[str, Any],
+        patch_id: int,
+        commit: str,
+        status: str,
+        *,
+        reason: str | None = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        status_map = target.get(self._PATCH_STATUS_KEY)
+        if isinstance(status_map, dict):
+            updated = dict(status_map)
+        else:
+            updated = {}
+        entry: Dict[str, Any] = {
+            "status": status,
+            "commit": commit,
+            "timestamp": time.time(),
+        }
+        if reason:
+            entry["reason"] = reason
+        if extra:
+            entry.update(extra)
+        updated[str(patch_id)] = entry
+        target[self._PATCH_STATUS_KEY] = updated
 
     def _cancel_internalization_retry(self, name: str) -> None:
         """Best-effort cancellation for a pending internalisation retry timer."""
@@ -2378,6 +2426,68 @@ class BotRegistry:
             node = self.graph.nodes[name]
             unsigned_meta: dict[str, Any] | None = None
 
+            if patch_id is not None:
+                status_entry = self._get_patch_status_entry(node, patch_id)
+                if status_entry and status_entry.get("commit") == commit:
+                    status = str(status_entry.get("status", ""))
+                    if status == "applied":
+                        logger.info(
+                            "Skipping update for %s because patch %s is already applied",
+                            name,
+                            patch_id,
+                        )
+                        return False
+                    if status in {"failed", "blocked"}:
+                        reason = status_entry.get("reason")
+                        logger.warning(
+                            "Skipping update for %s because patch %s previously %s (%s)",
+                            name,
+                            patch_id,
+                            status,
+                            reason or "no reason recorded",
+                        )
+                        return False
+                if self._is_blacklisted_patch(name, patch_id):
+                    logger.warning(
+                        "Blocking known broken patch %s for %s", patch_id, name
+                    )
+                    self._set_patch_status(
+                        node,
+                        patch_id,
+                        commit,
+                        "blocked",
+                        reason="blacklisted_patch",
+                    )
+                    node["update_blocked"] = True
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "bot:update_blocked",
+                                {
+                                    "name": name,
+                                    "module": module_path,
+                                    "patch_id": patch_id,
+                                    "commit": commit,
+                                    "reason": "blacklisted_patch",
+                                },
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to publish bot:update_blocked for %s: %s",
+                                name,
+                                exc,
+                            )
+                    if self.persist_path:
+                        try:
+                            self.save(self.persist_path)
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to save bot registry to %s: %s",
+                                self.persist_path,
+                                exc,
+                            )
+                    return False
+
             if not is_unsigned:
                 try:
                     self._verify_signed_provenance(patch_id, commit)
@@ -2470,6 +2580,8 @@ class BotRegistry:
                 self.hot_swap_bot(name)
                 self.health_check_bot(name, prev_state)
                 update_ok = True
+                if patch_id is not None:
+                    self._set_patch_status(node, patch_id, commit, "applied")
                 if self.event_bus and unsigned_meta is not None:
                     try:
                         self.event_bus.publish(
@@ -2498,6 +2610,15 @@ class BotRegistry:
                             exc,
                         )
             except Exception as exc:
+                if patch_id is not None:
+                    self._set_patch_status(
+                        prev_state,
+                        patch_id,
+                        commit,
+                        "failed",
+                        reason="exception",
+                        extra={"error": str(exc)},
+                    )
                 if prev_module_entry is None:
                     self.modules.pop(name, None)
                 else:
