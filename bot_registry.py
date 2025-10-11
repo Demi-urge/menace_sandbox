@@ -195,6 +195,45 @@ except Exception:  # pragma: no cover - optional dependency
     RollbackManager = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_PATCH_PROVENANCE_UNSET = object()
+_patch_provenance_service_cls: object = _PATCH_PROVENANCE_UNSET
+
+
+def _get_patch_provenance_service_cls() -> type | None:
+    """Return the :class:`PatchProvenanceService` implementation if available."""
+
+    global _patch_provenance_service_cls
+    if _patch_provenance_service_cls is _PATCH_PROVENANCE_UNSET:
+        cls: type | None = None
+        try:
+            from .patch_provenance import PatchProvenanceService as rel_cls
+        except ImportError as rel_exc:  # pragma: no cover - runtime guard
+            try:
+                module = importlib.import_module("patch_provenance")
+            except ImportError as abs_exc:
+                logger.debug(
+                    "Unable to import patch_provenance module (relative error: %s, absolute error: %s)",
+                    rel_exc,
+                    abs_exc,
+                )
+                _patch_provenance_service_cls = None
+                return None
+            cls = getattr(module, "PatchProvenanceService", None)
+            if cls is None:
+                logger.debug(
+                    "patch_provenance module is missing PatchProvenanceService"
+                )
+                _patch_provenance_service_cls = None
+                return None
+        else:
+            cls = rel_cls
+        _patch_provenance_service_cls = cls
+    return (
+        _patch_provenance_service_cls
+        if _patch_provenance_service_cls is not None
+        else None
+    )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS = {}
 
@@ -2317,9 +2356,10 @@ class BotRegistry:
             )
             if patch_id is not None:
                 try:
-                    from .patch_provenance import PatchProvenanceService
-
-                    service = PatchProvenanceService()
+                    service_cls = _get_patch_provenance_service_cls()
+                    if service_cls is None:
+                        raise ImportError("patch_provenance unavailable")
+                    service = service_cls()
                     rec = service.db.get(patch_id)
                     if rec and getattr(rec, "summary", None):
                         try:
@@ -2571,9 +2611,10 @@ class BotRegistry:
 
         stored_commit: str | None = None
         try:
-            from .patch_provenance import PatchProvenanceService
-
-            service = PatchProvenanceService()
+            service_cls = _get_patch_provenance_service_cls()
+            if service_cls is None:
+                raise ImportError("patch_provenance unavailable")
+            service = service_cls()
             rec = service.db.get(patch_id)
             if rec and getattr(rec, "summary", None):
                 try:
