@@ -1332,7 +1332,10 @@ class BotRegistry:
     """Store connections between bots using a directed graph."""
 
     _BROKEN_PATCHES: ClassVar[dict[str, set[int]]] = {
-        "TaskHandoffBot": {-2020412472},
+        "TaskHandoffBot": {
+            -2020412472,
+            -3989464708,
+        },
     }
     _PATCH_STATUS_KEY: ClassVar[str] = "provenance_patch_status"
 
