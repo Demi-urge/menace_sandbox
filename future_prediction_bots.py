@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar, cast
 
 try:  # pragma: no cover - prefer package import when available
     from .self_coding_dependency_probe import ensure_self_coding_ready
@@ -78,6 +78,30 @@ def _import_optional(module: str) -> Any:
         raise
 
 
+def _resolve_model_automation_pipeline() -> type[Any]:
+    """Return ``ModelAutomationPipeline`` while tolerating partial imports."""
+
+    module = _import_optional("model_automation_pipeline")
+    pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+    if pipeline_cls is not None:
+        return cast("type[Any]", pipeline_cls)
+
+    try:
+        module = importlib.reload(module)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug(
+            "ModelAutomationPipeline reload failed: %s",
+            exc,
+            exc_info=_exc_info(exc),
+        )
+    else:
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if pipeline_cls is not None:
+            return cast("type[Any]", pipeline_cls)
+
+    raise AttributeError("ModelAutomationPipeline is unavailable")
+
+
 def _bootstrap_self_coding() -> tuple[
     DecoratorFactory,
     BotRegistry | None,
@@ -100,7 +124,6 @@ def _bootstrap_self_coding() -> tuple[
         interface_mod = _import_optional("coding_bot_interface")
         manager_mod = _import_optional("self_coding_manager")
         engine_mod = _import_optional("self_coding_engine")
-        pipeline_mod = _import_optional("model_automation_pipeline")
         code_db_mod = _import_optional("code_database")
         memory_mod = _import_optional("gpt_memory")
         ctx_util_mod = _import_optional("context_builder_util")
@@ -143,7 +166,8 @@ def _bootstrap_self_coding() -> tuple[
             memory_mod.GPTMemoryManager(),
             context_builder=context_builder,
         )
-        pipeline = pipeline_mod.ModelAutomationPipeline(
+        pipeline_cls = _resolve_model_automation_pipeline()
+        pipeline = pipeline_cls(
             context_builder=context_builder,
             bot_registry=registry_local,
         )
@@ -153,6 +177,13 @@ def _bootstrap_self_coding() -> tuple[
             data_bot=data_bot_local,
             bot_registry=registry_local,
         )
+    except (ModuleNotFoundError, AttributeError) as exc:
+        logger.warning(
+            "ModelAutomationPipeline unavailable; future prediction bots will run without autonomous updates: %s",
+            exc,
+            exc_info=_exc_info(exc),
+        )
+        return _noop_self_coding, None, None, None
     except Exception as exc:  # pragma: no cover - bootstrap degraded
         logger.warning(
             "Self-coding services unavailable for future prediction bots: %s",
