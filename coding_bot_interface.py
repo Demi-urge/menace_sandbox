@@ -1646,20 +1646,12 @@ def self_coding_managed(
                 logger.exception("threshold reload failed for %s", name)
         manager_instance = manager
         if manager_instance is None:
-            if _self_coding_runtime_available():
-                try:
-                    manager_instance = _bootstrap_manager(name, bot_registry, data_bot)
-                except Exception as exc:
-                    logger.warning(
-                        "automatic SelfCodingManager bootstrap failed for %s: %s",
-                        name,
-                        exc,
-                    )
-                    manager_instance = _DisabledSelfCodingManager(
-                        bot_registry=bot_registry,
-                        data_bot=data_bot,
-                    )
-            else:
+            # Defer expensive manager bootstrap until the bot is instantiated to
+            # avoid circular imports during module import time (for example when
+            # ``CapitalManagementBot`` is constructed inside the automation
+            # pipeline).  Runtime availability checks remain so purely offline
+            # environments continue to receive the explicit warning.
+            if not _self_coding_runtime_available():
                 manager_instance = _DisabledSelfCodingManager(
                     bot_registry=bot_registry,
                     data_bot=data_bot,
