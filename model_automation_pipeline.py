@@ -31,7 +31,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .data_bot import DataBot
-from .capital_management_bot import CapitalManagementBot
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from .efficiency_bot import EfficiencyBot
@@ -75,6 +74,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from .bot_registry import BotRegistry
     from .bot_creation_bot import BotCreationBot
+    from .capital_management_bot import CapitalManagementBot
     from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
@@ -85,6 +85,7 @@ else:  # pragma: no cover - runtime fallback
     PlanningTask = Any  # type: ignore
     BotPlan = Any  # type: ignore
     BotCreationBot = Any  # type: ignore
+    CapitalManagementBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
 
@@ -193,6 +194,15 @@ def _build_default_hierarchy() -> "HierarchyAssessmentBot":
     return cast("HierarchyAssessmentBot", hierarchy_cls())
 
 
+@lru_cache(maxsize=1)
+def _capital_manager_cls() -> Type["CapitalManagementBot"]:
+    """Return the capital manager class lazily to avoid circular imports."""
+
+    from .capital_management_bot import CapitalManagementBot as _CapitalManagementBot
+
+    return _CapitalManagementBot
+
+
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -205,7 +215,7 @@ class ModelAutomationPipeline:
         hierarchy: HierarchyAssessmentBot | None = None,
         predictor: ResourcePredictionBot | None = None,
         data_bot: DataBot | None = None,
-        capital_manager: CapitalManagementBot | None = None,
+        capital_manager: "CapitalManagementBot" | None = None,
         roi_bot: PreExecutionROIBot | None = None,
         handoff: TaskHandoffBot | None = None,
         optimiser: ImplementationOptimiserBot | None = None,
@@ -281,7 +291,10 @@ class ModelAutomationPipeline:
         self.planner = planner or planner_cls()
         self.hierarchy = hierarchy or _build_default_hierarchy()
         self.data_bot = data_bot or DataBot()
-        self.capital_manager = capital_manager or CapitalManagementBot()
+        if capital_manager is None:
+            capital_manager_cls = _capital_manager_cls()
+            capital_manager = cast("CapitalManagementBot", capital_manager_cls())
+        self.capital_manager = capital_manager
 
         if predictor:
             self.predictor = predictor
