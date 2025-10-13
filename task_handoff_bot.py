@@ -233,13 +233,17 @@ def _wrap_update_bot_once(reg: BotRegistry) -> None:
 
         try:
             path = Path(candidate)
-            # ``module_path`` may already be a filesystem path.  ``resolve``
-            # raises if the path does not exist which is fine – we then fall
-            # back to import based resolution below.
-            if path.suffix:
-                return path.resolve()
         except Exception:
-            pass
+            path = None
+        else:
+            try:
+                if path.exists():
+                    return path.resolve()
+            except Exception:
+                # ``Path.exists`` may raise on certain virtual paths (for
+                # example when the working directory is unavailable).  Fall
+                # through to import based resolution in that case.
+                pass
 
         try:
             spec = importlib.util.find_spec(candidate)
