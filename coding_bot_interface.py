@@ -73,6 +73,10 @@ _PATCH_PROVENANCE_SERVICE: Any = _PATCH_PROVENANCE_SERVICE_SENTINEL
 _SIGNED_PROVENANCE_CACHE: dict[Path, tuple[int, int, tuple["_SignedProvenanceEntry", ...]]] = {}
 _PATH_KEY_HINTS: tuple[str, ...] = ("path", "file", "module", "target", "artifact", "source")
 _SIGNED_PROVENANCE_CACHE_LOCK = threading.Lock()
+_PATCH_HASH_TRACE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "PATCH_HASH_TRACE",
+    default=None,
+)
 
 
 @dataclass(slots=True)
@@ -366,6 +370,7 @@ def _load_signed_provenance_candidates() -> tuple[_SignedProvenanceEntry, ...]:
         if cached and cached[0] == mtime_ns and cached[1] == size:
             return cached[2]
 
+    payload: Any
     try:
         with path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -379,6 +384,17 @@ def _load_signed_provenance_candidates() -> tuple[_SignedProvenanceEntry, ...]:
 
     seen_keys: set[tuple[int | None, str | None, tuple[str, ...]]] = set()
     candidates: list[_SignedProvenanceEntry] = []
+    provenance_keys: tuple[str, ...] = ()
+    if isinstance(payload, dict):
+        provenance_keys = tuple(str(key) for key in payload.keys())
+    elif isinstance(payload, list):
+        key_accumulator: set[str] = set()
+        for item in payload:
+            if isinstance(item, dict):
+                key_accumulator.update(str(key) for key in item.keys())
+        if key_accumulator:
+            provenance_keys = tuple(sorted(key_accumulator))
+
     for entry in _iter_provenance_dicts(payload):
         candidate = _extract_signed_candidate(entry)
         if candidate.patch_id is None and candidate.commit is None:
@@ -394,6 +410,11 @@ def _load_signed_provenance_candidates() -> tuple[_SignedProvenanceEntry, ...]:
         _SIGNED_PROVENANCE_CACHE[path] = (mtime_ns, size, result)
 
     if not result:
+        patch_hash = _PATCH_HASH_TRACE.get()
+        if patch_hash:
+            print("🐍 PATCH HASH:", patch_hash)
+            print("🧬 Patch being searched:", patch_hash)
+        print("🔎 Available provenance keys:", provenance_keys)
         logger.debug(
             "signed provenance file %s did not yield usable patch metadata", path
         )
@@ -552,6 +573,8 @@ def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int
     seed_value = int.from_bytes(seed_bytes, "big") or 1
     patch_id = -abs(seed_value)
     commit = f"{_UNSIGNED_COMMIT_PREFIX}{digest}"
+    _PATCH_HASH_TRACE.set(commit)
+    print("🐍 PATCH HASH:", commit)
     return patch_id, commit
 
 
