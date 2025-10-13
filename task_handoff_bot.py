@@ -258,22 +258,47 @@ def _wrap_update_bot_once(reg: BotRegistry) -> None:
     @wraps(attr)
     def _guarded_update_bot(self: BotRegistry, name: str, module_path: str, **kwargs: Any) -> bool:
         resolved = _resolve_module_path(module_path)
-        same_module = resolved == current_module_path if resolved else False
-        if same_module:
-            if getattr(guard_state, "active", False):
-                logger.debug(
-                    "Skipping re-entrant update_bot call for %s due to in-progress hot swap", name
-                )
-                return False
+        guard_key: str | None
+        if resolved is not None:
+            guard_key = str(resolved)
+            same_module = resolved == current_module_path
+        else:
+            guard_key = module_path or None
+            same_module = module_path in {
+                __name__,
+                "task_handoff_bot",
+                f"{_PACKAGE_NAME}.task_handoff_bot",
+                str(current_module_path),
+            }
+        if same_module and guard_key:
+            with _UPDATE_LOCK:
+                if guard_key in _UPDATES_IN_PROGRESS or getattr(guard_state, "active", False):
+                    logger.debug(
+                        "Skipping re-entrant update_bot call for %s due to in-progress hot swap",
+                        name,
+                    )
+                    return False
+                _UPDATES_IN_PROGRESS.add(guard_key)
             guard_state.active = True
             try:
                 return original(name, module_path, **kwargs)
             finally:
                 guard_state.active = False
+                with _UPDATE_LOCK:
+                    _UPDATES_IN_PROGRESS.discard(guard_key)
         return original(name, module_path, **kwargs)
 
     _guarded_update_bot.__task_handoff_guard__ = True  # type: ignore[attr-defined]
     reg.update_bot = MethodType(_guarded_update_bot, reg)
+
+
+# ``BotRegistry.update_bot`` hot swaps modules by re-importing them.  When this
+# module is re-imported mid-call a new ``BotRegistry`` instance is created which
+# would recursively trigger another hot swap.  Guard against this by tracking
+# active updates globally so nested invocations are ignored regardless of the
+# registry instance they originate from.
+_UPDATE_LOCK = threading.RLock()
+_UPDATES_IN_PROGRESS: set[str] = set()
 
 
 _wrap_update_bot_once(registry)
