@@ -14,9 +14,11 @@ import sqlite3
 import sys
 import threading
 import uuid
+from functools import wraps
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
+from types import MethodType
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional
 
 
@@ -198,6 +200,57 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 registry = BotRegistry()
+
+
+def _wrap_update_bot_once(reg: BotRegistry) -> None:
+    """Install a re-entrancy guard around ``BotRegistry.update_bot``.
+
+    ``self_coding_managed`` invokes :meth:`BotRegistry.update_bot` while the
+    module defining the bot is still being executed.  ``update_bot`` in turn
+    hot-swaps the module by re-importing it which re-executes the decorator and
+    causes another immediate ``update_bot`` call.  In production environments
+    this feedback loop never terminates because the original call is still in
+    progress when the nested invocation begins.
+
+    The guard tracks whether ``update_bot`` is already handling an update for
+    this module path and turns nested calls into no-ops.  The outermost call
+    proceeds normally and performs the actual hot-swap, ensuring behaviour is
+    unchanged aside from breaking the loop.
+    """
+
+    attr = getattr(reg.update_bot, "__func__", reg.update_bot)
+    if getattr(attr, "__task_handoff_guard__", False):
+        return
+
+    original = reg.update_bot
+    guard_state = threading.local()
+
+    @wraps(attr)
+    def _guarded_update_bot(self: BotRegistry, name: str, module_path: str, **kwargs: Any) -> bool:
+        same_module = False
+        if module_path:
+            try:
+                same_module = Path(module_path).resolve() == Path(__file__).resolve()
+            except Exception:
+                same_module = False
+        if same_module:
+            if getattr(guard_state, "active", False):
+                logger.debug(
+                    "Skipping re-entrant update_bot call for %s due to in-progress hot swap", name
+                )
+                return False
+            guard_state.active = True
+            try:
+                return original(name, module_path, **kwargs)
+            finally:
+                guard_state.active = False
+        return original(name, module_path, **kwargs)
+
+    _guarded_update_bot.__task_handoff_guard__ = True  # type: ignore[attr-defined]
+    reg.update_bot = MethodType(_guarded_update_bot, reg)
+
+
+_wrap_update_bot_once(registry)
 data_bot = DataBot(start_server=False)
 
 
