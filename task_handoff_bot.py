@@ -6,46 +6,81 @@ Run ``menace embed --db workflow`` to backfill manually.
 
 from __future__ import annotations
 
-from bot_registry import BotRegistry
-from data_bot import DataBot
-
-from coding_bot_interface import self_coding_managed
+import importlib.util
 import json
+import logging
+import re
+import sqlite3
+import sys
+import threading
 import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterable, Optional, Iterator, Literal
-import logging
-import re
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional
 
-import sqlite3
-try:  # pragma: no cover - prefer package-relative import when available
-    from .unified_event_bus import UnifiedEventBus
-except ImportError:  # pragma: no cover - fallback for script execution
-    from unified_event_bus import UnifiedEventBus
 
-try:  # pragma: no cover - prefer package-relative import when available
-    from .workflow_graph import WorkflowGraph
-except ImportError:  # pragma: no cover - fallback for script execution
-    from workflow_graph import WorkflowGraph
-from vector_service import EmbeddableDBMixin, EmbeddingBackfill
-from vector_service.text_preprocessor import generalise
-from db_router import (
-    DBRouter,
-    GLOBAL_ROUTER,
-    LOCAL_TABLES,
-    SHARED_TABLES,
-    init_db_router,
-    queue_insert,
-)
-from db_dedup import insert_if_unique, ensure_content_hash_column
-from scope_utils import Scope, build_scope_clause
-from dynamic_path_router import get_project_root, resolve_path
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
+
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - allow flat execution layout
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)  # type: ignore[assignment]
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+
+BotRegistry = load_internal("bot_registry").BotRegistry
+DataBot = load_internal("data_bot").DataBot
+self_coding_managed = load_internal("coding_bot_interface").self_coding_managed
+
+UnifiedEventBus = load_internal("unified_event_bus").UnifiedEventBus
+WorkflowGraph = load_internal("workflow_graph").WorkflowGraph
+
+_vector_service = load_internal("vector_service")
+EmbeddableDBMixin = _vector_service.EmbeddableDBMixin
+EmbeddingBackfill = _vector_service.EmbeddingBackfill
+generalise = load_internal("vector_service.text_preprocessor").generalise
+
+_db_router = load_internal("db_router")
+DBRouter = _db_router.DBRouter
+GLOBAL_ROUTER = _db_router.GLOBAL_ROUTER
+LOCAL_TABLES = _db_router.LOCAL_TABLES
+SHARED_TABLES = _db_router.SHARED_TABLES
+init_db_router = _db_router.init_db_router
+queue_insert = _db_router.queue_insert
+
+_db_dedup = load_internal("db_dedup")
+insert_if_unique = _db_dedup.insert_if_unique
+ensure_content_hash_column = _db_dedup.ensure_content_hash_column
+
+_scope_utils = load_internal("scope_utils")
+Scope = _scope_utils.Scope
+build_scope_clause = _scope_utils.build_scope_clause
+
+_dynamic_path_router = load_internal("dynamic_path_router")
+get_project_root = _dynamic_path_router.get_project_root
+resolve_path = _dynamic_path_router.resolve_path
+
 try:
-    from .menace_memory_manager import _summarise_text  # type: ignore
+    _summarise_text = load_internal("menace_memory_manager")._summarise_text  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - fallback
     from menace_memory_manager import _summarise_text  # type: ignore
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -58,7 +93,6 @@ try:
     import pika  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pika = None  # type: ignore
-import threading
 
 
 registry = BotRegistry()
