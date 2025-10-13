@@ -225,14 +225,40 @@ def _wrap_update_bot_once(reg: BotRegistry) -> None:
     original = reg.update_bot
     guard_state = threading.local()
 
+    def _resolve_module_path(candidate: str) -> Path | None:
+        """Best-effort normalisation of ``candidate`` to a file on disk."""
+
+        if not candidate:
+            return None
+
+        try:
+            path = Path(candidate)
+            # ``module_path`` may already be a filesystem path.  ``resolve``
+            # raises if the path does not exist which is fine – we then fall
+            # back to import based resolution below.
+            if path.suffix:
+                return path.resolve()
+        except Exception:
+            pass
+
+        try:
+            spec = importlib.util.find_spec(candidate)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        origin: str | None = getattr(spec, "origin", None) if spec else None
+        if origin:
+            try:
+                return Path(origin).resolve()
+            except Exception:
+                return None
+        return None
+
+    current_module_path = Path(__file__).resolve()
+
     @wraps(attr)
     def _guarded_update_bot(self: BotRegistry, name: str, module_path: str, **kwargs: Any) -> bool:
-        same_module = False
-        if module_path:
-            try:
-                same_module = Path(module_path).resolve() == Path(__file__).resolve()
-            except Exception:
-                same_module = False
+        resolved = _resolve_module_path(module_path)
+        same_module = resolved == current_module_path if resolved else False
         if same_module:
             if getattr(guard_state, "active", False):
                 logger.debug(
