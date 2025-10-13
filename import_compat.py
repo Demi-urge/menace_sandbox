@@ -108,6 +108,34 @@ def bootstrap(module_name: str, module_file: str | Path | None = None) -> Module
 
     module = sys.modules.get(module_name, module)
 
+    # Normalise metadata so reloaders can treat the module as the packaged name
+    spec = getattr(module, "__spec__", None)
+    loader = getattr(spec, "loader", None)
+    origin = getattr(spec, "origin", None)
+    submodule_locations = getattr(spec, "submodule_search_locations", None)
+    if spec is None or spec.name != qualified_name:
+        try:
+            new_spec = importlib.util.spec_from_loader(
+                qualified_name,
+                loader,
+                origin=origin,
+            )
+        except Exception:
+            new_spec = None
+        if new_spec is not None and submodule_locations is not None:
+            new_spec.submodule_search_locations = list(submodule_locations)
+        if new_spec is not None:
+            spec = new_spec
+    if spec is not None:
+        module.__spec__ = spec
+        if getattr(spec, "loader", None) is not None:
+            module.__loader__ = spec.loader  # type: ignore[attr-defined]
+
+    if module.__name__ != qualified_name:
+        module.__name__ = qualified_name
+        # Retain the original entry so flat imports continue to succeed
+        sys.modules[module_name] = module
+
     sys.modules[qualified_name] = module
     sys.modules[flat_name] = module
 
