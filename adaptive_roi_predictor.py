@@ -11,10 +11,17 @@ parameters are stored on disk to allow incremental retraining when new data
 becomes available.
 """
 
+import logging
 from pathlib import Path
 from typing import Sequence, Tuple, Dict, Any
 
-import numpy as np
+try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - executed in minimal envs
+    np = None  # type: ignore[assignment]
+    _MISSING_NUMPY = exc
+else:
+    _MISSING_NUMPY = None
 import json
 import sqlite3
 

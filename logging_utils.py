@@ -12,6 +12,7 @@ from typing import Any, Dict
 from datetime import datetime
 import contextvars
 import importlib
+from types import SimpleNamespace, ModuleType
 
 
 _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -19,12 +20,37 @@ _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
-def _config_mod():
+def _config_mod() -> ModuleType:
     """Return the configuration module regardless of import style."""
-    try:  # pragma: no cover - package installed
-        return importlib.import_module("menace.config")
-    except Exception:  # pragma: no cover - fallback to local import
-        return importlib.import_module("config")
+
+    last_error: Exception | None = None
+    for dotted in ("menace.config", "config"):
+        try:  # pragma: no cover - package installed
+            return importlib.import_module(dotted)
+        except ModuleNotFoundError as exc:
+            last_error = exc
+            missing = getattr(exc, "name", "") or ""
+            if missing not in {"pydantic", "pydantic_settings"}:
+                continue
+            break
+        except Exception as exc:  # pragma: no cover - defensive
+            last_error = exc
+            continue
+
+    if isinstance(last_error, ModuleNotFoundError) and (
+        getattr(last_error, "name", "") in {"pydantic", "pydantic_settings"}
+    ):
+        module = ModuleType("menace.config_fallback")
+        module.USING_FALLBACK_CONFIG = True  # type: ignore[attr-defined]
+        module._EVENT_BUS = None  # type: ignore[attr-defined]
+        module.get_config = lambda *_a, **_k: SimpleNamespace(  # type: ignore[attr-defined]
+            logging=SimpleNamespace(verbosity="INFO")
+        )
+        return module
+
+    if last_error is not None:
+        raise last_error
+    raise ImportError("Unable to locate configuration module")
 
 
 class CorrelationIDFilter(logging.Filter):
@@ -211,8 +237,9 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
     cfg_mod = _config_mod()
+    cfg = _get_config_or_fallback(cfg_mod)
     if level is None:
-        level_name = cfg_mod.get_config().logging.verbosity
+        level_name = cfg.logging.verbosity
         level = getattr(logging, level_name.upper(), logging.INFO)
     if isinstance(level, int):
         logging.getLogger().setLevel(level)
@@ -233,7 +260,8 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
 def _apply_log_level() -> None:
     """Apply current config logging verbosity to root logger."""
     cfg_mod = _config_mod()
-    level_name = cfg_mod.get_config().logging.verbosity
+    cfg = _get_config_or_fallback(cfg_mod)
+    level_name = cfg.logging.verbosity
     logging.getLogger().setLevel(getattr(logging, level_name.upper(), logging.INFO))
 
 
@@ -300,3 +328,25 @@ __all__ = [
     "LockedRotatingFileHandler",
     "LockedTimedRotatingFileHandler",
 ]
+def _fallback_config() -> SimpleNamespace:
+    return SimpleNamespace(logging=SimpleNamespace(verbosity="INFO"))
+
+
+def _get_config_or_fallback(cfg_mod: ModuleType):
+    try:
+        return cfg_mod.get_config()
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", None) or ""
+        exc_name = f"{exc.__class__.__module__}.{exc.__class__.__name__}" if exc.__class__ else ""
+        if missing in {"yaml", "PyYAML"} or "yaml_fallback" in exc_name:
+            logging.getLogger(__name__).warning(
+                "configuration module degraded due to missing YAML support", exc_info=exc
+            )
+            return _fallback_config()
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "configuration module unavailable (%s); using defaults", exc
+        )
+        return _fallback_config()
+

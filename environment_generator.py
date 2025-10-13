@@ -17,7 +17,15 @@ from typing import Any, Dict, List, Sequence, Union, TYPE_CHECKING
 import json
 import logging
 from logging_utils import log_record
-import yaml
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully when PyYAML missing
+    try:
+        from .yaml_fallback import get_yaml
+    except Exception:  # pragma: no cover - allow flat execution
+        from yaml_fallback import get_yaml  # type: ignore
+
+    yaml = get_yaml(__name__)
 
 try:  # pragma: no cover - support package and flat layouts
     from .dynamic_path_router import resolve_path
