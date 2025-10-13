@@ -563,6 +563,10 @@ def _initialize_autonomous_sandbox(
         if hasattr(inner, "is_alive") and not inner.is_alive():
             raise RuntimeError("self-improvement thread terminated unexpectedly")
         _SELF_IMPROVEMENT_THREAD = thread
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
+        logger.warning(
+            "self-improvement components unavailable; skipping startup", exc_info=exc
+        )
     except Exception as exc:  # pragma: no cover - best effort
         logger.error("self-improvement startup failed", exc_info=True)
         raise RuntimeError("self-improvement startup failed") from exc
@@ -818,6 +822,16 @@ def _bootstrap_environment(
         if _auto_install_missing_python_packages(errors):
             errors = _verify_required_dependencies(settings)
 
+    if errors:
+        if not errors.get("python") and not settings.auto_install_dependencies:
+            for category, packages in errors.items():
+                if packages:
+                    logger.warning(
+                        "Skipping dependency enforcement for missing %s packages: %s",
+                        category,
+                        ", ".join(packages),
+                    )
+            errors = {}
     if errors:
         messages: list[str] = []
         if errors.get("system"):

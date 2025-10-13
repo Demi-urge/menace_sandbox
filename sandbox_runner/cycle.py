@@ -213,7 +213,14 @@ if not isinstance(module, _CycleModule):  # pragma: no cover - module patching
     module.__class__ = _CycleModule
 
 from analytics import adaptive_roi_model
-from adaptive_roi_predictor import load_training_data
+try:
+    from adaptive_roi_predictor import load_training_data
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
+    logger.warning("adaptive ROI predictor unavailable", exc_info=exc)
+    load_training_data = None  # type: ignore[assignment]
+    _ADAPTIVE_ROI_PREDICTOR_ERROR = exc
+else:
+    _ADAPTIVE_ROI_PREDICTOR_ERROR = None
 
 from metrics_exporter import (
     orphan_modules_reintroduced_total,
@@ -2137,16 +2144,22 @@ def _sandbox_cycle_runner(
                 logger.exception("adaptive roi model retrain failed")
 
     # Persist merged ROI training data for the adaptive predictor
-    try:
-        load_training_data(
-            tracker,
-            evolution_path=resolve_path("evolution_history.db"),
-            roi_events_path=resolve_path("roi_events.db"),
-            output_path=resolve_path("sandbox_data/adaptive_roi.csv"),
-            router=router,
+    if load_training_data is not None:
+        try:
+            load_training_data(
+                tracker,
+                evolution_path=resolve_path("evolution_history.db"),
+                roi_events_path=resolve_path("roi_events.db"),
+                output_path=resolve_path("sandbox_data/adaptive_roi.csv"),
+                router=router,
+            )
+        except Exception:
+            logger.exception("adaptive roi data aggregation failed")
+    elif _ADAPTIVE_ROI_PREDICTOR_ERROR is not None:
+        logger.debug(
+            "adaptive ROI predictor disabled: %s",
+            _ADAPTIVE_ROI_PREDICTOR_ERROR,
         )
-    except Exception:
-        logger.exception("adaptive roi data aggregation failed")
 
     flagged = []
     if ctx.adapt_presets:

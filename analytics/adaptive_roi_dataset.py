@@ -2,23 +2,52 @@ from __future__ import annotations
 
 """Assemble training data combining ROI deltas, performance metrics and GPT scores."""
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, TYPE_CHECKING
 
-import pandas as pd
+try:  # pragma: no cover - optional dependency
+    import pandas as pd  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - executed in minimal envs
+    pd = None  # type: ignore[assignment]
+    _MISSING_PANDAS = exc
+else:
+    _MISSING_PANDAS = None
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from pandas import Timestamp as _Timestamp
+else:
+    _Timestamp = Any
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from evaluation_history_db import EvaluationHistoryDB
 
 
+_LOGGER = logging.getLogger(__name__)
+_PANDAS_WARNING_EMITTED = False
+
+
 @dataclass
 class DatasetRecord:
     module: str
-    ts: pd.Timestamp
+    ts: _Timestamp
     roi_delta: float
     performance_delta: float
     gpt_score: float
+
+
+def _ensure_pandas() -> None:
+    global _PANDAS_WARNING_EMITTED
+    if _MISSING_PANDAS is not None:
+        if not _PANDAS_WARNING_EMITTED:
+            _LOGGER.warning(
+                "adaptive ROI dataset disabled; pandas dependency missing"
+            )
+            _PANDAS_WARNING_EMITTED = True
+        raise ModuleNotFoundError(
+            "pandas is required for adaptive ROI datasets. Install menace_sandbox[analytics]"
+        ) from _MISSING_PANDAS
 
 
 def _get_router(router: DBRouter | None = None) -> DBRouter:
@@ -30,6 +59,7 @@ def _get_router(router: DBRouter | None = None) -> DBRouter:
 def _load_roi_events(router: DBRouter) -> pd.DataFrame:
     """Return ROI deltas per module."""
 
+    _ensure_pandas()
     conn = router.get_connection("roi_events")
     df = pd.read_sql(
         "SELECT action AS module, roi_before, roi_after, ts FROM roi_events",
@@ -45,6 +75,7 @@ def _load_roi_events(router: DBRouter) -> pd.DataFrame:
 def _load_performance(router: DBRouter) -> pd.DataFrame:
     """Return performance deltas based on profitability per module."""
 
+    _ensure_pandas()
     conn = router.get_connection("metrics")
     df = pd.read_sql(
         "SELECT bot AS module, profitability, ts FROM metrics",
@@ -61,6 +92,7 @@ def _load_performance(router: DBRouter) -> pd.DataFrame:
 def _load_eval_scores(router: DBRouter) -> pd.DataFrame:
     """Return GPT evaluation scores per module."""
 
+    _ensure_pandas()
     db = EvaluationHistoryDB(router=router)
     rows: list[dict[str, object]] = []
     for eng in db.engines():
@@ -87,6 +119,7 @@ def build_dataset(*, router: DBRouter | None = None) -> pd.DataFrame:
         ``gpt_score`` normalised to zero mean and unit variance.
     """
 
+    _ensure_pandas()
     router = _get_router(router)
     roi_df = _load_roi_events(router)
     perf_df = _load_performance(router)

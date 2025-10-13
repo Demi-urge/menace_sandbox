@@ -13,7 +13,10 @@ _MODULE_CANDIDATES: tuple[tuple[str, str | None], ...] = (
     ("sandbox_settings_pydantic", None),
 )
 
-_FALLBACK_MODULE = "menace_sandbox.sandbox_settings_fallback"
+_FALLBACK_MODULE_CANDIDATES: tuple[str, ...] = (
+    "menace_sandbox.sandbox_settings_fallback",
+    "sandbox_settings_fallback",
+)
 
 _loaded: ModuleType | None = None
 _last_error: Exception | None = None
@@ -23,18 +26,31 @@ for dotted, attr in _MODULE_CANDIDATES:
     except ModuleNotFoundError as exc:
         _last_error = exc
         continue
+    except Exception as exc:  # pragma: no cover - incompatible dependency versions
+        _last_error = exc
+        continue
     else:
         _loaded = module
         break
 
 if _loaded is None:
-    try:
-        module = import_module(_FALLBACK_MODULE)
-    except ModuleNotFoundError as exc:  # pragma: no cover - catastrophic
+    fallback_exc: ModuleNotFoundError | None = None
+    for dotted in _FALLBACK_MODULE_CANDIDATES:
+        try:
+            module = import_module(dotted)
+        except ModuleNotFoundError as exc:  # pragma: no cover - catastrophic
+            fallback_exc = exc
+            continue
+        else:
+            _loaded = module
+            break
+    if _loaded is None:
+        exc = fallback_exc or ModuleNotFoundError(
+            ", ".join(_FALLBACK_MODULE_CANDIDATES)
+        )
         if _last_error is not None:
             exc.__cause__ = _last_error
-        raise
-    _loaded = module
+        raise exc
     if _last_error is not None:
         _LOGGER.warning(
             "pydantic unavailable; using lightweight sandbox settings fallback.",
