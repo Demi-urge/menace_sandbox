@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional
 
 
+logger = logging.getLogger(__name__)
+
+
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
@@ -45,16 +48,115 @@ import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
 BotRegistry = load_internal("bot_registry").BotRegistry
-DataBot = load_internal("data_bot").DataBot
-self_coding_managed = load_internal("coding_bot_interface").self_coding_managed
+_data_bot_fallback = False
+try:
+    DataBot = load_internal("data_bot").DataBot
+except Exception as exc:  # pragma: no cover - optional dependency fallback
+    logger.warning(
+        "DataBot unavailable for TaskHandoffBot; using inert stub: %s",
+        exc,
+    )
+    _data_bot_fallback = True
+
+    class _FallbackDataBot:
+        """Minimal stand-in when the data bot stack is unavailable."""
+
+        def __init__(self, *args: Any, event_bus: Any | None = None, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.event_bus = event_bus
+            self._degradation_callbacks: list[Callable[[dict[str, Any]], None]] = []
+
+        def start(self) -> None:  # pragma: no cover - compatibility no-op
+            return None
+
+        def subscribe_degradation(self, callback: Callable[[dict[str, Any]], None]) -> None:
+            self._degradation_callbacks.append(callback)
+
+        def subscribe_threshold_breaches(self, callback: Callable[[dict[str, Any]], None]) -> None:
+            self._degradation_callbacks.append(callback)
+
+        def check_degradation(self, *args: Any, **kwargs: Any) -> bool:
+            return False
+
+        def reload_thresholds(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {}
+
+    DataBot = _FallbackDataBot  # type: ignore[assignment]
+
+try:
+    self_coding_managed = load_internal("coding_bot_interface").self_coding_managed
+except Exception as exc:  # pragma: no cover - optional dependency fallback
+    logger.warning(
+        "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
+        exc,
+    )
+
+    def self_coding_managed(**_kwargs: Any) -> Callable[[type], type]:
+        def decorator(cls: type) -> type:
+            return cls
+
+        return decorator
+else:
+    if _data_bot_fallback:
+        logger.warning(
+            "Self-coding integration disabled because DataBot fallback is active.",
+        )
+
+        def self_coding_managed(**_kwargs: Any) -> Callable[[type], type]:
+            def decorator(cls: type) -> type:
+                return cls
+
+            return decorator
 
 UnifiedEventBus = load_internal("unified_event_bus").UnifiedEventBus
 WorkflowGraph = load_internal("workflow_graph").WorkflowGraph
 
-_vector_service = load_internal("vector_service")
-EmbeddableDBMixin = _vector_service.EmbeddableDBMixin
-EmbeddingBackfill = _vector_service.EmbeddingBackfill
-generalise = load_internal("vector_service.text_preprocessor").generalise
+try:
+    _vector_service = load_internal("vector_service")
+except Exception as exc:  # pragma: no cover - optional dependency fallback
+    logger.warning(
+        "Vector service unavailable for TaskHandoffBot; embeddings disabled: %s",
+        exc,
+    )
+
+    class _FallbackEmbeddableDBMixin:
+        """Minimal stub when the vector service cannot be imported."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._embeddings_enabled = False
+
+        def backfill_embeddings(self) -> list[Any]:
+            return []
+
+        def search_by_vector(self, *args: Any, **kwargs: Any) -> list[Any]:
+            return []
+
+    class _FallbackEmbeddingBackfill:
+        """No-op backfill watcher for disabled embeddings."""
+
+        def watch_events(self, *, bus: Any | None = None) -> None:
+            logger.debug("embedding backfill disabled; skipping watch (bus=%s)", bus)
+
+    def _generalise_passthrough(text: str) -> str:
+        return text
+
+    EmbeddableDBMixin = _FallbackEmbeddableDBMixin
+    EmbeddingBackfill = _FallbackEmbeddingBackfill
+    generalise = _generalise_passthrough
+else:
+    EmbeddableDBMixin = _vector_service.EmbeddableDBMixin
+    EmbeddingBackfill = _vector_service.EmbeddingBackfill
+    try:
+        generalise = load_internal("vector_service.text_preprocessor").generalise
+    except Exception as exc:  # pragma: no cover - optional dependency fallback
+        logger.warning(
+            "Vector text preprocessor unavailable; using passthrough: %s",
+            exc,
+        )
+
+        def generalise(text: str) -> str:
+            return text
 
 _db_router = load_internal("db_router")
 DBRouter = _db_router.DBRouter
@@ -111,8 +213,6 @@ class _PassiveSelfCodingManager:
 
 
 manager = _PassiveSelfCodingManager(registry, data_bot)
-
-logger = logging.getLogger(__name__)
 
 _WATCH_THREAD: threading.Thread | None = None
 
