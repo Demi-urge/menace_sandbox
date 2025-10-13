@@ -181,6 +181,40 @@ def test_successful_patch_records_success_flag(monkeypatch, tmp_path):
     )
     assert update_event["patch_success"] is True
 
+
+def test_unsigned_update_warning_emitted_once(monkeypatch, tmp_path, caplog):
+    import menace_sandbox.bot_registry as br
+
+    with br._UNSIGNED_PROVENANCE_WARNING_LOCK:
+        br._UNSIGNED_PROVENANCE_WARNING_CACHE.clear()
+
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+
+    monkeypatch.setattr(br.BotRegistry, "hot_swap_bot", lambda *_a, **_k: None)
+    monkeypatch.setattr(br.BotRegistry, "health_check_bot", lambda *_a, **_k: None)
+
+    registry = br.BotRegistry()
+    caplog.set_level("WARNING")
+
+    registry.update_bot("bot", str(module), patch_id=-123, commit="unsigned:abc")
+    first_warnings = [
+        record
+        for record in caplog.records
+        if "Applying unsigned provenance update" in record.message
+    ]
+    assert len(first_warnings) == 1
+
+    caplog.clear()
+    node = registry.graph.nodes["bot"]
+    node.pop(registry._PATCH_STATUS_KEY, None)
+
+    registry.update_bot("bot", str(module), patch_id=-123, commit="unsigned:abc")
+
+    assert not any(
+        "Applying unsigned provenance update" in record.message for record in caplog.records
+    )
+
 def test_get_bot_workflow_tests_combines_sources(monkeypatch):
     registry = BotRegistry()
     registry.graph.add_node("ExampleBot")

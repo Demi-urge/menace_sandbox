@@ -237,6 +237,8 @@ def _get_patch_provenance_service_cls() -> type | None:
         else None
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
+_UNSIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
+_UNSIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, int | None]] = set()
 _REGISTERED_BOTS = {}
 
 _PATH_SEPARATORS: tuple[str, ...] = tuple(
@@ -2544,11 +2546,23 @@ class BotRegistry:
                     "timestamp": timestamp,
                 }
                 node.pop("update_blocked", None)
-                logger.warning(
-                    "Applying unsigned provenance update for %s (patch_id=%s)",
-                    name,
-                    patch_id,
-                )
+                cache_key = (name, patch_id)
+                with _UNSIGNED_PROVENANCE_WARNING_LOCK:
+                    should_warn = cache_key not in _UNSIGNED_PROVENANCE_WARNING_CACHE
+                    if should_warn:
+                        _UNSIGNED_PROVENANCE_WARNING_CACHE.add(cache_key)
+                if should_warn:
+                    logger.warning(
+                        "Applying unsigned provenance update for %s (patch_id=%s)",
+                        name,
+                        patch_id,
+                    )
+                else:
+                    logger.debug(
+                        "Suppressing duplicate unsigned provenance warning for %s (patch_id=%s)",
+                        name,
+                        patch_id,
+                    )
 
             prev_state = dict(node)
             prev_module_entry = self.modules.get(name)
