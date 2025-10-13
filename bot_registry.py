@@ -1406,6 +1406,7 @@ class BotRegistry:
         *,
         reason: str | None = None,
         extra: Optional[Dict[str, Any]] = None,
+        success: bool | None = None,
     ) -> None:
         status_map = target.get(self._PATCH_STATUS_KEY)
         if isinstance(status_map, dict):
@@ -1421,6 +1422,13 @@ class BotRegistry:
             entry["reason"] = reason
         if extra:
             entry.update(extra)
+        if success is None:
+            if status == "applied":
+                success = True
+            elif status in {"failed", "blocked"}:
+                success = False
+        if success is not None:
+            entry["patch_success"] = success
         updated[str(patch_id)] = entry
         target[self._PATCH_STATUS_KEY] = updated
 
@@ -2472,6 +2480,7 @@ class BotRegistry:
                                     "patch_id": patch_id,
                                     "commit": commit,
                                     "reason": "blacklisted_patch",
+                                    "patch_success": False,
                                 },
                             )
                         except Exception as exc:
@@ -2507,6 +2516,7 @@ class BotRegistry:
                                     "commit": commit,
                                     "reason": "unverified_provenance",
                                     "error": str(exc),
+                                    "patch_success": False,
                                 },
                             )
                         except Exception as exc2:
@@ -2566,6 +2576,8 @@ class BotRegistry:
                     }
                     if unsigned_meta is not None:
                         payload["unsigned"] = True
+                    if patch_id is not None:
+                        payload["patch_success"] = True
                     self.event_bus.publish("bot:updated", payload)
                 except Exception as exc:
                     logger.error("Failed to publish bot:updated event: %s", exc)
@@ -2647,6 +2659,7 @@ class BotRegistry:
                                 "patch_id": patch_id,
                                 "commit": commit,
                                 "error": str(exc),
+                                "patch_success": False,
                             },
                         )
                     except Exception as pub_exc:
@@ -2711,6 +2724,7 @@ class BotRegistry:
                             "name": name,
                             "module": module_path,
                             "reason": "missing_provenance",
+                            "patch_success": False,
                         },
                     )
                 except Exception as exc:
@@ -2769,6 +2783,7 @@ class BotRegistry:
                             "reason": "provenance_mismatch",
                             "expected": stored_commit,
                             "actual": commit,
+                            "patch_success": False,
                         },
                     )
                 except Exception as exc:

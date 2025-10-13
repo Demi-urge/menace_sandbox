@@ -149,6 +149,38 @@ def test_update_bot_verification_failure(monkeypatch, tmp_path):
     assert bus.events[-1][1]["reason"] == "unverified_provenance"
 
 
+def test_successful_patch_records_success_flag(monkeypatch, tmp_path):
+    class Bus:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        def publish(self, name: str, payload: dict) -> None:
+            self.events.append((name, payload))
+
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+    bus = Bus()
+    registry = BotRegistry(event_bus=bus)
+
+    monkeypatch.setattr(
+        BotRegistry,
+        "_verify_signed_provenance",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(BotRegistry, "hot_swap_bot", lambda *_a, **_k: None)
+    monkeypatch.setattr(BotRegistry, "health_check_bot", lambda *_a, **_k: None)
+
+    registry.update_bot("bot", str(module), patch_id=42, commit="deadbeef")
+
+    node = registry.graph.nodes["bot"]
+    status = node[registry._PATCH_STATUS_KEY]["42"]
+    assert status["patch_success"] is True
+
+    update_event = next(
+        payload for topic, payload in bus.events if topic == "bot:updated"
+    )
+    assert update_event["patch_success"] is True
+
 def test_get_bot_workflow_tests_combines_sources(monkeypatch):
     registry = BotRegistry()
     registry.graph.add_node("ExampleBot")
