@@ -64,6 +64,20 @@ import threading
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+
+class _PassiveSelfCodingManager:
+    """Minimal stub satisfying self-coding registration requirements."""
+
+    __slots__ = ("bot_registry", "data_bot", "evolution_orchestrator")
+
+    def __init__(self, bot_registry: BotRegistry, data_bot: DataBot) -> None:
+        self.bot_registry = bot_registry
+        self.data_bot = data_bot
+        self.evolution_orchestrator = None
+
+
+manager = _PassiveSelfCodingManager(registry, data_bot)
+
 logger = logging.getLogger(__name__)
 
 _WATCH_THREAD: threading.Thread | None = None
@@ -604,7 +618,7 @@ class WorkflowDB(EmbeddableDBMixin):
         return results
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class TaskHandoffBot:
     """Compile tasks, record workflows and transmit them to Stage 4."""
 
