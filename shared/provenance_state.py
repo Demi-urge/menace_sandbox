@@ -22,7 +22,13 @@ UNSIGNED_WARNING_LOCK = threading.Lock()
 UNSIGNED_WARNING_CACHE: set[str] = set()
 
 UNSIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
-UNSIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, int | None]] = set()
+# Cache of unsigned provenance warnings keyed by ``(bot_name, commit)`` so
+# repeated derivations that result in the same commit hash do not emit warning
+# spam even when auxiliary identifiers such as ``patch_id`` change between
+# runs.  ``commit`` can be ``None`` when upstream code was unable to derive a
+# digest, in which case the caller falls back to the legacy patch-id based
+# behaviour.
+UNSIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str | None]] = set()
 UNSIGNED_PROVENANCE_WARNING_LAST_TS: Dict[str, float] = {}
 
 # Track patch hashes that have already been emitted so that subsequent

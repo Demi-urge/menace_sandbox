@@ -267,6 +267,47 @@ def test_unsigned_update_warning_rate_limited(monkeypatch, tmp_path, caplog):
         "Applying unsigned provenance update" in record.message for record in caplog.records
     )
 
+
+def test_duplicate_commit_skips_unsigned_reapply(monkeypatch, tmp_path, caplog):
+    import menace_sandbox.bot_registry as br
+
+    with br._UNSIGNED_PROVENANCE_WARNING_LOCK:
+        br._UNSIGNED_PROVENANCE_WARNING_CACHE.clear()
+        br._UNSIGNED_PROVENANCE_WARNING_LAST_TS.clear()
+
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+
+    hot_swap_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def track_hot_swap(*args, **kwargs):
+        hot_swap_calls.append((args, kwargs))
+
+    monkeypatch.setattr(br.BotRegistry, "hot_swap_bot", track_hot_swap)
+    monkeypatch.setattr(br.BotRegistry, "health_check_bot", lambda *_a, **_k: None)
+
+    registry = br.BotRegistry()
+    caplog.set_level("INFO")
+
+    commit = "unsigned:abc"
+
+    registry.update_bot("bot", str(module), patch_id=-1, commit=commit)
+    assert len(hot_swap_calls) == 1
+
+    caplog.clear()
+    registry.update_bot("bot", str(module), patch_id=-2, commit=commit)
+
+    assert len(hot_swap_calls) == 1, "duplicate commit should not trigger hot swap"
+    assert any(
+        "commit" in record.message and "already active" in record.message
+        for record in caplog.records
+    )
+
+    node = registry.graph.nodes["bot"]
+    alias_entry = registry._get_patch_status_entry(node, -2)
+    assert alias_entry is not None
+    assert alias_entry.get("status") == "applied"
+
 def test_get_bot_workflow_tests_combines_sources(monkeypatch):
     registry = BotRegistry()
     registry.graph.add_node("ExampleBot")

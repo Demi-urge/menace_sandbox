@@ -1407,6 +1407,28 @@ class BotRegistry:
         entry = status_map.get(str(patch_id))
         return entry if isinstance(entry, dict) else None
 
+    def _commit_already_applied(
+        self, node: MutableMapping[str, Any], commit: str | None
+    ) -> bool:
+        """Return ``True`` when ``commit`` is recorded as successfully applied."""
+
+        if not commit:
+            return False
+
+        status_map = node.get(self._PATCH_STATUS_KEY)
+        if not isinstance(status_map, dict):
+            return False
+
+        for entry in status_map.values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("status") != "applied":
+                continue
+            stored_commit = entry.get("commit")
+            if isinstance(stored_commit, str) and stored_commit == commit:
+                return True
+        return False
+
     def _set_patch_status(
         self,
         target: MutableMapping[str, Any],
@@ -2447,6 +2469,28 @@ class BotRegistry:
             node = self.graph.nodes[name]
             unsigned_meta: dict[str, Any] | None = None
 
+            if self._commit_already_applied(node, commit):
+                if (
+                    patch_id is not None
+                    and not self._get_patch_status_entry(node, patch_id)
+                ):
+                    try:
+                        self._set_patch_status(node, patch_id, commit, "applied")
+                    except Exception:  # pragma: no cover - defensive best effort
+                        logger.debug(
+                            "failed to alias applied commit %s to patch %s for %s",
+                            commit,
+                            patch_id,
+                            name,
+                            exc_info=True,
+                        )
+                logger.info(
+                    "Skipping update for %s because commit %s is already active",
+                    name,
+                    commit,
+                )
+                return False
+
             if patch_id is not None:
                 status_entry = self._get_patch_status_entry(node, patch_id)
                 if status_entry and status_entry.get("commit") == commit:
@@ -2554,7 +2598,7 @@ class BotRegistry:
                     "timestamp": timestamp,
                 }
                 node.pop("update_blocked", None)
-                cache_key = (name, patch_id)
+                cache_key = (name, commit)
                 with _UNSIGNED_PROVENANCE_WARNING_LOCK:
                     cache_miss = (
                         cache_key not in _UNSIGNED_PROVENANCE_WARNING_CACHE
