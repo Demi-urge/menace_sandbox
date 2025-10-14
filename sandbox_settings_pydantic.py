@@ -19,15 +19,39 @@ try:
 except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 
+try:  # pragma: no cover - optional import only available on pydantic>=2
+    from pydantic.errors import PydanticImportError as _PydanticImportError
+except Exception:  # pragma: no cover - keep narrow dependency surface
+
+    class _PydanticImportError(ImportError):
+        """Fallback error type when ``pydantic.errors`` is unavailable."""
+
+        pass
+
+
+_PYDANTIC_SETTINGS_ERROR: Exception | None = None
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
-
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
+    _PYDANTIC_SETTINGS_ERROR = exc
+except Exception as exc:  # pragma: no cover - incompatible ``pydantic-settings``
+    _PYDANTIC_SETTINGS_ERROR = exc
+else:
     PYDANTIC_V2 = True
-except Exception:  # pragma: no cover - fallback for pydantic<2
-    from pydantic import BaseSettings  # type: ignore
 
-    PYDANTIC_V2 = False
-    SettingsConfigDict = dict  # type: ignore[misc]
+if _PYDANTIC_SETTINGS_ERROR is not None:
+    try:
+        from pydantic import BaseSettings  # type: ignore[attr-defined]
+    except (ModuleNotFoundError, ImportError, AttributeError, _PydanticImportError) as exc:
+        missing = ModuleNotFoundError("pydantic_settings")
+        missing.__cause__ = exc
+        if exc is not _PYDANTIC_SETTINGS_ERROR:
+            missing.__context__ = _PYDANTIC_SETTINGS_ERROR
+        raise missing
+    else:
+        PYDANTIC_V2 = False
+        SettingsConfigDict = dict  # type: ignore[misc]
+
 from pydantic import BaseModel, Field
 from stack_dataset_defaults import (
     STACK_LANGUAGE_ALLOWLIST,
