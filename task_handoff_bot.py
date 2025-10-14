@@ -7,6 +7,7 @@ Run ``menace embed --db workflow`` to backfill manually.
 from __future__ import annotations
 
 import importlib.util
+import _thread
 import json
 import logging
 import re
@@ -301,8 +302,24 @@ def _wrap_update_bot_once(reg: BotRegistry) -> None:
 # would recursively trigger another hot swap.  Guard against this by tracking
 # active updates globally so nested invocations are ignored regardless of the
 # registry instance they originate from.
-_UPDATE_LOCK = threading.RLock()
-_UPDATES_IN_PROGRESS: set[str] = set()
+# ``importlib.reload`` re-executes this module which would normally re-create the
+# guard primitives below while :meth:`BotRegistry.update_bot` is still running.
+# Nested hot-swap calls rely on the ``_UPDATES_IN_PROGRESS`` set populated by the
+# outer invocation, so replacing it during a reload would cause the guard to miss
+# the in-flight update and recurse indefinitely.  Preserve the existing lock and
+# tracking set when available so a reload continues to coordinate with the
+# original call stack.
+_prev_lock = globals().get("_UPDATE_LOCK")
+if isinstance(_prev_lock, _thread.RLock):  # type: ignore[attr-defined]
+    _UPDATE_LOCK = _prev_lock
+else:
+    _UPDATE_LOCK = threading.RLock()
+
+_prev_updates = globals().get("_UPDATES_IN_PROGRESS")
+if isinstance(_prev_updates, set):
+    _UPDATES_IN_PROGRESS = _prev_updates
+else:
+    _UPDATES_IN_PROGRESS: set[str] = set()
 
 
 _wrap_update_bot_once(registry)
