@@ -1795,6 +1795,44 @@ def self_coding_managed(
                             name,
                             exc_info=True,
                         )
+
+        if should_update and update_kwargs:
+            try:
+                node = bot_registry.graph.nodes.get(name)
+            except Exception:  # pragma: no cover - best effort
+                node = None
+            if node is not None:
+                existing_commit = node.get("commit")
+                existing_patch = node.get("patch_id")
+                existing_module = node.get("module") or bot_registry.modules.get(name)
+                target_module = module_path
+                try:
+                    if target_module is not None:
+                        target_module = os.fspath(target_module)
+                except TypeError:
+                    target_module = str(target_module)
+                if isinstance(existing_module, os.PathLike):
+                    try:
+                        existing_module = os.fspath(existing_module)
+                    except TypeError:
+                        existing_module = str(existing_module)
+                if existing_commit == update_kwargs.get("commit") and existing_patch == update_kwargs.get("patch_id"):
+                    same_module = False
+                    if not target_module or not existing_module:
+                        same_module = True
+                    else:
+                        try:
+                            same_module = Path(existing_module).resolve() == Path(str(target_module)).resolve()
+                        except Exception:  # pragma: no cover - filesystem dependent
+                            same_module = str(existing_module) == str(target_module)
+                    if same_module:
+                        should_update = False
+                        logger.debug(
+                            "skipping redundant bot update for %s (patch_id=%s)",
+                            name,
+                            update_kwargs.get("patch_id"),
+                        )
+
         registries_seen = getattr(cls, "_self_coding_registry_ids", None)
         if not isinstance(registries_seen, set):
             registries_seen = set()
