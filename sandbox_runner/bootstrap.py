@@ -74,6 +74,36 @@ _MISSING_OPTIONAL: set[str] = set()
 _OPTIONAL_DEPENDENCY_WARNED: set[str] = set()
 
 
+# Mapping of import module names to one or more pip-installable packages.
+#
+# The autonomous sandbox needs to cope with environments where lightweight
+# mirrors are provided instead of the canonical packages (for example ``Pillow``
+# instead of ``PIL``) or where the import name differs from the distribution
+# name (``sklearn`` vs. ``scikit-learn``).  The mapping is intentionally
+# extensible and biased towards commonly used scientific and infrastructure
+# dependencies that are referenced throughout the code base.  Each value is a
+# tuple ordered by installation preference.  The sandbox will walk the tuple
+# until the module import succeeds, caching positive results to avoid
+# reinstalling already satisfied aliases.
+_PACKAGE_INSTALL_ALIASES: dict[str, tuple[str, ...]] = {
+    "dotenv": ("python-dotenv", "dotenv"),
+    "python_dotenv": ("python-dotenv",),
+    "yaml": ("PyYAML",),
+    "PIL": ("Pillow",),
+    "cv2": ("opencv-python",),
+    "sklearn": ("scikit-learn",),
+    "scikit": ("scikit-learn",),
+    "bs4": ("beautifulsoup4",),
+    "lxml": ("lxml",),
+    "Crypto": ("pycryptodome",),
+    "MySQLdb": ("mysqlclient", "PyMySQL"),
+    "psycopg2": ("psycopg2-binary", "psycopg2"),
+    "pymongo": ("pymongo",),
+    "redis": ("redis",),
+    "boto3": ("boto3",),
+}
+
+
 def _candidate_optional_module_names(name: str) -> list[str]:
     """Return import names to try for optional module ``name``."""
 
@@ -93,6 +123,47 @@ def _candidate_optional_module_names(name: str) -> list[str]:
     if name not in seen:
         candidates.append(name)
     return candidates
+
+
+def _module_available(name: str) -> bool:
+    """Return ``True`` if the import ``name`` can be resolved."""
+
+    try:
+        return importlib.util.find_spec(name) is not None
+    except Exception:
+        # ``find_spec`` can raise for certain namespace packages. Fall back to
+        # the interpreter module cache so that already-imported modules are
+        # considered available.
+        return name in sys.modules
+
+
+def _resolve_install_targets(module_name: str) -> tuple[str, ...]:
+    """Return pip package candidates for ``module_name``.
+
+    The helper normalises the provided module name and consults
+    ``_PACKAGE_INSTALL_ALIASES`` for known mismatches between import names and
+    distribution names.  When no alias is registered we return the original
+    module name, allowing ``pip`` to attempt a direct installation.
+    """
+
+    name = module_name.strip()
+    if not name:
+        return tuple()
+
+    aliases = _PACKAGE_INSTALL_ALIASES.get(name)
+    if aliases:
+        return aliases
+
+    # Some import specifications reference submodules (e.g. ``sklearn.metrics``)
+    # while the distribution is keyed under the top-level package.  We attempt a
+    # look-up using the root component when available.
+    root = name.split(".", 1)[0]
+    if root != name:
+        aliases = _PACKAGE_INSTALL_ALIASES.get(root)
+        if aliases:
+            return aliases
+
+    return (name,)
 
 
 def _cleanup_optional_imports(
@@ -728,29 +799,78 @@ def _auto_install_missing_python_packages(errors: dict[str, list[str]]) -> bool:
     missing_required = errors.get("python", [])
     missing_optional = errors.get("optional", [])
 
-    packages: list[str] = []
-    seen: set[str] = set()
-    for name in list(missing_required) + list(missing_optional):
-        if name not in seen:
-            packages.append(name)
-            seen.add(name)
+    install_plan: list[tuple[str, tuple[str, ...]]] = []
+    planned_targets: dict[str, tuple[str, ...]] = {}
+    for module_name in list(missing_required) + list(missing_optional):
+        module_name = module_name.strip()
+        if not module_name or _module_available(module_name):
+            continue
 
-    if not packages:
+        targets = _resolve_install_targets(module_name)
+        if not targets:
+            continue
+        if module_name in planned_targets:
+            continue
+
+        install_plan.append((module_name, targets))
+        planned_targets[module_name] = targets
+
+    if not install_plan:
         return False
 
+    planned_display = [
+        f"{module} -> {', '.join(targets)}" if module not in targets else module
+        for module, targets in install_plan
+    ]
     logger.info(
         "auto-installing Python packages: %s",
-        ", ".join(packages),
-        extra=log_record(event="auto_install", packages=packages),
+        ", ".join(planned_display),
+        extra=log_record(event="auto_install", packages=planned_display),
     )
 
-    for package in packages:
-        cmd = [sys.executable, "-m", "pip", "install", package]
-        try:
-            subprocess.run(cmd, check=True)
-        except Exception as exc:  # pragma: no cover - subprocess behaviour varies
+    install_success: dict[str, bool] = {}
+    for module_name, targets in install_plan:
+        if _module_available(module_name):
+            continue
+
+        module_installed = False
+        for target in targets:
+            if install_success.get(target):
+                module_installed = _module_available(module_name)
+                if module_installed:
+                    break
+
+            cmd = [sys.executable, "-m", "pip", "install", target]
+            try:
+                subprocess.run(cmd, check=True)
+            except Exception as exc:  # pragma: no cover - subprocess behaviour varies
+                install_success[target] = False
+                logger.error(
+                    "pip install %s failed: %s",
+                    target,
+                    exc,
+                    extra=log_record(package=target, module=module_name),
+                )
+                continue
+
+            install_success[target] = True
+            if target != module_name:
+                logger.info(
+                    "installed optional module %s via pip package %s",
+                    module_name,
+                    target,
+                )
+
+            if _module_available(module_name):
+                module_installed = True
+                break
+
+        if not module_installed and not _module_available(module_name):
             logger.error(
-                "pip install %s failed: %s", package, exc, extra=log_record(package=package)
+                "Unable to satisfy dependency %s after trying: %s",
+                module_name,
+                ", ".join(targets),
+                extra=log_record(module=module_name, packages=list(targets)),
             )
     return True
 
