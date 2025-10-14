@@ -16,8 +16,8 @@ try:  # pragma: no cover - executed during import
     import orphan_analyzer
 except ModuleNotFoundError as exc:  # pragma: no cover - minimal environments
     logger.warning(
-        "'orphan_analyzer' unavailable; orphan discovery will use simplified heuristics.",
-        exc_info=exc,
+        "'orphan_analyzer' unavailable; orphan discovery will use simplified heuristics: %s",
+        exc,
     )
 
     class _OrphanAnalyzerStub:
