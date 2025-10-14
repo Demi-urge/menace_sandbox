@@ -61,11 +61,16 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+from shared.provenance_state import (
+    PATCH_HASH_CACHE as _PATCH_HASH_CACHE,
+    PATCH_HASH_LOCK as _PATCH_HASH_LOCK,
+    UNSIGNED_WARNING_CACHE as _UNSIGNED_WARNING_CACHE,
+    UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
+)
+
 logger = logging.getLogger(__name__)
 
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
-_UNSIGNED_WARNING_CACHE: set[str] = set()
-_UNSIGNED_WARNING_LOCK = threading.Lock()
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
 _PATCH_PROVENANCE_SERVICE_SENTINEL = object()
@@ -77,6 +82,19 @@ _PATCH_HASH_TRACE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "PATCH_HASH_TRACE",
     default=None,
 )
+
+
+def _emit_patch_hash_once(commit: str, *, include_search_hint: bool = False) -> None:
+    """Print the derived patch hash only once per ``commit`` value."""
+
+    with _PATCH_HASH_LOCK:
+        if commit in _PATCH_HASH_CACHE:
+            return
+        _PATCH_HASH_CACHE.add(commit)
+
+    print("🐍 PATCH HASH:", commit)
+    if include_search_hint:
+        print("🧬 Patch being searched:", commit)
 
 
 @dataclass(slots=True)
@@ -412,8 +430,7 @@ def _load_signed_provenance_candidates() -> tuple[_SignedProvenanceEntry, ...]:
     if not result:
         patch_hash = _PATCH_HASH_TRACE.get()
         if patch_hash:
-            print("🐍 PATCH HASH:", patch_hash)
-            print("🧬 Patch being searched:", patch_hash)
+            _emit_patch_hash_once(patch_hash, include_search_hint=True)
         print("🔎 Available provenance keys:", provenance_keys)
         logger.debug(
             "signed provenance file %s did not yield usable patch metadata", path
@@ -574,7 +591,7 @@ def _derive_unsigned_provenance(name: str, module_path: str | None) -> tuple[int
     patch_id = -abs(seed_value)
     commit = f"{_UNSIGNED_COMMIT_PREFIX}{digest}"
     _PATCH_HASH_TRACE.set(commit)
-    print("🐍 PATCH HASH:", commit)
+    _emit_patch_hash_once(commit)
     return patch_id, commit
 
 
