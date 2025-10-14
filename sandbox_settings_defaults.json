@@ -257,7 +257,21 @@
     "pydantic",
     "dotenv",
     "foresight_tracker",
-    "filelock"
+    "filelock",
+    "networkx",
+    "numpy",
+    "requests",
+    "psutil",
+    "radon",
+    "pylint",
+    "prometheus_client",
+    "sklearn",
+    "pandas",
+    "stripe",
+    "docker",
+    "pyroute2",
+    "pydantic_settings",
+    "pulp"
   ],
   "required_system_tools": [
     "ffmpeg",
