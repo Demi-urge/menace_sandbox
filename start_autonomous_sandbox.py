@@ -9,17 +9,20 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
 import time
 import uuid
+from typing import Any, Mapping, Sequence
 
 if "--health-check" in sys.argv[1:] and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
     os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
+from dependency_health import DependencyMode, resolve_dependency_mode
 from sandbox_runner.bootstrap import (
     auto_configure_env,
     bootstrap_environment,
@@ -39,6 +42,97 @@ except Exception:  # pragma: no cover - fallback when run as a module
         sandbox_crashes_total,
         sandbox_last_failure_ts,
     )
+
+
+def _resolve_dependency_mode(settings: SandboxSettings) -> DependencyMode:
+    """Resolve the effective dependency handling policy for *settings*."""
+
+    configured: str | None = getattr(settings, "dependency_mode", None)
+    return resolve_dependency_mode(configured)
+
+
+def _dependency_failure_messages(
+    dependency_health: Mapping[str, Any] | None,
+    *,
+    dependency_mode: DependencyMode,
+) -> list[str]:
+    """Return user-facing failure reasons derived from dependency metadata."""
+
+    if not isinstance(dependency_health, Mapping):
+        return []
+
+    missing: Sequence[Mapping[str, Any]] = tuple(
+        item
+        for item in dependency_health.get("missing", [])
+        if isinstance(item, Mapping)
+    )
+
+    if not missing:
+        return []
+
+    required = [item for item in missing if not item.get("optional", False)]
+    optional = [item for item in missing if item.get("optional", False)]
+
+    failures: list[str] = []
+    if required:
+        failures.append(
+            "missing required dependencies: "
+            + ", ".join(sorted(str(item.get("name", "unknown")) for item in required))
+        )
+    if dependency_mode is not DependencyMode.MINIMAL and optional:
+        failures.append(
+            "missing optional dependencies in strict mode: "
+            + ", ".join(sorted(str(item.get("name", "unknown")) for item in optional))
+        )
+    return failures
+
+
+def _evaluate_health(
+    health: Mapping[str, Any],
+    *,
+    dependency_mode: DependencyMode,
+) -> tuple[bool, list[str]]:
+    """Determine whether ``health`` represents a successful health check."""
+
+    failures: list[str] = []
+
+    if not health.get("databases_accessible", True):
+        db_errors = health.get("database_errors")
+        if isinstance(db_errors, Mapping) and db_errors:
+            details = ", ".join(
+                f"{name}: {error}"
+                for name, error in sorted(db_errors.items())
+            )
+            failures.append(f"databases inaccessible ({details})")
+        else:
+            failures.append("databases inaccessible")
+
+    failures.extend(
+        _dependency_failure_messages(
+            health.get("dependency_health"),
+            dependency_mode=dependency_mode,
+        )
+    )
+
+    return not failures, failures
+
+
+def _emit_health_report(
+    health: Mapping[str, Any],
+    *,
+    healthy: bool,
+    failures: Sequence[str],
+) -> None:
+    """Write a structured health report to standard output."""
+
+    payload = {
+        "status": "pass" if healthy else "fail",
+        "failures": list(failures),
+        "health": health,
+    }
+    sys.stdout.write(json.dumps(payload, sort_keys=True))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -93,11 +187,44 @@ def main(argv: list[str] | None = None) -> None:
                 initialize=False,
                 enforce_dependencies=False,
             )
+            try:
+                health_snapshot = sandbox_health()
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                sandbox_crashes_total.inc()
+                sandbox_last_failure_ts.set(time.time())
+                logger.exception(
+                    "Sandbox health probe failed", extra=log_record(event="health-error")
+                )
+                failures = [f"health probe failed: {exc}"]
+                _emit_health_report(
+                    {"error": str(exc)},
+                    healthy=False,
+                    failures=failures,
+                )
+                shutdown_autonomous_sandbox()
+                logger.info("sandbox shutdown", extra=log_record(event="shutdown"))
+                sys.exit(2)
+
             logger.info(
-                "Sandbox health", extra=log_record(health=sandbox_health())
+                "Sandbox health", extra=log_record(health=health_snapshot)
+            )
+            healthy, failures = _evaluate_health(
+                health_snapshot,
+                dependency_mode=_resolve_dependency_mode(settings),
+            )
+            _emit_health_report(
+                health_snapshot,
+                healthy=healthy,
+                failures=failures,
             )
             shutdown_autonomous_sandbox()
             logger.info("sandbox shutdown", extra=log_record(event="shutdown"))
+            if not healthy:
+                logger.error(
+                    "Sandbox health check failed: %s",
+                    "; ".join(failures) if failures else "unknown reason",
+                )
+                sys.exit(2)
             return
         launch_sandbox()
         logger.info("sandbox shutdown", extra=log_record(event="shutdown"))
