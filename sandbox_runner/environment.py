@@ -5208,16 +5208,24 @@ def _cleanup_pools() -> None:
                 except Exception:
                     logger.exception('unexpected error')
 
-        try:
-            proc = _run_subprocess_with_progress(
-                ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
-            )
-            if proc.returncode == 0:
+        docker_binary = shutil.which("docker")
+        if docker_binary:
+            try:
+                proc = _run_subprocess_with_progress(
+                    [docker_binary, "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                    timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                )
+            except FileNotFoundError:
+                logger.info("docker binary disappeared during cleanup; skipping prune")
+                proc = None
+            except Exception:
+                logger.exception('unexpected error')
+                proc = None
+            if proc and proc.returncode == 0:
                 for cid in proc.stdout.splitlines():
                     cid = cid.strip()
                     if cid:
@@ -5225,19 +5233,23 @@ def _cleanup_pools() -> None:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception:
                             logger.exception('unexpected error')
-                        _run_subprocess_with_progress(
-                            ["docker", "rm", "-f", cid],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            check=False,
-                            timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
-                        )
+                        try:
+                            _run_subprocess_with_progress(
+                                [docker_binary, "rm", "-f", cid],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                check=False,
+                                timeout=_CLEANUP_SUBPROCESS_TIMEOUT,
+                            )
+                        except FileNotFoundError:
+                            logger.info("docker binary missing while pruning container %s", cid)
+                            break
                     else:
                         try:
                             logger.warning("encountered empty container id during prune")
                         except Exception:
                             logger.exception('unexpected error')
-            else:
+            elif proc is not None:
                 try:
                     stderr = (proc.stderr or "").strip()
                 except Exception:
@@ -5250,8 +5262,8 @@ def _cleanup_pools() -> None:
                     )
                 except Exception:
                     logger.exception('unexpected error')
-        except Exception:
-            logger.exception('unexpected error')
+        else:
+            logger.info("docker not available; skipping sandbox container pruning")
 
         # also prune any leftover volumes and networks so runtime
         # resources are fully released when the sandbox exits
