@@ -20,6 +20,7 @@ _FALLBACK_MODULE_CANDIDATES: tuple[str, ...] = (
 
 _loaded: ModuleType | None = None
 _last_error: Exception | None = None
+_logged_fallback_notice = False
 for dotted, attr in _MODULE_CANDIDATES:
     try:
         module = import_module(dotted)
@@ -51,11 +52,12 @@ if _loaded is None:
         if _last_error is not None:
             exc.__cause__ = _last_error
         raise exc
-    if _last_error is not None:
+    if _last_error is not None and not _logged_fallback_notice:
         _LOGGER.warning(
-            "pydantic unavailable; using lightweight sandbox settings fallback.",
-            exc_info=_last_error,
+            "pydantic unavailable; using lightweight sandbox settings fallback: %s",
+            _last_error,
         )
+        _logged_fallback_notice = True
 else:
     if _last_error is not None:
         _LOGGER.debug(

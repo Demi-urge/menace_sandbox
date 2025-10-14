@@ -104,7 +104,7 @@ if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
 try:
     from radon.metrics import mi_visit  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("radon metrics unavailable", exc_info=exc)
+    get_logger(__name__).warning("radon metrics unavailable: %s", exc)
     mi_visit = None  # type: ignore
 
 try:
@@ -112,14 +112,14 @@ try:
     from pylint.reporters.text import TextReporter  # type: ignore
     from io import StringIO
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("pylint unavailable", exc_info=exc)
+    get_logger(__name__).warning("pylint unavailable: %s", exc)
     PylintRun = None  # type: ignore
     TextReporter = None  # type: ignore
 
 try:
     import psutil  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("psutil unavailable", exc_info=exc)
+    get_logger(__name__).warning("psutil unavailable: %s", exc)
     psutil = None  # type: ignore
 
 # ``VectorMetricsDB`` was previously used for logging patch outcomes but has
@@ -216,7 +216,7 @@ from analytics import adaptive_roi_model
 try:
     from adaptive_roi_predictor import load_training_data
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
-    logger.warning("adaptive ROI predictor unavailable", exc_info=exc)
+    logger.warning("adaptive ROI predictor unavailable: %s", exc)
     load_training_data = None  # type: ignore[assignment]
     _ADAPTIVE_ROI_PREDICTOR_ERROR = exc
 else:

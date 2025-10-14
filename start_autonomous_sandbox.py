@@ -81,7 +81,10 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         if args.health_check:
-            bootstrap_environment(initialize=False)
+            bootstrap_environment(
+                initialize=False,
+                enforce_dependencies=False,
+            )
             logger.info(
                 "Sandbox health", extra=log_record(health=sandbox_health())
             )

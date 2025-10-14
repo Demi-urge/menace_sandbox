@@ -897,6 +897,7 @@ def bootstrap_environment(
     *,
     auto_install: bool | None = None,
     initialize: bool = True,
+    enforce_dependencies: bool = True,
 ) -> SandboxSettings:
     cid = f"bootstrap-env-{uuid.uuid4()}"
     set_correlation_id(cid)
@@ -908,6 +909,7 @@ def bootstrap_environment(
             verifier,
             auto_install=auto_install,
             initialize=initialize,
+            enforce_dependencies=enforce_dependencies,
         )
         logger.info(
             "bootstrap environment complete", extra=log_record(event="shutdown")
@@ -930,6 +932,7 @@ def _bootstrap_environment(
     *,
     auto_install: bool | None = None,
     initialize: bool = True,
+    enforce_dependencies: bool = True,
 ) -> SandboxSettings:
     """Fully prepare the autonomous sandbox environment.
 
@@ -966,37 +969,12 @@ def _bootstrap_environment(
         if _auto_install_missing_python_packages(errors):
             errors = _verify_required_dependencies(settings)
 
+    if errors and not enforce_dependencies:
+        _log_dependency_warnings(errors)
+        errors = {}
+
     if errors:
-        if not errors.get("python") and not effective_auto_install:
-            for category, packages in errors.items():
-                if packages:
-                    logger.warning(
-                        "Skipping dependency enforcement for missing %s packages: %s",
-                        category,
-                        ", ".join(packages),
-                    )
-            errors = {}
-    if errors:
-        messages: list[str] = []
-        if errors.get("system"):
-            messages.append(
-                "Missing system packages: "
-                + ", ".join(errors["system"])
-                + ". Install them using your package manager."
-            )
-        if errors.get("python"):
-            messages.append(
-                "Missing Python packages: "
-                + ", ".join(errors["python"])
-                + ". Install them with 'pip install <package>'."
-            )
-        if errors.get("optional"):
-            messages.append(
-                "Missing optional Python packages: "
-                + ", ".join(errors["optional"])
-                + ". Install them with 'pip install <package>'."
-            )
-        raise SystemExit("\n".join(messages))
+        raise SystemExit("\n".join(_format_dependency_errors(errors)))
     if not initialize:
         return initialize_autonomous_sandbox(
             settings,
@@ -1005,6 +983,34 @@ def _bootstrap_environment(
         )
 
     return initialize_autonomous_sandbox(settings)
+
+
+def _format_dependency_errors(errors: dict[str, list[str]]) -> list[str]:
+    messages: list[str] = []
+    if errors.get("system"):
+        messages.append(
+            "Missing system packages: "
+            + ", ".join(errors["system"])
+            + ". Install them using your package manager."
+        )
+    if errors.get("python"):
+        messages.append(
+            "Missing Python packages: "
+            + ", ".join(errors["python"])
+            + ". Install them with 'pip install <package>'."
+        )
+    if errors.get("optional"):
+        messages.append(
+            "Missing optional Python packages: "
+            + ", ".join(errors["optional"])
+            + ". Install them with 'pip install <package>'."
+        )
+    return messages
+
+
+def _log_dependency_warnings(errors: dict[str, list[str]]) -> None:
+    for message in _format_dependency_errors(errors):
+        logger.warning(message)
 
 
 def launch_sandbox(
