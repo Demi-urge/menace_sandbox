@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 import uuid
+
+if "--health-check" in sys.argv[1:] and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
+    os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
@@ -47,6 +51,10 @@ def main(argv: list[str] | None = None) -> None:
         be pulled from :data:`sys.argv`.
     """
 
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
+        os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
+
     settings = SandboxSettings()
     # Automatically configure the environment before proceeding so the caller
     # does not need to pre-populate configuration files or model paths.
@@ -66,7 +74,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Run sandbox health checks and exit",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
 
     root_logger = logging.getLogger()
     if not root_logger.handlers:

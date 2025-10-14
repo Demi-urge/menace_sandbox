@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, make_dataclass
 from functools import lru_cache
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence, Union, get_args, get_origin
@@ -33,8 +34,17 @@ except Exception:  # pragma: no cover - allow direct module import when flat
         normalise_stack_languages,
     )
 
+from dependency_health import (
+    DependencyMode,
+    partition_python_packages,
+    partition_system_tools,
+    resolve_dependency_mode,
+)
+
 PYDANTIC_V2 = False
 USING_SANDBOX_SETTINGS_FALLBACK = True
+
+logger = logging.getLogger(__name__)
 
 _DEFAULTS_PATH = Path(__file__).with_name("sandbox_settings_defaults.json")
 _ENV_MAP_PATH = Path(__file__).with_name("sandbox_settings_env_map.json")
@@ -227,7 +237,7 @@ PolicySettings = _make_model("PolicySettings")
 class SandboxSettings:
     """Fallback configuration loader relying on pre-generated defaults."""
 
-    __slots__ = ("_data",)
+    __slots__ = ("_data", "_dependency_adjustments", "dependency_mode")
 
     def __init__(self, **overrides: Any) -> None:
         data = _deep_copy(_SANDBOX_DEFAULTS)
@@ -242,7 +252,78 @@ class SandboxSettings:
         if "stack_streaming" in data:
             data["stack_streaming"] = _coerce_optional_bool(data["stack_streaming"])
         self._data = data
+        self._dependency_adjustments: dict[str, list[str]] = {
+            "python": [],
+            "optional_python": [],
+            "system": [],
+        }
+        self.dependency_mode = "strict"
+        self._apply_dependency_mode()
         self._initialise_grouped_models()
+
+    def _apply_dependency_mode(self) -> None:
+        mode = resolve_dependency_mode(self._data.get("dependency_mode"))
+        self.dependency_mode = mode.value
+        suppressed: dict[str, list[str]] = {
+            "python": [],
+            "optional_python": [],
+            "system": [],
+        }
+        req_python = list(self._data.get("required_python_packages", []))
+        opt_python = list(self._data.get("optional_python_packages", []))
+        req_system = list(self._data.get("required_system_tools", []))
+
+        if mode is DependencyMode.STRICT:
+            self._dependency_adjustments = suppressed
+            self._data["dependency_mode"] = mode.value
+            return
+
+        if mode is DependencyMode.RELAXED:
+            available_opt, missing_opt = partition_python_packages(opt_python)
+            self._data["optional_python_packages"] = available_opt
+            suppressed["optional_python"] = missing_opt
+            self._dependency_adjustments = suppressed
+            self._data["dependency_mode"] = mode.value
+            if missing_opt:
+                logger.debug(
+                    "Dependency mode %s suppressed optional packages: %s",
+                    mode.value,
+                    ", ".join(missing_opt),
+                )
+            return
+
+        available_py, missing_py = partition_python_packages(req_python)
+        available_sys, missing_sys = partition_system_tools(req_system)
+        suppressed["python"] = missing_py
+        suppressed["system"] = missing_sys
+        suppressed["optional_python"] = opt_python
+        self._data["required_python_packages"] = available_py
+        self._data["required_system_tools"] = available_sys
+        self._data["optional_python_packages"] = []
+        self._dependency_adjustments = suppressed
+        self._data["dependency_mode"] = mode.value
+        if any(suppressed.values()):
+            parts: list[str] = []
+            if suppressed["python"]:
+                parts.append(f"python={', '.join(suppressed['python'])}")
+            if suppressed["system"]:
+                parts.append(f"system={', '.join(suppressed['system'])}")
+            if suppressed["optional_python"]:
+                parts.append(
+                    f"optional={', '.join(suppressed['optional_python'])}"
+                )
+            logger.info(
+                "Activated %s dependency mode; suppressed %s",
+                mode.value,
+                "; ".join(parts),
+            )
+
+    def suppressed_dependencies(self) -> dict[str, list[str]]:
+        return {
+            key: list(values)
+            for key, values in self._dependency_adjustments.items()
+            if values
+        }
 
     def _load_env_overrides(self) -> dict[str, Any]:
         overrides: dict[str, Any] = {}

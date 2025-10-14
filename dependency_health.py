@@ -17,9 +17,15 @@ format.
 
 from dataclasses import dataclass, field
 from enum import Enum
+import importlib.util
 import logging
+import os
+import shutil
 import threading
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
+
+
+SANDBOX_DEPENDENCY_MODE_ENV = "SANDBOX_DEPENDENCY_MODE"
 
 
 class DependencyCategory(str, Enum):
@@ -45,6 +51,98 @@ class DependencySeverity(str, Enum):
         if self is DependencySeverity.WARNING:
             return logging.WARNING
         return logging.INFO
+
+
+class DependencyMode(str, Enum):
+    """Runtime policy indicating how dependency gaps should be handled."""
+
+    STRICT = "strict"
+    RELAXED = "relaxed"
+    MINIMAL = "minimal"
+
+    @classmethod
+    def from_value(cls, value: str | None) -> "DependencyMode":
+        if not value:
+            return cls.STRICT
+        normalised = value.strip().lower()
+        if not normalised:
+            return cls.STRICT
+        if normalised in {"strict", "default", "prod", "production"}:
+            return cls.STRICT
+        if normalised in {"relaxed", "permissive", "allow-optional"}:
+            return cls.RELAXED
+        if normalised in {"minimal", "degraded", "test", "sandbox"}:
+            return cls.MINIMAL
+        return cls.STRICT
+
+
+def resolve_dependency_mode(configured: str | None = None) -> DependencyMode:
+    """Resolve the effective :class:`DependencyMode`.
+
+    Parameters
+    ----------
+    configured:
+        Optional explicit mode supplied by configuration. When ``None`` the
+        value from :data:`SANDBOX_DEPENDENCY_MODE_ENV` is used instead.
+    """
+
+    if configured is not None and str(configured).strip():
+        return DependencyMode.from_value(str(configured))
+    return DependencyMode.from_value(os.getenv(SANDBOX_DEPENDENCY_MODE_ENV))
+
+
+def current_dependency_mode() -> DependencyMode:
+    """Return the currently active dependency handling policy."""
+
+    return resolve_dependency_mode()
+
+
+def _split_python_packages(packages: Sequence[str]) -> Tuple[list[str], list[str]]:
+    """Split ``packages`` into available and missing lists."""
+
+    available: list[str] = []
+    missing: list[str] = []
+    for raw in packages:
+        name = str(raw).strip()
+        if not name:
+            continue
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        if spec is None:
+            missing.append(name)
+        else:
+            available.append(name)
+    return available, missing
+
+
+def _split_system_tools(tools: Sequence[str]) -> Tuple[list[str], list[str]]:
+    """Split ``tools`` into available and missing lists based on ``PATH``."""
+
+    available: list[str] = []
+    missing: list[str] = []
+    for raw in tools:
+        name = str(raw).strip()
+        if not name:
+            continue
+        if shutil.which(name) is None:
+            missing.append(name)
+        else:
+            available.append(name)
+    return available, missing
+
+
+def partition_python_packages(packages: Sequence[str]) -> Tuple[list[str], list[str]]:
+    """Public helper exposing :func:`_split_python_packages`."""
+
+    return _split_python_packages(list(packages))
+
+
+def partition_system_tools(tools: Sequence[str]) -> Tuple[list[str], list[str]]:
+    """Public helper exposing :func:`_split_system_tools`."""
+
+    return _split_system_tools(list(tools))
 
 
 @dataclass(slots=True)
@@ -120,6 +218,15 @@ class DependencyHealthRegistry:
             )
         return status
 
+    def _should_assume_available(
+        self, status: DependencyStatus, mode: DependencyMode
+    ) -> bool:
+        if mode is DependencyMode.STRICT:
+            return False
+        if mode is DependencyMode.RELAXED:
+            return status.optional
+        return True
+
     def mark_missing(
         self,
         *,
@@ -147,6 +254,32 @@ class DependencyHealthRegistry:
             remedy=remedy,
             metadata=dict(metadata or {}),
         )
+        mode = current_dependency_mode()
+        if self._should_assume_available(status, mode):
+            status.available = True
+            status.severity = DependencySeverity.INFO
+            status.metadata.setdefault("suppressed_missing", True)
+            status.metadata.setdefault("policy_mode", mode.value)
+            if reason:
+                status.metadata.setdefault("original_reason", reason)
+            if remedy:
+                status.metadata.setdefault("original_remedy", remedy)
+            status.metadata.setdefault("originally_available", False)
+            status.metadata.setdefault("effective_category", category.value)
+            key = self._key(name, category)
+            with self._lock:
+                self._statuses[key] = status
+                self._logged_missing.discard(key)
+            log = logger or logging.getLogger(__name__)
+            detail = f": {reason}" if reason else ""
+            log.debug(
+                "Suppressed missing dependency %s (%s) under %s mode%s",
+                name,
+                category.value,
+                mode.value,
+                detail,
+            )
+            return status
         key = self._key(name, category)
         with self._lock:
             self._statuses[key] = status
@@ -212,5 +345,11 @@ __all__ = [
     "DependencySeverity",
     "DependencyStatus",
     "DependencyHealthRegistry",
+    "DependencyMode",
+    "resolve_dependency_mode",
+    "current_dependency_mode",
+    "partition_python_packages",
+    "partition_system_tools",
+    "SANDBOX_DEPENDENCY_MODE_ENV",
     "dependency_registry",
 ]
