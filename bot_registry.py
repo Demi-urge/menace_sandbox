@@ -35,6 +35,11 @@ import errno
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
 
+from shared.provenance_state import (
+    UNSIGNED_PROVENANCE_WARNING_CACHE as _UNSIGNED_PROVENANCE_WARNING_CACHE,
+    UNSIGNED_PROVENANCE_WARNING_LOCK as _UNSIGNED_PROVENANCE_WARNING_LOCK,
+)
+
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -237,8 +242,6 @@ def _get_patch_provenance_service_cls() -> type | None:
         else None
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
-_UNSIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
-_UNSIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, int | None]] = set()
 _REGISTERED_BOTS = {}
 
 _PATH_SEPARATORS: tuple[str, ...] = tuple(
