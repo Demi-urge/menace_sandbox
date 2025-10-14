@@ -3,9 +3,10 @@ from __future__ import annotations
 """Pydantic settings for sandbox utilities."""
 
 import json
+import logging
 import os
-from typing import Any
 from pathlib import Path
+from typing import Any, Iterable, Mapping
 
 try:
     import yaml
@@ -18,6 +19,8 @@ try:
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional import only available on pydantic>=2
     from pydantic.errors import PydanticImportError as _PydanticImportError
@@ -39,20 +42,126 @@ except Exception as exc:  # pragma: no cover - incompatible ``pydantic-settings`
 else:
     PYDANTIC_V2 = True
 
+from pydantic import BaseModel, Field
+
 if _PYDANTIC_SETTINGS_ERROR is not None:
     try:
-        from pydantic import BaseSettings  # type: ignore[attr-defined]
+        from pydantic import BaseSettings as _LegacyBaseSettings  # type: ignore[attr-defined]
     except (ModuleNotFoundError, ImportError, AttributeError, _PydanticImportError) as exc:
-        missing = ModuleNotFoundError("pydantic_settings")
-        missing.__cause__ = exc
-        if exc is not _PYDANTIC_SETTINGS_ERROR:
-            missing.__context__ = _PYDANTIC_SETTINGS_ERROR
-        raise missing
+        SettingsConfigDict = dict  # type: ignore[misc]
+        PYDANTIC_V2 = True
+
+        try:  # pragma: no cover - optional dependency for env parsing
+            from dotenv import dotenv_values as _dotenv_values
+        except Exception:  # pragma: no cover - dotenv optional
+            _dotenv_values = None
+
+        def _parse_env_file(path: Path) -> dict[str, str]:
+            """Parse ``path`` into a mapping of environment values."""
+
+            data: dict[str, str] = {}
+            if _dotenv_values is not None:
+                try:
+                    values = _dotenv_values(str(path))
+                except Exception as env_exc:  # pragma: no cover - best effort
+                    logger.debug("failed to read %s via python-dotenv: %s", path, env_exc)
+                else:
+                    for key, value in values.items():
+                        if key and value is not None:
+                            data[key] = value
+                    return data
+
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for raw_line in handle:
+                        line = raw_line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if line.lower().startswith("export "):
+                            line = line[7:].lstrip()
+                        key, sep, value = line.partition("=")
+                        if not sep:
+                            continue
+                        key = key.strip()
+                        value = value.strip()
+                        if not key:
+                            continue
+                        if (
+                            len(value) >= 2
+                            and value[0] == value[-1]
+                            and value[0] in {'"', "'"}
+                        ):
+                            value = value[1:-1]
+                        data.setdefault(key, value)
+            except FileNotFoundError:
+                return {}
+            except OSError as exc_io:  # pragma: no cover - filesystem dependent
+                logger.debug("failed reading env file %s: %s", path, exc_io)
+            return data
+
+        def _iter_env_files(config: Mapping[str, Any] | None) -> Iterable[Path]:
+            if not config:
+                return []
+            env_file = config.get("env_file") if isinstance(config, Mapping) else None
+            if not env_file:
+                return []
+            files: list[Path] = []
+            if isinstance(env_file, (str, os.PathLike)):
+                files.append(Path(env_file))
+            elif isinstance(env_file, Iterable):
+                for entry in env_file:
+                    if isinstance(entry, (str, os.PathLike)):
+                        files.append(Path(entry))
+            return files
+
+        class BaseSettings(BaseModel):  # type: ignore[assignment]
+            """Lightweight fallback mimicking :mod:`pydantic_settings` behaviour."""
+
+            model_config: Mapping[str, Any] | None = {"extra": "ignore"}
+
+            def __init__(self, **data: Any) -> None:
+                env_overrides = self._build_settings_values()
+                env_overrides.update(data)
+                super().__init__(**env_overrides)
+
+            @classmethod
+            def _build_settings_values(cls) -> dict[str, Any]:
+                values: dict[str, Any] = {}
+                field_env: dict[str, list[str]] = {}
+                for name, field in cls.model_fields.items():
+                    extra = field.json_schema_extra or {}
+                    env_key = extra.get("env") if isinstance(extra, Mapping) else None
+                    if not env_key:
+                        continue
+                    if isinstance(env_key, str):
+                        keys = [env_key]
+                    else:
+                        keys = [str(item) for item in env_key if item]
+                    if keys:
+                        field_env[name] = keys
+
+                if not field_env:
+                    return values
+
+                config = cls.model_config if isinstance(cls.model_config, Mapping) else {}
+                file_values: dict[str, str] = {}
+                for candidate in _iter_env_files(config):
+                    file_values.update(_parse_env_file(candidate))
+
+                for field_name, keys in field_env.items():
+                    for key in keys:
+                        if key in os.environ:
+                            values[field_name] = os.environ[key]
+                            break
+                        if key in file_values:
+                            values[field_name] = file_values[key]
+                            break
+                return values
+
     else:
         PYDANTIC_V2 = False
         SettingsConfigDict = dict  # type: ignore[misc]
-
-from pydantic import BaseModel, Field
+        BaseSettings = _LegacyBaseSettings
 from stack_dataset_defaults import (
     STACK_LANGUAGE_ALLOWLIST,
     normalise_stack_languages,
