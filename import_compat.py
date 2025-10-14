@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import Optional
 
 PACKAGE_NAME = "menace_sandbox"
+LEGACY_PACKAGE = "menace"
 
 _MODULE_CACHE: dict[str, ModuleType] = {}
 
@@ -138,6 +139,30 @@ def bootstrap(module_name: str, module_file: str | Path | None = None) -> Module
 
     sys.modules[qualified_name] = module
     sys.modules[flat_name] = module
+
+    if qualified_name.startswith(f"{PACKAGE_NAME}."):
+        legacy_module_name = f"{LEGACY_PACKAGE}.{qualified_name[len(PACKAGE_NAME) + 1:]}"
+        legacy_package = sys.modules.get(LEGACY_PACKAGE)
+        if legacy_package is None:
+            try:
+                legacy_package = importlib.import_module(LEGACY_PACKAGE)
+            except ModuleNotFoundError:
+                legacy_package = ModuleType(LEGACY_PACKAGE)
+                legacy_package.__path__ = [repo_root_str]
+                sys.modules[LEGACY_PACKAGE] = legacy_package
+        legacy_path = getattr(legacy_package, "__path__", None)
+        if legacy_path is not None:
+            try:
+                paths = list(legacy_path)
+            except TypeError:
+                legacy_package.__path__ = [repo_root_str]
+            else:
+                if repo_root_str not in paths:
+                    try:
+                        legacy_path.insert(0, repo_root_str)
+                    except Exception:
+                        legacy_package.__path__ = [repo_root_str, *paths]
+        sys.modules[legacy_module_name] = module
 
     if qualified_name.count("."):
         parent_package = qualified_name.rsplit(".", 1)[0]
