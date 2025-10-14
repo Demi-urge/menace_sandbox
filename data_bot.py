@@ -1396,6 +1396,7 @@ class DataBot:
         threshold_update_interval: float | None = None,
         metric_predictor: object | None = None,
         threshold_service: ThresholdService | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1406,6 +1407,7 @@ class DataBot:
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
+        self.logger = logger or logging.getLogger("menace.data_bot")
         self.monitoring_enabled = not _env_flag("MENACE_DISABLE_MONITORING")
         if not self.monitoring_enabled:
             self.logger.info(
@@ -1418,7 +1420,6 @@ class DataBot:
         self._degradation_callbacks: list[Callable[[dict], None]] = []
         if degradation_callback:
             self._degradation_callbacks.append(degradation_callback)
-        self.logger = logger
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
         self.baseline_window = (
