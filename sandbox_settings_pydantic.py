@@ -8,6 +8,13 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from dependency_health import (
+    DependencyMode,
+    partition_python_packages,
+    partition_system_tools,
+    resolve_dependency_mode,
+)
+
 try:
     import yaml
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
@@ -972,6 +979,14 @@ class SandboxSettings(BaseSettings):
     menace_offline_install: bool = Field(False, env="MENACE_OFFLINE_INSTALL")
     menace_wheel_dir: str | None = Field(None, env="MENACE_WHEEL_DIR")
     menace_light_imports: bool = Field(False, env="MENACE_LIGHT_IMPORTS")
+    dependency_mode: str = Field(
+        "strict",
+        env="SANDBOX_DEPENDENCY_MODE",
+        description=(
+            "Dependency enforcement policy. Supported values are 'strict', "
+            "'relaxed' and 'minimal'."
+        ),
+    )
     auto_install_dependencies: bool = Field(
         False,
         env="AUTO_INSTALL_DEPENDENCIES",
@@ -3445,6 +3460,12 @@ class SandboxSettings(BaseSettings):
 
     def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
         super().__init__(**data)
+        self._suppressed_dependencies: dict[str, list[str]] = {
+            "python": [],
+            "optional_python": [],
+            "system": [],
+        }
+        self._apply_dependency_mode()
         self.roi = ROISettings(
             threshold=self.roi_threshold,
             confidence=self.roi_confidence,
@@ -3530,6 +3551,68 @@ class SandboxSettings(BaseSettings):
             temperature=self.policy_temperature,
             exploration=self.policy_exploration,
         )
+
+    def _apply_dependency_mode(self) -> None:
+        mode = resolve_dependency_mode(self.dependency_mode)
+        self.dependency_mode = mode.value
+        suppressed: dict[str, list[str]] = {
+            "python": [],
+            "optional_python": [],
+            "system": [],
+        }
+        req_python = list(self.required_python_packages)
+        opt_python = list(self.optional_python_packages)
+        req_system = list(self.required_system_tools)
+
+        if mode is DependencyMode.STRICT:
+            self._suppressed_dependencies = suppressed
+            return
+
+        if mode is DependencyMode.RELAXED:
+            available_opt, missing_opt = partition_python_packages(opt_python)
+            self.optional_python_packages = available_opt
+            suppressed["optional_python"] = missing_opt
+            self._suppressed_dependencies = suppressed
+            if missing_opt:
+                logger.debug(
+                    "Dependency mode %s suppressed optional packages: %s",
+                    mode.value,
+                    ", ".join(missing_opt),
+                )
+            return
+
+        available_py, missing_py = partition_python_packages(req_python)
+        available_sys, missing_sys = partition_system_tools(req_system)
+        suppressed["python"] = missing_py
+        suppressed["system"] = missing_sys
+        suppressed["optional_python"] = opt_python
+        self.required_python_packages = available_py
+        self.required_system_tools = available_sys
+        self.optional_python_packages = []
+        self._suppressed_dependencies = suppressed
+        if any(suppressed.values()):
+            parts: list[str] = []
+            if suppressed["python"]:
+                parts.append(f"python={', '.join(suppressed['python'])}")
+            if suppressed["system"]:
+                parts.append(f"system={', '.join(suppressed['system'])}")
+            if suppressed["optional_python"]:
+                parts.append(
+                    f"optional={', '.join(suppressed['optional_python'])}"
+                )
+            logger.info(
+                "Activated %s dependency mode; suppressed %s",
+                mode.value,
+                "; ".join(parts),
+            )
+
+    @property
+    def suppressed_dependencies(self) -> dict[str, list[str]]:
+        return {
+            key: list(values)
+            for key, values in self._suppressed_dependencies.items()
+            if values
+        }
 
     model_config = SettingsConfigDict(
         env_file=os.getenv("MENACE_ENV_FILE", ".env"),
