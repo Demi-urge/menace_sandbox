@@ -459,13 +459,20 @@ def auto_configure_env(settings: SandboxSettings) -> None:
 
 def initialize_autonomous_sandbox(
     settings: SandboxSettings | None = None,
+    *,
+    start_services: bool = True,
+    start_self_improvement: bool = True,
 ) -> SandboxSettings:
     cid = f"bootstrap-init-{uuid.uuid4()}"
     set_correlation_id(cid)
     sandbox_restart_total.labels(service="bootstrap", reason="init").inc()
     logger.info("initialize sandbox start", extra=log_record(event="start"))
     try:
-        result = _initialize_autonomous_sandbox(settings)
+        result = _initialize_autonomous_sandbox(
+            settings,
+            start_services=start_services,
+            start_self_improvement=start_self_improvement,
+        )
         logger.info("initialize sandbox complete", extra=log_record(event="shutdown"))
         return result
     except Exception:
@@ -481,6 +488,9 @@ def initialize_autonomous_sandbox(
 
 def _initialize_autonomous_sandbox(
     settings: SandboxSettings | None = None,
+    *,
+    start_services: bool = True,
+    start_self_improvement: bool = True,
 ) -> SandboxSettings:
     """Prepare data directories, baseline metrics and optional services.
 
@@ -492,7 +502,7 @@ def _initialize_autonomous_sandbox(
 
     settings = settings or load_sandbox_settings()
     global _INITIALISED, _SELF_IMPROVEMENT_THREAD
-    if _INITIALISED:
+    if _INITIALISED and start_services and start_self_improvement:
         return settings
 
     _MISSING_OPTIONAL.clear()
@@ -610,37 +620,43 @@ def _initialize_autonomous_sandbox(
                 mod,
             )
 
-    _start_optional_services(
-        settings.optional_service_versions.keys(),
-        missing_optional=missing_optional,
-    )
-    _INITIALISED = True
-
-    try:
-        from self_improvement.api import (
-            init_self_improvement,
-            start_self_improvement_cycle,
+    if start_services:
+        _start_optional_services(
+            settings.optional_service_versions.keys(),
+            missing_optional=missing_optional,
         )
 
-        init_self_improvement(settings)
-        thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
-        thread.start()
+    if start_services and start_self_improvement:
+        _INITIALISED = True
+
+    if start_self_improvement:
         try:
-            thread.join(0)
-        except Exception as exc:
-            logger.error("self-improvement thread raised during startup", exc_info=True)
-            raise RuntimeError("self-improvement thread failed to start") from exc
-        inner = getattr(thread, "_thread", thread)
-        if hasattr(inner, "is_alive") and not inner.is_alive():
-            raise RuntimeError("self-improvement thread terminated unexpectedly")
-        _SELF_IMPROVEMENT_THREAD = thread
-    except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
-        logger.warning(
-            "self-improvement components unavailable; skipping startup", exc_info=exc
-        )
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.error("self-improvement startup failed", exc_info=True)
-        raise RuntimeError("self-improvement startup failed") from exc
+            from self_improvement.api import (
+                init_self_improvement,
+                start_self_improvement_cycle,
+            )
+
+            init_self_improvement(settings)
+            thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
+            thread.start()
+            try:
+                thread.join(0)
+            except Exception as exc:
+                logger.error(
+                    "self-improvement thread raised during startup", exc_info=True
+                )
+                raise RuntimeError("self-improvement thread failed to start") from exc
+            inner = getattr(thread, "_thread", thread)
+            if hasattr(inner, "is_alive") and not inner.is_alive():
+                raise RuntimeError("self-improvement thread terminated unexpectedly")
+            _SELF_IMPROVEMENT_THREAD = thread
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
+            logger.warning(
+                "self-improvement components unavailable; skipping startup", exc_info=exc
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("self-improvement startup failed", exc_info=True)
+            raise RuntimeError("self-improvement startup failed") from exc
 
     return settings
 
@@ -879,7 +895,8 @@ def bootstrap_environment(
     settings: SandboxSettings | None = None,
     verifier: Callable[..., dict[str, list[str]]] | None = None,
     *,
-    auto_install: bool = True,
+    auto_install: bool | None = None,
+    initialize: bool = True,
 ) -> SandboxSettings:
     cid = f"bootstrap-env-{uuid.uuid4()}"
     set_correlation_id(cid)
@@ -887,7 +904,10 @@ def bootstrap_environment(
     logger.info("bootstrap environment start", extra=log_record(event="start"))
     try:
         result = _bootstrap_environment(
-            settings, verifier, auto_install=auto_install
+            settings,
+            verifier,
+            auto_install=auto_install,
+            initialize=initialize,
         )
         logger.info(
             "bootstrap environment complete", extra=log_record(event="shutdown")
@@ -908,7 +928,8 @@ def _bootstrap_environment(
     settings: SandboxSettings | None = None,
     verifier: Callable[..., dict[str, list[str]]] | None = None,
     *,
-    auto_install: bool = True,
+    auto_install: bool | None = None,
+    initialize: bool = True,
 ) -> SandboxSettings:
     """Fully prepare the autonomous sandbox environment.
 
@@ -918,6 +939,9 @@ def _bootstrap_environment(
     """
 
     settings = settings or load_sandbox_settings()
+    effective_auto_install = (
+        settings.auto_install_dependencies if auto_install is None else auto_install
+    )
     env_file = Path(settings.menace_env_file)
     created_env = not env_file.exists()
     ensure_env(str(env_file))
@@ -927,7 +951,7 @@ def _bootstrap_environment(
         logger.info("created env file at %s", env_file)
     if verifier:
         try:
-            errors = verifier(settings, auto_install)  # type: ignore[misc]
+            errors = verifier(settings, effective_auto_install)  # type: ignore[misc]
         except TypeError:
             errors = verifier(settings)  # type: ignore[misc]
     else:
@@ -935,7 +959,7 @@ def _bootstrap_environment(
 
     if (
         errors
-        and auto_install
+        and effective_auto_install
         and verifier is None
         and (errors.get("python") or errors.get("optional"))
     ):
@@ -943,7 +967,7 @@ def _bootstrap_environment(
             errors = _verify_required_dependencies(settings)
 
     if errors:
-        if not errors.get("python") and not settings.auto_install_dependencies:
+        if not errors.get("python") and not effective_auto_install:
             for category, packages in errors.items():
                 if packages:
                     logger.warning(
@@ -973,6 +997,13 @@ def _bootstrap_environment(
                 + ". Install them with 'pip install <package>'."
             )
         raise SystemExit("\n".join(messages))
+    if not initialize:
+        return initialize_autonomous_sandbox(
+            settings,
+            start_services=False,
+            start_self_improvement=False,
+        )
+
     return initialize_autonomous_sandbox(settings)
 
 
