@@ -37,6 +37,7 @@ from types import SimpleNamespace
 
 from shared.provenance_state import (
     UNSIGNED_PROVENANCE_WARNING_CACHE as _UNSIGNED_PROVENANCE_WARNING_CACHE,
+    UNSIGNED_PROVENANCE_WARNING_LAST_TS as _UNSIGNED_PROVENANCE_WARNING_LAST_TS,
     UNSIGNED_PROVENANCE_WARNING_LOCK as _UNSIGNED_PROVENANCE_WARNING_LOCK,
 )
 
@@ -243,6 +244,10 @@ def _get_patch_provenance_service_cls() -> type | None:
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS = {}
+
+_UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS = float(
+    os.getenv("MENACE_UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS", "300")
+)
 
 _PATH_SEPARATORS: tuple[str, ...] = tuple(
     sorted({sep for sep in (os.sep, os.altsep, "/", "\\") if sep})
@@ -2551,12 +2556,28 @@ class BotRegistry:
                 node.pop("update_blocked", None)
                 cache_key = (name, patch_id)
                 with _UNSIGNED_PROVENANCE_WARNING_LOCK:
-                    should_warn = cache_key not in _UNSIGNED_PROVENANCE_WARNING_CACHE
-                    if should_warn:
+                    cache_miss = (
+                        cache_key not in _UNSIGNED_PROVENANCE_WARNING_CACHE
+                    )
+                    if cache_miss:
                         _UNSIGNED_PROVENANCE_WARNING_CACHE.add(cache_key)
+                    last_warn_ts = _UNSIGNED_PROVENANCE_WARNING_LAST_TS.get(name)
+                    should_warn = cache_miss and (
+                        last_warn_ts is None
+                        or timestamp - last_warn_ts
+                        >= _UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS
+                    )
+                    if should_warn:
+                        _UNSIGNED_PROVENANCE_WARNING_LAST_TS[name] = timestamp
                 if should_warn:
                     logger.warning(
                         "Applying unsigned provenance update for %s (patch_id=%s)",
+                        name,
+                        patch_id,
+                    )
+                elif cache_miss:
+                    logger.debug(
+                        "Rate limiting unsigned provenance warning for %s (patch_id=%s)",
                         name,
                         patch_id,
                     )

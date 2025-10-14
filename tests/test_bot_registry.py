@@ -187,6 +187,7 @@ def test_unsigned_update_warning_emitted_once(monkeypatch, tmp_path, caplog):
 
     with br._UNSIGNED_PROVENANCE_WARNING_LOCK:
         br._UNSIGNED_PROVENANCE_WARNING_CACHE.clear()
+        br._UNSIGNED_PROVENANCE_WARNING_LAST_TS.clear()
 
     module = tmp_path / "bot.py"
     module.write_text("VAL=1\n")
@@ -212,6 +213,57 @@ def test_unsigned_update_warning_emitted_once(monkeypatch, tmp_path, caplog):
     registry.update_bot("bot", str(module), patch_id=-123, commit="unsigned:abc")
 
     assert not any(
+        "Applying unsigned provenance update" in record.message for record in caplog.records
+    )
+
+
+def test_unsigned_update_warning_rate_limited(monkeypatch, tmp_path, caplog):
+    import menace_sandbox.bot_registry as br
+
+    with br._UNSIGNED_PROVENANCE_WARNING_LOCK:
+        br._UNSIGNED_PROVENANCE_WARNING_CACHE.clear()
+        br._UNSIGNED_PROVENANCE_WARNING_LAST_TS.clear()
+
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+
+    monkeypatch.setattr(br.BotRegistry, "hot_swap_bot", lambda *_a, **_k: None)
+    monkeypatch.setattr(br.BotRegistry, "health_check_bot", lambda *_a, **_k: None)
+
+    registry = br.BotRegistry()
+
+    caplog.set_level("WARNING")
+
+    monkeypatch.setattr(br, "_UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS", 60.0)
+
+    current_time = [1_000.0]
+
+    def fake_time() -> float:
+        return current_time[0]
+
+    monkeypatch.setattr(br.time, "time", fake_time)
+
+    registry.update_bot("bot", str(module), patch_id=-1, commit="unsigned:abc")
+    first_warnings = [
+        record
+        for record in caplog.records
+        if "Applying unsigned provenance update" in record.message
+    ]
+    assert len(first_warnings) == 1
+
+    caplog.clear()
+    current_time[0] += 10.0  # below the interval
+    registry.update_bot("bot", str(module), patch_id=-2, commit="unsigned:def")
+
+    assert not any(
+        "Applying unsigned provenance update" in record.message for record in caplog.records
+    )
+
+    caplog.clear()
+    current_time[0] += 120.0  # beyond the interval
+    registry.update_bot("bot", str(module), patch_id=-3, commit="unsigned:ghi")
+
+    assert any(
         "Applying unsigned provenance update" in record.message for record in caplog.records
     )
 

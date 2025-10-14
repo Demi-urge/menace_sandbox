@@ -6,12 +6,16 @@ When those modules are imported under multiple package aliases (for example
 ``menace`` and ``menace_sandbox``) the module-level globals are no longer
 shared which resulted in repeated warnings and noisy log output.  By housing
 these caches in a dedicated module we ensure that all imports reference the
-same data structures regardless of the package prefix that was used.
+same data structures regardless of the package prefix that was used.  The
+state defined here is intentionally lightweight so that it can be imported
+early during the bootstrap process without pulling in heavy optional
+dependencies.
 """
 
 from __future__ import annotations
 
 import threading
+from typing import Dict
 
 # Locks and caches used to suppress duplicate unsigned provenance warnings.
 UNSIGNED_WARNING_LOCK = threading.Lock()
@@ -19,6 +23,7 @@ UNSIGNED_WARNING_CACHE: set[str] = set()
 
 UNSIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
 UNSIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, int | None]] = set()
+UNSIGNED_PROVENANCE_WARNING_LAST_TS: Dict[str, float] = {}
 
 # Track patch hashes that have already been emitted so that subsequent
 # attempts to derive the same unsigned provenance do not keep printing the
@@ -31,6 +36,7 @@ __all__ = [
     "UNSIGNED_WARNING_CACHE",
     "UNSIGNED_PROVENANCE_WARNING_LOCK",
     "UNSIGNED_PROVENANCE_WARNING_CACHE",
+    "UNSIGNED_PROVENANCE_WARNING_LAST_TS",
     "PATCH_HASH_LOCK",
     "PATCH_HASH_CACHE",
 ]
