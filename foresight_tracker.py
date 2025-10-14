@@ -37,6 +37,12 @@ from numbers import Number
 import logging
 import math
 
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
+
 try:  # pragma: no cover - optional dependency
     import numpy as np
     _NUMPY_ERROR: Exception | None = None
@@ -62,9 +68,23 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 if _NUMPY_ERROR is not None:  # pragma: no cover - informational log
-    logger.warning(
-        "NumPy unavailable; using approximate statistical routines (%s).",
-        _NUMPY_ERROR,
+    dependency_registry.mark_missing(
+        name="numpy",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="High-precision numerical routines for foresight tracking",
+        reason=str(_NUMPY_ERROR),
+        remedy="pip install numpy",
+        logger=logger,
+    )
+else:
+    dependency_registry.mark_available(
+        name="numpy",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="High-precision numerical routines for foresight tracking",
+        logger=logger,
     )
 
 

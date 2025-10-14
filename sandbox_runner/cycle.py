@@ -17,6 +17,11 @@ import logging
 from pathlib import Path
 
 from logging_utils import get_logger, setup_logging, log_record
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
 from context_builder_util import ensure_fresh_weights
 import os
 import json
@@ -39,6 +44,9 @@ from alert_dispatcher import dispatch_alert
 from dynamic_path_router import resolve_path, path_for_prompt
 from error_parser import ErrorParser
 from prompt_types import Prompt
+
+
+logger = get_logger(__name__)
 
 
 # ``vector_service`` is an essential dependency but importing it at module load
@@ -104,30 +112,79 @@ if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
 try:
     from radon.metrics import mi_visit  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("radon metrics unavailable: %s", exc)
+    dependency_registry.mark_missing(
+        name="radon",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Code complexity metrics provider",
+        reason=str(exc),
+        remedy="pip install radon",
+        logger=logger,
+    )
     mi_visit = None  # type: ignore
+else:
+    dependency_registry.mark_available(
+        name="radon",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Code complexity metrics provider",
+        logger=logger,
+    )
 
 try:
     from pylint.lint import Run as PylintRun  # type: ignore
     from pylint.reporters.text import TextReporter  # type: ignore
     from io import StringIO
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("pylint unavailable: %s", exc)
+    dependency_registry.mark_missing(
+        name="pylint",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Static analysis linter",
+        reason=str(exc),
+        remedy="pip install pylint",
+        logger=logger,
+    )
     PylintRun = None  # type: ignore
     TextReporter = None  # type: ignore
+else:
+    dependency_registry.mark_available(
+        name="pylint",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Static analysis linter",
+        logger=logger,
+    )
 
 try:
     import psutil  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning("psutil unavailable: %s", exc)
+    dependency_registry.mark_missing(
+        name="psutil",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="System metrics collection",
+        reason=str(exc),
+        remedy="pip install psutil",
+        logger=logger,
+    )
     psutil = None  # type: ignore
+else:
+    dependency_registry.mark_available(
+        name="psutil",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="System metrics collection",
+        logger=logger,
+    )
 
 # ``VectorMetricsDB`` was previously used for logging patch outcomes but has
 # since been superseded by :class:`vector_service.patch_logger.PatchLogger`.
 # The legacy import and global instance are removed in favor of using
 # ``PatchLogger`` directly where needed.
-
-logger = get_logger(__name__)
 
 _ENVIRONMENT_MODULE: ModuleType | None = None
 
@@ -216,10 +273,26 @@ from analytics import adaptive_roi_model
 try:
     from adaptive_roi_predictor import load_training_data
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
-    logger.warning("adaptive ROI predictor unavailable: %s", exc)
+    dependency_registry.mark_missing(
+        name="adaptive_roi_predictor",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Adaptive ROI predictor",
+        reason=str(exc),
+        remedy="pip install numpy",  # predictor requires scientific stack
+        logger=logger,
+    )
     load_training_data = None  # type: ignore[assignment]
     _ADAPTIVE_ROI_PREDICTOR_ERROR = exc
 else:
+    dependency_registry.mark_available(
+        name="adaptive_roi_predictor",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Adaptive ROI predictor",
+        logger=logger,
+    )
     _ADAPTIVE_ROI_PREDICTOR_ERROR = None
 
 from metrics_exporter import (

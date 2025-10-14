@@ -21,6 +21,13 @@ import json
 import logging
 
 from dynamic_path_router import resolve_path
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - support execution without package context
     from .roi_tracker import ROITracker
@@ -28,10 +35,15 @@ except ImportError:
     try:  # pragma: no cover - fallback when imported as script
         from roi_tracker import ROITracker  # type: ignore
     except ImportError as exc:  # pragma: no cover - provide stub
-        logger = logging.getLogger(__name__)
-        logger.warning(
-            "ROITracker unavailable; governance rules will use a simplified fallback: %s",
-            exc,
+        dependency_registry.mark_missing(
+            name="roi_tracker",
+            category=DependencyCategory.PYTHON,
+            optional=True,
+            severity=DependencySeverity.INFO,
+            description="ROI tracker analytics",
+            reason=str(exc),
+            remedy="pip install numpy",
+            logger=logger,
         )
 
         class ROITracker:  # type: ignore[override]
@@ -47,6 +59,14 @@ except ImportError:
                 base = float(roi)
                 adjusted = base * max(0.0, 1.0 - float(rollback_prob))
                 return base, adjusted, {}
+else:
+    dependency_registry.mark_available(
+        name="roi_tracker",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="ROI tracker analytics",
+        logger=logger,
+    )
 
 try:  # pragma: no cover - optional dependency in minimal envs
     import yaml

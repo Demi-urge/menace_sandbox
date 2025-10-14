@@ -13,6 +13,11 @@ from types import ModuleType
 from typing import Any, Callable, Iterable
 
 from logging_utils import get_logger, set_correlation_id, log_record
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
 
 from packaging.version import Version
 try:  # pragma: no cover - exercised implicitly in tests
@@ -348,15 +353,25 @@ def _verify_optional_modules(
             _record_missing_optional(mod, missing)
             min_ver = versions.get(mod, "")
             ver_hint = f">={min_ver}" if min_ver else ""
-            logger.warning(
-                "%s module not found; install with 'pip install %s%s' to enable it (last error: %s)",
-                mod,
-                mod,
-                ver_hint,
-                exc,
+            dependency_registry.mark_missing(
+                name=mod,
+                category=DependencyCategory.PYTHON,
+                optional=True,
+                severity=DependencySeverity.INFO,
+                description=f"Optional service module '{mod}'",
+                reason=str(exc),
+                remedy=f"pip install {mod}{ver_hint}",
+                logger=logger,
             )
         else:
             _OPTIONAL_MODULE_CACHE[mod] = module
+            dependency_registry.mark_available(
+                name=mod,
+                category=DependencyCategory.PYTHON,
+                optional=True,
+                description=f"Optional service module '{mod}'",
+                logger=logger,
+            )
     return missing
 
 
@@ -746,15 +761,20 @@ def sandbox_health() -> dict[str, bool | dict[str, str]]:
     except Exception:
         stub_init = False
 
+    dependency_info = dependency_registry.summary()
+
     return {
         "self_improvement_thread_alive": alive,
         "databases_accessible": db_ok,
         "database_errors": db_errors,
         "stub_generator_initialized": stub_init,
+        "dependency_health": dependency_info,
     }
 
 
-def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[str]]:
+def _verify_required_dependencies(
+    settings: SandboxSettings, *, strict: bool = True
+) -> dict[str, list[str]]:
     """Validate required dependencies and return missing categories.
 
     The function performs a pure validation pass without attempting to install
@@ -792,6 +812,83 @@ def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[s
     missing_req = [p for p in req_pkgs if not _have_spec(p)]
     missing_opt = [p for p in opt_pkgs if not _have_spec(p)]
 
+    def _install_hint(module_name: str) -> str | None:
+        targets = _resolve_install_targets(module_name)
+        if not targets:
+            return None
+        if len(targets) == 1:
+            return f"pip install {targets[0]}"
+        display = " or ".join(targets)
+        return f"pip install {display}"
+
+    required_severity = (
+        DependencySeverity.WARNING if strict else DependencySeverity.INFO
+    )
+
+    for tool in req_tools:
+        if tool in missing_sys:
+            dependency_registry.mark_missing(
+                name=tool,
+                category=DependencyCategory.SYSTEM,
+                optional=False,
+                severity=required_severity,
+                description=f"Required system tool '{tool}'",
+                reason="executable not found on PATH",
+                remedy=f"Install '{tool}' using the system package manager.",
+                logger=logger,
+            )
+        else:
+            dependency_registry.mark_available(
+                name=tool,
+                category=DependencyCategory.SYSTEM,
+                optional=False,
+                description=f"Required system tool '{tool}'",
+                logger=logger,
+            )
+
+    for module in req_pkgs:
+        if module in missing_req:
+            dependency_registry.mark_missing(
+                name=module,
+                category=DependencyCategory.PYTHON,
+                optional=False,
+                severity=required_severity,
+                description=f"Required Python module '{module}'",
+                reason="module import failed",
+                remedy=_install_hint(module),
+                metadata={"install_targets": list(_resolve_install_targets(module))},
+                logger=logger,
+            )
+        else:
+            dependency_registry.mark_available(
+                name=module,
+                category=DependencyCategory.PYTHON,
+                optional=False,
+                description=f"Required Python module '{module}'",
+                logger=logger,
+            )
+
+    for module in opt_pkgs:
+        if module in missing_opt:
+            dependency_registry.mark_missing(
+                name=module,
+                category=DependencyCategory.PYTHON,
+                optional=True,
+                severity=DependencySeverity.INFO,
+                description=f"Optional Python module '{module}'",
+                reason="module import failed",
+                remedy=_install_hint(module),
+                logger=logger,
+            )
+        else:
+            dependency_registry.mark_available(
+                name=module,
+                category=DependencyCategory.PYTHON,
+                optional=True,
+                description=f"Optional Python module '{module}'",
+                logger=logger,
+            )
+
     mode = settings.menace_mode.lower()
 
     errors: dict[str, list[str]] = {}
@@ -801,10 +898,6 @@ def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[s
         errors["python"] = missing_req
     if missing_opt and mode == "production":
         errors["optional"] = missing_opt
-    elif missing_opt:
-        logger.warning(
-            "Missing optional Python packages: %s", ", ".join(missing_opt)
-        )
 
     return errors
 
@@ -958,7 +1051,9 @@ def _bootstrap_environment(
         except TypeError:
             errors = verifier(settings)  # type: ignore[misc]
     else:
-        errors = _verify_required_dependencies(settings)
+        errors = _verify_required_dependencies(
+            settings, strict=enforce_dependencies
+        )
 
     if (
         errors
@@ -967,7 +1062,9 @@ def _bootstrap_environment(
         and (errors.get("python") or errors.get("optional"))
     ):
         if _auto_install_missing_python_packages(errors):
-            errors = _verify_required_dependencies(settings)
+            errors = _verify_required_dependencies(
+                settings, strict=enforce_dependencies
+            )
 
     if errors and not enforce_dependencies:
         _log_dependency_warnings(errors)
@@ -1009,8 +1106,23 @@ def _format_dependency_errors(errors: dict[str, list[str]]) -> list[str]:
 
 
 def _log_dependency_warnings(errors: dict[str, list[str]]) -> None:
-    for message in _format_dependency_errors(errors):
-        logger.warning(message)
+    summary = dependency_registry.summary()
+    recorded: set[tuple[str, str]] = set()
+    for status in summary.get("missing", []) + summary.get("optional_missing", []):
+        recorded.add((status.get("category", ""), status.get("name", "")))
+    for message_category, names in errors.items():
+        category = "system" if message_category == "system" else "python"
+        pending = [
+            name
+            for name in names
+            if (category, name) not in recorded
+        ]
+        if pending:
+            logger.warning(
+                "%s dependencies pending installation: %s",
+                message_category.capitalize(),
+                ", ".join(pending),
+            )
 
 
 def launch_sandbox(

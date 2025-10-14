@@ -86,6 +86,14 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast
 
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
+
+logger = logging.getLogger(__name__)
+
 _db_router_module = load_internal("db_router")
 DBRouter = _db_router_module.DBRouter
 GLOBAL_ROUTER = _db_router_module.GLOBAL_ROUTER
@@ -148,26 +156,71 @@ def _create_baseline_tracker(*args: object, **kwargs: object) -> "BaselineTracke
 
 try:
     import psutil  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
-    logging.getLogger(__name__).warning(
-        "psutil is not installed; install with 'pip install psutil' to capture system metrics"
+    dependency_registry.mark_missing(
+        name="psutil",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="System metrics collection",
+        reason=str(exc),
+        remedy="pip install psutil",
+        logger=logger,
+    )
+else:
+    dependency_registry.mark_available(
+        name="psutil",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="System metrics collection",
+        logger=logger,
     )
 
 try:
     import pandas as pd  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
-    logging.getLogger(__name__).warning(
-        "pandas is not installed; install with 'pip install pandas' for DataFrame support"
+    dependency_registry.mark_missing(
+        name="pandas",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Data analysis helper for DataBot",
+        reason=str(exc),
+        remedy="pip install pandas",
+        logger=logger,
+    )
+else:
+    dependency_registry.mark_available(
+        name="pandas",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Data analysis helper for DataBot",
+        logger=logger,
     )
 
 try:
     from prometheus_client import CollectorRegistry, Gauge  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     CollectorRegistry = Gauge = None  # type: ignore
-    logging.getLogger(__name__).warning(
-        "prometheus_client is not installed; install with 'pip install prometheus-client' for Prometheus metrics"
+    dependency_registry.mark_missing(
+        name="prometheus_client",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Prometheus metrics exporter",
+        reason=str(exc),
+        remedy="pip install prometheus-client",
+        logger=logger,
+    )
+else:
+    dependency_registry.mark_available(
+        name="prometheus_client",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Prometheus metrics exporter",
+        logger=logger,
     )
 
 try:  # pragma: no cover - optional dependency
@@ -194,8 +247,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     FileSystemEventHandler = object  # type: ignore
     Observer = None  # type: ignore
-
-logger = logging.getLogger(__name__)
 
 _SC_WATCHER: "Observer | None" = None
 _SC_CACHE: Dict[str, SelfCodingThresholds] = {}
