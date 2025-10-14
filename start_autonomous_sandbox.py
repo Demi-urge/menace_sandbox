@@ -17,8 +17,14 @@ import time
 import uuid
 from typing import Any, Mapping, Sequence
 
-if "--health-check" in sys.argv[1:] and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
-    os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
+if "--health-check" in sys.argv[1:]:
+    if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
+        os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
+    # Disable long-running monitoring loops during the lightweight health
+    # probe so the command terminates promptly even when background services
+    # would normally bootstrap DataBot.
+    os.environ.setdefault("MENACE_SANDBOX_MODE", "health_check")
+    os.environ.setdefault("MENACE_DISABLE_MONITORING", "1")
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings

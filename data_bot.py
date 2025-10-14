@@ -94,6 +94,15 @@ from dependency_health import (
 
 logger = logging.getLogger(__name__)
 
+
+def _env_flag(name: str) -> bool:
+    """Return ``True`` when environment variable *name* is truthy."""
+
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 _db_router_module = load_internal("db_router")
 DBRouter = _db_router_module.DBRouter
 GLOBAL_ROUTER = _db_router_module.GLOBAL_ROUTER
@@ -1397,6 +1406,11 @@ class DataBot:
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
+        self.monitoring_enabled = not _env_flag("MENACE_DISABLE_MONITORING")
+        if not self.monitoring_enabled:
+            self.logger.info(
+                "DataBot monitoring disabled via MENACE_DISABLE_MONITORING",
+            )
         self.roi_drop_threshold = roi_drop_threshold
         self.error_threshold = error_threshold
         self.degradation_callback = degradation_callback
@@ -1605,9 +1619,15 @@ class DataBot:
             except Exception:
                 self.logger.exception("failed to restore monitoring for %s", name)
         if monitored:
-            self._monitor_thread = self.start_monitoring(
-                self.threshold_update_interval
-            )
+            if self.monitoring_enabled:
+                self._monitor_thread = self.start_monitoring(
+                    self.threshold_update_interval
+                )
+            else:
+                self.logger.info(
+                    "monitoring disabled via MENACE_DISABLE_MONITORING; "
+                    "skipping background refresh",
+                )
 
     # ------------------------------------------------------------------
     def register_predictor(self, predictor: object) -> None:
@@ -1671,6 +1691,8 @@ class DataBot:
                     self.logger.exception(
                         "failed to persist monitoring schedule for %s", name
                     )
+            if not self.monitoring_enabled:
+                return
             if not self._monitor_thread:
                 self._monitor_thread = self.start_monitoring(
                     self.threshold_update_interval
@@ -1764,6 +1786,9 @@ class DataBot:
         ``data:monitoring_started`` event on the :class:`UnifiedEventBus`
         when available.
         """
+
+        if not self.monitoring_enabled:
+            raise RuntimeError("monitoring disabled")
 
         def _monitor() -> None:
             while True:
