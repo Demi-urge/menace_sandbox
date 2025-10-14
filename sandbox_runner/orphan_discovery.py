@@ -9,15 +9,26 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from dynamic_path_router import resolve_path
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
 
 logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - executed during import
     import orphan_analyzer
 except ModuleNotFoundError as exc:  # pragma: no cover - minimal environments
-    logger.warning(
-        "'orphan_analyzer' unavailable; orphan discovery will use simplified heuristics: %s",
-        exc,
+    dependency_registry.mark_missing(
+        name="orphan_analyzer",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Graph-based orphan module analyzer",
+        reason=str(exc),
+        remedy="pip install networkx",
+        logger=logger,
     )
 
     class _OrphanAnalyzerStub:
@@ -34,6 +45,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - minimal environments
             return False
 
     orphan_analyzer = _OrphanAnalyzerStub()  # type: ignore[assignment]
+else:
+    dependency_registry.mark_available(
+        name="orphan_analyzer",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Graph-based orphan module analyzer",
+        logger=logger,
+    )
 
 
 class EvaluationError(Exception):

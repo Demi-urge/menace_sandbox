@@ -6,6 +6,12 @@ from importlib import import_module
 import logging
 from types import ModuleType
 
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 _MODULE_CANDIDATES: tuple[tuple[str, str | None], ...] = (
@@ -32,6 +38,13 @@ for dotted, attr in _MODULE_CANDIDATES:
         continue
     else:
         _loaded = module
+        dependency_registry.mark_available(
+            name="pydantic",
+            category=DependencyCategory.PYTHON,
+            optional=True,
+            description="Pydantic-powered sandbox settings loader",
+            logger=_LOGGER,
+        )
         break
 
 if _loaded is None:
@@ -53,9 +66,15 @@ if _loaded is None:
             exc.__cause__ = _last_error
         raise exc
     if _last_error is not None and not _logged_fallback_notice:
-        _LOGGER.warning(
-            "pydantic unavailable; using lightweight sandbox settings fallback: %s",
-            _last_error,
+        dependency_registry.mark_missing(
+            name="pydantic",
+            category=DependencyCategory.PYTHON,
+            optional=True,
+            severity=DependencySeverity.INFO,
+            description="Pydantic-powered sandbox settings loader",
+            reason=str(_last_error),
+            remedy="pip install pydantic",
+            logger=_LOGGER,
         )
         _logged_fallback_notice = True
 else:
