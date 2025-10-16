@@ -64,10 +64,15 @@ def main() -> None:
     if not args.download_only:
         root = Path(__file__).resolve().parents[1]
         reqs = root / "requirements-extra.txt"
-        print(f"Installing packages from {reqs}...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-r", str(reqs)]
-        )
+        if reqs.is_file():
+            print(f"Installing packages from {reqs}...")
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-r", str(reqs)]
+            )
+        else:
+            print(
+                f"Requirements file {reqs} not found; skipping package installation"
+            )
 
         if shutil.which("playwright"):
             print("Installing Playwright browsers...")
