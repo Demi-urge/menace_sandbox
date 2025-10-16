@@ -3,14 +3,33 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
-from dotenv import load_dotenv
+try:  # pragma: no cover - optional dependency in minimal envs
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully for tests
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:
+        """Stub that mirrors :func:`dotenv.load_dotenv` when dependency is absent."""
+
+        return False
+
+
+def _missing_playwright_check() -> bool:
+    """Fallback when ``dynamic_harvest`` cannot be imported locally."""
+
+    print(
+        "Playwright verification skipped: neurosales.dynamic_harvest unavailable"
+    )
+    return False
+
 
 try:  # pragma: no cover - import path differs when package installed
     from neurosales.dynamic_harvest import ensure_playwright_browsers
 except ModuleNotFoundError:  # pragma: no cover - local source layout
-    from neurosales.neurosales.dynamic_harvest import (  # type: ignore
-        ensure_playwright_browsers,
-    )
+    try:
+        from neurosales.neurosales.dynamic_harvest import (  # type: ignore
+            ensure_playwright_browsers,
+        )
+    except ModuleNotFoundError:
+        ensure_playwright_browsers = _missing_playwright_check
 
 load_dotenv()
 
