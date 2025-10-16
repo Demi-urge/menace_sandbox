@@ -5,7 +5,12 @@ import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
-from neurosales.dynamic_harvest import ensure_playwright_browsers
+try:  # pragma: no cover - import path differs when package installed
+    from neurosales.dynamic_harvest import ensure_playwright_browsers
+except ModuleNotFoundError:  # pragma: no cover - local source layout
+    from neurosales.neurosales.dynamic_harvest import (  # type: ignore
+        ensure_playwright_browsers,
+    )
 
 load_dotenv()
 
