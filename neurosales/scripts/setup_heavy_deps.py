@@ -1,8 +1,10 @@
 import argparse
+import importlib
 import subprocess
 import sys
 import shutil
 from pathlib import Path
+import typing
 try:  # pragma: no cover - optional dependency in minimal envs
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - degrade gracefully for tests
@@ -21,15 +23,31 @@ def _missing_playwright_check() -> bool:
     return False
 
 
-try:  # pragma: no cover - import path differs when package installed
-    from neurosales.dynamic_harvest import ensure_playwright_browsers
-except ModuleNotFoundError:  # pragma: no cover - local source layout
-    try:
-        from neurosales.neurosales.dynamic_harvest import (  # type: ignore
-            ensure_playwright_browsers,
-        )
-    except ModuleNotFoundError:
-        ensure_playwright_browsers = _missing_playwright_check
+def _load_ensure_playwright() -> typing.Callable[[], bool]:
+    """Return a best-effort Playwright verification function."""
+
+    candidates = (
+        "neurosales.dynamic_harvest",
+        "neurosales.neurosales.dynamic_harvest",
+        "dynamic_harvest",
+    )
+
+    for module_name in candidates:
+        try:  # pragma: no cover - import paths differ between layouts
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        except Exception:  # pragma: no cover - defensive best effort
+            continue
+
+        ensure = getattr(module, "ensure_playwright_browsers", None)
+        if callable(ensure):
+            return typing.cast(typing.Callable[[], bool], ensure)
+
+    return _missing_playwright_check
+
+
+ensure_playwright_browsers = _load_ensure_playwright()
 
 load_dotenv()
 
