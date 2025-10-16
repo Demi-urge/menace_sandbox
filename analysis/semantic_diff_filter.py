@@ -21,6 +21,18 @@ from typing import Iterable, List, Tuple
 
 from importlib import import_module
 from types import ModuleType
+from pathlib import Path
+import sys
+
+# Ensure the repository root is on ``sys.path`` when this module is imported via
+# ``analysis.semantic_diff_filter`` from a script living in a nested directory
+# (for example ``neurosales/scripts``).  When invoked that way Python only adds
+# the script directory to ``sys.path``, so importing ``unsafe_patterns`` from
+# the repository root fails.  Adding the root here keeps the existing import
+# logic working in both package and source checkouts.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
 
 
 def _load_patterns() -> ModuleType:
