@@ -19,7 +19,32 @@ import math
 from collections import Counter
 from typing import Iterable, List, Tuple
 
-from unsafe_patterns import UNSAFE_PATTERNS, UnsafePattern
+from importlib import import_module
+from types import ModuleType
+
+
+def _load_patterns() -> ModuleType:
+    """Return the ``unsafe_patterns`` module regardless of package layout."""
+
+    for name in ("unsafe_patterns", "menace_sandbox.unsafe_patterns"):
+        try:
+            return import_module(name)
+        except ModuleNotFoundError as exc:
+            # ``menace_sandbox`` isn't always installed as a package when the
+            # lightweight tooling in ``neurosales`` is executed directly from a
+            # checkout.  In that case the bare module import works.  When the
+            # project *is* installed as a package we need the fully-qualified
+            # name.  Ignore both failures here and try the next candidate.
+            if getattr(exc, "name", None) != name:
+                raise
+    raise ModuleNotFoundError(
+        "unsafe_patterns module is not available on the Python path"
+    )
+
+
+_patterns_module = _load_patterns()
+UNSAFE_PATTERNS = getattr(_patterns_module, "UNSAFE_PATTERNS")
+UnsafePattern = getattr(_patterns_module, "UnsafePattern")
 
 
 def _embed(text: str) -> Counter[str]:
