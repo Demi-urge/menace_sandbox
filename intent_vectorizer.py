@@ -15,7 +15,7 @@ import ast
 import io
 import tokenize
 
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
 except Exception:  # pragma: no cover - allow running without dependency
@@ -35,21 +35,18 @@ class IntentVectorizer:
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     def __post_init__(self) -> None:
-        self._model: SentenceTransformer | None = None
-        if SentenceTransformer is not None:
-            try:  # pragma: no cover - model load heavy
-                from huggingface_hub import login
-                import os
-
-                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._model = SentenceTransformer(self.model_name)
-            except Exception:  # pragma: no cover - best effort
-                self._model = None
+        self._embedder: SentenceTransformer | None = None
+        self._embedder_loaded = False
 
     # ------------------------------------------------------------------
     def _encode(self, text: str) -> List[float]:
-        if self._model is not None:
-            vec = governed_embed(text, self._model)
+        embedder = self._embedder
+        if not self._embedder_loaded:
+            embedder = get_embedder()
+            self._embedder = embedder
+            self._embedder_loaded = True
+        if embedder is not None:
+            vec = governed_embed(text, embedder)
             if vec is not None:
                 return [float(x) for x in vec]
         return _local_embed(text)
