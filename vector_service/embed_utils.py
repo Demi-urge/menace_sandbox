@@ -15,6 +15,8 @@ import json
 import os
 import urllib.request
 
+import governed_embeddings
+
 try:  # pragma: no cover - optional dependency
     import numpy as np  # type: ignore
 except Exception:  # pragma: no cover - numpy missing
@@ -30,17 +32,8 @@ try:  # pragma: no cover - optional service
 except Exception:  # pragma: no cover - dependency may be missing
     SharedVectorService = None  # type: ignore
 
-_MODEL = None
+_MODEL: "SentenceTransformer | None" = None
 EMBED_DIM = 384
-if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
-    try:
-        from huggingface_hub import login
-
-        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-        EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
-    except Exception:
-        _MODEL = None
 
 _SERVICE: "SharedVectorService | None" = None
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
@@ -56,6 +49,23 @@ def _remote_embed(url: str, text: str) -> List[float]:
     with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
         payload = json.loads(resp.read().decode("utf-8"))
     return payload.get("vector", [])
+
+
+def _ensure_model() -> "SentenceTransformer | None":
+    """Return a cached ``SentenceTransformer`` instance."""
+
+    global _MODEL, EMBED_DIM
+    if _MODEL is None:
+        mdl = governed_embeddings.get_embedder()
+        if mdl is not None:
+            _MODEL = mdl
+            try:
+                EMBED_DIM = int(mdl.get_sentence_embedding_dimension())
+            except Exception:
+                pass
+        else:
+            _MODEL = None
+    return _MODEL
 
 
 def get_text_embeddings(
@@ -75,7 +85,7 @@ def get_text_embeddings(
     if not texts:
         return []
 
-    mdl = model or _MODEL
+    mdl = model or _ensure_model()
     if mdl is not None:
         vecs = mdl.encode(texts)  # type: ignore[arg-type]
         if np is not None:
@@ -92,15 +102,7 @@ def get_text_embeddings(
     if svc is None and SharedVectorService is not None:
         if _SERVICE is None:
             try:
-                embedder = None
-                if SentenceTransformer is not None:
-                    try:
-                        from huggingface_hub import login
-
-                        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                        embedder = SentenceTransformer("all-MiniLM-L6-v2")
-                    except Exception:
-                        embedder = None
+                embedder = model or _ensure_model()
                 _SERVICE = SharedVectorService(embedder)  # type: ignore[misc]
             except Exception:
                 _SERVICE = None
