@@ -5,7 +5,6 @@ import logging
 import os
 import threading
 import time
-from contextlib import suppress
 from pathlib import Path
 from typing import Any, List, Optional, TYPE_CHECKING
 
@@ -155,6 +154,7 @@ _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
+_HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 
 
 def _cache_base() -> Optional[Path]:
@@ -178,49 +178,71 @@ def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
 def _cleanup_hf_locks(cache_dir: Path) -> None:
     """Remove stale Hugging Face lock files left behind by crashed downloads."""
 
+    if _HF_LOCK_CLEANUP_TIMEOUT == 0:
+        return
+
     if not cache_dir.exists():
         return
 
+    deadline: float | None = None
+    if _HF_LOCK_CLEANUP_TIMEOUT > 0:
+        deadline = time.monotonic() + _HF_LOCK_CLEANUP_TIMEOUT
+
     try:
-        lock_files = list(cache_dir.rglob("*.lock"))
+        for root, dirs, files in os.walk(cache_dir):
+            if deadline is not None and time.monotonic() >= deadline:
+                dirs[:] = []
+                logger.debug(
+                    "aborting huggingface lock cleanup after %.1fs", _HF_LOCK_CLEANUP_TIMEOUT
+                )
+                break
+
+            for name in files:
+                if not name.endswith(".lock"):
+                    continue
+                if name == "menace-embedder.lock":
+                    continue
+
+                lock_path = Path(root) / name
+
+                try:
+                    if lock_path.is_dir():
+                        continue
+                except Exception:  # pragma: no cover - ignore racing filesystem errors
+                    continue
+
+                stale = False
+                if is_lock_stale is not None:
+                    try:
+                        stale = is_lock_stale(
+                            str(lock_path), timeout=max(LOCK_TIMEOUT, 300)
+                        )
+                    except Exception as exc:  # pragma: no cover - diagnostics only
+                        logger.debug("failed to check lock %s: %s", lock_path, exc)
+                        stale = False
+                if not stale:
+                    try:
+                        stale = time.time() - lock_path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
+                    except FileNotFoundError:
+                        continue
+                    except Exception as exc:  # pragma: no cover - diagnostics only
+                        logger.debug("failed to stat lock file %s: %s", lock_path, exc)
+                        continue
+
+                if not stale:
+                    continue
+
+                try:
+                    lock_path.unlink()
+                    logger.warning("removed stale huggingface lock: %s", lock_path)
+                except FileNotFoundError:
+                    continue
+                except Exception as exc:  # pragma: no cover - diagnostics only
+                    logger.debug(
+                        "failed to remove stale huggingface lock %s: %s", lock_path, exc
+                    )
     except Exception as exc:  # pragma: no cover - best effort logging
         logger.debug("failed to scan huggingface cache for locks: %s", exc)
-        return
-
-    now = time.time()
-    for lock_path in lock_files:
-        if lock_path.name == "menace-embedder.lock":
-            continue
-        try:
-            if lock_path.is_dir():
-                continue
-        except Exception:  # pragma: no cover - ignore racing filesystem errors
-            continue
-
-        stale = False
-        if is_lock_stale is not None:
-            with suppress(Exception):
-                if is_lock_stale(str(lock_path), timeout=LOCK_TIMEOUT):
-                    stale = True
-        if not stale:
-            try:
-                stale = now - lock_path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
-            except FileNotFoundError:
-                continue
-            except Exception as exc:  # pragma: no cover - diagnostics only
-                logger.debug("failed to stat lock file %s: %s", lock_path, exc)
-                continue
-
-        if not stale:
-            continue
-
-        try:
-            lock_path.unlink()
-            logger.warning("removed stale huggingface lock: %s", lock_path)
-        except FileNotFoundError:
-            continue
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.debug("failed to remove stale huggingface lock %s: %s", lock_path, exc)
 
 
 def _embedder_lock() -> SandboxLockType | None:
