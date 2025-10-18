@@ -123,6 +123,7 @@ def test_get_embedder_exports_token_when_available(monkeypatch):
 def test_initialise_embedder_wait_capped(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
     monkeypatch.setattr(
         governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
     )
@@ -135,6 +136,9 @@ def test_initialise_embedder_wait_capped(monkeypatch, caplog):
     class DummyEvent:
         def wait(self, timeout: float) -> bool:
             recorded["timeout"] = timeout
+            return False
+
+        def is_set(self) -> bool:
             return False
 
     monkeypatch.setattr(
@@ -153,6 +157,7 @@ def test_initialise_embedder_wait_capped(monkeypatch, caplog):
 def test_initialise_embedder_soft_wait(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
     monkeypatch.setattr(
         governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
     )
@@ -167,6 +172,9 @@ def test_initialise_embedder_soft_wait(monkeypatch, caplog):
     class DummyEvent:
         def wait(self, timeout: float) -> bool:
             recorded["timeout"] = timeout
+            return False
+
+        def is_set(self) -> bool:
             return False
 
     monkeypatch.setattr(
@@ -185,6 +193,7 @@ def test_initialise_embedder_soft_wait(monkeypatch, caplog):
 def test_initialise_embedder_timeout_override(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
     monkeypatch.setattr(
         governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
     )
@@ -209,6 +218,42 @@ def test_initialise_embedder_timeout_override(monkeypatch, caplog):
 
     assert recorded["timeouts"] == [0.05]
     assert any("pending" in rec.msg for rec in caplog.records)
+
+
+def test_initialise_embedder_timeout_override_skips_wait(monkeypatch):
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+    monkeypatch.setattr(
+        governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
+    )
+
+    class DummyEvent:
+        def __init__(self) -> None:
+            self.calls: list[float] = []
+
+        def wait(self, timeout: float) -> bool:
+            self.calls.append(timeout)
+            return False
+
+        def is_set(self) -> bool:
+            return False
+
+    event = DummyEvent()
+    monkeypatch.setattr(
+        governed_embeddings,
+        "_ensure_embedder_thread_locked",
+        lambda: event,
+    )
+
+    governed_embeddings._initialise_embedder_with_timeout(
+        timeout_override=0.1, suppress_timeout_log=True
+    )
+    governed_embeddings._initialise_embedder_with_timeout(
+        timeout_override=0.2, suppress_timeout_log=True
+    )
+
+    assert event.calls == [0.1]
 
 
 def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
