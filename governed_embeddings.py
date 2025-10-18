@@ -1207,20 +1207,63 @@ def _load_embedder() -> SentenceTransformer | None:
                 "load.snapshot.detected",
                 snapshot=str(snapshot_path),
             )
+
+        cache_has_refs = False
+        cache_has_blobs = False
+        if model_cache.exists():
+            refs_dir = model_cache / "refs"
+            try:
+                cache_has_refs = refs_dir.exists() and any(refs_dir.iterdir())
+            except FileNotFoundError:
+                cache_has_refs = False
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug(
+                    "failed to inspect embedder refs directory %s: %s",
+                    refs_dir,
+                    exc,
+                )
+            blobs_dir = model_cache / "blobs"
+            try:
+                if blobs_dir.exists():
+                    next(blobs_dir.iterdir())
+                    cache_has_blobs = True
+            except StopIteration:
+                cache_has_blobs = False
+            except FileNotFoundError:
+                cache_has_blobs = False
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug(
+                    "failed to inspect embedder blobs directory %s: %s",
+                    blobs_dir,
+                    exc,
+                )
+
         offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
         force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
             "",
             "0",
             "false",
         }
-        if offline_env or force_local or snapshot_path is not None:
+        prefer_cached = snapshot_path is not None or cache_has_refs or cache_has_blobs
+        if offline_env or force_local or prefer_cached:
             local_kwargs["local_files_only"] = True
             _trace(
                 "load.local_mode",
                 offline=bool(offline_env),
                 force_local=bool(force_local),
                 snapshot=bool(snapshot_path),
+                prefer_cached=prefer_cached,
             )
+            if prefer_cached and not offline_env and not force_local:
+                logger.info(
+                    "using cached sentence transformer artefacts without hub access",
+                    extra={
+                        "model": _MODEL_NAME,
+                        "has_snapshot": bool(snapshot_path),
+                        "has_refs": cache_has_refs,
+                        "has_blobs": cache_has_blobs,
+                    },
+                )
 
         if snapshot_path is not None:
             try:
