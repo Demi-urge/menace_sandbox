@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import Iterable, List, Any, Dict
 import re
 import math
+import threading
 
 from .retry_utils import with_retry
 from security.secret_redactor import redact
 import license_detector
 from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 registry = BotRegistry()
@@ -186,25 +187,52 @@ if pipeline is not None:
         logger.warning("sentiment model init failed: %s", exc)
         _SENTIMENT_MODEL = None
 
-_EMBEDDER = None
-_AI_EMBEDDINGS: List[List[float]] | None = None
-if SentenceTransformer is not None:
-    try:
-        from huggingface_hub import login
+try:
+    _CI_EMBEDDER_TIMEOUT = float(os.getenv("CI_EMBEDDER_TIMEOUT", "5"))
+except Exception:
+    logger.warning("invalid CI_EMBEDDER_TIMEOUT; defaulting to 5s")
+    _CI_EMBEDDER_TIMEOUT = 5.0
+else:
+    if _CI_EMBEDDER_TIMEOUT < 0:
+        logger.warning("CI_EMBEDDER_TIMEOUT must be non-negative; defaulting to 5s")
+        _CI_EMBEDDER_TIMEOUT = 5.0
 
-        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        _EMBEDDER = SentenceTransformer(_EMBED_MODEL)
-        _AI_EMBEDDINGS = []
-        for kw in _AI_KEYWORDS:
-            emb = governed_embed(kw, _EMBEDDER)
-            if emb is not None:
-                _AI_EMBEDDINGS.append(emb)
-        if not _AI_EMBEDDINGS:
+_EMBEDDER: "SentenceTransformer | None" = None
+_AI_EMBEDDINGS: List[List[float]] | None = None
+_EMBEDDER_LOCK = threading.Lock()
+
+
+def _ensure_ai_embeddings() -> tuple["SentenceTransformer | None", List[List[float]] | None]:
+    """Initialise and cache embeddings for AI keyword heuristics."""
+
+    global _EMBEDDER, _AI_EMBEDDINGS
+    if _EMBEDDER is not None and _AI_EMBEDDINGS is not None:
+        return _EMBEDDER, _AI_EMBEDDINGS
+
+    if SentenceTransformer is None:
+        return None, None
+
+    with _EMBEDDER_LOCK:
+        if _EMBEDDER is not None and _AI_EMBEDDINGS is not None:
+            return _EMBEDDER, _AI_EMBEDDINGS
+
+        embedder = _EMBEDDER or get_embedder(timeout=_CI_EMBEDDER_TIMEOUT)
+        if embedder is None:
+            _EMBEDDER = None
             _AI_EMBEDDINGS = None
-    except Exception as exc:  # pragma: no cover - optional
-        logger.warning("embedding model init failed: %s", exc)
-        _EMBEDDER = None
-        _AI_EMBEDDINGS = None
+            return None, None
+
+        _EMBEDDER = embedder
+        if _AI_EMBEDDINGS is None:
+            embeddings: List[List[float]] = []
+            for kw in _AI_KEYWORDS:
+                vec = governed_embed(kw, embedder)
+                if vec is not None:
+                    embeddings.append(vec)
+            _AI_EMBEDDINGS = embeddings
+            if not _AI_EMBEDDINGS:
+                logger.debug("CI embedder produced no keyword embeddings")
+        return _EMBEDDER, _AI_EMBEDDINGS
 
 _NLP_MODEL = None
 if spacy is not None:
@@ -483,11 +511,12 @@ def detect_ai_signals(
     if lic:
         logger.warning("license detected: %s", lic)
         return False
-    if _EMBEDDER and _AI_EMBEDDINGS:
+    embedder, ai_embeddings = _ensure_ai_embeddings()
+    if embedder and ai_embeddings:
         try:
-            vec = governed_embed(cleaned, _EMBEDDER)
+            vec = governed_embed(cleaned, embedder)
             if vec is not None:
-                scores = [_cosine_similarity(vec, kw) for kw in _AI_EMBEDDINGS]
+                scores = [_cosine_similarity(vec, kw) for kw in ai_embeddings]
                 if _EMBED_STRATEGY == "average":
                     score = sum(scores) / len(scores)
                 elif _EMBED_STRATEGY == "topk":
