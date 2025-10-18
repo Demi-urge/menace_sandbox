@@ -14,7 +14,19 @@ import os
 
 print("🌍 ENV OK")
 
-from knowledge.local_knowledge import init_local_knowledge
+# ``knowledge.local_knowledge`` was used in historical deployments, however the
+# sandbox now ships ``local_knowledge_module`` directly within this repository.
+# Import from the local module first and gracefully degrade when the legacy
+# package is unavailable to keep the script usable in both layouts.
+try:  # pragma: no cover - exercised when legacy package is present
+    from knowledge.local_knowledge import init_local_knowledge
+except ModuleNotFoundError:  # pragma: no cover - default in the sandbox
+    from local_knowledge_module import init_local_knowledge as _init_local_knowledge
+
+    def init_local_knowledge(mem_db: str | os.PathLike[str] | None = None):
+        if mem_db is None:
+            mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+        return _init_local_knowledge(mem_db)
 
 print("📡 local_knowledge module imported")
 
