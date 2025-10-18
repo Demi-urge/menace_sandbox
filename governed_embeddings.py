@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import contextlib
+import inspect
 import logging
 import os
 import shutil
@@ -9,7 +10,7 @@ import tarfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, List, Optional, TYPE_CHECKING, cast
+from typing import Any, List, Optional, TYPE_CHECKING, cast, Set
 
 try:  # pragma: no cover - lock utilities are optional in some environments
     from lock_utils import (
@@ -172,6 +173,9 @@ _FALLBACK_ANNOUNCED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 _BUNDLED_EMBEDDER: Any | None = None
 _BUNDLED_EMBEDDER_LOCK = threading.Lock()
+_EMBEDDER_REQUESTER_TIMEOUTS: Set[str] = set()
+_EMBEDDER_REQUESTER_LOGGED: Set[str] = set()
+_EMBEDDER_REQUESTER_LOCK = threading.Lock()
 
 
 def _bundled_model_archive() -> Path | None:
@@ -510,6 +514,34 @@ def _embedder_lock() -> SandboxLockType | None:
     return _EMBEDDER_LOCK
 
 
+def _identify_embedder_requester() -> str | None:
+    """Return a concise description of the caller requesting the embedder."""
+
+    try:
+        stack = inspect.stack()
+    except Exception:
+        return None
+    try:
+        for frame_info in stack[2:]:
+            module = inspect.getmodule(frame_info.frame)
+            mod_name = module.__name__ if module is not None else None
+            if mod_name is None:
+                continue
+            if mod_name.startswith(__name__):
+                continue
+            if mod_name.startswith("threading") or mod_name.startswith("logging"):
+                continue
+            return f"{mod_name}.{frame_info.function}"
+        if len(stack) > 2:
+            frame_info = stack[2]
+            module = inspect.getmodule(frame_info.frame)
+            mod_name = module.__name__ if module is not None else None
+            return f"{mod_name}.{frame_info.function}" if mod_name else frame_info.function
+        return None
+    finally:
+        del stack
+
+
 def _ensure_embedder_thread_locked() -> threading.Event:
     """Ensure the background embedder initialisation thread is running."""
 
@@ -562,6 +594,7 @@ def _initialise_embedder_with_timeout(
     timeout_override: float | None = None,
     *,
     suppress_timeout_log: bool = False,
+    requester: str | None = None,
 ) -> None:
     """Initialise the shared embedder without blocking indefinitely.
 
@@ -607,6 +640,18 @@ def _initialise_embedder_with_timeout(
         wait_limit = min(wait_limit, soft_cap)
         soft_clamped = wait_limit < wait_cap
 
+    skip_wait = False
+    log_wait = True
+    if requester:
+        with _EMBEDDER_REQUESTER_LOCK:
+            skip_wait = requester in _EMBEDDER_REQUESTER_TIMEOUTS
+            if requester in _EMBEDDER_REQUESTER_LOGGED:
+                log_wait = False
+            else:
+                _EMBEDDER_REQUESTER_LOGGED.add(requester)
+    if skip_wait:
+        wait_limit = 0.0
+
     if (
         timeout_override is None
         and not _EMBEDDER_WAIT_CAPPED
@@ -634,39 +679,76 @@ def _initialise_embedder_with_timeout(
         wait_time = 0.0
 
     if wait_time > 0:
-        logger.debug(
-            "waiting up to %.1fs for embedder initialisation", wait_time,
-            extra={"model": _MODEL_NAME},
-        )
+        if requester and log_wait:
+            logger.debug(
+                "waiting up to %.1fs for embedder initialisation (requested by %s)",
+                wait_time,
+                requester,
+                extra={"model": _MODEL_NAME},
+            )
+        elif not requester:
+            logger.debug(
+                "waiting up to %.1fs for embedder initialisation",
+                wait_time,
+                extra={"model": _MODEL_NAME},
+            )
     finished = event.wait(wait_time)
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
         _EMBEDDER_TIMEOUT_REACHED = False
+        if requester:
+            with _EMBEDDER_REQUESTER_LOCK:
+                _EMBEDDER_REQUESTER_TIMEOUTS.discard(requester)
         return
 
     if _EMBEDDER is None and _activate_bundled_fallback("timeout"):
         _EMBEDDER_TIMEOUT_LOGGED = False
         _EMBEDDER_TIMEOUT_REACHED = False
+        if requester:
+            with _EMBEDDER_REQUESTER_LOCK:
+                _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
         return
 
     if suppress_timeout_log:
         if wait_time > 0:
-            logger.debug(
-                "sentence transformer initialisation still pending after %.0fs",
-                wait_time,
-                extra={"model": _MODEL_NAME},
-            )
+            if requester:
+                logger.debug(
+                    "sentence transformer initialisation still pending after %.0fs (requested by %s)",
+                    wait_time,
+                    requester,
+                    extra={"model": _MODEL_NAME},
+                )
+            else:
+                logger.debug(
+                    "sentence transformer initialisation still pending after %.0fs",
+                    wait_time,
+                    extra={"model": _MODEL_NAME},
+                )
         _EMBEDDER_TIMEOUT_REACHED = True
+        if requester:
+            with _EMBEDDER_REQUESTER_LOCK:
+                _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
         return
 
     if not _EMBEDDER_TIMEOUT_LOGGED:
         _EMBEDDER_TIMEOUT_LOGGED = True
         _EMBEDDER_TIMEOUT_REACHED = True
-        logger.error(
-            "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
-            _EMBEDDER_INIT_TIMEOUT,
-            extra={"model": _MODEL_NAME},
-        )
+        if requester:
+            logger.error(
+                "sentence transformer initialisation exceeded %.0fs; continuing without embeddings (requested by %s)",
+                _EMBEDDER_INIT_TIMEOUT,
+                requester,
+                extra={"model": _MODEL_NAME},
+            )
+        else:
+            logger.error(
+                "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
+                _EMBEDDER_INIT_TIMEOUT,
+                extra={"model": _MODEL_NAME},
+            )
+        if requester:
+            with _EMBEDDER_REQUESTER_LOCK:
+                _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
 
 
 def _load_embedder() -> SentenceTransformer | None:
@@ -806,6 +888,7 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
     if _EMBEDDER is not None:
         return _EMBEDDER
 
+    requester = _identify_embedder_requester()
     lock = _embedder_lock()
     wait_override = timeout
     lock_timeout = LOCK_TIMEOUT
@@ -819,6 +902,7 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
         _initialise_embedder_with_timeout(
             timeout_override=wait_override,
             suppress_timeout_log=wait_override is not None,
+            requester=requester,
         )
         return _EMBEDDER
 
@@ -827,11 +911,13 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
             _initialise_embedder_with_timeout(
                 timeout_override=wait_override,
                 suppress_timeout_log=wait_override is not None,
+                requester=requester,
             )
     except LockTimeout:
         lock_path = getattr(lock, "lock_file", "")
         logger.error(
-            "timed out waiting for embedder initialisation lock", extra={"lock": lock_path}
+            "timed out waiting for embedder initialisation lock",
+            extra={"lock": lock_path, "requester": requester},
         )
         return None
     return _EMBEDDER
