@@ -3,11 +3,18 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, List, Optional, TYPE_CHECKING
 
 try:  # pragma: no cover - lock utilities are optional in some environments
-    from lock_utils import SandboxLock, Timeout as LockTimeout, LOCK_TIMEOUT
+    from lock_utils import (
+        LOCK_TIMEOUT,
+        SandboxLock,
+        Timeout as LockTimeout,
+        is_lock_stale,
+    )
 except Exception:  # pragma: no cover - degrade gracefully when locks unavailable
     SandboxLock = None  # type: ignore[assignment]
 
@@ -18,6 +25,7 @@ except Exception:  # pragma: no cover - degrade gracefully when locks unavailabl
 
     LockTimeout = _FallbackTimeout  # type: ignore[assignment]
     LOCK_TIMEOUT = float(os.getenv("LOCK_TIMEOUT", "60"))
+    is_lock_stale = None  # type: ignore[assignment]
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
@@ -63,6 +71,54 @@ def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
     return cache_dir / "hub" / f"models--sentence-transformers--{safe_name}"
 
 
+def _cleanup_hf_locks(cache_dir: Path) -> None:
+    """Remove stale Hugging Face lock files left behind by crashed downloads."""
+
+    if not cache_dir.exists():
+        return
+
+    try:
+        lock_files = list(cache_dir.rglob("*.lock"))
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logger.debug("failed to scan huggingface cache for locks: %s", exc)
+        return
+
+    now = time.time()
+    for lock_path in lock_files:
+        if lock_path.name == "menace-embedder.lock":
+            continue
+        try:
+            if lock_path.is_dir():
+                continue
+        except Exception:  # pragma: no cover - ignore racing filesystem errors
+            continue
+
+        stale = False
+        if is_lock_stale is not None:
+            with suppress(Exception):
+                if is_lock_stale(str(lock_path), timeout=LOCK_TIMEOUT):
+                    stale = True
+        if not stale:
+            try:
+                stale = now - lock_path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("failed to stat lock file %s: %s", lock_path, exc)
+                continue
+
+        if not stale:
+            continue
+
+        try:
+            lock_path.unlink()
+            logger.warning("removed stale huggingface lock: %s", lock_path)
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("failed to remove stale huggingface lock %s: %s", lock_path, exc)
+
+
 def _embedder_lock() -> SandboxLockType | None:
     """Return a process-wide file lock guarding embedder initialisation."""
 
@@ -95,6 +151,7 @@ def _load_embedder() -> SentenceTransformer | None:
     cache_dir = _cache_base()
     local_kwargs: dict[str, object] = {}
     if cache_dir is not None:
+        _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
         if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
