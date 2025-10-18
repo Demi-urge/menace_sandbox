@@ -735,15 +735,17 @@ def _initialise_embedder_with_timeout(
         event = _ensure_embedder_thread_locked()
 
     if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
+        thread = _EMBEDDER_INIT_THREAD
+        alive = thread.is_alive() if thread is not None else False
         if suppress_timeout_log:
             logger.debug(
                 "skipping embedder wait after previous timeout",
-                extra={"model": _MODEL_NAME},
+                extra={"model": _MODEL_NAME, "thread_alive": alive},
             )
         else:
-            logger.debug(
-                "embedder initialisation previously timed out; not waiting",
-                extra={"model": _MODEL_NAME},
+            logger.info(
+                "embedder initialisation previously timed out; returning cached failure",
+                extra={"model": _MODEL_NAME, "thread_alive": alive},
             )
         return
 
@@ -868,18 +870,20 @@ def _initialise_embedder_with_timeout(
     if not _EMBEDDER_TIMEOUT_LOGGED:
         _EMBEDDER_TIMEOUT_LOGGED = True
         _EMBEDDER_TIMEOUT_REACHED = True
+        thread = _EMBEDDER_INIT_THREAD
+        alive = thread.is_alive() if thread is not None else False
         if requester:
             logger.error(
                 "sentence transformer initialisation exceeded %.0fs; continuing without embeddings (requested by %s)",
                 _EMBEDDER_INIT_TIMEOUT,
                 requester,
-                extra={"model": _MODEL_NAME},
+                extra={"model": _MODEL_NAME, "thread_alive": alive},
             )
         else:
             logger.error(
                 "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
                 _EMBEDDER_INIT_TIMEOUT,
-                extra={"model": _MODEL_NAME},
+                extra={"model": _MODEL_NAME, "thread_alive": alive},
             )
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
@@ -916,6 +920,14 @@ def _load_embedder() -> SentenceTransformer | None:
             _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
         snapshot_path = _resolve_local_snapshot(model_cache) if model_cache.exists() else None
+        if snapshot_path is not None:
+            logger.info(
+                "loading sentence transformer snapshot from cache",
+                extra={
+                    "model": _MODEL_NAME,
+                    "snapshot": str(snapshot_path),
+                },
+            )
         offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
         force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
             "",
@@ -1008,7 +1020,15 @@ def _load_embedder() -> SentenceTransformer | None:
         logger.warning("failed to initialise sentence transformer: %s", exc)
         fallback = _load_bundled_embedder()
         if fallback is not None:
+            logger.info(
+                "using bundled sentence transformer fallback after hub failure",
+                extra={"model": _MODEL_NAME, "duration": round(time.perf_counter() - start, 3)},
+            )
             return cast("SentenceTransformer", fallback)
+        logger.error(
+            "sentence transformer initialisation failed with no fallback available",
+            extra={"model": _MODEL_NAME},
+        )
         return None
 
 
