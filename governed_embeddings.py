@@ -6,9 +6,11 @@ import inspect
 import logging
 import os
 import shutil
+import sys
 import tarfile
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any, List, Optional, TYPE_CHECKING, cast, Set
 
@@ -181,6 +183,63 @@ _STUB_FALLBACK_USED = False
 _HF_TIMEOUT_SETTINGS: dict[str, str] = {}
 _HF_TIMEOUT_CONFIGURED = False
 _FORCED_LOCK_CLEANUP_GUARD = threading.Lock()
+_STACKTRACE_LOCK = threading.Lock()
+_EMBEDDER_STACK_REPORTED: Set[str] = set()
+
+
+def _stacktrace_enabled() -> bool:
+    flag = os.getenv("EMBEDDER_STACKTRACE", "").strip().lower()
+    return bool(flag) and flag not in {"0", "false", "no", "off"}
+
+
+def _dump_embedder_thread(reason: str, waited: float | None = None) -> None:
+    """Log the current stack of the embedder thread when diagnostics are enabled."""
+
+    if not _stacktrace_enabled():
+        return
+
+    thread = _EMBEDDER_INIT_THREAD
+    if thread is None or not thread.is_alive():
+        return
+
+    ident = thread.ident
+    if ident is None:
+        return
+
+    key = f"{ident}:{reason}"
+    with _STACKTRACE_LOCK:
+        if key in _EMBEDDER_STACK_REPORTED:
+            return
+        _EMBEDDER_STACK_REPORTED.add(key)
+
+    try:
+        frames = sys._current_frames()
+    except Exception:  # pragma: no cover - diagnostic best effort
+        return
+
+    frame = frames.get(ident)
+    if frame is None:
+        return
+
+    stack = "".join(traceback.format_stack(frame))
+    if waited is not None:
+        logger.warning(
+            "embedder initialisation thread stack trace (%s, waited %.1fs):\n%s",
+            reason,
+            waited,
+            stack,
+        )
+    else:
+        logger.warning(
+            "embedder initialisation thread stack trace (%s):\n%s",
+            reason,
+            stack,
+        )
+    _trace(
+        "thread.stack_dump",
+        reason=reason,
+        waited=round(waited, 3) if waited is not None else None,
+    )
 
 
 def _trace(event: str, **extra: Any) -> None:
@@ -952,44 +1011,57 @@ def _initialise_embedder_with_timeout(
     waited = 0.0
     remaining_wait = wait_time
     if wait_time <= 0:
-        finished = event.is_set()
+        finished = bool(getattr(event, "is_set", lambda: False)())
     else:
         deadline = time.perf_counter() + wait_time
         heartbeat_interval = 5.0
-        next_heartbeat = time.perf_counter() + heartbeat_interval
-        remaining = wait_time
-        while remaining > 0:
-            slice_wait = remaining if remaining <= 1.0 else 1.0
-            if event.wait(slice_wait):
-                finished = True
-                break
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                break
-            waited = wait_time - max(0.0, remaining)
-            remaining_wait = max(0.0, remaining)
-            if time.perf_counter() >= next_heartbeat:
-                next_heartbeat = time.perf_counter() + heartbeat_interval
-                logger.debug(
-                    "sentence transformer initialisation still pending",
-                    extra={
-                        "model": _MODEL_NAME,
-                        "seconds_remaining": round(remaining_wait, 3),
-                        "requester": requester,
-                    },
-                )
-                _trace(
-                    "wait.heartbeat",
-                    requester=requester,
-                    seconds_remaining=round(remaining_wait, 3),
-                    waited=round(waited, 3),
-                )
+        if wait_time <= heartbeat_interval:
+            start_wait = time.perf_counter()
+            finished = event.wait(wait_time)
+            waited = time.perf_counter() - start_wait
+            if waited > wait_time:
+                waited = wait_time
+            remaining = max(0.0, wait_time - waited)
+            remaining_wait = max(0.0, deadline - time.perf_counter())
         else:
-            remaining = deadline - time.perf_counter()
-        waited = max(0.0, wait_time - max(0.0, remaining))
-        remaining_wait = max(0.0, remaining)
+            next_heartbeat = time.perf_counter() + heartbeat_interval
+            remaining = wait_time
+            while remaining > 0:
+                if remaining <= 1e-6:
+                    break
+                slice_wait = 1.0 if remaining > 1.0 else remaining
+                start_slice = time.perf_counter()
+                if event.wait(slice_wait):
+                    finished = True
+                    break
+                elapsed = time.perf_counter() - start_slice
+                remaining = max(0.0, deadline - time.perf_counter())
+                waited = wait_time - max(0.0, remaining)
+                remaining_wait = max(0.0, remaining)
+                if elapsed < slice_wait and remaining > 0:
+                    time.sleep(min(0.1, remaining))
+                if time.perf_counter() >= next_heartbeat:
+                    next_heartbeat = time.perf_counter() + heartbeat_interval
+                    logger.debug(
+                        "sentence transformer initialisation still pending",
+                        extra={
+                            "model": _MODEL_NAME,
+                            "seconds_remaining": round(remaining_wait, 3),
+                            "requester": requester,
+                        },
+                    )
+                    _trace(
+                        "wait.heartbeat",
+                        requester=requester,
+                        seconds_remaining=round(remaining_wait, 3),
+                        waited=round(waited, 3),
+                    )
+            else:
+                remaining = max(0.0, deadline - time.perf_counter())
+            waited = max(0.0, wait_time - max(0.0, remaining))
+            remaining_wait = max(0.0, remaining)
         if not finished:
-            finished = event.is_set()
+            finished = bool(getattr(event, "is_set", lambda: False)())
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
         _EMBEDDER_TIMEOUT_REACHED = False
@@ -1004,6 +1076,7 @@ def _initialise_embedder_with_timeout(
         )
         return
 
+    _dump_embedder_thread("wait_timeout", waited or wait_time or 0.0)
     cleaned = _force_cleanup_embedder_locks()
     if cleaned:
         _trace(
@@ -1348,6 +1421,7 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
                 )
                 break
         except LockTimeout:
+            _dump_embedder_thread("lock_timeout")
             lock_path = getattr(lock, "lock_file", "")
             if cleaned_once:
                 logger.error(
