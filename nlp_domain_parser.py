@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 import logging
+import os
 
 import numpy as np
 
@@ -22,6 +23,23 @@ except Exception:  # pragma: no cover - optional dependency
     cosine_similarity = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timeout(env_var: str, default: float) -> float:
+    """Return a positive float from *env_var* or ``default`` when invalid."""
+
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except Exception:
+        logger.warning("invalid %s value %r; using %.1fs", env_var, raw, default)
+        return default
+    if value < 0:
+        logger.warning("%s must be positive; using %.1fs", env_var, default)
+        return default
+    return value
 
 # Reference domain anchors used for semantic matching.
 TARGET_ANCHORS: List[str] = [
@@ -37,6 +55,7 @@ _MODEL: Any | None = None
 _VECTORIZER: TfidfVectorizer | None = None
 _ANCHOR_VECS: Any = None
 _METHOD: str | None = None
+_EMBEDDER_TIMEOUT = _parse_timeout("NLP_DOMAIN_EMBEDDER_TIMEOUT", 5.0)
 
 
 def load_model() -> str:
@@ -52,7 +71,7 @@ def load_model() -> str:
     if _METHOD:
         return _METHOD
 
-    embedder = get_embedder()
+    embedder = get_embedder(timeout=_EMBEDDER_TIMEOUT)
     if embedder is not None:
         try:
             _MODEL = embedder
