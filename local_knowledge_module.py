@@ -12,6 +12,7 @@ import importlib.util
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -222,6 +223,11 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
 
     global _LOCAL_KNOWLEDGE
     if _LOCAL_KNOWLEDGE is None:
+        start = time.perf_counter()
+        logger.info(
+            "initialising LocalKnowledgeModule",
+            extra={"memory_db": str(mem_db)},
+        )
         embedder = get_embedder(timeout=_EMBEDDER_TIMEOUT)
         if embedder is None and _EMBEDDER_TIMEOUT:
             logger.warning(
@@ -229,6 +235,15 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 _EMBEDDER_TIMEOUT,
             )
         _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=embedder)
+        duration = time.perf_counter() - start
+        logger.info(
+            "LocalKnowledgeModule ready",
+            extra={
+                "memory_db": str(mem_db),
+                "duration": round(duration, 3),
+                "embedder_available": embedder is not None,
+            },
+        )
     return _LOCAL_KNOWLEDGE
 
 
