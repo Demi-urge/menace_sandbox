@@ -75,6 +75,16 @@ logger = logging.getLogger(__name__)
 _EMBEDDER_WAIT_HARD_CAP = 60.0
 
 
+def _trace(event: str, **extra: Any) -> None:
+    """Emit opt-in diagnostics when ``LOCAL_KNOWLEDGE_TRACE`` is enabled."""
+
+    flag = os.getenv("LOCAL_KNOWLEDGE_TRACE", "").strip().lower()
+    if not flag or flag in {"0", "false", "no", "off"}:
+        return
+    payload = {"event": event, **extra}
+    logger.log(logging.INFO, "local-knowledge: %s", event, extra=payload)
+
+
 def _parse_positive_float(env_name: str, default: float) -> float:
     raw = os.getenv(env_name, "").strip()
     if not raw:
@@ -245,10 +255,12 @@ _LOCAL_KNOWLEDGE: "LocalKnowledgeModule | None" = None
 def _attach_embedder(module: "LocalKnowledgeModule", embedder: "SentenceTransformer") -> None:
     """Wire ``embedder`` into ``module`` and its memory backend."""
 
+    _trace("attach_embedder.start", module_id=id(module))
     try:
         module.memory.embedder = embedder
     except Exception:
         logger.exception("failed to attach embedder to memory manager")
+        _trace("attach_embedder.memory.error", module_id=id(module))
         return
 
     try:
@@ -259,11 +271,17 @@ def _attach_embedder(module: "LocalKnowledgeModule", embedder: "SentenceTransfor
             vector_service.text_embedder = embedder
     except Exception:
         logger.exception("failed to attach embedder to vector service")
+        _trace("attach_embedder.vector.error", module_id=id(module))
         return
 
     logger.info(
         "sentence transformer attached to LocalKnowledgeModule",
         extra={"embedder": type(embedder).__name__},
+    )
+    _trace(
+        "attach_embedder.complete",
+        module_id=id(module),
+        embedder=type(embedder).__name__,
     )
 
 
@@ -276,17 +294,32 @@ def _load_embedder_async(
     errors: list[BaseException] = []
 
     def _worker() -> None:
+        _trace("embedder.worker.start")
         try:
             embedder = get_embedder(timeout=None)
         except BaseException as exc:  # pragma: no cover - diagnostics only
             errors.append(exc)
+            _trace(
+                "embedder.worker.error",
+                error=str(exc),
+                exc_type=type(exc).__name__,
+            )
             return
         result["embedder"] = embedder
+        _trace(
+            "embedder.worker.finished",
+            success=embedder is not None,
+        )
 
     thread = threading.Thread(
         target=_worker,
         name="local-knowledge-embedder",
         daemon=True,
+    )
+    _trace(
+        "embedder.worker.spawned",
+        thread_name=thread.name,
+        wait_time=wait_time,
     )
     thread.start()
 
@@ -300,6 +333,11 @@ def _load_embedder_async(
                 join_timeout,
             )
             join_timeout = _EMBEDDER_JOIN_CAP
+        _trace(
+            "embedder.worker.join.wait",
+            requested=wait_time,
+            capped=join_timeout,
+        )
     start = time.perf_counter()
     thread.join(join_timeout)
     waited = time.perf_counter() - start
@@ -311,6 +349,11 @@ def _load_embedder_async(
                 "waited": round(waited, 3),
                 "thread_alive": thread.is_alive(),
             },
+        )
+        _trace(
+            "embedder.worker.join.complete",
+            waited=round(waited, 3),
+            thread_alive=thread.is_alive(),
         )
 
     return result, thread, errors
@@ -331,6 +374,7 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             "initialising LocalKnowledgeModule",
             extra={"memory_db": str(mem_db)},
         )
+        _trace("init.start", memory_db=str(mem_db))
         embedder_state, thread, errors = _load_embedder_async(_EMBEDDER_TIMEOUT)
         embedder = embedder_state.get("embedder")
         if thread.is_alive() and _EMBEDDER_TIMEOUT:
@@ -338,17 +382,36 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 "sentence transformer still initialising after %.1fs; continuing without embeddings",
                 _EMBEDDER_TIMEOUT,
             )
+            _trace(
+                "init.embedder.pending",
+                timeout=_EMBEDDER_TIMEOUT,
+                thread_alive=True,
+            )
         if errors:
             logger.warning(
                 "sentence transformer initialisation raised: %s", errors[-1]
             )
+            _trace(
+                "init.embedder.error",
+                error=str(errors[-1]),
+                exc_type=type(errors[-1]).__name__,
+            )
 
         module = LocalKnowledgeModule(mem_db, embedder=embedder)
+        _trace(
+            "init.module.created",
+            module_id=id(module),
+            embedder_attached=embedder is not None,
+        )
 
         def _finalise_embedder(
             state: dict[str, "SentenceTransformer | None"],
             err_state: list[BaseException],
         ) -> None:
+            _trace(
+                "init.embedder.finaliser.start",
+                module_id=id(module),
+            )
             logger.info(
                 "waiting for background embedder initialisation thread to finish",
                 extra={
@@ -357,16 +420,36 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 },
             )
             thread.join()
+            _trace(
+                "init.embedder.finaliser.joined",
+                module_id=id(module),
+                thread_alive=thread.is_alive(),
+            )
             if err_state:
                 logger.warning(
                     "sentence transformer initialisation raised: %s", err_state[-1]
+                )
+                _trace(
+                    "init.embedder.finaliser.error",
+                    module_id=id(module),
+                    error=str(err_state[-1]),
+                    exc_type=type(err_state[-1]).__name__,
                 )
             ready = state.get("embedder")
             if ready is None:
                 ready = get_embedder(timeout=0)
             if ready is None:
+                _trace(
+                    "init.embedder.finaliser.unavailable",
+                    module_id=id(module),
+                )
                 return
             _attach_embedder(module, ready)
+            _trace(
+                "init.embedder.finaliser.attached",
+                module_id=id(module),
+                embedder=type(ready).__name__,
+            )
 
         if thread.is_alive():
             threading.Thread(
@@ -375,14 +458,27 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 name="local-knowledge-embedder-finalise",
                 daemon=True,
             ).start()
+            _trace(
+                "init.embedder.finaliser.spawned",
+                module_id=id(module),
+            )
         else:
             ready = embedder_state.get("embedder")
             if ready is not None:
                 _attach_embedder(module, ready)
+                _trace(
+                    "init.embedder.attached.immediate",
+                    module_id=id(module),
+                    embedder=type(ready).__name__,
+                )
             else:
                 logger.info(
                     "background embedder thread finished without providing a model",
                     extra={"memory_db": str(mem_db)},
+                )
+                _trace(
+                    "init.embedder.missing",
+                    module_id=id(module),
                 )
 
         _LOCAL_KNOWLEDGE = module
@@ -395,6 +491,13 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 "embedder_available": embedder is not None,
                 "embedder_thread_alive": thread.is_alive(),
             },
+        )
+        _trace(
+            "init.complete",
+            memory_db=str(mem_db),
+            duration=round(duration, 3),
+            embedder_available=embedder is not None,
+            embedder_thread_alive=thread.is_alive(),
         )
     return _LOCAL_KNOWLEDGE
 
