@@ -176,6 +176,8 @@ _BUNDLED_EMBEDDER_LOCK = threading.Lock()
 _EMBEDDER_REQUESTER_TIMEOUTS: Set[str] = set()
 _EMBEDDER_REQUESTER_LOGGED: Set[str] = set()
 _EMBEDDER_REQUESTER_LOCK = threading.Lock()
+_STUB_EMBEDDER_DIMENSION = 384
+_STUB_FALLBACK_USED = False
 
 
 def _bundled_model_archive() -> Path | None:
@@ -220,6 +222,33 @@ def _prepare_bundled_model_dir() -> Path | None:
     return target_dir
 
 
+def _build_stub_embedder() -> Any:
+    """Return a minimal stand-in for :class:`SentenceTransformer`."""
+
+    try:  # pragma: no cover - optional dependency
+        import numpy as np
+    except Exception:  # pragma: no cover - numpy may be unavailable
+        np = None  # type: ignore[assignment]
+
+    class _StubSentenceTransformer:
+        def __init__(self, dimension: int) -> None:
+            self._dimension = dimension
+
+        def encode(self, sentences: Any, **kwargs: Any) -> Any:
+            if isinstance(sentences, str):
+                sentences = [sentences]
+            convert_to_numpy = kwargs.get("convert_to_numpy", np is not None)
+            batch = [[0.0] * self._dimension for _ in sentences]
+            if convert_to_numpy and np is not None:
+                return np.asarray(batch, dtype="float32")
+            return batch
+
+        def get_sentence_embedding_dimension(self) -> int:
+            return self._dimension
+
+    return _StubSentenceTransformer(_STUB_EMBEDDER_DIMENSION)
+
+
 def _load_bundled_embedder() -> Any | None:
     global _BUNDLED_EMBEDDER
     if _BUNDLED_EMBEDDER is not None:
@@ -227,10 +256,18 @@ def _load_bundled_embedder() -> Any | None:
 
     archive = _bundled_model_archive()
     if archive is None:
-        return None
+        global _STUB_FALLBACK_USED
+        if not _STUB_FALLBACK_USED:
+            _STUB_FALLBACK_USED = True
+            logger.warning(
+                "bundled embedder archive missing; using stub sentence transformer"
+            )
+        _BUNDLED_EMBEDDER = _build_stub_embedder()
+        return _BUNDLED_EMBEDDER
     if torch is None or AutoModel is None or AutoTokenizer is None:  # pragma: no cover - optional deps
-        logger.warning("bundled embedder unavailable because transformers stack is missing")
-        return None
+        logger.warning("bundled embedder unavailable because transformers stack is missing; using stub sentence transformer")
+        _BUNDLED_EMBEDDER = _build_stub_embedder()
+        return _BUNDLED_EMBEDDER
 
     model_dir = _prepare_bundled_model_dir()
     if model_dir is None:
@@ -245,8 +282,9 @@ def _load_bundled_embedder() -> Any | None:
             model = AutoModel.from_pretrained(model_dir)
             model.eval()
         except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.warning("failed to load bundled fallback embedder: %s", exc)
-            return None
+            logger.warning("failed to load bundled fallback embedder: %s; using stub sentence transformer", exc)
+            _BUNDLED_EMBEDDER = _build_stub_embedder()
+            return _BUNDLED_EMBEDDER
 
         class _FallbackSentenceTransformer:
             """Minimal wrapper emulating the ``SentenceTransformer`` API."""
