@@ -328,12 +328,23 @@ def _ensure_embedder_thread_locked() -> threading.Event:
 
     def _initialise() -> None:
         global _EMBEDDER, _EMBEDDER_TIMEOUT_LOGGED
+        start = time.perf_counter()
+        logger.info("embedder initialisation thread started", extra={"model": _MODEL_NAME})
         try:
             _EMBEDDER = _load_embedder()
         except Exception:  # pragma: no cover - defensive logging
             logger.debug("sentence transformer initialisation raised", exc_info=True)
             _EMBEDDER = None
         finally:
+            duration = time.perf_counter() - start
+            logger.info(
+                "embedder initialisation thread finished",
+                extra={
+                    "model": _MODEL_NAME,
+                    "duration": round(duration, 3),
+                    "success": _EMBEDDER is not None,
+                },
+            )
             if _EMBEDDER is not None and _EMBEDDER_TIMEOUT_LOGGED:
                 logger.info("sentence transformer became available after initial timeout")
             _EMBEDDER_INIT_EVENT.set()
@@ -409,6 +420,11 @@ def _initialise_embedder_with_timeout(
     if _EMBEDDER_TIMEOUT_LOGGED and not suppress_timeout_log:
         wait_time = 0.0
 
+    if wait_time > 0:
+        logger.debug(
+            "waiting up to %.1fs for embedder initialisation", wait_time,
+            extra={"model": _MODEL_NAME},
+        )
     finished = event.wait(wait_time)
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
@@ -417,7 +433,9 @@ def _initialise_embedder_with_timeout(
     if suppress_timeout_log:
         if wait_time > 0:
             logger.debug(
-                "sentence transformer initialisation still pending after %.0fs", wait_time
+                "sentence transformer initialisation still pending after %.0fs",
+                wait_time,
+                extra={"model": _MODEL_NAME},
             )
         return
 
@@ -426,6 +444,7 @@ def _initialise_embedder_with_timeout(
         logger.error(
             "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
             _EMBEDDER_INIT_TIMEOUT,
+            extra={"model": _MODEL_NAME},
         )
 
 
@@ -437,6 +456,14 @@ def _load_embedder() -> SentenceTransformer | None:
 
     cache_dir = _cache_base()
     local_kwargs: dict[str, object] = {}
+    start = time.perf_counter()
+    logger.info(
+        "starting sentence transformer initialisation",
+        extra={
+            "model": _MODEL_NAME,
+            "cache_dir": str(cache_dir) if cache_dir is not None else None,
+        },
+    )
     if cache_dir is not None:
         _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
@@ -453,9 +480,23 @@ def _load_embedder() -> SentenceTransformer | None:
 
         if snapshot_path is not None:
             try:
-                return SentenceTransformer(
+                logger.info(
+                    "loading sentence transformer from cached snapshot",
+                    extra={"model": _MODEL_NAME, "snapshot": str(snapshot_path)},
+                )
+                model = SentenceTransformer(
                     str(snapshot_path), local_files_only=True
                 )
+                duration = time.perf_counter() - start
+                logger.info(
+                    "loaded sentence transformer from snapshot",
+                    extra={
+                        "model": _MODEL_NAME,
+                        "snapshot": str(snapshot_path),
+                        "duration": round(duration, 3),
+                    },
+                )
+                return model
             except Exception as exc:  # pragma: no cover - diagnostics only
                 logger.warning(
                     "failed to load sentence transformer from cached snapshot %s: %s",
@@ -472,7 +513,20 @@ def _load_embedder() -> SentenceTransformer | None:
         os.environ.setdefault("HF_HUB_TOKEN", token)
 
     try:
-        return SentenceTransformer(_MODEL_NAME, **local_kwargs)
+        logger.info(
+            "loading sentence transformer via hub",
+            extra={
+                "model": _MODEL_NAME,
+                "local_files_only": local_kwargs.get("local_files_only", False),
+            },
+        )
+        model = SentenceTransformer(_MODEL_NAME, **local_kwargs)
+        duration = time.perf_counter() - start
+        logger.info(
+            "loaded sentence transformer",
+            extra={"model": _MODEL_NAME, "duration": round(duration, 3)},
+        )
+        return model
     except Exception as exc:
         if local_kwargs.pop("local_files_only", None):
             if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
@@ -482,7 +536,17 @@ def _load_embedder() -> SentenceTransformer | None:
                 )
                 return None
             try:
-                return SentenceTransformer(_MODEL_NAME, **local_kwargs)
+                logger.info(
+                    "retrying sentence transformer load with hub access",
+                    extra={"model": _MODEL_NAME},
+                )
+                model = SentenceTransformer(_MODEL_NAME, **local_kwargs)
+                duration = time.perf_counter() - start
+                logger.info(
+                    "loaded sentence transformer after retry",
+                    extra={"model": _MODEL_NAME, "duration": round(duration, 3)},
+                )
+                return model
             except Exception:
                 logger.warning("failed to initialise sentence transformer: %s", exc)
                 return None
