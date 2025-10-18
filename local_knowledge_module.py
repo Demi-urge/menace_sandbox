@@ -84,6 +84,22 @@ else:
         )
         _EMBEDDER_TIMEOUT = 10.0
 
+try:
+    _EMBEDDER_JOIN_CAP = float(
+        os.getenv("LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP", "30")
+    )
+except Exception:
+    _EMBEDDER_JOIN_CAP = 30.0
+    logger.warning(
+        "invalid LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP; defaulting to 30s"
+    )
+else:
+    if _EMBEDDER_JOIN_CAP < 0:
+        logger.warning(
+            "LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP must be non-negative; defaulting to 30s"
+        )
+        _EMBEDDER_JOIN_CAP = 30.0
+
 
 class LocalKnowledgeModule:
     """Aggregate GPT memory and summarised insights.
@@ -267,6 +283,13 @@ def _load_embedder_async(
     join_timeout = None
     if wait_time is not None:
         join_timeout = max(0.0, wait_time)
+        if _EMBEDDER_JOIN_CAP >= 0 and join_timeout > _EMBEDDER_JOIN_CAP:
+            logger.warning(
+                "capping initial embedder wait to %.1fs (requested %.1fs)",
+                _EMBEDDER_JOIN_CAP,
+                join_timeout,
+            )
+            join_timeout = _EMBEDDER_JOIN_CAP
     thread.join(join_timeout)
 
     return result, thread, errors
