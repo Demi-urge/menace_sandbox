@@ -1677,4 +1677,27 @@ def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Op
         return None
 
 
-__all__ = ["governed_embed", "get_embedder"]
+def embedder_diagnostics() -> dict[str, Any]:
+    """Return a snapshot of the embedder initialisation state."""
+
+    thread = _EMBEDDER_INIT_THREAD
+    diagnostics: dict[str, Any] = {
+        "embedder_ready": _EMBEDDER is not None,
+        "fallback_announced": _FALLBACK_ANNOUNCED,
+        "timeout_logged": _EMBEDDER_TIMEOUT_LOGGED,
+        "timeout_reached": _EMBEDDER_TIMEOUT_REACHED,
+    }
+    if _EMBEDDER is not None:
+        diagnostics["embedder_type"] = type(_EMBEDDER).__name__
+    if thread is not None:
+        diagnostics["thread_alive"] = thread.is_alive()
+        diagnostics["thread_name"] = thread.name
+    else:
+        diagnostics["thread_alive"] = False
+    diagnostics["event_set"] = _EMBEDDER_INIT_EVENT.is_set()
+    diagnostics["wait_cap"] = _MAX_EMBEDDER_WAIT
+    diagnostics["init_timeout"] = _EMBEDDER_INIT_TIMEOUT
+    return diagnostics
+
+
+__all__ = ["governed_embed", "get_embedder", "embedder_diagnostics"]

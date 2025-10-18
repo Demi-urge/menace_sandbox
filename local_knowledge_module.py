@@ -46,7 +46,11 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
-get_embedder = load_internal("governed_embeddings").get_embedder
+_governed_embeddings = load_internal("governed_embeddings")
+get_embedder = _governed_embeddings.get_embedder
+embedder_diagnostics = getattr(
+    _governed_embeddings, "embedder_diagnostics", lambda: {}
+)
 
 GPTMemoryManager = load_internal("gpt_memory").GPTMemoryManager
 GPTKnowledgeService = load_internal("gpt_knowledge_service").GPTKnowledgeService
@@ -372,7 +376,10 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
         start = time.perf_counter()
         logger.info(
             "initialising LocalKnowledgeModule",
-            extra={"memory_db": str(mem_db)},
+            extra={
+                "memory_db": str(mem_db),
+                "embedder_state": embedder_diagnostics(),
+            },
         )
         _trace("init.start", memory_db=str(mem_db))
         embedder_state, thread, errors = _load_embedder_async(_EMBEDDER_TIMEOUT)
@@ -399,6 +406,7 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             logger.warning(
                 "sentence transformer still initialising after %.1fs; continuing without embeddings",
                 _EMBEDDER_TIMEOUT,
+                extra={"embedder_state": embedder_diagnostics()},
             )
             _trace(
                 "init.embedder.pending",
@@ -445,7 +453,9 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             )
             if err_state:
                 logger.warning(
-                    "sentence transformer initialisation raised: %s", err_state[-1]
+                    "sentence transformer initialisation raised: %s",
+                    err_state[-1],
+                    extra={"embedder_state": embedder_diagnostics()},
                 )
                 _trace(
                     "init.embedder.finaliser.error",
@@ -492,7 +502,10 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             else:
                 logger.info(
                     "background embedder thread finished without providing a model",
-                    extra={"memory_db": str(mem_db)},
+                    extra={
+                        "memory_db": str(mem_db),
+                        "embedder_state": embedder_diagnostics(),
+                    },
                 )
                 _trace(
                     "init.embedder.missing",
@@ -508,6 +521,7 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
                 "duration": round(duration, 3),
                 "embedder_available": embedder is not None,
                 "embedder_thread_alive": thread.is_alive(),
+                "embedder_state": embedder_diagnostics(),
             },
         )
         _trace(
