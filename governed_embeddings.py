@@ -2,8 +2,28 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, TYPE_CHECKING
+
+try:  # pragma: no cover - lock utilities are optional in some environments
+    from lock_utils import SandboxLock, Timeout as LockTimeout, LOCK_TIMEOUT
+except Exception:  # pragma: no cover - degrade gracefully when locks unavailable
+    SandboxLock = None  # type: ignore[assignment]
+
+    class _FallbackTimeout(Exception):
+        """Placeholder used when :mod:`filelock` is unavailable."""
+
+        pass
+
+    LockTimeout = _FallbackTimeout  # type: ignore[assignment]
+    LOCK_TIMEOUT = float(os.getenv("LOCK_TIMEOUT", "60"))
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from lock_utils import SandboxLock as SandboxLockType
+else:  # pragma: no cover - at runtime we either have the real class or ``Any``
+    SandboxLockType = Any
 
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer
@@ -20,6 +40,8 @@ from analysis.semantic_diff_filter import find_semantic_risks
 logger = logging.getLogger(__name__)
 
 _EMBEDDER: SentenceTransformer | None = None
+_EMBEDDER_LOCK: SandboxLockType | None = None
+_EMBEDDER_THREAD_LOCK = threading.RLock()
 _MODEL_NAME = "all-MiniLM-L6-v2"
 
 
@@ -39,6 +61,29 @@ def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
 
     safe_name = model_name.replace("/", "--")
     return cache_dir / "hub" / f"models--sentence-transformers--{safe_name}"
+
+
+def _embedder_lock() -> SandboxLockType | None:
+    """Return a process-wide file lock guarding embedder initialisation."""
+
+    global _EMBEDDER_LOCK
+    if SandboxLock is None:
+        return None
+    if _EMBEDDER_LOCK is not None:
+        return _EMBEDDER_LOCK
+
+    base = _cache_base()
+    if base is None:
+        base = Path.home() / ".cache" / "huggingface"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logger.debug("failed to prepare embedder lock directory: %s", exc)
+        return None
+
+    lock_path = base / "menace-embedder.lock"
+    _EMBEDDER_LOCK = SandboxLock(str(lock_path))
+    return _EMBEDDER_LOCK
 
 
 def _load_embedder() -> SentenceTransformer | None:
@@ -70,6 +115,12 @@ def _load_embedder() -> SentenceTransformer | None:
         return SentenceTransformer(_MODEL_NAME, **local_kwargs)
     except Exception as exc:
         if local_kwargs.pop("local_files_only", None):
+            if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+                logger.warning(
+                    "sentence transformer initialisation failed in offline mode: %s",
+                    exc,
+                )
+                return None
             try:
                 return SentenceTransformer(_MODEL_NAME, **local_kwargs)
             except Exception:
@@ -87,8 +138,29 @@ def get_embedder() -> SentenceTransformer | None:
     expensive failures.
     """
     global _EMBEDDER
-    if _EMBEDDER is None:
-        _EMBEDDER = _load_embedder()
+    if _EMBEDDER is not None:
+        return _EMBEDDER
+
+    lock = _embedder_lock()
+    timeout = LOCK_TIMEOUT
+
+    if lock is None:
+        with _EMBEDDER_THREAD_LOCK:
+            if _EMBEDDER is None:
+                _EMBEDDER = _load_embedder()
+        return _EMBEDDER
+
+    try:
+        with lock.acquire(timeout=timeout):
+            with _EMBEDDER_THREAD_LOCK:
+                if _EMBEDDER is None:
+                    _EMBEDDER = _load_embedder()
+    except LockTimeout:
+        lock_path = getattr(lock, "lock_file", "")
+        logger.error(
+            "timed out waiting for embedder initialisation lock", extra={"lock": lock_path}
+        )
+        return None
     return _EMBEDDER
 
 
