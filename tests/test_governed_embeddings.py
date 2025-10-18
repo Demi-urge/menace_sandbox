@@ -79,6 +79,7 @@ def test_init_local_knowledge_uses_get_embedder(monkeypatch, tmp_path):
 def test_get_embedder_initialises_without_token(monkeypatch):
     monkeypatch.delenv("HUGGINGFACE_API_TOKEN", raising=False)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_resolve_local_snapshot", lambda *_: None)
 
     class DummySentenceTransformer:
         def __init__(self, name: str, **_: object) -> None:
@@ -100,6 +101,7 @@ def test_get_embedder_exports_token_when_available(monkeypatch):
     monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
     monkeypatch.delenv("HF_HUB_TOKEN", raising=False)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_resolve_local_snapshot", lambda *_: None)
 
     class DummySentenceTransformer:
         def __init__(self, name: str, **_: object) -> None:
@@ -178,3 +180,40 @@ def test_initialise_embedder_soft_wait(monkeypatch, caplog):
 
     assert recorded["timeout"] == 0.2
     assert any("EMBEDDER_INIT_SOFT_WAIT" in rec.msg for rec in caplog.records)
+
+
+def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
+    cache_root = (
+        tmp_path
+        / "hub"
+        / "models--sentence-transformers--all-MiniLM-L6-v2"
+    )
+    snapshot_dir = cache_root / "snapshots" / "abc123"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "config.json").write_text("{}")
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *_: None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_LOCK", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+
+    recorded = {}
+
+    class DummySentenceTransformer:
+        def __init__(self, path: str, **kwargs: object) -> None:
+            recorded["path"] = path
+            recorded["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "SentenceTransformer",
+        DummySentenceTransformer,
+    )
+
+    embedder = governed_embeddings.get_embedder()
+    assert isinstance(embedder, DummySentenceTransformer)
+    assert recorded["path"] == str(snapshot_dir)
+    # ``cache_folder`` should not be passed when we load directly from a snapshot.
+    assert recorded["kwargs"].get("cache_folder") is None
