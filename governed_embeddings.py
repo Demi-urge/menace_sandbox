@@ -178,6 +178,8 @@ _EMBEDDER_REQUESTER_LOGGED: Set[str] = set()
 _EMBEDDER_REQUESTER_LOCK = threading.Lock()
 _STUB_EMBEDDER_DIMENSION = 384
 _STUB_FALLBACK_USED = False
+_HF_TIMEOUT_SETTINGS: dict[str, str] = {}
+_HF_TIMEOUT_CONFIGURED = False
 
 
 def _bundled_model_archive() -> Path | None:
@@ -326,6 +328,85 @@ def _load_bundled_embedder() -> Any | None:
             extra={"archive": str(archive)},
         )
         return _BUNDLED_EMBEDDER
+
+
+def _hf_timeout_values() -> tuple[float, int]:
+    """Return the configured Hugging Face timeout and retry values."""
+
+    global _HF_TIMEOUT_SETTINGS
+    if _HF_TIMEOUT_SETTINGS:
+        timeout = float(_HF_TIMEOUT_SETTINGS.get("timeout", "30"))
+        retries = int(_HF_TIMEOUT_SETTINGS.get("retries", "1"))
+        return timeout, retries
+
+    raw_timeout = os.getenv("EMBEDDER_HF_TIMEOUT", "").strip()
+    timeout = 30.0
+    if raw_timeout:
+        try:
+            timeout = float(raw_timeout)
+        except Exception:
+            logger.warning(
+                "invalid EMBEDDER_HF_TIMEOUT=%r; defaulting to 30s", raw_timeout
+            )
+            timeout = 30.0
+    if timeout <= 0:
+        logger.warning(
+            "EMBEDDER_HF_TIMEOUT must be positive; defaulting to 30s"
+        )
+        timeout = 30.0
+
+    raw_retries = os.getenv("EMBEDDER_HF_RETRIES", "").strip()
+    retries = 1
+    if raw_retries:
+        try:
+            retries = int(float(raw_retries))
+        except Exception:
+            logger.warning(
+                "invalid EMBEDDER_HF_RETRIES=%r; defaulting to 1", raw_retries
+            )
+            retries = 1
+    if retries <= 0:
+        logger.warning("EMBEDDER_HF_RETRIES must be positive; defaulting to 1")
+        retries = 1
+
+    _HF_TIMEOUT_SETTINGS = {"timeout": f"{timeout:g}", "retries": str(retries)}
+    return timeout, retries
+
+
+def _ensure_hf_timeouts() -> None:
+    """Apply conservative Hugging Face hub timeouts to avoid long stalls."""
+
+    global _HF_TIMEOUT_CONFIGURED
+    if _HF_TIMEOUT_CONFIGURED:
+        return
+
+    if os.getenv("EMBEDDER_DISABLE_HF_TIMEOUTS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        _HF_TIMEOUT_CONFIGURED = True
+        return
+
+    timeout, retries = _hf_timeout_values()
+    timeout_str = f"{timeout:g}"
+    applied: dict[str, str] = {}
+
+    for env_name in ("HF_HUB_TIMEOUT", "HF_HUB_READ_TIMEOUT", "HF_HUB_CONNECTION_TIMEOUT"):
+        if not os.environ.get(env_name):
+            os.environ[env_name] = timeout_str
+            applied[env_name] = timeout_str
+
+    if not os.environ.get("HF_HUB_DOWNLOAD_RETRIES"):
+        os.environ["HF_HUB_DOWNLOAD_RETRIES"] = str(retries)
+        applied["HF_HUB_DOWNLOAD_RETRIES"] = str(retries)
+
+    if applied:
+        logger.debug(
+            "configured huggingface hub timeouts", extra={"settings": applied}
+        )
+
+    _HF_TIMEOUT_CONFIGURED = True
 
 
 def _activate_bundled_fallback(reason: str) -> bool:
@@ -870,6 +951,7 @@ def _load_embedder() -> SentenceTransformer | None:
                 "local_files_only": local_kwargs.get("local_files_only", False),
             },
         )
+        _ensure_hf_timeouts()
         model = SentenceTransformer(_MODEL_NAME, **local_kwargs)
         duration = time.perf_counter() - start
         logger.info(
@@ -893,6 +975,7 @@ def _load_embedder() -> SentenceTransformer | None:
                     "retrying sentence transformer load with hub access",
                     extra={"model": _MODEL_NAME},
                 )
+                _ensure_hf_timeouts()
                 model = SentenceTransformer(_MODEL_NAME, **local_kwargs)
                 duration = time.perf_counter() - start
                 logger.info(

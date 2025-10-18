@@ -120,6 +120,47 @@ def test_get_embedder_exports_token_when_available(monkeypatch):
     assert os.environ["HF_HUB_TOKEN"] == "secret-token"
 
 
+def test_get_embedder_configures_hf_timeouts(monkeypatch):
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_CONFIGURED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_SETTINGS", {})
+    monkeypatch.setattr(governed_embeddings, "_resolve_local_snapshot", lambda *_: None)
+    monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *a, **k: None)
+
+    class DummySentenceTransformer:
+        def __init__(self, name: str, **_: object) -> None:
+            self.name = name
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "SentenceTransformer",
+        DummySentenceTransformer,
+    )
+
+    for env in (
+        "HF_HUB_TIMEOUT",
+        "HF_HUB_READ_TIMEOUT",
+        "HF_HUB_CONNECTION_TIMEOUT",
+        "HF_HUB_DOWNLOAD_RETRIES",
+    ):
+        monkeypatch.delenv(env, raising=False)
+
+    monkeypatch.setenv("EMBEDDER_HF_TIMEOUT", "12")
+    monkeypatch.setenv("EMBEDDER_HF_RETRIES", "2")
+
+    embedder = governed_embeddings.get_embedder()
+    assert isinstance(embedder, DummySentenceTransformer)
+    assert embedder.name == "all-MiniLM-L6-v2"
+    assert os.environ["HF_HUB_TIMEOUT"] == "12"
+    assert os.environ["HF_HUB_READ_TIMEOUT"] == "12"
+    assert os.environ["HF_HUB_CONNECTION_TIMEOUT"] == "12"
+    assert os.environ["HF_HUB_DOWNLOAD_RETRIES"] == "2"
+
+
 def test_initialise_embedder_wait_capped(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
