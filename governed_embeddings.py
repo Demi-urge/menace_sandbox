@@ -177,6 +177,52 @@ def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
     return cache_dir / "hub" / f"models--sentence-transformers--{safe_name}"
 
 
+def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
+    """Return the most recent cached snapshot for ``model_cache`` if available.
+
+    Hugging Face caches model revisions in ``snapshots/<rev>``.  When the
+    download was previously completed we can load the model directly from the
+    snapshot directory without invoking the hub client which may otherwise block
+    on network access.  The newest snapshot is preferred because older
+    directories may be partially downloaded or left over from failed updates.
+    """
+
+    snapshots_root = model_cache / "snapshots"
+    if not snapshots_root.exists():
+        return None
+
+    candidates: list[tuple[float, Path]] = []
+    try:
+        for entry in snapshots_root.iterdir():
+            try:
+                if not entry.is_dir():
+                    continue
+                stamp = entry.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("failed to stat snapshot %s: %s", entry, exc)
+                continue
+            candidates.append((stamp, entry))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug("failed to scan snapshot directory %s: %s", snapshots_root, exc)
+        return None
+
+    for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
+        config = path / "config.json"
+        try:
+            if config.exists():
+                return path
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("failed to inspect snapshot %s: %s", path, exc)
+            continue
+    return None
+
+
 def _cleanup_hf_locks(cache_dir: Path) -> None:
     """Remove stale Hugging Face lock files left behind by crashed downloads."""
 
@@ -367,11 +413,27 @@ def _load_embedder() -> SentenceTransformer | None:
         _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
-        if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+        snapshot_path = _resolve_local_snapshot(model_cache) if model_cache.exists() else None
+        offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
+        force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
+            "",
+            "0",
+            "false",
+        }
+        if offline_env or force_local or snapshot_path is not None:
             local_kwargs["local_files_only"] = True
-        elif model_cache.exists():
-            # We already have the files locally; avoid slow network calls.
-            local_kwargs["local_files_only"] = True
+
+        if snapshot_path is not None:
+            try:
+                return SentenceTransformer(
+                    str(snapshot_path), local_files_only=True
+                )
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.warning(
+                    "failed to load sentence transformer from cached snapshot %s: %s",
+                    snapshot_path,
+                    exc,
+                )
 
     token = os.getenv("HUGGINGFACE_API_TOKEN")
     if token:
