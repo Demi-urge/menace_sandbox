@@ -225,6 +225,46 @@ DEFAULT_CLASSIFICATION_RULES = {
 class ErrorClassifier:
     """Categorise errors via regex and semantic matching."""
 
+    _EMBEDDER_TIMEOUT_DEFAULT = 5.0
+
+    def _embedder_timeout(self) -> float:
+        raw = os.getenv("ERROR_CLASSIFIER_EMBEDDER_TIMEOUT", "").strip()
+        if not raw:
+            return self._EMBEDDER_TIMEOUT_DEFAULT
+        try:
+            value = float(raw)
+        except Exception:
+            self.logger.warning(
+                "invalid ERROR_CLASSIFIER_EMBEDDER_TIMEOUT=%r; defaulting to %.1fs",
+                raw,
+                self._EMBEDDER_TIMEOUT_DEFAULT,
+            )
+            return self._EMBEDDER_TIMEOUT_DEFAULT
+        if value < 0:
+            self.logger.warning(
+                "ERROR_CLASSIFIER_EMBEDDER_TIMEOUT must be non-negative; defaulting to %.1fs",
+                self._EMBEDDER_TIMEOUT_DEFAULT,
+            )
+            return self._EMBEDDER_TIMEOUT_DEFAULT
+        return value
+
+    def _load_embedder(self) -> None:
+        if not util:
+            self.model = None
+            return
+
+        timeout = self._embedder_timeout()
+        try:
+            embedder = get_embedder(timeout=timeout)
+        except TypeError:
+            embedder = get_embedder()
+        if embedder is None and timeout:
+            self.logger.warning(
+                "proceeding without sentence transformer after waiting %.1fs",
+                timeout,
+            )
+        self.model = embedder
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -239,11 +279,7 @@ class ErrorClassifier:
         else:
             self.config_path = None
         self._build_maps(config)
-
-        if util:
-            self.model = get_embedder()
-        else:
-            self.model = None
+        self._load_embedder()
 
     @staticmethod
     def _parse_type(name: str) -> ErrorCategory | None:
