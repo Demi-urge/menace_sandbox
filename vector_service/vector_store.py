@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Protocol
 
 import json
+import logging
 import math
+import os
 import uuid
 from dynamic_path_router import get_project_root, resolve_path
 
@@ -36,6 +38,16 @@ except Exception:  # pragma: no cover - fallback when module missing
     chromadb = None  # type: ignore
 
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
+
+
+def _trace(event: str, **extra: Any) -> None:
+    flag = os.getenv("VECTOR_SERVICE_TRACE", "")
+    if flag and flag.lower() not in {"0", "false", "no", "off"}:
+        payload = {"event": event, **extra}
+        logger.log(logging.INFO, "vector-store: %s", event, extra=payload)
 
 
 class VectorStore(Protocol):
@@ -404,6 +416,7 @@ def get_default_vector_store() -> VectorStore | None:
 
     global _default_store
     if _default_store is not None:
+        _trace("vector_store.default.cached", backend=_default_store.__class__.__name__)
         return _default_store
 
     try:  # pragma: no cover - configuration optional in tests
@@ -412,14 +425,30 @@ def get_default_vector_store() -> VectorStore | None:
         cfg = getattr(CONFIG, "vector_store", None)
         vec_cfg = getattr(CONFIG, "vector", None)
         if cfg is None or vec_cfg is None:
+            _trace(
+                "vector_store.default.config_missing",
+                has_vector_store_cfg=cfg is not None,
+                has_vector_cfg=vec_cfg is not None,
+            )
             return None
+        _trace(
+            "vector_store.default.create",
+            backend=getattr(cfg, "backend", None),
+            path=getattr(cfg, "path", None),
+            dimensions=getattr(vec_cfg, "dimensions", None),
+        )
         _default_store = create_vector_store(
             dim=vec_cfg.dimensions,
             path=cfg.path,
             backend=cfg.backend,
             metric="angular",
         )
+        _trace(
+            "vector_store.default.created",
+            backend=_default_store.__class__.__name__,
+        )
     except Exception:
+        _trace("vector_store.default.error", error="config_import_failed")
         return None
     return _default_store
 
