@@ -12,7 +12,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Any, List, Optional, TYPE_CHECKING, cast, Set
+from typing import Any, Iterable, List, Optional, TYPE_CHECKING, cast, Set
 
 try:  # pragma: no cover - lock utilities are optional in some environments
     from lock_utils import (
@@ -657,10 +657,11 @@ def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
 
     ``focus`` allows callers to restrict the scan to a specific subtree (for
     example the cache directory of the embedder being loaded).  When provided it
-    takes precedence over the broader ``cache_dir`` walk which can be expensive
-    in shared caches with many unrelated models.  The fallback to scanning the
-    entire cache is preserved for backwards compatibility when ``focus`` is not
-    supplied or does not exist.
+    takes precedence over the broader ``cache_dir`` walk.  Older versions fell
+    back to a full recursive scan of ``cache_dir`` even when the targeted
+    directory was missing which can be extremely expensive on shared caches with
+    many models.  The implementation now performs a shallow inspection in that
+    scenario so startup does not stall while traversing unrelated directories.
     """
 
     if _HF_LOCK_CLEANUP_TIMEOUT == 0:
@@ -669,24 +670,38 @@ def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
     if not cache_dir.exists():
         return
 
-    search_roots: list[Path] = []
-    if focus is not None and focus.exists():
-        search_roots.append(focus)
-    else:
-        search_roots.append(cache_dir)
-
-    if cache_dir not in search_roots:
-        search_roots.append(cache_dir)
-
     deadline: float | None = None
     if _HF_LOCK_CLEANUP_TIMEOUT > 0:
         deadline = time.monotonic() + _HF_LOCK_CLEANUP_TIMEOUT
 
-    try:
-        for base in search_roots:
-            if not base.exists():
-                continue
+    def _iter_lock_files(base: Path, *, recursive: bool) -> Iterable[Path]:
+        if deadline is not None and time.monotonic() >= deadline:
+            return []
+        if not base.exists():
+            return []
 
+        if not recursive:
+            try:
+                entries = list(base.iterdir())
+            except FileNotFoundError:
+                return []
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("failed to list %s: %s", base, exc)
+                return []
+            result: list[Path] = []
+            for entry in entries:
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+                if entry.is_dir():
+                    continue
+                if not entry.name.endswith(".lock"):
+                    continue
+                if entry.name == "menace-embedder.lock":
+                    continue
+                result.append(entry)
+            return result
+
+        try:
             for root, dirs, files in os.walk(base):
                 if deadline is not None and time.monotonic() >= deadline:
                     dirs[:] = []
@@ -694,59 +709,73 @@ def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
                         "aborting huggingface lock cleanup after %.1fs", _HF_LOCK_CLEANUP_TIMEOUT
                     )
                     break
-
                 for name in files:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
                     if not name.endswith(".lock"):
                         continue
                     if name == "menace-embedder.lock":
                         continue
-
                     lock_path = Path(root) / name
-
                     try:
                         if lock_path.is_dir():
                             continue
                     except Exception:  # pragma: no cover - ignore racing filesystem errors
                         continue
+                    yield lock_path
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("failed to scan %s for locks: %s", base, exc)
+        return []
 
-                    stale = False
-                    if is_lock_stale is not None:
-                        try:
-                            stale = is_lock_stale(
-                                str(lock_path), timeout=max(LOCK_TIMEOUT, 300)
-                            )
-                        except Exception as exc:  # pragma: no cover - diagnostics only
-                            logger.debug("failed to check lock %s: %s", lock_path, exc)
-                            stale = False
-                    if not stale:
-                        try:
-                            stale = time.time() - lock_path.stat().st_mtime > max(
-                                LOCK_TIMEOUT, 300
-                            )
-                        except FileNotFoundError:
-                            continue
-                        except Exception as exc:  # pragma: no cover - diagnostics only
-                            logger.debug("failed to stat lock file %s: %s", lock_path, exc)
-                            continue
+    def _is_stale(path: Path) -> bool:
+        stale = False
+        if is_lock_stale is not None:
+            try:
+                stale = is_lock_stale(str(path), timeout=max(LOCK_TIMEOUT, 300))
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("failed to check lock %s: %s", path, exc)
+                stale = False
+        if stale:
+            return True
+        try:
+            return time.time() - path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
+        except FileNotFoundError:
+            return False
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("failed to stat lock file %s: %s", path, exc)
+            return False
 
-                    if not stale:
-                        continue
+    targets: list[tuple[Path, bool]] = []
+    if focus is not None and focus.exists():
+        targets.append((focus, True))
+    else:
+        if focus is not None:
+            parent = focus.parent if focus.parent != focus else cache_dir
+            if parent.exists():
+                targets.append((parent, False))
+        targets.append((cache_dir, False))
 
-                    try:
-                        lock_path.unlink()
-                        logger.warning("removed stale huggingface lock: %s", lock_path)
-                    except FileNotFoundError:
-                        continue
-                    except Exception as exc:  # pragma: no cover - diagnostics only
-                        logger.debug(
-                            "failed to remove stale huggingface lock %s: %s", lock_path, exc
-                        )
-                if deadline is not None and time.monotonic() >= deadline:
-                    break
+    seen: set[Path] = set()
+    for base, recursive in targets:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        if base in seen:
+            continue
+        seen.add(base)
+        for lock_path in _iter_lock_files(base, recursive=recursive):
             if deadline is not None and time.monotonic() >= deadline:
                 break
-    except Exception as exc:  # pragma: no cover - best effort logging
-        logger.debug("failed to scan huggingface cache for locks: %s", exc)
+            if not _is_stale(lock_path):
+                continue
+            try:
+                lock_path.unlink()
+                logger.warning("removed stale huggingface lock: %s", lock_path)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug(
+                    "failed to remove stale huggingface lock %s: %s", lock_path, exc
+                )
 
 
 def _force_cleanup_embedder_locks() -> int:
