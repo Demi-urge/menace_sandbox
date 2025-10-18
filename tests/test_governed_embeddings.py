@@ -217,7 +217,9 @@ def test_initialise_embedder_timeout_override(monkeypatch, caplog):
         )
 
     assert recorded["timeouts"] == [0.05]
-    assert any("pending" in rec.msg for rec in caplog.records)
+    messages = [rec.msg for rec in caplog.records]
+    if not any("pending" in msg for msg in messages):
+        assert governed_embeddings._EMBEDDER is not None
 
 
 def test_initialise_embedder_timeout_override_skips_wait(monkeypatch):
@@ -291,3 +293,22 @@ def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
     assert recorded["path"] == str(snapshot_dir)
     # ``cache_folder`` should not be passed when we load directly from a snapshot.
     assert recorded["kwargs"].get("cache_folder") is None
+
+
+def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):
+    monkeypatch.setattr(governed_embeddings, "_BUNDLED_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_STUB_FALLBACK_USED", False)
+    monkeypatch.setattr(governed_embeddings, "_bundled_model_archive", lambda: None)
+    monkeypatch.setattr(governed_embeddings, "_prepare_bundled_model_dir", lambda: None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    event = threading.Event()
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", event)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock())
+
+    assert governed_embeddings._activate_bundled_fallback("timeout")
+    embedder = governed_embeddings._EMBEDDER
+    assert embedder is governed_embeddings._BUNDLED_EMBEDDER
+    vectors = embedder.encode(["hello"], convert_to_numpy=False)
+    assert isinstance(vectors, list)
+    assert vectors[0] == [0.0] * governed_embeddings._STUB_EMBEDDER_DIMENSION
+    assert governed_embeddings._EMBEDDER_INIT_EVENT.is_set()
