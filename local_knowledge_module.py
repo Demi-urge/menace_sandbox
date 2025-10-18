@@ -377,6 +377,24 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
         _trace("init.start", memory_db=str(mem_db))
         embedder_state, thread, errors = _load_embedder_async(_EMBEDDER_TIMEOUT)
         embedder = embedder_state.get("embedder")
+
+        if embedder is None:
+            eager = get_embedder(timeout=0)
+            if eager is not None:
+                embedder = eager
+                embedder_state["embedder"] = eager
+                logger.info(
+                    "promoted fallback sentence transformer during LocalKnowledgeModule bootstrap",
+                    extra={
+                        "memory_db": str(mem_db),
+                        "embedder": type(eager).__name__,
+                    },
+                )
+                _trace(
+                    "init.embedder.eager_fallback",
+                    state_id=id(embedder_state),
+                    embedder=type(eager).__name__,
+                )
         if thread.is_alive() and _EMBEDDER_TIMEOUT:
             logger.warning(
                 "sentence transformer still initialising after %.1fs; continuing without embeddings",
