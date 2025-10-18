@@ -51,6 +51,10 @@ _EMBEDDER: SentenceTransformer | None = None
 _EMBEDDER_LOCK: SandboxLockType | None = None
 _EMBEDDER_THREAD_LOCK = threading.RLock()
 _MODEL_NAME = "all-MiniLM-L6-v2"
+_EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
+_EMBEDDER_INIT_EVENT = threading.Event()
+_EMBEDDER_INIT_THREAD: threading.Thread | None = None
+_EMBEDDER_TIMEOUT_LOGGED = False
 
 
 def _cache_base() -> Optional[Path]:
@@ -142,6 +146,61 @@ def _embedder_lock() -> SandboxLockType | None:
     return _EMBEDDER_LOCK
 
 
+def _ensure_embedder_thread_locked() -> threading.Event:
+    """Ensure the background embedder initialisation thread is running."""
+
+    global _EMBEDDER_INIT_THREAD
+
+    if _EMBEDDER_INIT_THREAD is not None and _EMBEDDER_INIT_THREAD.is_alive():
+        return _EMBEDDER_INIT_EVENT
+
+    _EMBEDDER_INIT_EVENT.clear()
+
+    def _initialise() -> None:
+        global _EMBEDDER, _EMBEDDER_TIMEOUT_LOGGED
+        try:
+            _EMBEDDER = _load_embedder()
+        except Exception:  # pragma: no cover - defensive logging
+            logger.debug("sentence transformer initialisation raised", exc_info=True)
+            _EMBEDDER = None
+        finally:
+            if _EMBEDDER is not None and _EMBEDDER_TIMEOUT_LOGGED:
+                logger.info("sentence transformer became available after initial timeout")
+            _EMBEDDER_INIT_EVENT.set()
+
+    _EMBEDDER_INIT_THREAD = threading.Thread(
+        target=_initialise,
+        name="menace-embedder-init",
+        daemon=True,
+    )
+    _EMBEDDER_INIT_THREAD.start()
+    return _EMBEDDER_INIT_EVENT
+
+
+def _initialise_embedder_with_timeout() -> None:
+    """Initialise the shared embedder without blocking indefinitely."""
+
+    global _EMBEDDER_TIMEOUT_LOGGED
+
+    with _EMBEDDER_THREAD_LOCK:
+        if _EMBEDDER is not None:
+            return
+        event = _ensure_embedder_thread_locked()
+
+    wait_time = _EMBEDDER_INIT_TIMEOUT if not _EMBEDDER_TIMEOUT_LOGGED else 0.0
+    finished = event.wait(wait_time)
+    if finished:
+        _EMBEDDER_TIMEOUT_LOGGED = False
+        return
+
+    if not _EMBEDDER_TIMEOUT_LOGGED:
+        _EMBEDDER_TIMEOUT_LOGGED = True
+        logger.error(
+            "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
+            _EMBEDDER_INIT_TIMEOUT,
+        )
+
+
 def _load_embedder() -> SentenceTransformer | None:
     """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
 
@@ -202,16 +261,12 @@ def get_embedder() -> SentenceTransformer | None:
     timeout = LOCK_TIMEOUT
 
     if lock is None:
-        with _EMBEDDER_THREAD_LOCK:
-            if _EMBEDDER is None:
-                _EMBEDDER = _load_embedder()
+        _initialise_embedder_with_timeout()
         return _EMBEDDER
 
     try:
         with lock.acquire(timeout=timeout):
-            with _EMBEDDER_THREAD_LOCK:
-                if _EMBEDDER is None:
-                    _EMBEDDER = _load_embedder()
+            _initialise_embedder_with_timeout()
     except LockTimeout:
         lock_path = getattr(lock, "lock_file", "")
         logger.error(
