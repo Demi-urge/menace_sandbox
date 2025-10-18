@@ -167,6 +167,7 @@ _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
+_EMBEDDER_TIMEOUT_REACHED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 _BUNDLED_EMBEDDER: Any | None = None
 _BUNDLED_EMBEDDER_LOCK = threading.Lock()
@@ -496,12 +497,25 @@ def _initialise_embedder_with_timeout(
     background initialisation thread alive.
     """
 
-    global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED
+    global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED
 
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
             return
         event = _ensure_embedder_thread_locked()
+
+    if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
+        if suppress_timeout_log:
+            logger.debug(
+                "skipping embedder wait after previous timeout",
+                extra={"model": _MODEL_NAME},
+            )
+        else:
+            logger.debug(
+                "embedder initialisation previously timed out; not waiting",
+                extra={"model": _MODEL_NAME},
+            )
+        return
 
     global _EMBEDDER_WAIT_CAPPED
 
@@ -553,6 +567,7 @@ def _initialise_embedder_with_timeout(
     finished = event.wait(wait_time)
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
+        _EMBEDDER_TIMEOUT_REACHED = False
         return
 
     if suppress_timeout_log:
@@ -562,10 +577,12 @@ def _initialise_embedder_with_timeout(
                 wait_time,
                 extra={"model": _MODEL_NAME},
             )
+        _EMBEDDER_TIMEOUT_REACHED = True
         return
 
     if not _EMBEDDER_TIMEOUT_LOGGED:
         _EMBEDDER_TIMEOUT_LOGGED = True
+        _EMBEDDER_TIMEOUT_REACHED = True
         logger.error(
             "sentence transformer initialisation exceeded %.0fs; continuing without embeddings",
             _EMBEDDER_INIT_TIMEOUT,
