@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import List, Optional
-
 import logging
 import os
+from pathlib import Path
+from typing import List, Optional
 
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer
@@ -20,6 +20,63 @@ from analysis.semantic_diff_filter import find_semantic_risks
 logger = logging.getLogger(__name__)
 
 _EMBEDDER: SentenceTransformer | None = None
+_MODEL_NAME = "all-MiniLM-L6-v2"
+
+
+def _cache_base() -> Optional[Path]:
+    """Return the configured Hugging Face cache directory when available."""
+
+    for env in ("TRANSFORMERS_CACHE", "HF_HOME"):
+        loc = os.getenv(env)
+        if loc:
+            return Path(loc).expanduser()
+    default = Path.home() / ".cache" / "huggingface"
+    return default if default.exists() else None
+
+
+def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
+    """Return the expected cache path for ``model_name`` within ``cache_dir``."""
+
+    safe_name = model_name.replace("/", "--")
+    return cache_dir / "hub" / f"models--sentence-transformers--{safe_name}"
+
+
+def _load_embedder() -> SentenceTransformer | None:
+    """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
+
+    if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
+        return None
+
+    cache_dir = _cache_base()
+    local_kwargs: dict[str, object] = {}
+    if cache_dir is not None:
+        local_kwargs["cache_folder"] = str(cache_dir)
+        model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
+        if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+            local_kwargs["local_files_only"] = True
+        elif model_cache.exists():
+            # We already have the files locally; avoid slow network calls.
+            local_kwargs["local_files_only"] = True
+
+    token = os.getenv("HUGGINGFACE_API_TOKEN")
+    if token:
+        # The transformers stack honours these environment variables directly and
+        # avoids the interactive ``huggingface_hub.login`` flow that can hang in
+        # restricted environments.
+        os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", token)
+        os.environ.setdefault("HF_HUB_TOKEN", token)
+
+    try:
+        return SentenceTransformer(_MODEL_NAME, **local_kwargs)
+    except Exception as exc:
+        if local_kwargs.pop("local_files_only", None):
+            try:
+                return SentenceTransformer(_MODEL_NAME, **local_kwargs)
+            except Exception:
+                logger.warning("failed to initialise sentence transformer: %s", exc)
+                return None
+        logger.warning("failed to initialise sentence transformer: %s", exc)
+        return None
 
 
 def get_embedder() -> SentenceTransformer | None:
@@ -30,23 +87,8 @@ def get_embedder() -> SentenceTransformer | None:
     expensive failures.
     """
     global _EMBEDDER
-    if _EMBEDDER is None and SentenceTransformer is not None:
-        token = os.getenv("HUGGINGFACE_API_TOKEN")
-        if token:
-            try:  # pragma: no cover - optional dependency may be missing
-                from huggingface_hub import login
-            except Exception as exc:  # pragma: no cover - import failure
-                logger.warning("failed to import huggingface_hub: %s", exc)
-            else:
-                try:  # pragma: no cover - network interaction
-                    login(token=token)
-                except Exception as exc:  # pragma: no cover - hub issues
-                    logger.warning("huggingface login failed: %s", exc)
-        try:  # pragma: no cover - heavy model download
-            _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception as exc:
-            logger.warning("failed to initialise sentence transformer: %s", exc)
-            _EMBEDDER = None
+    if _EMBEDDER is None:
+        _EMBEDDER = _load_embedder()
     return _EMBEDDER
 
 

@@ -1,5 +1,6 @@
 import inspect
 import logging
+import os
 import sys
 import types
 
@@ -74,7 +75,7 @@ def test_init_local_knowledge_uses_get_embedder(monkeypatch, tmp_path):
     assert called.get("hit")
 
 
-def test_get_embedder_skips_login_without_token(monkeypatch):
+def test_get_embedder_initialises_without_token(monkeypatch):
     monkeypatch.delenv("HUGGINGFACE_API_TOKEN", raising=False)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
 
@@ -82,11 +83,6 @@ def test_get_embedder_skips_login_without_token(monkeypatch):
         def __init__(self, name: str) -> None:
             self.name = name
 
-    def raising_login(*_args, **_kwargs):
-        raise AssertionError("login should not be called when token is missing")
-
-    fake_module = types.SimpleNamespace(login=raising_login)
-    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_module)
     monkeypatch.setattr(
         governed_embeddings,
         "SentenceTransformer",
@@ -98,21 +94,15 @@ def test_get_embedder_skips_login_without_token(monkeypatch):
     assert embedder.name == "all-MiniLM-L6-v2"
 
 
-def test_get_embedder_logs_in_when_token_available(monkeypatch):
+def test_get_embedder_exports_token_when_available(monkeypatch):
     monkeypatch.setenv("HUGGINGFACE_API_TOKEN", "secret-token")
+    monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
+    monkeypatch.delenv("HF_HUB_TOKEN", raising=False)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
-
-    recorded: dict[str, object] = {}
-
-    def fake_login(*_args, **kwargs):
-        recorded["token"] = kwargs.get("token")
-
-    fake_module = types.SimpleNamespace(login=fake_login)
-    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_module)
 
     class DummySentenceTransformer:
         def __init__(self, name: str) -> None:
-            recorded["model"] = name
+            self.name = name
 
     monkeypatch.setattr(
         governed_embeddings,
@@ -120,6 +110,8 @@ def test_get_embedder_logs_in_when_token_available(monkeypatch):
         DummySentenceTransformer,
     )
 
-    governed_embeddings.get_embedder()
-    assert recorded["token"] == "secret-token"
-    assert recorded["model"] == "all-MiniLM-L6-v2"
+    embedder = governed_embeddings.get_embedder()
+    assert isinstance(embedder, DummySentenceTransformer)
+    assert embedder.name == "all-MiniLM-L6-v2"
+    assert os.environ["HUGGINGFACEHUB_API_TOKEN"] == "secret-token"
+    assert os.environ["HF_HUB_TOKEN"] == "secret-token"
