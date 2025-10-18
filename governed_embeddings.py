@@ -682,21 +682,28 @@ def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
 
         if not recursive:
             try:
-                entries = list(base.iterdir())
+                iterator = base.iterdir()
             except FileNotFoundError:
                 return []
             except Exception as exc:  # pragma: no cover - diagnostics only
                 logger.debug("failed to list %s: %s", base, exc)
                 return []
             result: list[Path] = []
-            for entry in entries:
+            for entry in iterator:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
-                if entry.is_dir():
+                try:
+                    if entry.is_dir():
+                        continue
+                except FileNotFoundError:
                     continue
-                if not entry.name.endswith(".lock"):
+                except Exception as exc:  # pragma: no cover - diagnostics only
+                    logger.debug("failed to inspect %s: %s", entry, exc)
                     continue
-                if entry.name == "menace-embedder.lock":
+                name = entry.name
+                if not name.endswith(".lock"):
+                    continue
+                if name == "menace-embedder.lock":
                     continue
                 result.append(entry)
             return result
@@ -807,6 +814,9 @@ def _force_cleanup_embedder_locks() -> int:
                     break
 
                 for name in files:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        dirs[:] = []
+                        break
                     if not name.endswith(".lock"):
                         continue
                     if name == "menace-embedder.lock":
