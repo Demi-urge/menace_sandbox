@@ -187,6 +187,71 @@ _STACKTRACE_LOCK = threading.Lock()
 _EMBEDDER_STACK_REPORTED: Set[str] = set()
 
 
+def _determine_timeout_cap() -> float:
+    """Return the maximum allowed embedder wait based on configuration."""
+
+    default_cap = 300.0
+    raw = os.getenv("EMBEDDER_INIT_TIMEOUT_CAP", "").strip()
+    if not raw:
+        return default_cap
+    try:
+        cap = float(raw)
+    except Exception:
+        logger.warning(
+            "invalid EMBEDDER_INIT_TIMEOUT_CAP=%r; defaulting to %.0fs",
+            raw,
+            default_cap,
+        )
+        return default_cap
+    return cap
+
+
+def _cap_timeout(value: float, cap: float, env_name: str) -> float:
+    """Clamp ``value`` to ``cap`` when both are non-negative."""
+
+    if value < 0 or cap < 0:
+        return value
+    if value <= cap:
+        return value
+    logger.warning(
+        "capping %s to %.0fs (requested %.0fs)",
+        env_name,
+        cap,
+        value,
+    )
+    return cap
+
+
+def _apply_timeout_caps() -> None:
+    """Normalise embedder wait settings to avoid multi-hour stalls."""
+
+    global _EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT, _SOFT_EMBEDDER_WAIT, _EMBEDDER_TIMEOUT_CAP
+
+    cap = _determine_timeout_cap()
+    _EMBEDDER_TIMEOUT_CAP = cap
+    _EMBEDDER_INIT_TIMEOUT = _cap_timeout(
+        _EMBEDDER_INIT_TIMEOUT, cap, "EMBEDDER_INIT_TIMEOUT"
+    )
+    _MAX_EMBEDDER_WAIT = _cap_timeout(
+        _MAX_EMBEDDER_WAIT, cap, "EMBEDDER_INIT_MAX_WAIT"
+    )
+    if (
+        _SOFT_EMBEDDER_WAIT >= 0
+        and _MAX_EMBEDDER_WAIT >= 0
+        and _SOFT_EMBEDDER_WAIT > _MAX_EMBEDDER_WAIT
+    ):
+        logger.warning(
+            "capping EMBEDDER_INIT_SOFT_WAIT to %.0fs (requested %.0fs)",
+            _MAX_EMBEDDER_WAIT,
+            _SOFT_EMBEDDER_WAIT,
+        )
+        _SOFT_EMBEDDER_WAIT = _MAX_EMBEDDER_WAIT
+
+
+_EMBEDDER_TIMEOUT_CAP = 0.0
+_apply_timeout_caps()
+
+
 def _stacktrace_enabled() -> bool:
     flag = os.getenv("EMBEDDER_STACKTRACE", "").strip().lower()
     return bool(flag) and flag not in {"0", "false", "no", "off"}
