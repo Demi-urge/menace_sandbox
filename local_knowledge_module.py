@@ -305,6 +305,13 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             state: dict[str, "SentenceTransformer | None"],
             err_state: list[BaseException],
         ) -> None:
+            logger.info(
+                "waiting for background embedder initialisation thread to finish",
+                extra={
+                    "memory_db": str(mem_db),
+                    "thread_alive": thread.is_alive(),
+                },
+            )
             thread.join()
             if err_state:
                 logger.warning(
@@ -328,6 +335,11 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
             ready = embedder_state.get("embedder")
             if ready is not None:
                 _attach_embedder(module, ready)
+            else:
+                logger.info(
+                    "background embedder thread finished without providing a model",
+                    extra={"memory_db": str(mem_db)},
+                )
 
         _LOCAL_KNOWLEDGE = module
         duration = time.perf_counter() - start
