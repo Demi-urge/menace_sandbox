@@ -184,6 +184,17 @@ def resolve_path(name: str, root: Optional[Path | str] = None) -> Path:
                 _PATH_CACHE[key] = resolved
             return resolved
 
+        # When the candidate's parent directory already exists we assume the
+        # caller intends to create a new file at that location.  Returning the
+        # prospective path avoids an expensive full repository walk looking for
+        # a match that does not yet exist (which can stall startup when large
+        # directory trees are scanned).
+        if candidate.parent.exists():
+            resolved = candidate.resolve()
+            with _CACHE_LOCK:
+                _PATH_CACHE[key] = resolved
+            return resolved
+
     target = Path(norm_name)
     for base in roots:
         for dirpath, dirs, files in os.walk(base):
