@@ -1211,6 +1211,27 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
         except Exception:
             lock_timeout = LOCK_TIMEOUT
 
+    if lock_timeout < 0:
+        lock_timeout = 0.0
+
+    # ``LOCK_TIMEOUT`` defaults to a fairly generous value because other parts
+    # of the sandbox prefer long lived locks.  For the embedder initialisation
+    # we cap the wait to the maximum embedder startup window so that stale lock
+    # files left behind by crashed processes do not block the sandbox for
+    # hours.  The cap mirrors the longest time the caller would otherwise wait
+    # for the background initialisation thread, making sure both phases respect
+    # the same upper bound.
+    lock_cap = _MAX_EMBEDDER_WAIT
+    if _EMBEDDER_INIT_TIMEOUT >= 0:
+        lock_cap = min(lock_cap, max(0.0, _EMBEDDER_INIT_TIMEOUT))
+    if lock_cap >= 0 and lock_timeout > lock_cap:
+        logger.warning(
+            "capping embedder lock wait to %.0fs (requested %.0fs)",
+            lock_cap,
+            lock_timeout,
+        )
+        lock_timeout = lock_cap
+
     if lock is None:
         _initialise_embedder_with_timeout(
             timeout_override=wait_override,
