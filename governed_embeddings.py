@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import logging
+import os
+
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - simplify in environments without the package
     SentenceTransformer = None  # type: ignore
-
-import logging
 
 from security.secret_redactor import redact
 from compliance.license_fingerprint import (
@@ -30,13 +31,21 @@ def get_embedder() -> SentenceTransformer | None:
     """
     global _EMBEDDER
     if _EMBEDDER is None and SentenceTransformer is not None:
+        token = os.getenv("HUGGINGFACE_API_TOKEN")
+        if token:
+            try:  # pragma: no cover - optional dependency may be missing
+                from huggingface_hub import login
+            except Exception as exc:  # pragma: no cover - import failure
+                logger.warning("failed to import huggingface_hub: %s", exc)
+            else:
+                try:  # pragma: no cover - network interaction
+                    login(token=token)
+                except Exception as exc:  # pragma: no cover - hub issues
+                    logger.warning("huggingface login failed: %s", exc)
         try:  # pragma: no cover - heavy model download
-            from huggingface_hub import login
-            import os
-
-            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to initialise sentence transformer: %s", exc)
             _EMBEDDER = None
     return _EMBEDDER
 
