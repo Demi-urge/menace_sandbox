@@ -9,6 +9,8 @@ context.
 """
 
 import importlib.util
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -62,6 +64,21 @@ else:
     FEEDBACK = _log_tags.FEEDBACK
     IMPROVEMENT_PATH = _log_tags.IMPROVEMENT_PATH
     ERROR_FIX = _log_tags.ERROR_FIX
+
+
+logger = logging.getLogger(__name__)
+
+try:
+    _EMBEDDER_TIMEOUT = float(os.getenv("LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT", "10"))
+except Exception:
+    _EMBEDDER_TIMEOUT = 10.0
+    logger.warning("invalid LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT; defaulting to 10s")
+else:
+    if _EMBEDDER_TIMEOUT < 0:
+        logger.warning(
+            "LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT must be non-negative; defaulting to 10s"
+        )
+        _EMBEDDER_TIMEOUT = 10.0
 
 
 class LocalKnowledgeModule:
@@ -205,7 +222,13 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
 
     global _LOCAL_KNOWLEDGE
     if _LOCAL_KNOWLEDGE is None:
-        _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=get_embedder())
+        embedder = get_embedder(timeout=_EMBEDDER_TIMEOUT)
+        if embedder is None and _EMBEDDER_TIMEOUT:
+            logger.warning(
+                "proceeding without sentence transformer after waiting %.1fs",
+                _EMBEDDER_TIMEOUT,
+            )
+        _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=embedder)
     return _LOCAL_KNOWLEDGE
 
 
