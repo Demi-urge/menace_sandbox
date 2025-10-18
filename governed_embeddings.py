@@ -150,10 +150,12 @@ _EMBEDDER_THREAD_LOCK = threading.RLock()
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
 _MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
+_SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "30"))
 _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
+_EMBEDDER_SOFT_WAIT_LOGGED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 
 
@@ -302,7 +304,7 @@ def _ensure_embedder_thread_locked() -> threading.Event:
 def _initialise_embedder_with_timeout() -> None:
     """Initialise the shared embedder without blocking indefinitely."""
 
-    global _EMBEDDER_TIMEOUT_LOGGED
+    global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED
 
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
@@ -311,18 +313,33 @@ def _initialise_embedder_with_timeout() -> None:
 
     global _EMBEDDER_WAIT_CAPPED
 
-    wait_limit = max(0.0, min(_EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT))
+    wait_cap = max(0.0, min(_EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT))
+    wait_limit = wait_cap
+    soft_clamped = False
+    if _SOFT_EMBEDDER_WAIT >= 0:
+        wait_limit = min(wait_limit, _SOFT_EMBEDDER_WAIT)
+        soft_clamped = wait_limit < wait_cap
+
     if (
         not _EMBEDDER_WAIT_CAPPED
-        and wait_limit < _EMBEDDER_INIT_TIMEOUT
+        and (wait_limit < _EMBEDDER_INIT_TIMEOUT or soft_clamped)
         and not _EMBEDDER_TIMEOUT_LOGGED
     ):
         _EMBEDDER_WAIT_CAPPED = True
-        logger.warning(
-            "capping embedder initialisation wait to %.0fs (requested %.0fs)",
-            wait_limit,
-            _EMBEDDER_INIT_TIMEOUT,
-        )
+        if soft_clamped and not _EMBEDDER_SOFT_WAIT_LOGGED:
+            _EMBEDDER_SOFT_WAIT_LOGGED = True
+            logger.warning(
+                "capping embedder initialisation wait to %.0fs due to EMBEDDER_INIT_SOFT_WAIT=%.0fs (requested %.0fs)",
+                wait_limit,
+                _SOFT_EMBEDDER_WAIT,
+                _EMBEDDER_INIT_TIMEOUT,
+            )
+        else:
+            logger.warning(
+                "capping embedder initialisation wait to %.0fs (requested %.0fs)",
+                wait_limit,
+                _EMBEDDER_INIT_TIMEOUT,
+            )
 
     wait_time = wait_limit if not _EMBEDDER_TIMEOUT_LOGGED else 0.0
     finished = event.wait(wait_time)
