@@ -299,6 +299,33 @@ def test_initialise_embedder_timeout_override_skips_wait(monkeypatch):
     assert event.calls == [0.1]
 
 
+def test_timeout_cap_limits_configuration(monkeypatch, caplog):
+    original_timeout = governed_embeddings._EMBEDDER_INIT_TIMEOUT
+    original_max_wait = governed_embeddings._MAX_EMBEDDER_WAIT
+    original_soft_wait = governed_embeddings._SOFT_EMBEDDER_WAIT
+
+    monkeypatch.setenv("EMBEDDER_INIT_TIMEOUT_CAP", "0.5")
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_TIMEOUT", 5.0)
+    monkeypatch.setattr(governed_embeddings, "_MAX_EMBEDDER_WAIT", 5.0)
+    monkeypatch.setattr(governed_embeddings, "_SOFT_EMBEDDER_WAIT", 1.0)
+
+    with caplog.at_level(logging.WARNING):
+        governed_embeddings._apply_timeout_caps()
+
+    assert governed_embeddings._EMBEDDER_INIT_TIMEOUT == 0.5
+    assert governed_embeddings._MAX_EMBEDDER_WAIT == 0.5
+    assert governed_embeddings._SOFT_EMBEDDER_WAIT == 0.5
+    messages = {rec.getMessage() for rec in caplog.records}
+    assert any("EMBEDDER_INIT_TIMEOUT" in msg for msg in messages)
+    assert any("EMBEDDER_INIT_MAX_WAIT" in msg for msg in messages)
+
+    governed_embeddings._EMBEDDER_INIT_TIMEOUT = original_timeout
+    governed_embeddings._MAX_EMBEDDER_WAIT = original_max_wait
+    governed_embeddings._SOFT_EMBEDDER_WAIT = original_soft_wait
+    monkeypatch.delenv("EMBEDDER_INIT_TIMEOUT_CAP", raising=False)
+    governed_embeddings._apply_timeout_caps()
+
+
 def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
     cache_root = (
         tmp_path
