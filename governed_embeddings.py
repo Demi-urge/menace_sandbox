@@ -273,7 +273,11 @@ def _load_bundled_embedder() -> Any | None:
 
     model_dir = _prepare_bundled_model_dir()
     if model_dir is None:
-        return None
+        logger.warning(
+            "failed to prepare bundled embedder directory; using stub sentence transformer"
+        )
+        _BUNDLED_EMBEDDER = _build_stub_embedder()
+        return _BUNDLED_EMBEDDER
 
     with _BUNDLED_EMBEDDER_LOCK:
         if _BUNDLED_EMBEDDER is not None:
@@ -803,13 +807,25 @@ def _initialise_embedder_with_timeout(
                 "waiting up to %.1fs for embedder initialisation (requested by %s)",
                 wait_time,
                 requester,
-                extra={"model": _MODEL_NAME},
+                extra={
+                    "model": _MODEL_NAME,
+                    "wait_time": round(wait_time, 3),
+                    "requested_timeout": round(requested_timeout, 3),
+                    "max_wait": round(_MAX_EMBEDDER_WAIT, 3),
+                    "soft_wait": round(_SOFT_EMBEDDER_WAIT, 3),
+                },
             )
         elif not requester:
             logger.debug(
                 "waiting up to %.1fs for embedder initialisation",
                 wait_time,
-                extra={"model": _MODEL_NAME},
+                extra={
+                    "model": _MODEL_NAME,
+                    "wait_time": round(wait_time, 3),
+                    "requested_timeout": round(requested_timeout, 3),
+                    "max_wait": round(_MAX_EMBEDDER_WAIT, 3),
+                    "soft_wait": round(_SOFT_EMBEDDER_WAIT, 3),
+                },
             )
     finished = event.wait(wait_time)
     if finished:
