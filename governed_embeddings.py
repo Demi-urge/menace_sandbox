@@ -349,8 +349,16 @@ def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
     return None
 
 
-def _cleanup_hf_locks(cache_dir: Path) -> None:
-    """Remove stale Hugging Face lock files left behind by crashed downloads."""
+def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
+    """Remove stale Hugging Face lock files left behind by crashed downloads.
+
+    ``focus`` allows callers to restrict the scan to a specific subtree (for
+    example the cache directory of the embedder being loaded).  When provided it
+    takes precedence over the broader ``cache_dir`` walk which can be expensive
+    in shared caches with many unrelated models.  The fallback to scanning the
+    entire cache is preserved for backwards compatibility when ``focus`` is not
+    supplied or does not exist.
+    """
 
     if _HF_LOCK_CLEANUP_TIMEOUT == 0:
         return
@@ -358,63 +366,82 @@ def _cleanup_hf_locks(cache_dir: Path) -> None:
     if not cache_dir.exists():
         return
 
+    search_roots: list[Path] = []
+    if focus is not None and focus.exists():
+        search_roots.append(focus)
+    else:
+        search_roots.append(cache_dir)
+
+    if cache_dir not in search_roots:
+        search_roots.append(cache_dir)
+
     deadline: float | None = None
     if _HF_LOCK_CLEANUP_TIMEOUT > 0:
         deadline = time.monotonic() + _HF_LOCK_CLEANUP_TIMEOUT
 
     try:
-        for root, dirs, files in os.walk(cache_dir):
-            if deadline is not None and time.monotonic() >= deadline:
-                dirs[:] = []
-                logger.debug(
-                    "aborting huggingface lock cleanup after %.1fs", _HF_LOCK_CLEANUP_TIMEOUT
-                )
-                break
+        for base in search_roots:
+            if not base.exists():
+                continue
 
-            for name in files:
-                if not name.endswith(".lock"):
-                    continue
-                if name == "menace-embedder.lock":
-                    continue
+            for root, dirs, files in os.walk(base):
+                if deadline is not None and time.monotonic() >= deadline:
+                    dirs[:] = []
+                    logger.debug(
+                        "aborting huggingface lock cleanup after %.1fs", _HF_LOCK_CLEANUP_TIMEOUT
+                    )
+                    break
 
-                lock_path = Path(root) / name
-
-                try:
-                    if lock_path.is_dir():
+                for name in files:
+                    if not name.endswith(".lock"):
                         continue
-                except Exception:  # pragma: no cover - ignore racing filesystem errors
-                    continue
+                    if name == "menace-embedder.lock":
+                        continue
 
-                stale = False
-                if is_lock_stale is not None:
+                    lock_path = Path(root) / name
+
                     try:
-                        stale = is_lock_stale(
-                            str(lock_path), timeout=max(LOCK_TIMEOUT, 300)
-                        )
-                    except Exception as exc:  # pragma: no cover - diagnostics only
-                        logger.debug("failed to check lock %s: %s", lock_path, exc)
-                        stale = False
-                if not stale:
+                        if lock_path.is_dir():
+                            continue
+                    except Exception:  # pragma: no cover - ignore racing filesystem errors
+                        continue
+
+                    stale = False
+                    if is_lock_stale is not None:
+                        try:
+                            stale = is_lock_stale(
+                                str(lock_path), timeout=max(LOCK_TIMEOUT, 300)
+                            )
+                        except Exception as exc:  # pragma: no cover - diagnostics only
+                            logger.debug("failed to check lock %s: %s", lock_path, exc)
+                            stale = False
+                    if not stale:
+                        try:
+                            stale = time.time() - lock_path.stat().st_mtime > max(
+                                LOCK_TIMEOUT, 300
+                            )
+                        except FileNotFoundError:
+                            continue
+                        except Exception as exc:  # pragma: no cover - diagnostics only
+                            logger.debug("failed to stat lock file %s: %s", lock_path, exc)
+                            continue
+
+                    if not stale:
+                        continue
+
                     try:
-                        stale = time.time() - lock_path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
+                        lock_path.unlink()
+                        logger.warning("removed stale huggingface lock: %s", lock_path)
                     except FileNotFoundError:
                         continue
                     except Exception as exc:  # pragma: no cover - diagnostics only
-                        logger.debug("failed to stat lock file %s: %s", lock_path, exc)
-                        continue
-
-                if not stale:
-                    continue
-
-                try:
-                    lock_path.unlink()
-                    logger.warning("removed stale huggingface lock: %s", lock_path)
-                except FileNotFoundError:
-                    continue
-                except Exception as exc:  # pragma: no cover - diagnostics only
-                    logger.debug(
-                        "failed to remove stale huggingface lock %s: %s", lock_path, exc
-                    )
+                        logger.debug(
+                            "failed to remove stale huggingface lock %s: %s", lock_path, exc
+                        )
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+            if deadline is not None and time.monotonic() >= deadline:
+                break
     except Exception as exc:  # pragma: no cover - best effort logging
         logger.debug("failed to scan huggingface cache for locks: %s", exc)
 
@@ -610,9 +637,10 @@ def _load_embedder() -> SentenceTransformer | None:
         },
     )
     if cache_dir is not None:
-        _cleanup_hf_locks(cache_dir)
-        local_kwargs["cache_folder"] = str(cache_dir)
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
+        focus_dir = model_cache if model_cache.exists() else model_cache.parent
+        _cleanup_hf_locks(cache_dir, focus=focus_dir)
+        local_kwargs["cache_folder"] = str(cache_dir)
         snapshot_path = _resolve_local_snapshot(model_cache) if model_cache.exists() else None
         offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
         force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
