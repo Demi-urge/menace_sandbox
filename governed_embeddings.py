@@ -762,20 +762,51 @@ def _force_cleanup_embedder_locks() -> int:
 
     removed = 0
 
+    deadline: float | None = None
+    if _HF_LOCK_CLEANUP_TIMEOUT > 0:
+        deadline = time.monotonic() + _HF_LOCK_CLEANUP_TIMEOUT
+
     with _FORCED_LOCK_CLEANUP_GUARD:
         try:
-            for lock_path in model_cache.rglob("*.lock"):
-                if lock_path.name == "menace-embedder.lock":
-                    continue
-                try:
-                    lock_path.unlink()
-                    removed += 1
-                except FileNotFoundError:
-                    continue
-                except Exception as exc:  # pragma: no cover - diagnostics only
+            for root, dirs, files in os.walk(model_cache):
+                if deadline is not None and time.monotonic() >= deadline:
+                    dirs[:] = []
                     logger.debug(
-                        "failed to remove embedder cache lock %s: %s", lock_path, exc
+                        "aborting forced embedder lock cleanup after %.1fs",
+                        _HF_LOCK_CLEANUP_TIMEOUT,
                     )
+                    break
+
+                for name in files:
+                    if not name.endswith(".lock"):
+                        continue
+                    if name == "menace-embedder.lock":
+                        continue
+
+                    lock_path = Path(root) / name
+                    try:
+                        if lock_path.is_dir():
+                            continue
+                    except Exception:  # pragma: no cover - ignore racing filesystem errors
+                        continue
+
+                    try:
+                        lock_path.unlink()
+                        removed += 1
+                    except FileNotFoundError:
+                        continue
+                    except Exception as exc:  # pragma: no cover - diagnostics only
+                        logger.debug(
+                            "failed to remove embedder cache lock %s: %s", lock_path, exc
+                        )
+
+                if deadline is not None and time.monotonic() >= deadline:
+                    dirs[:] = []
+                    logger.debug(
+                        "aborting forced embedder lock cleanup after %.1fs",
+                        _HF_LOCK_CLEANUP_TIMEOUT,
+                    )
+                    break
         except FileNotFoundError:
             return removed
         except Exception as exc:  # pragma: no cover - diagnostics only
