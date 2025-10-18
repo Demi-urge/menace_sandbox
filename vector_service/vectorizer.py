@@ -13,10 +13,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
 from pathlib import Path
+import json
+import logging
 import os
+import socket
 import tarfile
 import tempfile
-import json
+import urllib.error
 import urllib.request
 
 import torch
@@ -39,7 +42,32 @@ _LOCAL_TOKENIZER: AutoTokenizer | None = None
 _LOCAL_MODEL: AutoModel | None = None
 
 
+logger = logging.getLogger(__name__)
+
+
+def _remote_timeout() -> float | None:
+    raw = os.getenv("VECTOR_SERVICE_TIMEOUT", "10").strip()
+    if not raw:
+        return 10.0
+    try:
+        value = float(raw)
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_TIMEOUT=%r; defaulting to 10s", raw
+        )
+        return 10.0
+    if value <= 0:
+        logger.warning(
+            "VECTOR_SERVICE_TIMEOUT must be positive; defaulting to 10s"
+        )
+        return 10.0
+    return value
+
+
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
+_REMOTE_ENDPOINT = _REMOTE_URL.rstrip("/") if _REMOTE_URL else None
+_REMOTE_TIMEOUT = _remote_timeout()
+_REMOTE_DISABLED = False
 
 
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
@@ -98,18 +126,41 @@ class SharedVectorService:
             return _local_embed(text)
         raise RuntimeError("text embedder unavailable")
 
+    def _call_remote(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any] | None:
+        global _REMOTE_DISABLED
+        if _REMOTE_DISABLED or _REMOTE_ENDPOINT is None:
+            return None
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{_REMOTE_ENDPOINT}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(
+                req, timeout=_REMOTE_TIMEOUT or None
+            ) as resp:  # pragma: no cover - network
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            logger.warning(
+                "remote vector service unavailable; falling back to local handling",  # pragma: no cover - diagnostics
+                extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
+            )
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
+            )
+        _REMOTE_DISABLED = True
+        return None
+
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
-        if _REMOTE_URL:
-            data = json.dumps({"kind": kind, "record": record}).encode("utf-8")
-            req = urllib.request.Request(
-                f"{_REMOTE_URL.rstrip('/')}/vectorise",
-                data=data,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
-                payload = json.loads(resp.read().decode("utf-8"))
-            return payload.get("vector", [])
+        payload = self._call_remote("/vectorise", {"kind": kind, "record": record})
+        if payload is not None:
+            vec = payload.get("vector", [])
+            if isinstance(vec, list):
+                return vec
 
         kind = kind.lower()
         handler = self._handlers.get(kind)
@@ -133,24 +184,18 @@ class SharedVectorService:
         """Vectorise ``record`` and persist the embedding."""
 
         vec = self.vectorise(kind, record)
-        if _REMOTE_URL:
-            data = json.dumps(
-                {
-                    "kind": kind,
-                    "record_id": record_id,
-                    "record": record,
-                    "origin_db": origin_db,
-                    "metadata": metadata,
-                }
-            ).encode("utf-8")
-            req = urllib.request.Request(
-                f"{_REMOTE_URL.rstrip('/')}/vectorise-and-store",
-                data=data,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
-                payload = json.loads(resp.read().decode("utf-8"))
-            return payload.get("vector", [])
+        payload = self._call_remote(
+            "/vectorise-and-store",
+            {
+                "kind": kind,
+                "record_id": record_id,
+                "record": record,
+                "origin_db": origin_db,
+                "metadata": metadata,
+            },
+        )
+        if payload is not None:
+            vec = payload.get("vector", vec)
 
         if self.vector_store is None:
             raise RuntimeError("VectorStore not configured")
