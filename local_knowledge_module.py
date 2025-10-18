@@ -72,33 +72,43 @@ else:
 
 logger = logging.getLogger(__name__)
 
-try:
-    _EMBEDDER_TIMEOUT = float(os.getenv("LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT", "10"))
-except Exception:
-    _EMBEDDER_TIMEOUT = 10.0
-    logger.warning("invalid LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT; defaulting to 10s")
-else:
-    if _EMBEDDER_TIMEOUT < 0:
-        logger.warning(
-            "LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT must be non-negative; defaulting to 10s"
-        )
-        _EMBEDDER_TIMEOUT = 10.0
+_EMBEDDER_WAIT_HARD_CAP = 60.0
 
-try:
-    _EMBEDDER_JOIN_CAP = float(
-        os.getenv("LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP", "30")
-    )
-except Exception:
-    _EMBEDDER_JOIN_CAP = 30.0
-    logger.warning(
-        "invalid LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP; defaulting to 30s"
-    )
-else:
-    if _EMBEDDER_JOIN_CAP < 0:
+
+def _parse_positive_float(env_name: str, default: float) -> float:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        value = default
+    else:
+        try:
+            value = float(raw)
+        except Exception:
+            logger.warning(
+                "invalid %s=%r; defaulting to %.1fs", env_name, raw, default
+            )
+            return default
+    if value < 0:
         logger.warning(
-            "LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP must be non-negative; defaulting to 30s"
+            "%s must be non-negative; defaulting to %.1fs", env_name, default
         )
-        _EMBEDDER_JOIN_CAP = 30.0
+        return default
+    if value > _EMBEDDER_WAIT_HARD_CAP:
+        logger.warning(
+            "capping %s to %.1fs (requested %.1fs)",
+            env_name,
+            _EMBEDDER_WAIT_HARD_CAP,
+            value,
+        )
+        return _EMBEDDER_WAIT_HARD_CAP
+    return value
+
+
+_EMBEDDER_TIMEOUT = _parse_positive_float(
+    "LOCAL_KNOWLEDGE_EMBEDDER_TIMEOUT", 10.0
+)
+_EMBEDDER_JOIN_CAP = _parse_positive_float(
+    "LOCAL_KNOWLEDGE_EMBEDDER_JOIN_CAP", 30.0
+)
 
 
 class LocalKnowledgeModule:
@@ -290,7 +300,18 @@ def _load_embedder_async(
                 join_timeout,
             )
             join_timeout = _EMBEDDER_JOIN_CAP
+    start = time.perf_counter()
     thread.join(join_timeout)
+    waited = time.perf_counter() - start
+    if join_timeout is not None:
+        logger.debug(
+            "initial embedder wait elapsed",
+            extra={
+                "requested": round(join_timeout, 3) if join_timeout is not None else 0.0,
+                "waited": round(waited, 3),
+                "thread_alive": thread.is_alive(),
+            },
+        )
 
     return result, thread, errors
 
