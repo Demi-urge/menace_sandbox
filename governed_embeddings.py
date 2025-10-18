@@ -859,14 +859,60 @@ def _initialise_embedder_with_timeout(
                 wait_time=round(wait_time, 3),
                 requested_timeout=round(requested_timeout, 3),
             )
-    finished = event.wait(wait_time)
+    finished = False
+    waited = 0.0
+    remaining_wait = wait_time
+    if wait_time <= 0:
+        finished = event.is_set()
+    else:
+        deadline = time.perf_counter() + wait_time
+        heartbeat_interval = 5.0
+        next_heartbeat = time.perf_counter() + heartbeat_interval
+        remaining = wait_time
+        while remaining > 0:
+            slice_wait = remaining if remaining <= 1.0 else 1.0
+            if event.wait(slice_wait):
+                finished = True
+                break
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            waited = wait_time - max(0.0, remaining)
+            remaining_wait = max(0.0, remaining)
+            if time.perf_counter() >= next_heartbeat:
+                next_heartbeat = time.perf_counter() + heartbeat_interval
+                logger.debug(
+                    "sentence transformer initialisation still pending",
+                    extra={
+                        "model": _MODEL_NAME,
+                        "seconds_remaining": round(remaining_wait, 3),
+                        "requester": requester,
+                    },
+                )
+                _trace(
+                    "wait.heartbeat",
+                    requester=requester,
+                    seconds_remaining=round(remaining_wait, 3),
+                    waited=round(waited, 3),
+                )
+        else:
+            remaining = deadline - time.perf_counter()
+        waited = max(0.0, wait_time - max(0.0, remaining))
+        remaining_wait = max(0.0, remaining)
+        if not finished:
+            finished = event.is_set()
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
         _EMBEDDER_TIMEOUT_REACHED = False
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.discard(requester)
-        _trace("wait.finished", requester=requester, wait_time=round(wait_time, 3))
+        _trace(
+            "wait.finished",
+            requester=requester,
+            wait_time=round(wait_time, 3),
+            waited=round(waited, 3),
+        )
         return
 
     if _EMBEDDER is None and _activate_bundled_fallback("timeout"):
@@ -875,7 +921,12 @@ def _initialise_embedder_with_timeout(
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
-        _trace("wait.fallback", requester=requester, wait_time=round(wait_time, 3))
+        _trace(
+            "wait.fallback",
+            requester=requester,
+            wait_time=round(wait_time, 3),
+            waited=round(waited, 3),
+        )
         return
 
     if suppress_timeout_log:
@@ -883,20 +934,20 @@ def _initialise_embedder_with_timeout(
             if requester:
                 logger.debug(
                     "sentence transformer initialisation still pending after %.0fs (requested by %s)",
-                    wait_time,
+                    waited or wait_time,
                     requester,
                     extra={"model": _MODEL_NAME},
                 )
             else:
                 logger.debug(
                     "sentence transformer initialisation still pending after %.0fs",
-                    wait_time,
+                    waited or wait_time,
                     extra={"model": _MODEL_NAME},
                 )
             _trace(
                 "wait.pending",
                 requester=requester,
-                wait_time=round(wait_time, 3),
+                wait_time=round(waited or wait_time, 3),
                 suppress_timeout=True,
             )
         _EMBEDDER_TIMEOUT_REACHED = True
@@ -920,7 +971,7 @@ def _initialise_embedder_with_timeout(
             _trace(
                 "wait.timeout",
                 requester=requester,
-                wait_time=round(wait_time, 3),
+                wait_time=round(waited or wait_time, 3),
                 thread_alive=alive,
             )
         else:
@@ -932,7 +983,7 @@ def _initialise_embedder_with_timeout(
             _trace(
                 "wait.timeout",
                 requester=None,
-                wait_time=round(wait_time, 3),
+                wait_time=round(waited or wait_time, 3),
                 thread_alive=alive,
             )
         if requester:
