@@ -180,6 +180,7 @@ _STUB_EMBEDDER_DIMENSION = 384
 _STUB_FALLBACK_USED = False
 _HF_TIMEOUT_SETTINGS: dict[str, str] = {}
 _HF_TIMEOUT_CONFIGURED = False
+_FORCED_LOCK_CLEANUP_GUARD = threading.Lock()
 
 
 def _trace(event: str, **extra: Any) -> None:
@@ -624,6 +625,51 @@ def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
         logger.debug("failed to scan huggingface cache for locks: %s", exc)
 
 
+def _force_cleanup_embedder_locks() -> int:
+    """Aggressively remove lock files within the embedder cache directory."""
+
+    cache_dir = _cache_base()
+    if cache_dir is None:
+        return 0
+
+    model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
+    if not model_cache.exists():
+        return 0
+
+    removed = 0
+
+    with _FORCED_LOCK_CLEANUP_GUARD:
+        try:
+            for lock_path in model_cache.rglob("*.lock"):
+                if lock_path.name == "menace-embedder.lock":
+                    continue
+                try:
+                    lock_path.unlink()
+                    removed += 1
+                except FileNotFoundError:
+                    continue
+                except Exception as exc:  # pragma: no cover - diagnostics only
+                    logger.debug(
+                        "failed to remove embedder cache lock %s: %s", lock_path, exc
+                    )
+        except FileNotFoundError:
+            return removed
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug(
+                "failed to scan embedder cache for locks: %s", exc,
+                extra={"cache": str(model_cache)},
+            )
+            return removed
+
+    if removed:
+        logger.warning(
+            "force removed %d stale huggingface locks from %s",
+            removed,
+            model_cache,
+        )
+    return removed
+
+
 def _embedder_lock() -> SandboxLockType | None:
     """Return a process-wide file lock guarding embedder initialisation."""
 
@@ -645,6 +691,49 @@ def _embedder_lock() -> SandboxLockType | None:
     lock_path = base / "menace-embedder.lock"
     _EMBEDDER_LOCK = SandboxLock(str(lock_path))
     return _EMBEDDER_LOCK
+
+
+def _cleanup_stale_embedder_lock(lock_path: str) -> bool:
+    """Attempt to remove a stale embedder lock file."""
+
+    if not lock_path:
+        return False
+
+    try:
+        path = Path(lock_path)
+    except Exception:  # pragma: no cover - invalid paths are ignored
+        return False
+
+    stale = False
+    try:
+        if is_lock_stale is not None:
+            stale = is_lock_stale(lock_path, timeout=max(LOCK_TIMEOUT, 300))
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug("failed to inspect embedder lock %s: %s", lock_path, exc)
+        stale = False
+
+    if not stale:
+        try:
+            stale = time.time() - path.stat().st_mtime > max(LOCK_TIMEOUT, 300)
+        except FileNotFoundError:
+            return False
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("failed to stat embedder lock %s: %s", lock_path, exc)
+            return False
+
+    if not stale:
+        return False
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug("failed to remove stale embedder lock %s: %s", lock_path, exc)
+        return False
+
+    logger.warning("removed stale embedder lock: %s", lock_path)
+    return True
 
 
 def _identify_embedder_requester() -> str | None:
@@ -914,6 +1003,14 @@ def _initialise_embedder_with_timeout(
             waited=round(waited, 3),
         )
         return
+
+    cleaned = _force_cleanup_embedder_locks()
+    if cleaned:
+        _trace(
+            "wait.force_cleanup",
+            requester=requester,
+            removed=cleaned,
+        )
 
     if _EMBEDDER is None and _activate_bundled_fallback("timeout"):
         _EMBEDDER_TIMEOUT_LOGGED = False
@@ -1240,20 +1337,52 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
         )
         return _EMBEDDER
 
-    try:
-        with lock.acquire(timeout=lock_timeout):
-            _initialise_embedder_with_timeout(
-                timeout_override=wait_override,
-                suppress_timeout_log=wait_override is not None,
-                requester=requester,
+    cleaned_once = False
+    while True:
+        try:
+            with lock.acquire(timeout=lock_timeout):
+                _initialise_embedder_with_timeout(
+                    timeout_override=wait_override,
+                    suppress_timeout_log=wait_override is not None,
+                    requester=requester,
+                )
+                break
+        except LockTimeout:
+            lock_path = getattr(lock, "lock_file", "")
+            if cleaned_once:
+                logger.error(
+                    "timed out waiting for embedder initialisation lock",
+                    extra={"lock": lock_path, "requester": requester},
+                )
+                return None
+
+            removed_lock = _cleanup_stale_embedder_lock(lock_path)
+            removed_cache = _force_cleanup_embedder_locks()
+            if not removed_lock and not removed_cache:
+                logger.error(
+                    "timed out waiting for embedder initialisation lock",
+                    extra={"lock": lock_path, "requester": requester},
+                )
+                return None
+
+            cleaned_once = True
+            logger.warning(
+                "retrying embedder initialisation after cleaning stale locks",
+                extra={
+                    "lock": lock_path,
+                    "requester": requester,
+                    "lock_removed": removed_lock,
+                    "cache_locks_removed": removed_cache,
+                },
             )
-    except LockTimeout:
-        lock_path = getattr(lock, "lock_file", "")
-        logger.error(
-            "timed out waiting for embedder initialisation lock",
-            extra={"lock": lock_path, "requester": requester},
-        )
-        return None
+            _trace(
+                "lock.retry",
+                requester=requester,
+                lock=lock_path,
+                lock_removed=removed_lock,
+                cache_removed=removed_cache,
+            )
+            continue
     return _EMBEDDER
 
 
