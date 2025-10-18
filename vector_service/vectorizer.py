@@ -9,6 +9,8 @@ appropriate vectoriser and optionally persists the resulting embedding
 using a configurable :class:`~vector_service.vector_store.VectorStore`.
 """
 
+# ruff: noqa: T201 - module level debug prints are routed via logging
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
@@ -43,6 +45,15 @@ _LOCAL_MODEL: AutoModel | None = None
 
 
 logger = logging.getLogger(__name__)
+
+
+def _trace(event: str, **extra: Any) -> None:
+    """Emit lightweight diagnostics when ``VECTOR_SERVICE_TRACE`` is set."""
+
+    flag = os.getenv("VECTOR_SERVICE_TRACE", "")
+    if flag and flag.lower() not in {"0", "false", "no", "off"}:
+        payload = {"event": event, **extra}
+        logger.log(logging.INFO, "vector-service: %s", event, extra=payload)
 
 
 def _remote_timeout() -> float | None:
@@ -111,18 +122,35 @@ class SharedVectorService:
     def __post_init__(self) -> None:
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
+        _trace("shared_vector_service.init.start")
         self._handlers = load_handlers()
+        _trace(
+            "shared_vector_service.handlers.loaded",
+            handler_count=len(self._handlers),
+            handlers=sorted(self._handlers.keys()),
+        )
         if self.vector_store is None:
-            self.vector_store = get_default_vector_store()
+            _trace("shared_vector_service.vector_store.fetch")
+            try:
+                self.vector_store = get_default_vector_store()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                _trace("shared_vector_service.vector_store.error", error=str(exc))
+                raise
+        _trace(
+            "shared_vector_service.init.complete",
+            has_vector_store=self.vector_store is not None,
+        )
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is not None:
+            _trace("shared_vector_service.encode_text.embedder", source="governed")
             vec = governed_embed(text, self.text_embedder)
             if vec is None:
                 raise RuntimeError("embedding failed")
             return [float(x) for x in vec]
         if SentenceTransformer is None:
             # SentenceTransformer not installed: load bundled model
+            _trace("shared_vector_service.encode_text.embedder", source="local_fallback")
             return _local_embed(text)
         raise RuntimeError("text embedder unavailable")
 
@@ -156,19 +184,24 @@ class SharedVectorService:
 
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
+        _trace("shared_vector_service.vectorise.start", kind=kind)
         payload = self._call_remote("/vectorise", {"kind": kind, "record": record})
         if payload is not None:
             vec = payload.get("vector", [])
             if isinstance(vec, list):
+                _trace("shared_vector_service.vectorise.remote", kind=kind)
                 return vec
 
         kind = kind.lower()
         handler = self._handlers.get(kind)
         if handler:
+            _trace("shared_vector_service.vectorise.handler", kind=kind)
             return handler(record)
         if kind in {"text", "prompt"}:
+            _trace("shared_vector_service.vectorise.text", kind=kind)
             return self._encode_text(str(record.get("text", "")))
         if kind in {"stack"}:
+            _trace("shared_vector_service.vectorise.stack", kind=kind)
             return self._encode_text(str(record.get("text", "")))
         raise ValueError(f"unknown record type: {kind}")
 
