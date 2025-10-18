@@ -63,7 +63,7 @@ def test_memory_manager_uses_governed_embed(monkeypatch):
 def test_init_local_knowledge_uses_get_embedder(monkeypatch, tmp_path):
     called = {}
 
-    def fake_get():
+    def fake_get(*args, **kwargs):
         called["hit"] = True
         class Dummy:
             def encode(self, arr):
@@ -180,6 +180,35 @@ def test_initialise_embedder_soft_wait(monkeypatch, caplog):
 
     assert recorded["timeout"] == 0.2
     assert any("EMBEDDER_INIT_SOFT_WAIT" in rec.msg for rec in caplog.records)
+
+
+def test_initialise_embedder_timeout_override(monkeypatch, caplog):
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(
+        governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
+    )
+
+    recorded = {}
+
+    class DummyEvent:
+        def wait(self, timeout: float) -> bool:
+            recorded.setdefault("timeouts", []).append(timeout)
+            return False
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "_ensure_embedder_thread_locked",
+        lambda: DummyEvent(),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        governed_embeddings._initialise_embedder_with_timeout(
+            timeout_override=0.05, suppress_timeout_log=True
+        )
+
+    assert recorded["timeouts"] == [0.05]
+    assert any("pending" in rec.msg for rec in caplog.records)
 
 
 def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):

@@ -347,8 +347,18 @@ def _ensure_embedder_thread_locked() -> threading.Event:
     return _EMBEDDER_INIT_EVENT
 
 
-def _initialise_embedder_with_timeout() -> None:
-    """Initialise the shared embedder without blocking indefinitely."""
+def _initialise_embedder_with_timeout(
+    timeout_override: float | None = None,
+    *,
+    suppress_timeout_log: bool = False,
+) -> None:
+    """Initialise the shared embedder without blocking indefinitely.
+
+    ``timeout_override`` allows callers to shorten the wait period without
+    affecting the global timeout configuration.  When an override is used the
+    function returns ``None`` once the shorter timeout elapses while keeping the
+    background initialisation thread alive.
+    """
 
     global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED
 
@@ -359,15 +369,23 @@ def _initialise_embedder_with_timeout() -> None:
 
     global _EMBEDDER_WAIT_CAPPED
 
-    wait_cap = max(0.0, min(_EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT))
+    requested_timeout = _EMBEDDER_INIT_TIMEOUT
+    if timeout_override is not None:
+        requested_timeout = min(requested_timeout, max(0.0, timeout_override))
+
+    wait_cap = max(0.0, min(requested_timeout, _MAX_EMBEDDER_WAIT))
     wait_limit = wait_cap
     soft_clamped = False
     if _SOFT_EMBEDDER_WAIT >= 0:
-        wait_limit = min(wait_limit, _SOFT_EMBEDDER_WAIT)
+        soft_cap = _SOFT_EMBEDDER_WAIT
+        if timeout_override is not None:
+            soft_cap = min(soft_cap, max(0.0, timeout_override))
+        wait_limit = min(wait_limit, soft_cap)
         soft_clamped = wait_limit < wait_cap
 
     if (
-        not _EMBEDDER_WAIT_CAPPED
+        timeout_override is None
+        and not _EMBEDDER_WAIT_CAPPED
         and (wait_limit < _EMBEDDER_INIT_TIMEOUT or soft_clamped)
         and not _EMBEDDER_TIMEOUT_LOGGED
     ):
@@ -387,10 +405,20 @@ def _initialise_embedder_with_timeout() -> None:
                 _EMBEDDER_INIT_TIMEOUT,
             )
 
-    wait_time = wait_limit if not _EMBEDDER_TIMEOUT_LOGGED else 0.0
+    wait_time = wait_limit
+    if _EMBEDDER_TIMEOUT_LOGGED and not suppress_timeout_log:
+        wait_time = 0.0
+
     finished = event.wait(wait_time)
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
+        return
+
+    if suppress_timeout_log:
+        if wait_time > 0:
+            logger.debug(
+                "sentence transformer initialisation still pending after %.0fs", wait_time
+            )
         return
 
     if not _EMBEDDER_TIMEOUT_LOGGED:
@@ -462,27 +490,41 @@ def _load_embedder() -> SentenceTransformer | None:
         return None
 
 
-def get_embedder() -> SentenceTransformer | None:
+def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
     """Return a lazily-instantiated shared :class:`SentenceTransformer`.
 
     The model is created on first use and reused for subsequent calls.  Errors
     during initialisation result in ``None`` being cached to avoid repeated
-    expensive failures.
+    expensive failures.  When ``timeout`` is provided the caller-specific wait
+    duration is capped to that value, allowing services that run during startup
+    to avoid blocking for the full global timeout.
     """
     global _EMBEDDER
     if _EMBEDDER is not None:
         return _EMBEDDER
 
     lock = _embedder_lock()
-    timeout = LOCK_TIMEOUT
+    wait_override = timeout
+    lock_timeout = LOCK_TIMEOUT
+    if wait_override is not None:
+        try:
+            lock_timeout = min(lock_timeout, max(0.0, wait_override))
+        except Exception:
+            lock_timeout = LOCK_TIMEOUT
 
     if lock is None:
-        _initialise_embedder_with_timeout()
+        _initialise_embedder_with_timeout(
+            timeout_override=wait_override,
+            suppress_timeout_log=wait_override is not None,
+        )
         return _EMBEDDER
 
     try:
-        with lock.acquire(timeout=timeout):
-            _initialise_embedder_with_timeout()
+        with lock.acquire(timeout=lock_timeout):
+            _initialise_embedder_with_timeout(
+                timeout_override=wait_override,
+                suppress_timeout_log=wait_override is not None,
+            )
     except LockTimeout:
         lock_path = getattr(lock, "lock_file", "")
         logger.error(
