@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import threading
@@ -26,6 +27,103 @@ except Exception:  # pragma: no cover - degrade gracefully when locks unavailabl
     LockTimeout = _FallbackTimeout  # type: ignore[assignment]
     LOCK_TIMEOUT = float(os.getenv("LOCK_TIMEOUT", "60"))
     is_lock_stale = None  # type: ignore[assignment]
+
+if SandboxLock is None:  # pragma: no cover - fallback when lock_utils unavailable
+    from fcntl_compat import LOCK_EX, LOCK_NB, LOCK_UN, flock
+
+    class _SimpleLockGuard:
+        """Context manager implementing ``with lock.acquire():`` semantics."""
+
+        def __init__(self, lock: "_SimpleSandboxLock", timeout: float | None) -> None:
+            if timeout is None or timeout < 0:
+                timeout = LOCK_TIMEOUT
+            self._timeout = timeout
+            self._lock = lock
+
+        def __enter__(self) -> "_SimpleSandboxLock":
+            self._lock._acquire(self._timeout)
+            return self._lock
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._lock.release()
+
+    class _SimpleSandboxLock:
+        """Minimal cross-process file lock used when :mod:`lock_utils` is absent."""
+
+        def __init__(self, lock_file: str) -> None:
+            self.lock_file = lock_file
+            self.timeout = LOCK_TIMEOUT
+            self._fd: int | None = None
+            self._guard: _SimpleLockGuard | None = None
+
+        # ------------------------------------------------------------------ helpers
+        def _acquire(self, timeout: float) -> None:
+            deadline = None if timeout < 0 else time.monotonic() + timeout
+            os.makedirs(os.path.dirname(self.lock_file), exist_ok=True)
+            poll_interval = 0.1
+            while True:
+                fd = os.open(self.lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+                try:
+                    flock(fd, LOCK_EX | LOCK_NB)
+                except OSError as exc:
+                    os.close(fd)
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                        raise
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise LockTimeout(self.lock_file)
+                    time.sleep(poll_interval)
+                    continue
+
+                self._fd = fd
+                try:
+                    os.ftruncate(fd, 0)
+                    os.write(fd, f"{os.getpid()},{time.time()}".encode("ascii", "ignore"))
+                except Exception:  # pragma: no cover - metadata best effort
+                    pass
+                return
+
+        # ---------------------------------------------------------------- context API
+        def acquire(self, timeout: float | None = None) -> _SimpleLockGuard:
+            return _SimpleLockGuard(self, timeout)
+
+        def release(self) -> None:
+            if self._fd is None:
+                return
+            fd = self._fd
+            self._fd = None
+            try:
+                flock(fd, LOCK_UN)
+            except Exception:  # pragma: no cover - best effort
+                pass
+            finally:
+                try:
+                    os.close(fd)
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            try:
+                os.remove(self.lock_file)
+            except FileNotFoundError:
+                pass
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("failed to remove fallback lock file %s: %s", self.lock_file, exc)
+
+        def __enter__(self) -> "_SimpleSandboxLock":
+            self._guard = self.acquire()
+            self._guard.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            if self._guard is not None:
+                self._guard.__exit__(exc_type, exc, tb)
+                self._guard = None
+            else:  # pragma: no cover - defensive
+                self.release()
+
+    SandboxLock = _SimpleSandboxLock  # type: ignore[assignment]
+    SandboxLockType = _SimpleSandboxLock  # type: ignore[assignment]
+    logging.getLogger(__name__).debug(
+        "lock_utils unavailable; using simplified sandbox lock"
+    )
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
