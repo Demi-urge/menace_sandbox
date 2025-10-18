@@ -8,6 +8,28 @@ Initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router` before importing
 modules that touch the database.
 """
 
+print("🔥 RUN STARTED")
+
+import os
+
+print("🌍 ENV OK")
+
+from knowledge.local_knowledge import init_local_knowledge
+
+print("📡 local_knowledge module imported")
+
+local_knowledge = init_local_knowledge()
+
+print("✅ local_knowledge loaded")
+
+from sandbox_runner.environment import start_sandbox
+
+print("🧪 sandbox module imported")
+
+start_sandbox(knowledge=local_knowledge)
+
+print("🏁 Sandbox fully started")
+
 import argparse
 import atexit
 import contextlib
