@@ -168,6 +168,7 @@ _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
 _EMBEDDER_TIMEOUT_REACHED = False
+_FALLBACK_ANNOUNCED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 _BUNDLED_EMBEDDER: Any | None = None
 _BUNDLED_EMBEDDER_LOCK = threading.Lock()
@@ -283,6 +284,46 @@ def _load_bundled_embedder() -> Any | None:
             extra={"archive": str(archive)},
         )
         return _BUNDLED_EMBEDDER
+
+
+def _activate_bundled_fallback(reason: str) -> bool:
+    """Promote the bundled embedder to the shared embedder slot.
+
+    The helper is invoked when the hub initialisation thread exceeds its
+    timeout.  It loads the lightweight bundled model (if available) and marks
+    the shared embedder as ready so dependant services can proceed instead of
+    blocking indefinitely while the background thread continues its best-effort
+    hub initialisation.
+    """
+
+    global _EMBEDDER, _FALLBACK_ANNOUNCED
+
+    fallback = _load_bundled_embedder()
+    if fallback is None:
+        return False
+
+    with _EMBEDDER_THREAD_LOCK:
+        if _EMBEDDER is None:
+            _EMBEDDER = cast("SentenceTransformer", fallback)
+            _EMBEDDER_INIT_EVENT.set()
+            if not _FALLBACK_ANNOUNCED:
+                _FALLBACK_ANNOUNCED = True
+                logger.warning(
+                    "using bundled fallback sentence transformer while hub initialisation continues",
+                    extra={"model": _MODEL_NAME, "reason": reason},
+                )
+            return True
+
+    if _EMBEDDER is not None:
+        return True
+
+    if not _FALLBACK_ANNOUNCED:
+        _FALLBACK_ANNOUNCED = True
+        logger.warning(
+            "bundled fallback sentence transformer already active",
+            extra={"model": _MODEL_NAME, "reason": reason},
+        )
+    return True
 
 
 def _cache_base() -> Optional[Path]:
@@ -472,22 +513,28 @@ def _embedder_lock() -> SandboxLockType | None:
 def _ensure_embedder_thread_locked() -> threading.Event:
     """Ensure the background embedder initialisation thread is running."""
 
-    global _EMBEDDER_INIT_THREAD
+    global _EMBEDDER_INIT_THREAD, _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_TIMEOUT_REACHED
 
     if _EMBEDDER_INIT_THREAD is not None and _EMBEDDER_INIT_THREAD.is_alive():
         return _EMBEDDER_INIT_EVENT
 
     _EMBEDDER_INIT_EVENT.clear()
+    _EMBEDDER_TIMEOUT_LOGGED = False
+    _EMBEDDER_TIMEOUT_REACHED = False
+    global _FALLBACK_ANNOUNCED
+    _FALLBACK_ANNOUNCED = False
 
     def _initialise() -> None:
         global _EMBEDDER, _EMBEDDER_TIMEOUT_LOGGED
         start = time.perf_counter()
         logger.info("embedder initialisation thread started", extra={"model": _MODEL_NAME})
         try:
-            _EMBEDDER = _load_embedder()
+            result = _load_embedder()
+            if result is not None:
+                _EMBEDDER = result
         except Exception:  # pragma: no cover - defensive logging
             logger.debug("sentence transformer initialisation raised", exc_info=True)
-            _EMBEDDER = None
+            result = None
         finally:
             duration = time.perf_counter() - start
             logger.info(
@@ -597,6 +644,11 @@ def _initialise_embedder_with_timeout(
         _EMBEDDER_TIMEOUT_REACHED = False
         return
 
+    if _EMBEDDER is None and _activate_bundled_fallback("timeout"):
+        _EMBEDDER_TIMEOUT_LOGGED = False
+        _EMBEDDER_TIMEOUT_REACHED = False
+        return
+
     if suppress_timeout_log:
         if wait_time > 0:
             logger.debug(
@@ -639,7 +691,12 @@ def _load_embedder() -> SentenceTransformer | None:
     if cache_dir is not None:
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
         focus_dir = model_cache if model_cache.exists() else model_cache.parent
-        _cleanup_hf_locks(cache_dir, focus=focus_dir)
+        try:
+            _cleanup_hf_locks(cache_dir, focus=focus_dir)
+        except TypeError:
+            # Tests stub ``_cleanup_hf_locks`` with a positional-only lambda.
+            # Fallback to the legacy calling convention to keep compatibility.
+            _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
         snapshot_path = _resolve_local_snapshot(model_cache) if model_cache.exists() else None
         offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
