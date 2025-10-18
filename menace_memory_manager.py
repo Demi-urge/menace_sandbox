@@ -31,6 +31,41 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 
+def _memory_embedder_timeout() -> float | None:
+    """Return the timeout used when fetching the shared embedder.
+
+    The timeout defaults to a small value so that repeated instantiations of
+    :class:`MenaceMemoryManager` do not serially block sandbox start-up when the
+    embedder is unavailable.  Users can opt-in to the legacy behaviour by
+    setting ``MENACE_MEMORY_EMBEDDER_TIMEOUT`` to ``"default"`` which disables
+    the override and lets :func:`governed_embeddings.get_embedder` use its
+    global timeout.  Any negative values are treated as zero to avoid surprising
+    wait times.
+    """
+
+    raw = os.getenv("MENACE_MEMORY_EMBEDDER_TIMEOUT", "").strip().lower()
+    if not raw:
+        return 5.0
+    if raw in {"default", "none", "auto"}:
+        return None
+    try:
+        timeout = float(raw)
+    except Exception:
+        logger.warning(
+            "invalid MENACE_MEMORY_EMBEDDER_TIMEOUT=%r; defaulting to 5s", raw
+        )
+        return 5.0
+    if timeout < 0:
+        logger.warning(
+            "MENACE_MEMORY_EMBEDDER_TIMEOUT must be non-negative; treating as 0s"
+        )
+        return 0.0
+    return timeout
+
+
+_MEMORY_EMBEDDER_TIMEOUT = _memory_embedder_timeout()
+
+
 class _SimpleKMeans:
     """Fallback KMeans clustering for when scikit-learn is unavailable."""
 
@@ -125,6 +160,7 @@ class MenaceMemoryManager(GPTMemoryInterface):
 
     def __init__(
         self,
+        db_path: str | Path | None = None,
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         bot_db: "BotDB" | None = None,
@@ -138,11 +174,21 @@ class MenaceMemoryManager(GPTMemoryInterface):
         summary_interval: int = 50,
     ) -> None:
         # allow connections to be shared across threads
-        router = GLOBAL_ROUTER or init_db_router(
-            os.getenv("MENACE_ID", "memory_manager")
-        )
-        with router.get_connection("memory") as conn:
-            self.conn = conn
+        self._owns_connection = False
+        if db_path is not None:
+            target = Path(db_path)
+            if str(target) != ":memory:":
+                target.parent.mkdir(parents=True, exist_ok=True)
+            self.conn = sqlite3.connect(  # noqa: SQL001
+                str(target), check_same_thread=False
+            )
+            self._owns_connection = True
+        else:
+            router = GLOBAL_ROUTER or init_db_router(
+                os.getenv("MENACE_ID", "memory_manager")
+            )
+            with router.get_connection("memory") as conn:
+                self.conn = conn
         self.subscribers: List[Callable[[MemoryEntry], None]] = []
         self.event_bus = event_bus
         self.bot_db = bot_db
@@ -152,7 +198,13 @@ class MenaceMemoryManager(GPTMemoryInterface):
         if embedder is not None:
             self.embedder = embedder
         else:
-            self.embedder = get_embedder()
+            timeout = _MEMORY_EMBEDDER_TIMEOUT
+            wait_for: float | None = None if timeout is None else max(0.0, timeout)
+            self.embedder = get_embedder(timeout=wait_for)
+            if self.embedder is None and wait_for not in (None, 0.0):
+                logger.debug(
+                    "MenaceMemoryManager continuing without embedder after %.1fs wait", wait_for
+                )
         self.cluster_backend = cluster_backend if cluster_backend in {"hdbscan", "faiss"} else "hdbscan"
         self.recluster_interval = max(1, recluster_interval)
         self._log_count = 0
