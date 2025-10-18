@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import errno
+import contextlib
 import logging
 import os
+import shutil
+import tarfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING, cast
 
 try:  # pragma: no cover - lock utilities are optional in some environments
     from lock_utils import (
@@ -135,6 +138,14 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - simplify in environments without the package
     SentenceTransformer = None  # type: ignore
 
+try:  # pragma: no cover - lightweight fallback dependencies
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+except Exception:  # pragma: no cover - defer heavy imports until needed
+    torch = None  # type: ignore[assignment]
+    AutoModel = None  # type: ignore[assignment]
+    AutoTokenizer = None  # type: ignore[assignment]
+
 from security.secret_redactor import redact
 from compliance.license_fingerprint import (
     check as license_check,
@@ -157,6 +168,120 @@ _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
+_BUNDLED_EMBEDDER: Any | None = None
+_BUNDLED_EMBEDDER_LOCK = threading.Lock()
+
+
+def _bundled_model_archive() -> Path | None:
+    base = Path(__file__).resolve().parent
+    archive = base / "vector_service" / "minilm" / "tiny-distilroberta-base.tar.xz"
+    return archive if archive.exists() else None
+
+
+def _prepare_bundled_model_dir() -> Path | None:
+    archive = _bundled_model_archive()
+    if archive is None:
+        logger.debug("bundled embedder archive missing")
+        return None
+
+    cache_dir = _cache_base()
+    if cache_dir is None:
+        cache_dir = Path.home() / ".cache" / "huggingface"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug("failed to prepare cache directory for bundled embedder: %s", exc)
+        return None
+
+    target_dir = cache_dir / "menace-bundled" / "tiny-distilroberta-base"
+    sentinel = target_dir / "config.json"
+    if not sentinel.exists():
+        tmp_dir = target_dir.with_suffix(".tmp")
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(archive) as tar:
+                tar.extractall(tmp_dir)
+            if target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+            tmp_dir.rename(target_dir)
+        except Exception as exc:
+            logger.warning("failed to extract bundled embedder archive: %s", exc)
+            with contextlib.suppress(Exception):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            return None
+    return target_dir
+
+
+def _load_bundled_embedder() -> Any | None:
+    global _BUNDLED_EMBEDDER
+    if _BUNDLED_EMBEDDER is not None:
+        return _BUNDLED_EMBEDDER
+
+    archive = _bundled_model_archive()
+    if archive is None:
+        return None
+    if torch is None or AutoModel is None or AutoTokenizer is None:  # pragma: no cover - optional deps
+        logger.warning("bundled embedder unavailable because transformers stack is missing")
+        return None
+
+    model_dir = _prepare_bundled_model_dir()
+    if model_dir is None:
+        return None
+
+    with _BUNDLED_EMBEDDER_LOCK:
+        if _BUNDLED_EMBEDDER is not None:
+            return _BUNDLED_EMBEDDER
+
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModel.from_pretrained(model_dir)
+            model.eval()
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.warning("failed to load bundled fallback embedder: %s", exc)
+            return None
+
+        class _FallbackSentenceTransformer:
+            """Minimal wrapper emulating the ``SentenceTransformer`` API."""
+
+            def __init__(self, tok, mdl) -> None:
+                self._tokenizer = tok
+                self._model = mdl
+
+            def encode(self, sentences: Any, **kwargs: Any) -> List[List[float]]:
+                if isinstance(sentences, str):
+                    batch = [sentences]
+                else:
+                    batch = list(sentences)
+                if not batch:
+                    return []
+                inputs = self._tokenizer(
+                    batch,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                with torch.no_grad():
+                    outputs = self._model(**inputs)
+                embeddings = outputs.last_hidden_state.mean(dim=1)
+                if kwargs.get("normalize_embeddings"):
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                return embeddings.cpu().tolist()
+
+            def get_sentence_embedding_dimension(self) -> int:
+                try:
+                    return int(self._model.config.hidden_size)
+                except Exception:  # pragma: no cover - defensive
+                    sample = self.encode(["test"])
+                    return len(sample[0]) if sample else 0
+
+        _BUNDLED_EMBEDDER = _FallbackSentenceTransformer(tokenizer, model)
+        logger.info(
+            "using bundled fallback sentence transformer",
+            extra={"archive": str(archive)},
+        )
+        return _BUNDLED_EMBEDDER
 
 
 def _cache_base() -> Optional[Path]:
@@ -452,6 +577,9 @@ def _load_embedder() -> SentenceTransformer | None:
     """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
 
     if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
+        fallback = _load_bundled_embedder()
+        if fallback is not None:
+            return cast("SentenceTransformer", fallback)
         return None
 
     cache_dir = _cache_base()
@@ -534,6 +662,9 @@ def _load_embedder() -> SentenceTransformer | None:
                     "sentence transformer initialisation failed in offline mode: %s",
                     exc,
                 )
+                fallback = _load_bundled_embedder()
+                if fallback is not None:
+                    return cast("SentenceTransformer", fallback)
                 return None
             try:
                 logger.info(
@@ -549,8 +680,14 @@ def _load_embedder() -> SentenceTransformer | None:
                 return model
             except Exception:
                 logger.warning("failed to initialise sentence transformer: %s", exc)
+                fallback = _load_bundled_embedder()
+                if fallback is not None:
+                    return cast("SentenceTransformer", fallback)
                 return None
         logger.warning("failed to initialise sentence transformer: %s", exc)
+        fallback = _load_bundled_embedder()
+        if fallback is not None:
+            return cast("SentenceTransformer", fallback)
         return None
 
 
