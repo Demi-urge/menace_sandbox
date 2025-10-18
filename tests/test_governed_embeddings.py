@@ -2,6 +2,7 @@ import inspect
 import logging
 import os
 import sys
+import threading
 import types
 
 import menace.governed_embeddings as governed_embeddings
@@ -115,3 +116,33 @@ def test_get_embedder_exports_token_when_available(monkeypatch):
     assert embedder.name == "all-MiniLM-L6-v2"
     assert os.environ["HUGGINGFACEHUB_API_TOKEN"] == "secret-token"
     assert os.environ["HF_HUB_TOKEN"] == "secret-token"
+
+
+def test_initialise_embedder_wait_capped(monkeypatch, caplog):
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(
+        governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock()
+    )
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_TIMEOUT", 9999.0)
+    monkeypatch.setattr(governed_embeddings, "_MAX_EMBEDDER_WAIT", 0.5)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_WAIT_CAPPED", False)
+
+    recorded = {}
+
+    class DummyEvent:
+        def wait(self, timeout: float) -> bool:
+            recorded["timeout"] = timeout
+            return False
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "_ensure_embedder_thread_locked",
+        lambda: DummyEvent(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        governed_embeddings._initialise_embedder_with_timeout()
+
+    assert recorded["timeout"] == 0.5
+    assert any("capping embedder" in rec.msg for rec in caplog.records)

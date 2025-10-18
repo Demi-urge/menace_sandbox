@@ -52,9 +52,11 @@ _EMBEDDER_LOCK: SandboxLockType | None = None
 _EMBEDDER_THREAD_LOCK = threading.RLock()
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
+_MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
 _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
+_EMBEDDER_WAIT_CAPPED = False
 
 
 def _cache_base() -> Optional[Path]:
@@ -187,7 +189,22 @@ def _initialise_embedder_with_timeout() -> None:
             return
         event = _ensure_embedder_thread_locked()
 
-    wait_time = _EMBEDDER_INIT_TIMEOUT if not _EMBEDDER_TIMEOUT_LOGGED else 0.0
+    global _EMBEDDER_WAIT_CAPPED
+
+    wait_limit = max(0.0, min(_EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT))
+    if (
+        not _EMBEDDER_WAIT_CAPPED
+        and wait_limit < _EMBEDDER_INIT_TIMEOUT
+        and not _EMBEDDER_TIMEOUT_LOGGED
+    ):
+        _EMBEDDER_WAIT_CAPPED = True
+        logger.warning(
+            "capping embedder initialisation wait to %.0fs (requested %.0fs)",
+            wait_limit,
+            _EMBEDDER_INIT_TIMEOUT,
+        )
+
+    wait_time = wait_limit if not _EMBEDDER_TIMEOUT_LOGGED else 0.0
     finished = event.wait(wait_time)
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
