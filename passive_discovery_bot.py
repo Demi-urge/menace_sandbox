@@ -18,9 +18,6 @@ import time
 from dynamic_path_router import resolve_path
 
 from .resilience import (
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
     CircuitBreaker,
     CircuitOpenError,
     PublishError,
@@ -28,6 +25,9 @@ data_bot = DataBot(start_server=False)
     retry_with_backoff,
 )
 from .logging_utils import set_correlation_id
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
