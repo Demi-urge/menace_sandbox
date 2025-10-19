@@ -244,10 +244,90 @@ def _get_patch_provenance_service_cls() -> type | None:
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS: dict[str, dict[str, str]] = {
+    "FutureSynergyProfitBot": {
+        "module_path": "menace_sandbox.future_prediction_bots",
+        "class_name": "FutureSynergyProfitBot",
+    },
+    "FutureSynergyMaintainabilityBot": {
+        "module_path": "menace_sandbox.future_prediction_bots",
+        "class_name": "FutureSynergyMaintainabilityBot",
+    },
+    "FutureSynergyCodeQualityBot": {
+        "module_path": "menace_sandbox.future_prediction_bots",
+        "class_name": "FutureSynergyCodeQualityBot",
+    },
+    "FutureSynergyNetworkLatencyBot": {
+        "module_path": "menace_sandbox.future_prediction_bots",
+        "class_name": "FutureSynergyNetworkLatencyBot",
+    },
+    "FutureSynergyThroughputBot": {
+        "module_path": "menace_sandbox.future_prediction_bots",
+        "class_name": "FutureSynergyThroughputBot",
+    },
+    "FutureSynergySecurityScoreBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergySecurityScoreBot",
+    },
+    "FutureSynergyEfficiencyBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyEfficiencyBot",
+    },
+    "FutureSynergyAntifragilityBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyAntifragilityBot",
+    },
+    "FutureSynergyResilienceBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyResilienceBot",
+    },
+    "FutureSynergyShannonEntropyBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyShannonEntropyBot",
+    },
+    "FutureSynergyFlexibilityBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyFlexibilityBot",
+    },
+    "FutureSynergyEnergyConsumptionBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyEnergyConsumptionBot",
+    },
+    "FutureSynergyAdaptabilityBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyAdaptabilityBot",
+    },
+    "FutureSynergySafetyRatingBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergySafetyRatingBot",
+    },
+    "FutureSynergyRiskIndexBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyRiskIndexBot",
+    },
+    "FutureSynergyRecoveryTimeBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyRecoveryTimeBot",
+    },
     "FutureSynergyDiscrepancyCountBot": {
         "module_path": "menace_sandbox.prediction_manager_bot",
         "class_name": "FutureSynergyDiscrepancyCountBot",
-    }
+    },
+    "FutureSynergyGPUUsageBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyGPUUsageBot",
+    },
+    "FutureSynergyCPUUsageBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyCPUUsageBot",
+    },
+    "FutureSynergyMemoryUsageBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyMemoryUsageBot",
+    },
+    "FutureSynergyLongTermLucrativityBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyLongTermLucrativityBot",
+    },
 }
 
 _UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS = float(
