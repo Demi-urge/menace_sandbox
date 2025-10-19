@@ -530,6 +530,7 @@ def _initialize_autonomous_sandbox(
     _MISSING_OPTIONAL.clear()
     _OPTIONAL_DEPENDENCY_WARNED.clear()
 
+    print("🧬 A: starting environment auto configuration")
     try:
         auto_configure_env(settings)
     except Exception as exc:  # pragma: no cover - best effort
@@ -538,11 +539,14 @@ def _initialize_autonomous_sandbox(
 
     # Ensure the mandatory vector_service dependency is available before
     # proceeding with further sandbox initialisation.
+    print("🧬 B: ensuring vector service availability")
     ensure_vector_service()
+    print("🧬 C: vector service confirmed")
 
     # Verify optional modules referenced in the docstring.  Missing modules are
     # collected so the version check below can skip them and avoid duplicate
     # warnings.
+    print("🧬 D: verifying optional modules")
     try:
         missing_optional = _verify_optional_modules(
             ("relevancy_radar", "quick_fix_engine"),
@@ -552,6 +556,7 @@ def _initialize_autonomous_sandbox(
         logger.warning("optional module verification failed", exc_info=True)
         missing_optional = set()
 
+    print("🧬 E: preparing sandbox data directory")
     data_dir = resolve_path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -565,8 +570,10 @@ def _initialize_autonomous_sandbox(
             "adjust permissions or update sandbox_data_dir"
         ) from exc
 
+    print("🧬 F: ensuring sandbox data directory is writable")
     # Ensure baseline metrics file exists; fall back to minimal snapshot when
     # metrics collection fails.
+    print("🧬 G: checking baseline metrics path")
     baseline_str = getattr(settings, "alignment_baseline_metrics_path", "")
     baseline_path = Path()
     if baseline_str:
@@ -587,10 +594,12 @@ def _initialize_autonomous_sandbox(
                 baseline_path.write_text("{}\n", encoding="utf-8")
 
     # Create expected SQLite databases
+    print("🧬 H: verifying required SQLite databases")
     for name in settings.sandbox_required_db_files:
         _ensure_sqlite_db(data_dir / name)
 
     # Verify optional services are importable and meet version requirements
+    print("🧬 I: validating optional service versions")
     from importlib import metadata
 
     for mod, min_version in settings.optional_service_versions.items():
@@ -642,6 +651,7 @@ def _initialize_autonomous_sandbox(
                 mod,
             )
 
+    print("🧬 J: optional service startup evaluation")
     if start_services:
         _start_optional_services(
             settings.optional_service_versions.keys(),
@@ -651,6 +661,7 @@ def _initialize_autonomous_sandbox(
     if start_services and start_self_improvement:
         _INITIALISED = True
 
+    print("🧬 K: self-improvement startup evaluation")
     if start_self_improvement:
         try:
             from self_improvement.api import (
@@ -658,10 +669,13 @@ def _initialize_autonomous_sandbox(
                 start_self_improvement_cycle,
             )
 
+            print("🧬 L: initializing self-improvement components")
             init_self_improvement(settings)
+            print("🧬 M: starting self-improvement cycle thread")
             thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
             thread.start()
             try:
+                print("🧬 N: joining self-improvement thread (non-blocking)")
                 thread.join(0)
             except Exception as exc:
                 logger.error(
@@ -669,6 +683,7 @@ def _initialize_autonomous_sandbox(
                 )
                 raise RuntimeError("self-improvement thread failed to start") from exc
             inner = getattr(thread, "_thread", thread)
+            print("🧬 O: verifying self-improvement thread liveness")
             if hasattr(inner, "is_alive") and not inner.is_alive():
                 raise RuntimeError("self-improvement thread terminated unexpectedly")
             _SELF_IMPROVEMENT_THREAD = thread
@@ -680,6 +695,7 @@ def _initialize_autonomous_sandbox(
             logger.error("self-improvement startup failed", exc_info=True)
             raise RuntimeError("self-improvement startup failed") from exc
 
+    print("🧬 P: autonomous sandbox initialization complete")
     return settings
 
 
