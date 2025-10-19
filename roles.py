@@ -51,11 +51,22 @@ READ = "read"
 WRITE = "write"
 ADMIN = "admin"
 
+_default_role = os.getenv("DEFAULT_BOT_ROLE", READ)
+if _default_role not in ROLE_PERMISSIONS:
+    logger.warning(
+        "Invalid DEFAULT_BOT_ROLE '%s'; falling back to %s",
+        _default_role,
+        READ,
+    )
+    _default_role = READ
+DEFAULT_ROLE = _default_role
+
 __all__ = [
     "ROLE_PERMISSIONS",
     "READ",
     "WRITE",
     "ADMIN",
+    "DEFAULT_ROLE",
     "ROLE_PERMISSIONS_FILE",
     "load_role_permissions",
 ]
