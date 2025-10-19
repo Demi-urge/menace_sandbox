@@ -94,7 +94,7 @@ flask==3.1.1
     # via menace (pyproject.toml)
 fonttools==4.58.5
     # via matplotlib
-fsspec==2025.5.1
+fsspec==2024.9.0
     # via
     #   huggingface-hub
     #   torch
