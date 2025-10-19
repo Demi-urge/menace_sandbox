@@ -106,8 +106,17 @@ except ImportError:  # pragma: no cover - fallback for package-relative layout
 
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from composite_workflow_scorer import CompositeWorkflowScorer
-except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+    _COMPOSITE_SCORER_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - fallback for package-relative layout
+    try:
+        from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+    except ImportError as exc2:
+        CompositeWorkflowScorer = None  # type: ignore[assignment]
+        _COMPOSITE_SCORER_ERROR = exc2
+    else:
+        _COMPOSITE_SCORER_ERROR = None
+else:
+    _COMPOSITE_SCORER_ERROR = None
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from neuroplasticity import PathwayDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
@@ -120,10 +129,6 @@ try:  # pragma: no cover - prefer absolute imports when running from repo root
     from roi_results_db import ROIResultsDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.roi_results_db import ROIResultsDB
-try:  # pragma: no cover - prefer absolute imports when running from repo root
-    from workflow_scorer_core import EvaluationResult
-except ImportError:  # pragma: no cover - fallback for package-relative layout
-    from menace_sandbox.workflow_scorer_core import EvaluationResult
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from workflow_stability_db import WorkflowStabilityDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
@@ -138,13 +143,115 @@ except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 try:  # pragma: no cover - optional dependency
     from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+    _WORKFLOW_SYNERGY_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - fallback for flat layout
+    try:
+        from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+    except ImportError as exc2:  # pragma: no cover - best effort
+        WorkflowSynergyComparator = None  # type: ignore[assignment]
+        _WORKFLOW_SYNERGY_ERROR = exc2
+    else:
+        _WORKFLOW_SYNERGY_ERROR = None
+else:
+    _WORKFLOW_SYNERGY_ERROR = None
 
-router = GLOBAL_ROUTER or init_db_router("self_improvement")
-STABLE_WORKFLOWS = WorkflowStabilityDB()
-from .meta_planning import PLANNER_INTERVAL
-from . import meta_planning
+_LOCAL_ROUTER: DBRouter | None = None
+
+
+class _RouterProxy:
+    """Lazy loader for :class:`DBRouter` used during module import."""
+
+    def _resolve(self) -> DBRouter:
+        global _LOCAL_ROUTER
+        if GLOBAL_ROUTER is not None:
+            return GLOBAL_ROUTER
+        if _LOCAL_ROUTER is None:
+            _LOCAL_ROUTER = init_db_router("self_improvement")
+        return _LOCAL_ROUTER
+
+    def __getattr__(self, name: str):
+        return getattr(self._resolve(), name)
+
+    def __bool__(self) -> bool:  # pragma: no cover - convenience only
+        try:
+            self._resolve()
+        except Exception:
+            return False
+        return True
+
+
+router = _RouterProxy()
+
+
+class _WorkflowStabilityProxy:
+    """Delay :class:`WorkflowStabilityDB` initialisation until first use."""
+
+    def __init__(self) -> None:
+        self._instance: WorkflowStabilityDB | None = None
+
+    def _resolve(self) -> WorkflowStabilityDB:
+        if self._instance is None:
+            self._instance = WorkflowStabilityDB()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self._resolve(), name)
+
+    def __bool__(self) -> bool:  # pragma: no cover - convenience only
+        return self._instance is not None
+
+
+STABLE_WORKFLOWS = _WorkflowStabilityProxy()
+try:  # pragma: no cover - optional meta-planning helpers
+    from .meta_planning import PLANNER_INTERVAL
+    from . import meta_planning
+    _META_PLANNING_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - simplified environments
+    import sys
+    import types
+
+    PLANNER_INTERVAL = 1  # type: ignore[assignment]
+
+    meta_planning = types.ModuleType("self_improvement.meta_planning")
+    meta_planning.MetaWorkflowPlanner = None  # type: ignore[attr-defined]
+
+    class _FallbackPlanner:
+        roi_db = None
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def schedule(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> list[dict[str, object]]:
+            return []
+
+    def _recent_error_entropy(
+        *_args: object,
+        **_kwargs: object,
+    ) -> tuple[list[object], float, float, float, float]:
+        return ([], 0.0, 0.0, 0.0, 0.0)
+
+    async def _self_improvement_cycle(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def _start_cycle(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def _stop_cycle(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    meta_planning._FallbackPlanner = _FallbackPlanner  # type: ignore[attr-defined]
+    meta_planning._recent_error_entropy = _recent_error_entropy  # type: ignore[attr-defined]
+    meta_planning.PLANNER_INTERVAL = PLANNER_INTERVAL  # type: ignore[attr-defined]
+    meta_planning.self_improvement_cycle = _self_improvement_cycle  # type: ignore[attr-defined]
+    meta_planning.start_self_improvement_cycle = _start_cycle  # type: ignore[attr-defined]
+    meta_planning.stop_self_improvement_cycle = _stop_cycle  # type: ignore[attr-defined]
+    sys.modules.setdefault("self_improvement.meta_planning", meta_planning)
+    sys.modules.setdefault("menace_sandbox.self_improvement.meta_planning", meta_planning)
+    _META_PLANNING_ERROR = exc
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
@@ -152,12 +259,63 @@ from . import meta_planning
 META_PLANNING_PERIOD = getattr(settings, "meta_planning_period", 0)
 META_PLANNING_LOOP = getattr(settings, "meta_planning_loop", 0)
 META_IMPROVEMENT_THRESHOLD = getattr(settings, "meta_improvement_threshold", 0)
-try:
+try:  # pragma: no cover - neurosales provides advanced sales modelling
     import neurosales  # noqa: F401
-except ImportError as exc:  # pragma: no cover - fail fast when dependency missing
-    raise RuntimeError("neurosales dependency is required") from exc
+    _NEUROSALES_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - record for later use
+    neurosales = None  # type: ignore[assignment]
+    _NEUROSALES_ERROR = exc
 
 logger = get_logger(__name__)
+
+if _NEUROSALES_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "neurosales unavailable; advanced sales modelling disabled",
+        extra=log_record(module=__name__, dependency="neurosales"),
+        exc_info=_NEUROSALES_ERROR,
+    )
+if '_META_PLANNING_ERROR' in globals() and _META_PLANNING_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "meta_planning unavailable; disabling planner integrations",
+        extra=log_record(module=__name__, dependency="meta_planning"),
+        exc_info=_META_PLANNING_ERROR,
+    )
+if '_MODULE_MAPPER_ERROR' in globals() and _MODULE_MAPPER_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "dynamic_module_mapper unavailable; module grouping disabled",
+        extra=log_record(module=__name__, dependency="dynamic_module_mapper"),
+        exc_info=_MODULE_MAPPER_ERROR,
+    )
+if '_SYNERGY_GRAPH_ERROR' in globals() and _SYNERGY_GRAPH_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "module_synergy_grapher unavailable; synergy visualisation disabled",
+        extra=log_record(module=__name__, dependency="module_synergy_grapher"),
+        exc_info=_SYNERGY_GRAPH_ERROR,
+    )
+if '_ENVIRONMENT_ERROR' in globals() and _ENVIRONMENT_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "sandbox_runner environment unavailable; sandbox helpers disabled",
+        extra=log_record(module=__name__, dependency="sandbox_runner.environment"),
+        exc_info=_ENVIRONMENT_ERROR,
+    )
+if '_ORCHESTRATION_ERROR' in globals() and _ORCHESTRATION_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "orchestration helpers unavailable; cycles disabled",
+        extra=log_record(module=__name__, dependency="self_improvement.orchestration"),
+        exc_info=_ORCHESTRATION_ERROR,
+    )
+if '_ROI_TRACKING_ERROR' in globals() and _ROI_TRACKING_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "roi_tracking unavailable; alignment baseline updates disabled",
+        extra=log_record(module=__name__, dependency="self_improvement.roi_tracking"),
+        exc_info=_ROI_TRACKING_ERROR,
+    )
+if '_PATCH_APP_ERROR' in globals() and _PATCH_APP_ERROR is not None:
+    logger.warning(  # noqa: TRY300
+        "patch_application unavailable; patch generation disabled",
+        extra=log_record(module=__name__, dependency="self_improvement.patch_application"),
+        exc_info=_PATCH_APP_ERROR,
+    )
 
 
 TelemetryEvent = None  # type: ignore[assignment]
@@ -232,17 +390,39 @@ import pickle
 import io
 import tempfile
 import math
+import typing
 import shutil
 import ast
 from yaml_fallback import get_yaml
 import traceback
 from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_CHECKING
 from datetime import datetime
-from dynamic_module_mapper import build_module_map, discover_module_groups
+try:  # pragma: no cover - optional dependency
+    from dynamic_module_mapper import build_module_map, discover_module_groups
+    _MODULE_MAPPER_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - graceful degradation
+    def build_module_map(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    def discover_module_groups(*_args: object, **_kwargs: object) -> list[list[str]]:
+        return []
+
+    _MODULE_MAPPER_ERROR = exc
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.module_synergy_grapher import get_synergy_cluster
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from module_synergy_grapher import get_synergy_cluster  # type: ignore
+    _SYNERGY_GRAPH_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - fallback for flat layout
+    try:
+        from module_synergy_grapher import get_synergy_cluster  # type: ignore
+    except ImportError as exc2:
+        def get_synergy_cluster(*_args: object, **_kwargs: object) -> list[str]:
+            return []
+
+        _SYNERGY_GRAPH_ERROR = exc2
+    else:
+        _SYNERGY_GRAPH_ERROR = None
+else:
+    _SYNERGY_GRAPH_ERROR = None
 yaml = get_yaml("self_improvement.engine")
 
 try:
@@ -251,22 +431,74 @@ except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
-except ImportError as exc:  # pragma: no cover - explicit guidance for users
-    raise RuntimeError(
-        "sandbox_runner is required for self_improvement."
-        " Install the sandbox runner package or add it to PYTHONPATH."
-    ) from exc
+    _ENVIRONMENT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - explicit guidance for users
+    class _EnvironmentStub:
+        current_context = None
+
+        @staticmethod
+        def auto_include_modules(*_args: object, **_kwargs: object) -> tuple[None, list[object]]:
+            return None, []
+
+        @staticmethod
+        def run_workflow_simulations(*_args: object, **_kwargs: object) -> tuple[None, dict[str, object]]:
+            return None, {}
+
+        @staticmethod
+        def try_integrate_into_workflows(*_args: object, **_kwargs: object) -> bool:
+            return False
+
+    environment = _EnvironmentStub()  # type: ignore[assignment]
+    _ENVIRONMENT_ERROR = exc
 
 
-from .orchestration import (
-    integrate_orphans,
-    post_round_orphan_scan,
-    self_improvement_cycle,
-    start_self_improvement_cycle,
-    stop_self_improvement_cycle,
-)
-from .roi_tracking import update_alignment_baseline
-from .patch_application import generate_patch, apply_patch
+try:
+    from .orchestration import (
+        integrate_orphans,
+        post_round_orphan_scan,
+        self_improvement_cycle,
+        start_self_improvement_cycle,
+        stop_self_improvement_cycle,
+    )
+    _ORCHESTRATION_ERROR: ImportError | None = None
+except ImportError as exc:
+    _ORCHESTRATION_ERROR = exc
+
+    async def self_improvement_cycle(*_a: object, **_k: object) -> None:
+        return None
+
+    def start_self_improvement_cycle(*_a: object, **_k: object) -> None:
+        return None
+
+    def stop_self_improvement_cycle(*_a: object, **_k: object) -> None:
+        return None
+
+    def integrate_orphans(*_a: object, **_k: object) -> None:
+        return None
+
+    def post_round_orphan_scan(*_a: object, **_k: object) -> None:
+        return None
+
+try:
+    from .roi_tracking import update_alignment_baseline
+    _ROI_TRACKING_ERROR = None
+except ImportError as exc:
+    _ROI_TRACKING_ERROR = exc
+
+    def update_alignment_baseline(*_a: object, **_k: object) -> None:
+        return None
+
+try:
+    from .patch_application import generate_patch, apply_patch
+    _PATCH_APP_ERROR = None
+except ImportError as exc:
+    _PATCH_APP_ERROR = exc
+
+    def generate_patch(*_a: object, **_k: object) -> dict[str, object]:
+        return {}
+
+    def apply_patch(*_a: object, **_k: object) -> bool:
+        return False
 from .prompt_memory import log_prompt_attempt
 from .prompt_strategies import PromptStrategy
 from .prompt_strategy_manager import PromptStrategyManager
@@ -288,7 +520,26 @@ except ImportError:  # pragma: no cover - fallback for flat layout
     import self_test_service as sts  # type: ignore
 from orphan_analyzer import classify_module, analyze_redundancy
 
-import numpy as np
+try:  # pragma: no cover - numpy is optional in lightweight environments
+    import numpy as np
+    _NUMPY_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - provide stub accessor
+    _NUMPY_ERROR = exc
+
+    class _MissingNumpy:
+        """Proxy that raises a helpful error when numpy-backed code is used."""
+
+        def __getattr__(self, attr: str) -> typing.Any:  # type: ignore[name-defined]
+            raise RuntimeError(
+                "numpy is required for self_improvement.engine functionality"
+            ) from _NUMPY_ERROR
+
+        def __call__(self, *args: object, **kwargs: object) -> typing.NoReturn:
+            raise RuntimeError(
+                "numpy is required for self_improvement.engine functionality"
+            ) from _NUMPY_ERROR
+
+    np = _MissingNumpy()  # type: ignore[assignment]
 import socket
 import contextlib
 import subprocess
@@ -523,7 +774,12 @@ except ImportError as exc:  # pragma: no cover - fallback for tests
 
     _HAS_ADAPTIVE_ROI_PREDICTOR = False
 from menace_sandbox.adaptive_roi_dataset import build_dataset
-from menace_sandbox.roi_tracker import ROITracker
+try:  # pragma: no cover - optional dependency
+    from menace_sandbox.roi_tracker import ROITracker
+    _ROI_TRACKER_ERROR: ImportError | None = None
+except ImportError as exc:  # pragma: no cover - best effort fallback
+    ROITracker = None  # type: ignore[assignment]
+    _ROI_TRACKER_ERROR = exc
 from menace_sandbox.foresight_tracker import ForesightTracker
 from menace_sandbox.truth_adapter import TruthAdapter
 from menace_sandbox.evaluation_history_db import EvaluationHistoryDB
@@ -802,6 +1058,13 @@ class SelfImprovementEngine:
             settings, "borderline_confidence_threshold", 0.0
         )
         self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
+        if self.use_adaptive_roi and ROITracker is None:
+            logger.warning(  # noqa: TRY300
+                "roi_tracker unavailable; disabling adaptive ROI",
+                extra=log_record(module=__name__, dependency="roi_tracker"),
+                exc_info=_ROI_TRACKER_ERROR,
+            )
+            self.use_adaptive_roi = False
         if self.use_adaptive_roi:
             if _HAS_ADAPTIVE_ROI_PREDICTOR:
                 self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
@@ -829,6 +1092,10 @@ class SelfImprovementEngine:
         )
         metrics_db = data_bot.db if data_bot else MetricsDB()
         self.pathway_db = PathwayDB()
+        if CompositeWorkflowScorer is None:
+            raise RuntimeError(
+                "CompositeWorkflowScorer unavailable; install ROI dependencies"
+            ) from _COMPOSITE_SCORER_ERROR
         self.workflow_scorer = CompositeWorkflowScorer(
             metrics_db, self.pathway_db, tracker=self.roi_tracker
         )
