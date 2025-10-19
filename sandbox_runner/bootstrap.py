@@ -479,18 +479,24 @@ def initialize_autonomous_sandbox(
     start_self_improvement: bool = True,
 ) -> SandboxSettings:
     cid = f"bootstrap-init-{uuid.uuid4()}"
+    print("🧩 Step 1: setting correlation id")
     set_correlation_id(cid)
+    print("🧩 Step 2: incrementing sandbox restart counter")
     sandbox_restart_total.labels(service="bootstrap", reason="init").inc()
+    print("🧩 Step 3: logging sandbox start")
     logger.info("initialize sandbox start", extra=log_record(event="start"))
     try:
+        print("🧩 Step 4: invoking autonomous sandbox initialization")
         result = _initialize_autonomous_sandbox(
             settings,
             start_services=start_services,
             start_self_improvement=start_self_improvement,
         )
+        print("🧩 Step 5: logging sandbox completion")
         logger.info("initialize sandbox complete", extra=log_record(event="shutdown"))
         return result
     except Exception:
+        print("🧩 Step 6: initialization failed; updating failure metrics")
         environment_failure_total.labels(reason="init").inc()
         sandbox_crashes_total.inc()
         logger.exception(
@@ -498,6 +504,7 @@ def initialize_autonomous_sandbox(
         )
         raise
     finally:
+        print("🧩 Step 7: clearing correlation id")
         set_correlation_id(None)
 
 
