@@ -1278,34 +1278,71 @@ else:
     update_thresholds = _self_coding_thresholds.update_thresholds
     _load_config = _self_coding_thresholds._load_config
 
-try:  # pragma: no cover - optional self-coding dependency
-    SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager
-except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully when absent
-    fallback_mod = sys.modules.get("menace.self_coding_manager")
-    if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
-        SelfCodingManager = getattr(fallback_mod, "SelfCodingManager")  # type: ignore[assignment]
-        logger.debug(
-            "using stub SelfCodingManager from menace.self_coding_manager after import failure", exc_info=exc
-        )
-    else:
+_SELF_CODING_MANAGER_SENTINEL = object()
+_SELF_CODING_MANAGER_CLS: type[Any] | None | object = _SELF_CODING_MANAGER_SENTINEL
+
+
+def _import_self_coding_manager_cls() -> type[Any] | None | object:
+    """Load ``SelfCodingManager`` lazily to avoid circular imports."""
+
+    try:  # pragma: no cover - optional self-coding dependency
+        return load_internal("self_coding_manager").SelfCodingManager
+    except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully when absent
+        fallback_mod = sys.modules.get("menace.self_coding_manager")
+        if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
+            logger.debug(
+                "using stub SelfCodingManager from menace.self_coding_manager after import failure",
+                exc_info=exc,
+            )
+            return getattr(fallback_mod, "SelfCodingManager")  # type: ignore[no-any-return]
+
         logger.warning(
             "self_coding_manager could not be imported; self-coding will run in disabled mode",
             exc_info=exc,
         )
-        SelfCodingManager = Any  # type: ignore
-except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
-    fallback_mod = sys.modules.get("menace.self_coding_manager")
-    if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
-        SelfCodingManager = getattr(fallback_mod, "SelfCodingManager")  # type: ignore[assignment]
-        logger.debug(
-            "using stub SelfCodingManager from menace.self_coding_manager after runtime error", exc_info=exc
-        )
-    else:
+        return None
+    except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
+        fallback_mod = sys.modules.get("menace.self_coding_manager")
+        if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
+            logger.debug(
+                "using stub SelfCodingManager from menace.self_coding_manager after runtime error",
+                exc_info=exc,
+            )
+            return getattr(fallback_mod, "SelfCodingManager")  # type: ignore[no-any-return]
+
         logger.warning(
             "self_coding_manager import failed; self-coding will run in disabled mode",
             exc_info=exc,
         )
-        SelfCodingManager = Any  # type: ignore
+        return None
+
+
+def _resolve_self_coding_manager_cls() -> type[Any] | None:
+    """Return the cached ``SelfCodingManager`` class when available."""
+
+    global _SELF_CODING_MANAGER_CLS
+    if _SELF_CODING_MANAGER_CLS is _SELF_CODING_MANAGER_SENTINEL:
+        _SELF_CODING_MANAGER_CLS = _import_self_coding_manager_cls()
+    elif _SELF_CODING_MANAGER_CLS is None:
+        # A previous attempt failed (for example due to an import cycle).  When
+        # the module eventually completes initialisation the attribute becomes
+        # available, so re-check ``sys.modules`` for a loaded definition before
+        # giving up.
+        for mod_name in ("menace_sandbox.self_coding_manager", "self_coding_manager"):
+            module = sys.modules.get(mod_name)
+            if module and hasattr(module, "SelfCodingManager"):
+                _SELF_CODING_MANAGER_CLS = getattr(module, "SelfCodingManager")
+                break
+
+    resolved = _SELF_CODING_MANAGER_CLS
+    return resolved if isinstance(resolved, type) else None
+
+
+def _is_self_coding_manager(candidate: Any) -> bool:
+    """Return ``True`` when *candidate* is a ``SelfCodingManager`` instance."""
+
+    manager_cls = _resolve_self_coding_manager_cls()
+    return isinstance(candidate, manager_cls) if manager_cls is not None else False
 
 _ENGINE_AVAILABLE = True
 _ENGINE_IMPORT_ERROR: Exception | None = None
@@ -1366,10 +1403,12 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from menace_sandbox.bot_registry import BotRegistry
     from menace_sandbox.data_bot import DataBot
     from menace_sandbox.evolution_orchestrator import EvolutionOrchestrator
+    from menace_sandbox.self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime placeholders
     BotRegistry = Any  # type: ignore
     DataBot = Any  # type: ignore
     EvolutionOrchestrator = Any  # type: ignore
+    SelfCodingManager = Any  # type: ignore
 
 
 if not _ENGINE_AVAILABLE and _ENGINE_IMPORT_ERROR is not None:
@@ -1380,7 +1419,7 @@ if not _ENGINE_AVAILABLE and _ENGINE_IMPORT_ERROR is not None:
 
 
 def _self_coding_runtime_available() -> bool:
-    return _ENGINE_AVAILABLE and isinstance(SelfCodingManager, type)
+    return _ENGINE_AVAILABLE and _resolve_self_coding_manager_cls() is not None
 
 
 class _DisabledSelfCodingManager:
@@ -1437,11 +1476,12 @@ def _bootstrap_manager(
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
-    if not _self_coding_runtime_available():
+    manager_cls = _resolve_self_coding_manager_cls()
+    if manager_cls is None:
         raise RuntimeError("self-coding runtime is unavailable")
 
     try:
-        return SelfCodingManager(  # type: ignore[call-arg]
+        return manager_cls(  # type: ignore[call-arg]
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
@@ -1887,7 +1927,7 @@ def self_coding_managed(
                         "failed to initialise thresholds for %s", name_local
                     )
             manual_mode = getattr(cls, "_self_coding_manual_mode", False)
-            manager_is_active = isinstance(manager_local, SelfCodingManager)
+            manager_is_active = _is_self_coding_manager(manager_local)
             if (
                 _self_coding_runtime_available()
                 and not manual_mode
