@@ -159,6 +159,55 @@ except ImportError as exc:  # pragma: no cover - fail fast when dependency missi
 
 logger = get_logger(__name__)
 
+
+TelemetryEvent = None  # type: ignore[assignment]
+_TELEMETRY_EVENT_ERROR: BaseException | None = None
+_TELEMETRY_EVENT_WARNED = False
+
+
+def _load_telemetry_event() -> type:
+    """Resolve :class:`TelemetryEvent` lazily."""
+
+    global TelemetryEvent, _TELEMETRY_EVENT_ERROR
+    if TelemetryEvent is not None:
+        return TelemetryEvent
+    if _TELEMETRY_EVENT_ERROR is not None:
+        raise RuntimeError("TelemetryEvent previously failed to import") from _TELEMETRY_EVENT_ERROR
+
+    try:  # pragma: no cover - prefer absolute imports when running from repo root
+        module = importlib.import_module("menace_sandbox.error_logger")
+    except Exception as exc:
+        try:  # pragma: no cover - fallback for flat layout
+            module = importlib.import_module("error_logger")
+        except Exception:
+            _TELEMETRY_EVENT_ERROR = exc
+            raise RuntimeError("error_logger module unavailable") from exc
+
+    try:
+        TelemetryEvent = getattr(module, "TelemetryEvent")  # type: ignore[assignment]
+    except AttributeError as exc:  # pragma: no cover - unexpected layout
+        _TELEMETRY_EVENT_ERROR = exc
+        raise RuntimeError("TelemetryEvent missing from error_logger") from exc
+
+    return TelemetryEvent
+
+
+def _get_telemetry_event() -> type | None:
+    """Best-effort accessor for :class:`TelemetryEvent`."""
+
+    global _TELEMETRY_EVENT_WARNED
+    try:
+        return _load_telemetry_event()
+    except RuntimeError as exc:
+        if not _TELEMETRY_EVENT_WARNED:
+            _TELEMETRY_EVENT_WARNED = True
+            logger.warning(  # noqa: TRY300
+                "telemetry event unavailable",
+                extra=log_record(module=__name__, dependency="TelemetryEvent"),
+                exc_info=exc,
+            )
+        return None
+
 try:
     DEFAULT_RELEVANCY_METRICS_DB = resolve_path("sandbox_data/relevancy_metrics.db")
 except FileNotFoundError:
@@ -245,7 +294,6 @@ import contextlib
 import subprocess
 from collections import deque
 from menace_sandbox.error_cluster_predictor import ErrorClusterPredictor
-from menace_sandbox.error_logger import TelemetryEvent
 from menace_sandbox import mutation_logger as MutationLogger
 from menace_sandbox.gpt_memory import GPTMemoryManager
 from menace_sandbox.local_knowledge_module import init_local_knowledge
@@ -6432,18 +6480,20 @@ class SelfImprovementEngine:
                                 extra=log_record(module=mod),
                             )
                 if self.error_bot and hasattr(self.error_bot, "db"):
-                    try:
-                        self.error_bot.db.add_telemetry(
-                            TelemetryEvent(
-                                module=str(mod),
-                                patch_id=patch_id,
-                                resolution_status="attempted",
+                    event_cls = _get_telemetry_event()
+                    if event_cls is not None:
+                        try:
+                            self.error_bot.db.add_telemetry(
+                                event_cls(
+                                    module=str(mod),
+                                    patch_id=patch_id,
+                                    resolution_status="attempted",
+                                )
                             )
-                        )
-                    except Exception:
-                        self.logger.exception(
-                            "telemetry record failed", extra=log_record(module=mod)
-                        )
+                        except Exception:
+                            self.logger.exception(
+                                "telemetry record failed", extra=log_record(module=mod)
+                            )
                 if self.error_predictor:
                     try:
                         self.error_predictor.graph.add_telemetry_event(
@@ -6590,18 +6640,20 @@ class SelfImprovementEngine:
                                     extra=log_record(module=mod),
                                 )
                     if self.error_bot and hasattr(self.error_bot, "db"):
-                        try:
-                            self.error_bot.db.add_telemetry(
-                                TelemetryEvent(
-                                    module=str(mod),
-                                    patch_id=patch_id,
-                                    resolution_status="attempted",
+                        event_cls = _get_telemetry_event()
+                        if event_cls is not None:
+                            try:
+                                self.error_bot.db.add_telemetry(
+                                    event_cls(
+                                        module=str(mod),
+                                        patch_id=patch_id,
+                                        resolution_status="attempted",
+                                    )
                                 )
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "telemetry record failed", extra=log_record(module=mod)
-                            )
+                            except Exception:
+                                self.logger.exception(
+                                    "telemetry record failed", extra=log_record(module=mod)
+                                )
                     if self.error_predictor:
                         try:
                             self.error_predictor.graph.add_telemetry_event(
