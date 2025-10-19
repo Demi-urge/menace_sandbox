@@ -565,16 +565,22 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
     """
 
     global settings
+    print("💡 SI-1: loading sandbox settings")
     settings = new_settings or load_sandbox_settings()
     auto_install = settings.auto_install_dependencies or not sys.stdin.isatty()
+    print("💡 SI-2: verifying self-improvement dependencies")
     verify_dependencies(auto_install=auto_install)
+    print("💡 SI-3: initializing autonomous sandbox components")
     initialize_autonomous_sandbox(settings)
     if getattr(settings, "sandbox_central_logging", False):
+        print("💡 SI-4: configuring central logging")
         setup_logging()
+    print("💡 SI-5: loading synergy weights")
     reload_synergy_weights()
     try:
         from . import meta_planning
 
+        print("💡 SI-6: reloading meta-planning settings")
         meta_planning.reload_settings(settings)
     except Exception as exc:  # pragma: no cover - best effort
         logging.getLogger(__name__).exception(

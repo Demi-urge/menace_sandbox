@@ -1346,6 +1346,7 @@ def start_self_improvement_cycle(
     if evaluate_cycle is None:
         raise ValueError("evaluate_cycle callable required")
 
+    print("💡 SI-7: preparing self-improvement cycle thread scaffold")
     stop_event = threading.Event()
 
     class _CycleThread:
@@ -1363,6 +1364,7 @@ def start_self_improvement_cycle(
         def _run(self) -> None:
             from inspect import signature
 
+            print("💡 SI-8: starting self-improvement event loop")
             asyncio.set_event_loop(self._loop)
             kwargs: dict[str, Any] = {
                 "interval": interval,
@@ -1376,6 +1378,7 @@ def start_self_improvement_cycle(
                 kwargs["should_encode"] = self._should_encode
             if "evaluate_cycle" in signature(self_improvement_cycle).parameters:
                 kwargs["evaluate_cycle"] = self._evaluate_cycle
+            print("💡 SI-9: scheduling self-improvement cycle coroutine")
             self._task = self._loop.create_task(
                 self_improvement_cycle(workflows, **kwargs)
             )
@@ -1414,14 +1417,17 @@ def start_self_improvement_cycle(
 
         # --------------------------------------------------
         def start(self) -> None:
+            print("💡 SI-10: launching self-improvement thread")
             self._thread.start()
 
         def join(self, timeout: float | None = None) -> None:
+            print("💡 SI-11: joining self-improvement thread")
             self._thread.join(timeout)
             if not self._exc.empty():
                 raise self._exc.get()
 
         def stop(self) -> None:
+            print("💡 SI-12: stopping self-improvement thread")
             self._stop_event.set()
             self._loop.call_soon_threadsafe(
                 lambda: self._task.cancel() if self._task is not None else None
@@ -1432,6 +1438,7 @@ def start_self_improvement_cycle(
     logger_fn = globals().get("get_logger")
     log_record_fn = globals().get("log_record")
     logger = logger_fn(__name__) if logger_fn else None
+    print("💡 SI-13: initialising ROI results database")
     try:
         ROIResultsDB()
     except (OSError, RuntimeError) as exc:
@@ -1442,6 +1449,7 @@ def start_self_improvement_cycle(
                 exc_info=exc,
             )
         raise RuntimeError("ROIResultsDB initialisation failed") from exc
+    print("💡 SI-14: initialising workflow stability database")
     try:
         WorkflowStabilityDB()
     except (OSError, RuntimeError) as exc:
