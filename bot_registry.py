@@ -243,7 +243,12 @@ def _get_patch_provenance_service_cls() -> type | None:
         else None
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
-_REGISTERED_BOTS = {}
+_REGISTERED_BOTS: dict[str, dict[str, str]] = {
+    "FutureSynergyDiscrepancyCountBot": {
+        "module_path": "menace_sandbox.prediction_manager_bot",
+        "class_name": "FutureSynergyDiscrepancyCountBot",
+    }
+}
 
 _UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS = float(
     os.getenv("MENACE_UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS", "300")
@@ -1982,6 +1987,10 @@ class BotRegistry:
         with self._lock:
             self.graph.add_node(name)
             node = self.graph.nodes[name]
+            if module_path is None:
+                fallback = _REGISTERED_BOTS.get(name)
+                if isinstance(fallback, dict):
+                    module_path = fallback.get("module_path") or fallback.get("module")
             resolved_path: str | None = None
             if module_path is not None:
                 try:
