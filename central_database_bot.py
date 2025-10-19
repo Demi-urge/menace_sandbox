@@ -13,9 +13,6 @@ import uuid
 
 from .logging_utils import set_correlation_id
 from .resilience import (
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
     CircuitBreaker,
     CircuitOpenError,
     RetryError,
@@ -26,6 +23,9 @@ data_bot = DataBot(start_server=False)
 from pydantic import BaseModel
 from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 try:
     from sqlalchemy import MetaData, Table, Column, Integer, Text, create_engine, select, text as sqtext  # type: ignore
     from sqlalchemy.engine import Engine  # type: ignore
