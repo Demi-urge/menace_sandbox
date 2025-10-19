@@ -34,13 +34,13 @@ local_knowledge = init_local_knowledge()
 
 print("✅ local_knowledge loaded")
 
-from sandbox_runner.environment import start_sandbox
+from sandbox_runner.bootstrap import launch_sandbox
 
 print("🧪 sandbox module imported")
 
-start_sandbox(knowledge=local_knowledge)
+launch_sandbox()
 
-print("🏁 Sandbox fully started")
+print("🏁 FULL MENACE LAUNCH COMPLETE")
 
 import argparse
 import atexit
