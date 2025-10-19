@@ -79,7 +79,9 @@ if not hasattr(BaseModel, "model_validate"):
     def _model_validate(cls, data):  # type: ignore[override]
         """Compatibility shim for :meth:`BaseModel.model_validate` on Pydantic v1."""
 
-        return cls.parse_obj(data)  # type: ignore[attr-defined]
+        if hasattr(cls, "parse_obj"):
+            return cls.parse_obj(data)  # type: ignore[attr-defined]
+        return cls(**data)
 
     BaseModel.model_validate = classmethod(_model_validate)  # type: ignore[attr-defined]
 
