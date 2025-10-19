@@ -663,16 +663,20 @@ def _initialize_autonomous_sandbox(
 
     print("🧬 K: self-improvement startup evaluation")
     if start_self_improvement:
+        print("🧱 SI-1: prechecks")
         try:
             from self_improvement.api import (
                 init_self_improvement,
                 start_self_improvement_cycle,
             )
 
+            print("🧱 SI-2: loading agents")
             print("🧬 L: initializing self-improvement components")
             init_self_improvement(settings)
+            print("🧱 SI-3: registering optimizers")
             print("🧬 M: starting self-improvement cycle thread")
             thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
+            print("🧱 SI-4: evaluating targets")
             thread.start()
             try:
                 print("🧬 N: joining self-improvement thread (non-blocking)")
@@ -687,6 +691,7 @@ def _initialize_autonomous_sandbox(
             if hasattr(inner, "is_alive") and not inner.is_alive():
                 raise RuntimeError("self-improvement thread terminated unexpectedly")
             _SELF_IMPROVEMENT_THREAD = thread
+            print("🧱 SI-5: done")
         except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
             logger.warning(
                 "self-improvement components unavailable; skipping startup", exc_info=exc
