@@ -665,33 +665,43 @@ def _initialize_autonomous_sandbox(
     if start_self_improvement:
         print("🧱 SI-1: prechecks")
         try:
+            print("🧱 SI-2: importing self-improvement modules")
             from self_improvement.api import (
                 init_self_improvement,
                 start_self_improvement_cycle,
             )
+            print("🧱 SI-3: modules imported")
 
-            print("🧱 SI-2: loading agents")
-            print("🧬 L: initializing self-improvement components")
+            print("🧱 SI-4: initializing self-improvement")
             init_self_improvement(settings)
-            print("🧱 SI-3: registering optimizers")
-            print("🧬 M: starting self-improvement cycle thread")
+            print("🧱 SI-5: initialization complete")
+
+            print("🧱 SI-6: creating cycle thread")
             thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
-            print("🧱 SI-4: evaluating targets")
+            print("🧱 SI-7: cycle thread created")
+
+            print("🧱 SI-8: starting cycle thread")
             thread.start()
+            print("🧱 SI-9: cycle thread started")
+
             try:
-                print("🧬 N: joining self-improvement thread (non-blocking)")
+                print("🧱 SI-10: joining cycle thread (non-blocking)")
                 thread.join(0)
+                print("🧱 SI-11: join call returned")
             except Exception as exc:
                 logger.error(
                     "self-improvement thread raised during startup", exc_info=True
                 )
                 raise RuntimeError("self-improvement thread failed to start") from exc
+
+            print("🧱 SI-12: verifying cycle thread liveness")
             inner = getattr(thread, "_thread", thread)
-            print("🧬 O: verifying self-improvement thread liveness")
             if hasattr(inner, "is_alive") and not inner.is_alive():
                 raise RuntimeError("self-improvement thread terminated unexpectedly")
+
+            print("🧱 SI-13: cycle thread healthy")
             _SELF_IMPROVEMENT_THREAD = thread
-            print("🧱 SI-5: done")
+            print("🧱 SI-14: self-improvement startup complete")
         except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
             logger.warning(
                 "self-improvement components unavailable; skipping startup", exc_info=exc
