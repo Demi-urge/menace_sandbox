@@ -1715,6 +1715,8 @@ def self_coding_managed(
             module_path = inspect.getfile(cls)
         except Exception:  # pragma: no cover - best effort
             module_path = ""
+        if not module_path:
+            module_path = getattr(cls, "__module__", "")
         roi_t = err_t = None
         if hasattr(data_bot, "reload_thresholds"):
             try:

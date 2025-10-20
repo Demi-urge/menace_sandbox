@@ -195,6 +195,28 @@ def test_successful_initialisation_registers():
     assert orchestrator.registered == ["sample"]
 
 
+def test_module_path_falls_back_to_module_name(monkeypatch):
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    def _raise_getfile(_cls):
+        raise OSError("no source")
+
+    monkeypatch.setattr(cbi.inspect, "getfile", _raise_getfile)
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "fallback"
+
+        def __init__(self):
+            pass
+
+    Bot()
+
+    assert registry.updated, "bot update should be attempted"
+    assert registry.updated[-1][1] == Bot.__module__
+
+
 def test_thresholds_loaded_on_init():
     registry = DummyRegistry()
     data_bot = DummyDataBot()
