@@ -26,12 +26,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:  # pragma: no cover - import path handling
     from .audit_trail import AuditTrail, load_private_key_material
-    from .access_control import READ, WRITE, check_permission
+    from .access_control import DEFAULT_ROLE, READ, WRITE, check_permission
     from .unified_event_bus import UnifiedEventBus
     from .governance import evaluate_rules
 except ImportError:  # pragma: no cover - script execution fallback
     from audit_trail import AuditTrail, load_private_key_material  # type: ignore
-    from access_control import READ, WRITE, check_permission  # type: ignore
+    from access_control import DEFAULT_ROLE, READ, WRITE, check_permission  # type: ignore
     from unified_event_bus import UnifiedEventBus  # type: ignore
     from governance import evaluate_rules  # type: ignore
 
@@ -93,7 +93,7 @@ class RollbackManager:
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
             return
-        role = self.bot_roles.get(requesting_bot, READ)
+        role = self.bot_roles.get(requesting_bot, DEFAULT_ROLE)
         check_permission(role, action)
 
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:
