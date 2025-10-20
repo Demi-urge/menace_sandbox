@@ -34,3 +34,14 @@ export GPT_MEMORY_RETENTION="insight=40,error_fix=20"
 After the environment variable is set the maintenance thread ensures only the
 most recent memories for each tag are retained while the knowledge graph stays
 up to date through the event bus.
+
+## Sandbox warning about persisted graphs
+
+The autonomous sandbox bundles a lightweight stub of `networkx` so that unit
+tests do not need the full dependency tree.  The stub intentionally raises when
+code accesses advanced module attributes such as `__path__`, which prevents the
+graph loader from deserializing a persisted `knowledge_graph.gpickle` file.  As a
+result `KnowledgeGraph` prints a warning about skipping the saved graph on each
+startup.  This is expected in the sandbox environment; install the real
+`networkx` package locally if you want to load the persisted graph instead of
+seeing the warning.
