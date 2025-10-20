@@ -116,6 +116,12 @@ class DiGraph:
         self._nodes.add(node)
         self._node_attrs.setdefault(node, {})
 
+    def clear(self) -> None:
+        """Remove all nodes, edges, and associated attributes from the graph."""
+        self._edges.clear()
+        self._nodes.clear()
+        self._node_attrs.clear()
+
     @property
     def nodes(self) -> _NodeView:  # type: ignore[override]
         return self._node_view
