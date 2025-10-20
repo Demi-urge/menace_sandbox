@@ -86,6 +86,29 @@ except ModuleNotFoundError:  # pragma: no cover - allow execution without networ
         def get(self, key: str, default: Optional[dict] = None) -> Optional[dict]:
             return self._graph._nodes.get(key, default)
 
+    class _EdgeView:
+        """Subset of the ``networkx`` edge view interface used in the registry."""
+
+        def __init__(self, graph: "_DiGraph") -> None:
+            self._graph = graph
+
+        def _iter_edges(self, data: bool = False, default: Optional[Any] = None):
+            for u, nbrs in self._graph._adj.items():
+                for v, attrs in nbrs.items():
+                    if data:
+                        yield (u, v, dict(attrs))
+                    else:
+                        yield (u, v)
+
+        def __iter__(self):  # pragma: no cover - exercised indirectly
+            return self._iter_edges()
+
+        def __call__(self, data: bool = False, default: Optional[Any] = None):
+            return self._iter_edges(data=data, default=default)
+
+        def data(self, data: bool = True, default: Optional[Any] = None):
+            return self._iter_edges(data=data, default=default)
+
     class _DiGraph:
         """Minimal ``DiGraph`` implementation covering the registry use cases."""
 
@@ -116,13 +139,9 @@ except ModuleNotFoundError:  # pragma: no cover - allow execution without networ
         def successors(self, node: str) -> Iterator[str]:
             return iter(self._adj.get(node, {}))
 
-        def edges(self, data: bool = False):
-            for u, nbrs in self._adj.items():
-                for v, attrs in nbrs.items():
-                    if data:
-                        yield (u, v, attrs)
-                    else:
-                        yield (u, v)
+        @property
+        def edges(self) -> _EdgeView:  # pragma: no cover - exercised indirectly
+            return _EdgeView(self)
 
         def clear(self) -> None:
             self._nodes.clear()
@@ -3334,7 +3353,7 @@ class BotRegistry:
                 """,
                 (node, module, version, last_mod, last_ver),
             )
-        for u, v, data in self.graph.edges(data=True):
+        for u, v, data in self.graph.edges.data():
             cur.execute(
                 "REPLACE INTO bot_edges(from_bot,to_bot,weight) VALUES(?,?,?)",
                 (u, v, float(data.get("weight", 1.0))),
