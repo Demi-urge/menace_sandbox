@@ -265,11 +265,11 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "FutureSynergyThroughputBot",
     },
     "FutureSynergySecurityScoreBot": {
-        "module_path": "menace_sandbox.prediction_manager_bot",
+        "module_path": "menace_sandbox.bots.future_synergy_security_score_bot",
         "class_name": "FutureSynergySecurityScoreBot",
     },
     "FutureSynergyEfficiencyBot": {
-        "module_path": "menace_sandbox.prediction_manager_bot",
+        "module_path": "menace_sandbox.bots.future_synergy_efficiency_bot",
         "class_name": "FutureSynergyEfficiencyBot",
     },
     "FutureSynergyAntifragilityBot": {
