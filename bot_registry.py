@@ -459,8 +459,12 @@ def _iter_module_search_roots() -> list[tuple[Path, str | None]]:
         pkg_path = getattr(module, "__path__", None)
         if not pkg_path:
             continue
+        try:
+            path_iter = iter(pkg_path)
+        except TypeError:
+            continue
         package_name = getattr(module, "__name__", None)
-        for entry in pkg_path:
+        for entry in path_iter:
             try:
                 path_obj = Path(entry)
             except TypeError:
@@ -2892,9 +2896,13 @@ class BotRegistry:
         """Import or reload the module backing ``name`` and refresh references."""
 
         node = self.graph.nodes.get(name)
-        if not node:
+        if node is None:
             raise KeyError(f"bot {name!r} has no module path")
         module_path = node.get("module")
+        if not module_path:
+            module_path = self.modules.get(name)
+            if module_path:
+                node["module"] = module_path
         if not module_path:
             fallback = _REGISTERED_BOTS.get(name)
             if isinstance(fallback, dict):
