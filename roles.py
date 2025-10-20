@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Set
+from typing import Dict, Mapping, Set
 
 from dynamic_path_router import resolve_path
 
@@ -27,6 +27,7 @@ def load_role_permissions(path: str | Path = ROLE_PERMISSIONS_FILE) -> Dict[str,
 
     Returns defaults if the file is missing or invalid.
     """
+
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -61,12 +62,52 @@ if _default_role not in ROLE_PERMISSIONS:
     _default_role = READ
 DEFAULT_ROLE = _default_role
 
+_DEFAULT_BOT_ROLES: Dict[str, str] = {}
+
+_bot_roles_path = resolve_path("config/bot_roles.json")
+BOT_ROLES_FILE = Path(os.getenv("BOT_ROLES_FILE", str(_bot_roles_path)))
+
+
+def load_bot_roles(path: str | Path = BOT_ROLES_FILE) -> Dict[str, str]:
+    """Load the bot to role mapping from ``path``.
+
+    Entries are validated against :data:`ROLE_PERMISSIONS`.  Returns the default
+    (empty) mapping when the file is missing or invalid.
+    """
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, Mapping):
+            raise TypeError("bot roles config must be a mapping of bot to role")
+        mapping: Dict[str, str] = {}
+        for bot, role in data.items():
+            if not isinstance(bot, str):
+                raise TypeError("bot identifiers must be strings")
+            if not isinstance(role, str):
+                raise TypeError(f"Role for bot '{bot}' must be a string")
+            if role not in ROLE_PERMISSIONS:
+                raise ValueError(f"Unknown role '{role}' for bot '{bot}'")
+            mapping[bot] = role
+        return mapping
+    except FileNotFoundError:
+        logger.warning("Bot roles file not found at %s; using defaults", path)
+    except Exception as exc:  # pragma: no cover - fallback
+        logger.error("Failed to load bot roles: %s", exc)
+    return dict(_DEFAULT_BOT_ROLES)
+
+
+BOT_ROLES: Dict[str, str] = load_bot_roles()
+
 __all__ = [
-    "ROLE_PERMISSIONS",
     "READ",
     "WRITE",
     "ADMIN",
     "DEFAULT_ROLE",
     "ROLE_PERMISSIONS_FILE",
+    "BOT_ROLES_FILE",
+    "ROLE_PERMISSIONS",
     "load_role_permissions",
+    "BOT_ROLES",
+    "load_bot_roles",
 ]

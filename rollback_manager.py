@@ -26,12 +26,24 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:  # pragma: no cover - import path handling
     from .audit_trail import AuditTrail, load_private_key_material
-    from .access_control import DEFAULT_ROLE, READ, WRITE, check_permission
+    from .access_control import (
+        READ,
+        WRITE,
+        BOT_ROLES,
+        check_permission,
+        resolve_bot_role,
+    )
     from .unified_event_bus import UnifiedEventBus
     from .governance import evaluate_rules
 except ImportError:  # pragma: no cover - script execution fallback
     from audit_trail import AuditTrail, load_private_key_material  # type: ignore
-    from access_control import DEFAULT_ROLE, READ, WRITE, check_permission  # type: ignore
+    from access_control import (  # type: ignore
+        READ,
+        WRITE,
+        BOT_ROLES,
+        check_permission,
+        resolve_bot_role,
+    )
     from unified_event_bus import UnifiedEventBus  # type: ignore
     from governance import evaluate_rules  # type: ignore
 
@@ -70,7 +82,7 @@ class RollbackManager:
     ) -> None:
         self.path = path
         self._ensure()
-        self.bot_roles: Dict[str, str] = bot_roles or {}
+        self.bot_roles: Dict[str, str] = dict(bot_roles or BOT_ROLES)
         log_path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
         key_source = audit_privkey or os.getenv("AUDIT_PRIVKEY")
         key_path = None if key_source else os.getenv("AUDIT_PRIVKEY_PATH")
@@ -93,7 +105,7 @@ class RollbackManager:
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
             return
-        role = self.bot_roles.get(requesting_bot, DEFAULT_ROLE)
+        role = resolve_bot_role(requesting_bot, self.bot_roles)
         check_permission(role, action)
 
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:

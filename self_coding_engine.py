@@ -156,7 +156,9 @@ _access_control = load_internal("access_control")
 READ = _access_control.READ
 WRITE = _access_control.WRITE
 DEFAULT_ROLE = _access_control.DEFAULT_ROLE
+BOT_ROLES = getattr(_access_control, "BOT_ROLES", {})
 check_permission = _access_control.check_permission
+resolve_bot_role = getattr(_access_control, "resolve_bot_role", None)
 
 _patch_suggestion_db = load_internal("patch_suggestion_db")
 PatchSuggestionDB = _patch_suggestion_db.PatchSuggestionDB
@@ -864,7 +866,7 @@ class SelfCodingEngine:
                 TargetRegion | None,
             ],
         ] = {}
-        self.bot_roles: Dict[str, str] = bot_roles or {}
+        self.bot_roles: Dict[str, str] = dict(bot_roles or BOT_ROLES)
         path_setting = audit_trail_path or getattr(_settings, "audit_log_path", "")
         try:
             path = resolve_path(path_setting)
@@ -1459,7 +1461,10 @@ class SelfCodingEngine:
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
             return
-        role = self.bot_roles.get(requesting_bot, DEFAULT_ROLE)
+        if resolve_bot_role is not None:
+            role = resolve_bot_role(requesting_bot, self.bot_roles)
+        else:  # pragma: no cover - legacy fallback when helper unavailable
+            role = self.bot_roles.get(requesting_bot, DEFAULT_ROLE)
         check_permission(role, action)
 
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:
