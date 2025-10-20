@@ -155,6 +155,7 @@ load_private_key_material = _audit_trail.load_private_key_material
 _access_control = load_internal("access_control")
 READ = _access_control.READ
 WRITE = _access_control.WRITE
+DEFAULT_ROLE = _access_control.DEFAULT_ROLE
 check_permission = _access_control.check_permission
 
 _patch_suggestion_db = load_internal("patch_suggestion_db")
@@ -1458,7 +1459,7 @@ class SelfCodingEngine:
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
             return
-        role = self.bot_roles.get(requesting_bot, READ)
+        role = self.bot_roles.get(requesting_bot, DEFAULT_ROLE)
         check_permission(role, action)
 
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:

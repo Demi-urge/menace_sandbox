@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 
 try:  # pragma: no cover - support execution without package context
-    from .roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN
+    from .roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN, DEFAULT_ROLE
     from .models import BotRole
 except ImportError:  # pragma: no cover - fallback when imported as script
-    from roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN  # type: ignore
+    from roles import ROLE_PERMISSIONS, READ, WRITE, ADMIN, DEFAULT_ROLE  # type: ignore
     from models import BotRole  # type: ignore
 
 logger = logging.getLogger(__name__)
@@ -31,4 +31,5 @@ __all__ = [
     "READ",
     "WRITE",
     "ADMIN",
+    "DEFAULT_ROLE",
 ]
