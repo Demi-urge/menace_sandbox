@@ -2873,9 +2873,18 @@ class BotRegistry:
         """Import or reload the module backing ``name`` and refresh references."""
 
         node = self.graph.nodes.get(name)
-        if not node or "module" not in node:
+        if not node:
             raise KeyError(f"bot {name!r} has no module path")
-        module_path = node["module"]
+        module_path = node.get("module")
+        if not module_path:
+            fallback = _REGISTERED_BOTS.get(name)
+            if isinstance(fallback, dict):
+                module_path = fallback.get("module_path") or fallback.get("module")
+                if module_path:
+                    node["module"] = module_path
+                    self.modules[name] = module_path
+        if not module_path:
+            raise KeyError(f"bot {name!r} has no module path")
         commit = node.get("commit")
         patch_id = node.get("patch_id")
         prev_module = node.get("last_good_module")
@@ -3085,9 +3094,18 @@ class BotRegistry:
         """Import the bot module and record a heartbeat to verify health."""
 
         node = self.graph.nodes.get(name)
-        if not node or "module" not in node:
+        if not node:
             raise KeyError(f"bot {name!r} has no module path")
-        module_path = node["module"]
+        module_path = node.get("module")
+        if not module_path:
+            fallback = _REGISTERED_BOTS.get(name)
+            if isinstance(fallback, dict):
+                module_path = fallback.get("module_path") or fallback.get("module")
+                if module_path:
+                    node["module"] = module_path
+                    self.modules[name] = module_path
+        if not module_path:
+            raise KeyError(f"bot {name!r} has no module path")
         try:
             path_obj = Path(module_path)
             if _is_probable_filesystem_path(module_path):
