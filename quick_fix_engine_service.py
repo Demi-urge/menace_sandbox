@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 
+print("🧪 ENTERED: quick_fix_engine_service.py top-level")
+
 __all__ = ["start", "is_running"]
 
 _logger = logging.getLogger(__name__)
