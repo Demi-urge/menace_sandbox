@@ -1883,7 +1883,7 @@ class QuickFixEngine:
                 meta["error_cluster_id"] = cid
                 meta["error_cluster_size"] = size
             builder = create_context_builder()
-        print("[QFE] refreshed context builder for run()", flush=True)
+            print("[QFE] refreshed context builder for run()", flush=True)
             try:
                 ensure_fresh_weights(builder)
             except Exception:
