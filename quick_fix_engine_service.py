@@ -1,5 +1,4 @@
-with open("shim_was_loaded.txt", "w") as f:
-    f.write("YES")
+from __future__ import annotations
 
 """Lightweight bootstrap hook for the optional quick-fix background worker.
 
@@ -19,7 +18,8 @@ skipped.  In either case the bootstrapper considers the optional service
 "installed" which prevents noisy warnings during ``manual_bootstrap`` runs.
 """
 
-from __future__ import annotations
+with open("shim_was_loaded.txt", "w") as f:
+    f.write("YES")
 
 import logging
 import sys
