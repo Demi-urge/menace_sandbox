@@ -12,6 +12,7 @@ values.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 import types
@@ -25,6 +26,23 @@ root.__path__ = [str(base)]
 sys.modules.setdefault("sandbox_runner", pkg)
 sys.modules.setdefault("menace_sandbox", root)
 sys.modules.setdefault("menace_sandbox.sandbox_runner", pkg)
+
+
+def _register_optional_stub(module_name: str, stub_module: str) -> None:
+    """Expose ``stub_module`` under ``module_name`` when the real package is missing."""
+
+    if module_name in sys.modules:
+        return
+
+    try:  # pragma: no cover - only executed when dependency available
+        importlib.import_module(module_name)
+    except Exception:  # pragma: no cover - exercised in constrained environments
+        stub = importlib.import_module(stub_module)
+        sys.modules.setdefault(module_name, stub)
+
+
+_register_optional_stub("annoy", "annoy_stub")
+_register_optional_stub("pydantic", "pydantic_stub")
 
 
 def _patch_dotenv() -> None:
