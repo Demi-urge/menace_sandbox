@@ -8,6 +8,8 @@ have its database weights refreshed before use to ensure accurate context
 retrieval.
 """
 
+print("[QFE] quick_fix_engine module import started", flush=True)
+
 __version__ = "1.0.0"
 
 import ast
@@ -34,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
+print("[QFE] attempting to import import_compat", flush=True)
 try:  # pragma: no cover - prefer package import when installed
     from menace_sandbox import import_compat  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - support flat execution
@@ -48,25 +51,34 @@ except ModuleNotFoundError:  # pragma: no cover - support flat execution
     sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
     sys.modules[_HELPER_NAME] = import_compat
     _spec.loader.exec_module(import_compat)
+    print("[QFE] loaded import_compat from local file", flush=True)
 else:  # pragma: no cover - ensure helper aliases exist
     sys.modules.setdefault(_HELPER_NAME, import_compat)
     sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
+print("[QFE] starting import_compat bootstrap", flush=True)
 import_compat.bootstrap(__name__, __file__)
+print("[QFE] finished import_compat bootstrap", flush=True)
 load_internal = import_compat.load_internal
 
+print("[QFE] loading snippet compressor", flush=True)
 compress_snippets = load_internal("snippet_compressor").compress_snippets
+print("[QFE] snippet compressor ready", flush=True)
 
 _codebase_diff_checker = load_internal("codebase_diff_checker")
 generate_code_diff = _codebase_diff_checker.generate_code_diff
 flag_risky_changes = _codebase_diff_checker.flag_risky_changes
+print("[QFE] codebase diff checker ready", flush=True)
 
 SandboxSettings = load_internal("sandbox_settings").SandboxSettings
+print("[QFE] sandbox settings loaded", flush=True)
 
 try:  # pragma: no cover - optional dependency
     _context_builder_util = load_internal("context_builder_util")
+    print("[QFE] context_builder_util module loaded", flush=True)
     ensure_fresh_weights = _context_builder_util.ensure_fresh_weights
     create_context_builder = _context_builder_util.create_context_builder
+    print("[QFE] context_builder_util helpers ready", flush=True)
 except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
     raise RuntimeError(
         "context_builder_util helpers are required for quick_fix_engine"
@@ -79,6 +91,7 @@ except Exception as exc:  # pragma: no cover - required helper failed to import
 _dynamic_path_router = load_internal("dynamic_path_router")
 resolve_path = _dynamic_path_router.resolve_path
 path_for_prompt = _dynamic_path_router.path_for_prompt
+print("[QFE] dynamic_path_router ready", flush=True)
 from collections import Counter
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -871,6 +884,8 @@ def generate_patch(
         slice is modified.
     """
 
+    print(f"[QFE] generate_patch entered for module={module}", flush=True)
+
     logger = logging.getLogger("QuickFixEngine")
     helper = helper_fn or manager_generate_helper
     risk_flags: list[str] = []
@@ -889,6 +904,7 @@ def generate_patch(
         raise QuickFixEngineError(
             "quick_fix_init_error", "generate_patch requires a manager"
         )
+    print("[QFE] manager validated", flush=True)
     if not _is_self_coding_manager(manager):
         raise QuickFixEngineError(
             "quick_fix_init_error",
@@ -912,6 +928,7 @@ def generate_patch(
             "quick_fix_validation_error",
             "provided ContextBuilder cannot query local databases",
         ) from exc
+    print("[QFE] context builder refreshed", flush=True)
     mod_str = module if module.endswith(".py") else f"{module}.py"
     try:
         path = resolve_path(mod_str)
@@ -919,13 +936,16 @@ def generate_patch(
         logger.error("module not found: %s", module)
         return (None, risk_flags) if return_flags else None
 
+    print(f"[QFE] resolve_path succeeded for {mod_str}", flush=True)
     prompt_path = path_for_prompt(path.as_posix())
+    print(f"[QFE] prompt path resolved: {prompt_path}", flush=True)
     description = description or f"preemptive fix for {prompt_path}"
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
     graph_lines: list[str] = []
     if graph is not None:
+        print("[QFE] graph context requested", flush=True)
         def _fetch() -> list[str]:
             return graph.related(f"code:{prompt_path}")
         try:
@@ -1456,6 +1476,7 @@ class QuickFixEngine:
         redundancy_limit: int | None = None,
         helper_fn: Callable[..., str] = manager_generate_helper,
     ) -> None:
+        print("[QFE] QuickFixEngine.__init__ entered", flush=True)
         if context_builder is None:
             raise RuntimeError("context_builder is required")
         try:
@@ -1505,6 +1526,7 @@ class QuickFixEngine:
             else env_red
         )
         self.helper_fn = helper_fn
+        print("[QFE] QuickFixEngine.__init__ completed", flush=True)
 
     # ------------------------------------------------------------------
     def _top_error(
@@ -1550,6 +1572,7 @@ class QuickFixEngine:
 
     def run(self, bot: str) -> None:
         """Attempt a quick patch for the most frequent error of ``bot``."""
+        print(f"[QFE] run() invoked for bot={bot}", flush=True)
         if self.predictor is not None:
             try:
                 modules = self.predictor.predict_high_risk_modules()
@@ -1578,17 +1601,27 @@ class QuickFixEngine:
             cluster_traces = []
             cluster_size = count
         if cluster_size < self.threshold:
+            print(
+                f"[QFE] threshold not met for bot={bot}: size={cluster_size}",
+                flush=True,
+            )
             return
         try:
             path = resolve_path(f"{module}.py")
         except FileNotFoundError:
+            print(
+                f"[QFE] resolve_path failed for module={module}",
+                flush=True,
+            )
             return
         prompt_path = path_for_prompt(path)
+        print(f"[QFE] preparing patch for {prompt_path}", flush=True)
         context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
         if cluster_id is not None:
             context_meta["error_cluster_id"] = cluster_id
             context_meta["error_cluster_size"] = cluster_size
         builder = create_context_builder()
+        print("[QFE] refreshed context builder for run()", flush=True)
         try:
             ensure_fresh_weights(builder)
         except Exception:
@@ -1688,6 +1721,10 @@ class QuickFixEngine:
         summary: Dict[str, Any] | None = None
         try:
             try:
+                print(
+                    f"[QFE] invoking patch_fn for {prompt_path} (with context)",
+                    flush=True,
+                )
                 result = patch_fn(
                     path,
                     desc,
@@ -1695,6 +1732,10 @@ class QuickFixEngine:
                     context_builder=builder,
                 )
             except TypeError:
+                print(
+                    f"[QFE] retrying patch_fn for {prompt_path} (without context)",
+                    flush=True,
+                )
                 result = patch_fn(
                     path,
                     desc,
@@ -1842,6 +1883,7 @@ class QuickFixEngine:
                 meta["error_cluster_id"] = cid
                 meta["error_cluster_size"] = size
             builder = create_context_builder()
+        print("[QFE] refreshed context builder for run()", flush=True)
             try:
                 ensure_fresh_weights(builder)
             except Exception:
@@ -2047,6 +2089,10 @@ class QuickFixEngine:
         except Exception:
             self.logger.exception("quick fix patch failed")
             return False, None, ["generation_error"]
+        print(
+            f"[QFE] apply_validated_patch completed for {module_path}",
+            flush=True,
+        )
         flags_list = list(flags)
         if flags_list:
             try:
@@ -2105,6 +2151,7 @@ class QuickFixEngine:
             Verified token ensuring the request originates from the active
             ``EvolutionOrchestrator``.
         """
+        print(f"[QFE] validate_patch called for {module_name}", flush=True)
         flags: List[str]
         try:
             _pid, flags = generate_patch(
