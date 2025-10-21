@@ -1,9 +1,10 @@
 """Compatibility shim for the :mod:`annoy` package.
 
-This module tries to use the real `annoy` implementation when it is available
-in the environment.  If that fails (for instance when the C extension was not
-compiled) a lightweight in-memory fallback is provided that mimics the public
-API of :class:`annoy.AnnoyIndex` sufficiently for the needs of this project.
+This module tries to import the real :mod:`annoy` implementation when it is
+available in the environment.  If that fails (for instance when the C extension
+was not compiled) a lightweight in-memory fallback is provided that mimics the
+public API of :class:`annoy.AnnoyIndex` sufficiently for the needs of this
+project.
 """
 
 from __future__ import annotations
@@ -11,55 +12,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 import heapq
 import importlib
-import importlib.machinery
-import importlib.util
 import json
 import math
-import os
 import random
-import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
 
+__all__ = ["AnnoyIndex"]
 
-def _try_import_real_annoy() -> "AnnoyIndex | None":
-    """Attempt to load the real :mod:`annoy` implementation.
-
-    The local repository also provides a module named ``annoy`` which would
-    normally shadow an installed package.  To work around this we manually
-    search ``sys.path`` for any other ``annoy`` package and load it if found.
-    """
-
-    this_dir = os.path.dirname(__file__)
-    for path in sys.path:
-        if os.path.abspath(path) == os.path.abspath(os.path.dirname(this_dir)):
-            continue
-        spec = importlib.machinery.PathFinder.find_spec("annoy", [path])
-        if spec and spec.origin and os.path.abspath(spec.origin) != os.path.abspath(__file__):
-            module = importlib.util.module_from_spec(spec)
-            prev = sys.modules.get("annoy")
-            sys.modules["annoy"] = module
-            assert spec.loader is not None
-            try:
-                spec.loader.exec_module(module)  # type: ignore[arg-type]
-                return module.AnnoyIndex  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            finally:
-                if prev is not None:
-                    sys.modules["annoy"] = prev
-                else:
-                    sys.modules.pop("annoy", None)
-            return None
-    return None
-
-
-_REAL_ANNOY = _try_import_real_annoy()
-
-
-if _REAL_ANNOY is not None:
-    AnnoyIndex = _REAL_ANNOY  # pragma: no cover - delegate to real library
-else:
+try:  # pragma: no cover - exercised when real package installed
+    AnnoyIndex = importlib.import_module("annoy").AnnoyIndex  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback used in test environment
 
     @dataclass
     class _Node:
@@ -158,6 +121,14 @@ else:
 
         # --------------------------------------------------
         def _distance(self, v1: Sequence[float], v2: Sequence[float]) -> float:
+            if self.metric == "angular":
+                dot = sum(a * b for a, b in zip(v1, v2))
+                norm1 = math.sqrt(sum(a * a for a in v1))
+                norm2 = math.sqrt(sum(b * b for b in v2))
+                if norm1 == 0 or norm2 == 0:
+                    return 0.0
+                cosine = max(-1.0, min(1.0, dot / (norm1 * norm2)))
+                return math.acos(cosine)
             if self.metric == "euclidean":
                 return math.sqrt(sum((a - b) ** 2 for a, b in zip(v1, v2)))
             if self.metric == "manhattan":
@@ -166,61 +137,47 @@ else:
                 return sum(0 if a == b else 1 for a, b in zip(v1, v2))
             if self.metric == "dot":
                 return -sum(a * b for a, b in zip(v1, v2))
-            # angular / cosine
-            dot = sum(a * b for a, b in zip(v1, v2))
-            norm1 = math.sqrt(sum(a * a for a in v1))
-            norm2 = math.sqrt(sum(b * b for b in v2))
-            if not norm1 or not norm2:
-                return float("inf")
-            cos_sim = dot / (norm1 * norm2)
-            return 1 - cos_sim
+            raise ValueError(f"Unsupported metric: {self.metric}")
 
         # --------------------------------------------------
-        def _search_tree(
-            self, node: _Node | None, vec: Sequence[float], heap: List[tuple[int, float]], search_k: int
-        ) -> None:
-            if node is None:
-                return
-            dist = self._distance(vec, self.items[node.index])
-            if len(heap) < search_k:
-                heapq.heappush(heap, (dist, node.index))
-            elif dist < heap[0][0]:
-                heapq.heapreplace(heap, (dist, node.index))
-            if node.left is None and node.right is None:
-                return
-            if dist < node.threshold:
-                self._search_tree(node.left, vec, heap, search_k)
-                if len(heap) < search_k or node.threshold - dist <= heap[0][0]:
-                    self._search_tree(node.right, vec, heap, search_k)
-            else:
-                self._search_tree(node.right, vec, heap, search_k)
-                if len(heap) < search_k or dist - node.threshold <= heap[0][0]:
-                    self._search_tree(node.left, vec, heap, search_k)
-
-        # --------------------------------------------------
-        def get_nns_by_vector(self, vec: Sequence[float], n: int) -> List[int]:
-            if not self.items:
-                return []
-            if len(vec) != self.dim:
-                raise ValueError("Vector dimensionality mismatch")
+        def get_nns_by_vector(
+            self,
+            vector: Sequence[float],
+            n: int,
+            search_k: int | None = None,
+            include_distances: bool = False,
+        ) -> List[int] | tuple[List[int], List[float]]:
             if not self._built:
-                self.build()
-            search_k = max(n * len(self._trees), n)
-            heap: List[tuple[int, float]] = []
-            for tree in self._trees:
-                self._search_tree(tree, vec, heap, search_k)
-            heap.sort()
-            seen = set()
-            result = []
-            for dist, idx in heap:
-                if idx not in seen:
-                    seen.add(idx)
-                    result.append(idx)
-                if len(result) >= n:
-                    break
-            return result
+                raise RuntimeError("Index not built")
+            if len(vector) != self.dim:
+                raise ValueError("Vector dimensionality mismatch")
 
+            search_k = search_k or len(self.items) * 2
+            distances = []
+            for idx, vec in heapq.nsmallest(
+                search_k,
+                ((i, self._distance(vector, v)) for i, v in self.items.items()),
+                key=lambda x: x[1],
+            ):
+                distances.append((idx, vec))
 
-__all__ = ["AnnoyIndex"]
+            neighbours = [idx for idx, _ in distances[:n]]
+            if include_distances:
+                return neighbours, [dist for _, dist in distances[:n]]
+            return neighbours
 
+        # --------------------------------------------------
+        def get_item_vector(self, idx: int) -> List[float]:
+            return self.items[int(idx)]
 
+        # --------------------------------------------------
+        def unload(self) -> None:  # noqa: D401 - compatibility shim
+            """Compatibility shim matching the real Annoy API."""
+
+            self.items.clear()
+            self._trees.clear()
+            self._built = False
+
+        # --------------------------------------------------
+        def __len__(self) -> int:
+            return len(self.items)
