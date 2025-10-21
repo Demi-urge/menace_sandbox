@@ -22,8 +22,18 @@ that transient failures are retried while permanent issues propagate errors.
 
 # flake8: noqa
 
+
+def _qfe_log(message: str) -> None:
+    print(f"[QFE:engine] {message}", flush=True)
+
+
+_qfe_log("engine.py top-level import started")
+
 import logging
+_qfe_log("logging imported")
+
 from pathlib import Path
+_qfe_log("pathlib.Path imported")
 
 try:
     from logging_utils import log_record, get_logger, setup_logging, set_correlation_id
@@ -35,6 +45,7 @@ except ImportError:  # pragma: no cover - allow package-relative import
             setup_logging,
             set_correlation_id,
         )
+        _qfe_log("logging_utils imported (menace_sandbox variant)")
     except ImportError:  # pragma: no cover - simplified environments
 
         def log_record(**fields: object) -> dict[str, object]:  # type: ignore
@@ -49,16 +60,31 @@ except ImportError:  # pragma: no cover - allow package-relative import
         def set_correlation_id(_: str | None) -> None:  # type: ignore
             return
 
+        _qfe_log("logging_utils fallback shims defined")
+else:
+    _qfe_log("logging_utils imported")
+
 
 import time
+_qfe_log("time imported")
+
 import threading
+_qfe_log("threading imported")
+
 import asyncio
+_qfe_log("asyncio imported")
+
 import os
+_qfe_log("os imported")
+
 import importlib
+_qfe_log("importlib imported")
 
 from db_router import GLOBAL_ROUTER, init_db_router
+_qfe_log("db_router imported")
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
+_qfe_log("sandbox_settings imported")
 from .init import (
     init_self_improvement,
     settings,
@@ -67,10 +93,14 @@ from .init import (
     _atomic_write,
     get_default_synergy_weights,
 )
+_qfe_log("self_improvement.init imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from dynamic_path_router import resolve_path, resolve_module_path
 except Exception:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.dynamic_path_router import resolve_path, resolve_module_path
+    _qfe_log("dynamic_path_router imported (menace_sandbox fallback)")
+else:
+    _qfe_log("dynamic_path_router imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from metrics_exporter import (
         synergy_weight_updates_total,
@@ -103,6 +133,9 @@ except ImportError:  # pragma: no cover - fallback for package-relative layout
     prediction_reliability,
     self_improvement_failure_total,
     )
+    _qfe_log("metrics_exporter imported (menace_sandbox fallback)")
+else:
+    _qfe_log("metrics_exporter imported")
 
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from composite_workflow_scorer import CompositeWorkflowScorer
@@ -115,32 +148,52 @@ except ImportError as exc:  # pragma: no cover - fallback for package-relative l
         _COMPOSITE_SCORER_ERROR = exc2
     else:
         _COMPOSITE_SCORER_ERROR = None
+        _qfe_log("composite_workflow_scorer imported (menace_sandbox fallback)")
 else:
     _COMPOSITE_SCORER_ERROR = None
+    _qfe_log("composite_workflow_scorer imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from neuroplasticity import PathwayDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.neuroplasticity import PathwayDB
+    _qfe_log("neuroplasticity imported (menace_sandbox fallback)")
+else:
+    _qfe_log("neuroplasticity imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from data_bot import MetricsDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.data_bot import MetricsDB
+    _qfe_log("data_bot imported (menace_sandbox fallback)")
+else:
+    _qfe_log("data_bot imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from roi_results_db import ROIResultsDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.roi_results_db import ROIResultsDB
+    _qfe_log("roi_results_db imported (menace_sandbox fallback)")
+else:
+    _qfe_log("roi_results_db imported")
 try:  # pragma: no cover - prefer absolute imports when running from repo root
     from workflow_stability_db import WorkflowStabilityDB
 except ImportError:  # pragma: no cover - fallback for package-relative layout
     from menace_sandbox.workflow_stability_db import WorkflowStabilityDB
+    _qfe_log("workflow_stability_db imported (menace_sandbox fallback)")
+else:
+    _qfe_log("workflow_stability_db imported")
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except ImportError:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
+    _qfe_log("task_handoff_bot unavailable - fallback to None")
+else:
+    _qfe_log("task_handoff_bot imported")
 try:  # pragma: no cover - optional dependency
     from menace_sandbox.workflow_summary_db import WorkflowSummaryDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
+    _qfe_log("workflow_summary_db imported (flat layout fallback)")
+else:
+    _qfe_log("workflow_summary_db imported")
 try:  # pragma: no cover - optional dependency
     from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
     _WORKFLOW_SYNERGY_ERROR: ImportError | None = None
@@ -152,8 +205,10 @@ except ImportError as exc:  # pragma: no cover - fallback for flat layout
         _WORKFLOW_SYNERGY_ERROR = exc2
     else:
         _WORKFLOW_SYNERGY_ERROR = None
+        _qfe_log("workflow_synergy_comparator imported (flat layout fallback)")
 else:
     _WORKFLOW_SYNERGY_ERROR = None
+    _qfe_log("workflow_synergy_comparator imported")
 
 _LOCAL_ROUTER: DBRouter | None = None
 
@@ -206,9 +261,12 @@ try:  # pragma: no cover - optional meta-planning helpers
     from .meta_planning import PLANNER_INTERVAL
     from . import meta_planning
     _META_PLANNING_ERROR: Exception | None = None
+    _qfe_log("meta_planning imported")
 except Exception as exc:  # pragma: no cover - simplified environments
     import sys
     import types
+
+    _qfe_log("meta_planning import failed; using fallback stubs")
 
     PLANNER_INTERVAL = 1  # type: ignore[assignment]
 
@@ -262,9 +320,11 @@ META_IMPROVEMENT_THRESHOLD = getattr(settings, "meta_improvement_threshold", 0)
 try:  # pragma: no cover - neurosales provides advanced sales modelling
     import neurosales  # noqa: F401
     _NEUROSALES_ERROR: ImportError | None = None
+    _qfe_log("neurosales imported")
 except ImportError as exc:  # pragma: no cover - record for later use
     neurosales = None  # type: ignore[assignment]
     _NEUROSALES_ERROR = exc
+    _qfe_log("neurosales import failed")
 
 logger = get_logger(__name__)
 
@@ -383,23 +443,53 @@ except FileNotFoundError:
             "unable to prepare relevancy metrics database"
         ) from exc
 from alert_dispatcher import dispatch_alert
+_qfe_log("alert_dispatcher imported")
+
 import json
+_qfe_log("json imported")
+
 import inspect
+_qfe_log("inspect imported")
+
 import sqlite3
+_qfe_log("sqlite3 imported")
+
 import pickle
+_qfe_log("pickle imported")
+
 import io
+_qfe_log("io imported")
+
 import tempfile
+_qfe_log("tempfile imported")
+
 import math
+_qfe_log("math imported")
+
 import typing
+_qfe_log("typing imported")
+
 import shutil
+_qfe_log("shutil imported")
+
 import ast
+_qfe_log("ast imported")
+
 from yaml_fallback import get_yaml
+_qfe_log("yaml_fallback imported")
+
 import traceback
+_qfe_log("traceback imported")
+
 from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_CHECKING
+_qfe_log("typing aliases imported")
+
 from datetime import datetime
+_qfe_log("datetime imported")
 try:  # pragma: no cover - optional dependency
     from dynamic_module_mapper import build_module_map, discover_module_groups
     _MODULE_MAPPER_ERROR: ImportError | None = None
+    _qfe_log("dynamic_module_mapper imported")
 except ImportError as exc:  # pragma: no cover - graceful degradation
     def build_module_map(*_args: object, **_kwargs: object) -> dict[str, object]:
         return {}
@@ -408,6 +498,7 @@ except ImportError as exc:  # pragma: no cover - graceful degradation
         return []
 
     _MODULE_MAPPER_ERROR = exc
+    _qfe_log("dynamic_module_mapper import failed")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.module_synergy_grapher import get_synergy_cluster
     _SYNERGY_GRAPH_ERROR: ImportError | None = None
@@ -419,19 +510,26 @@ except ImportError as exc:  # pragma: no cover - fallback for flat layout
             return []
 
         _SYNERGY_GRAPH_ERROR = exc2
+        _qfe_log("module_synergy_grapher import failed")
     else:
         _SYNERGY_GRAPH_ERROR = None
+        _qfe_log("module_synergy_grapher imported (flat layout)")
 else:
     _SYNERGY_GRAPH_ERROR = None
+    _qfe_log("module_synergy_grapher imported")
 yaml = get_yaml("self_improvement.engine")
+_qfe_log("yaml configuration loaded")
 
 try:
     from menace_sandbox import security_auditor
+    _qfe_log("security_auditor imported (menace_sandbox)")
 except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
+    _qfe_log("security_auditor imported (flat layout)")
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
     _ENVIRONMENT_ERROR: Exception | None = None
+    _qfe_log("sandbox_runner.environment imported")
 except Exception as exc:  # pragma: no cover - explicit guidance for users
     class _EnvironmentStub:
         current_context = None
@@ -450,6 +548,7 @@ except Exception as exc:  # pragma: no cover - explicit guidance for users
 
     environment = _EnvironmentStub()  # type: ignore[assignment]
     _ENVIRONMENT_ERROR = exc
+    _qfe_log("sandbox_runner.environment import failed; using stub")
 
 
 try:
@@ -461,8 +560,10 @@ try:
         stop_self_improvement_cycle,
     )
     _ORCHESTRATION_ERROR: ImportError | None = None
+    _qfe_log("self_improvement.orchestration imported")
 except ImportError as exc:
     _ORCHESTRATION_ERROR = exc
+    _qfe_log("self_improvement.orchestration import failed; using stubs")
 
     async def self_improvement_cycle(*_a: object, **_k: object) -> None:
         return None
@@ -482,8 +583,11 @@ except ImportError as exc:
 try:
     from .roi_tracking import update_alignment_baseline
     _ROI_TRACKING_ERROR = None
+    _qfe_log("self_improvement.roi_tracking imported")
 except ImportError as exc:
     _ROI_TRACKING_ERROR = exc
+
+    _qfe_log("self_improvement.roi_tracking import failed")
 
     def update_alignment_baseline(*_a: object, **_k: object) -> None:
         return None
@@ -491,8 +595,11 @@ except ImportError as exc:
 try:
     from .patch_application import generate_patch, apply_patch
     _PATCH_APP_ERROR = None
+    _qfe_log("self_improvement.patch_application imported")
 except ImportError as exc:
     _PATCH_APP_ERROR = exc
+
+    _qfe_log("self_improvement.patch_application import failed")
 
     def generate_patch(*_a: object, **_k: object) -> dict[str, object]:
         return {}
@@ -500,31 +607,46 @@ except ImportError as exc:
     def apply_patch(*_a: object, **_k: object) -> bool:
         return False
 from .prompt_memory import log_prompt_attempt
+_qfe_log("self_improvement.prompt_memory imported")
 from .prompt_strategies import PromptStrategy
+_qfe_log("self_improvement.prompt_strategies imported")
 from .prompt_strategy_manager import PromptStrategyManager
+_qfe_log("self_improvement.prompt_strategy_manager imported")
 from .strategy_analytics import StrategyAnalytics
+_qfe_log("self_improvement.strategy_analytics imported")
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
     SnapshotTracker,
 )
+_qfe_log("self_improvement.snapshot_tracker imported")
 from . import snapshot_tracker
+_qfe_log("self_improvement.snapshot_tracker module imported")
 from .sandbox_score import get_latest_sandbox_score
+_qfe_log("self_improvement.sandbox_score imported")
 from db_router import DBRouter
+_qfe_log("db_router.DBRouter imported")
 
 
 from menace_sandbox.self_test_service import SelfTestService
+_qfe_log("menace_sandbox.self_test_service imported")
 try:
     from menace_sandbox import self_test_service as sts
+    _qfe_log("self_test_service module imported (menace_sandbox)")
 except ImportError:  # pragma: no cover - fallback for flat layout
     import self_test_service as sts  # type: ignore
+    _qfe_log("self_test_service module imported (flat layout)")
 from orphan_analyzer import classify_module, analyze_redundancy
+_qfe_log("orphan_analyzer imported")
 
 try:  # pragma: no cover - numpy is optional in lightweight environments
     import numpy as np
     _NUMPY_ERROR: ImportError | None = None
+    _qfe_log("numpy imported")
 except ImportError as exc:  # pragma: no cover - provide stub accessor
     _NUMPY_ERROR = exc
+
+    _qfe_log("numpy import failed")
 
     class _MissingNumpy:
         """Proxy that raises a helpful error when numpy-backed code is used."""
