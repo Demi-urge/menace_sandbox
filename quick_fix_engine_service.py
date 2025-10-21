@@ -19,8 +19,10 @@ skipped.  In either case the bootstrapper considers the optional service
 from __future__ import annotations
 
 import logging
+import sys
 
-print("🧪 ENTERED: quick_fix_engine_service.py top-level")
+print("[SHIM] quick_fix_engine_service module loaded", flush=True)
+sys.stdout.flush()
 
 __all__ = ["start", "is_running"]
 
@@ -39,33 +41,43 @@ def start() -> None:
     """
 
     global _started
-    print("[quick_fix_engine_service] start() invoked")
+    print("[SHIM] entering start()", flush=True)
+    sys.stdout.flush()
     if _started:
-        print("[quick_fix_engine_service] start() called but already started; returning early")
+        print(
+            "[SHIM] start() called but shim is already marked as started; returning",
+            flush=True,
+        )
+        sys.stdout.flush()
         return
 
     try:
-        print("[quick_fix_engine_service] attempting to import quick_fix_engine")
+        print("[SHIM] attempting to import quick_fix_engine", flush=True)
+        sys.stdout.flush()
         import quick_fix_engine  # noqa: F401  # local import for optional dep
     except Exception as exc:  # pragma: no cover - import failures depend on env
         print(
-            "[quick_fix_engine_service] quick_fix_engine import failed; skipping optional background worker",
-            exc,
+            f"[SHIM] exception during quick_fix_engine import: {exc}",
+            flush=True,
         )
+        sys.stdout.flush()
         _logger.debug(
             "quick_fix_engine unavailable; skipping optional background worker: %s",
             exc,
         )
     else:
         print(
-            "[quick_fix_engine_service] quick_fix_engine import succeeded; see logs for next steps"
+            "[SHIM] quick_fix_engine import succeeded; see logs for next steps",
+            flush=True,
         )
+        sys.stdout.flush()
         _logger.info(
             "quick_fix_engine_service shim loaded; start the production worker "
             "separately if desired",
         )
     finally:
-        print("[quick_fix_engine_service] marking service as started")
+        print("[SHIM] marking shim as started and forcing stdout flush", flush=True)
+        sys.stdout.flush()
         _started = True
 
 
