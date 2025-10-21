@@ -37,22 +37,33 @@ def start() -> None:
     """
 
     global _started
+    print("[quick_fix_engine_service] start() invoked")
     if _started:
+        print("[quick_fix_engine_service] start() called but already started; returning early")
         return
 
     try:
+        print("[quick_fix_engine_service] attempting to import quick_fix_engine")
         import quick_fix_engine  # noqa: F401  # local import for optional dep
     except Exception as exc:  # pragma: no cover - import failures depend on env
+        print(
+            "[quick_fix_engine_service] quick_fix_engine import failed; skipping optional background worker",
+            exc,
+        )
         _logger.debug(
             "quick_fix_engine unavailable; skipping optional background worker: %s",
             exc,
         )
     else:
+        print(
+            "[quick_fix_engine_service] quick_fix_engine import succeeded; see logs for next steps"
+        )
         _logger.info(
             "quick_fix_engine_service shim loaded; start the production worker "
             "separately if desired",
         )
     finally:
+        print("[quick_fix_engine_service] marking service as started")
         _started = True
 
 
