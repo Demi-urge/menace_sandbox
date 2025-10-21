@@ -1,3 +1,6 @@
+with open("shim_was_loaded.txt", "w") as f:
+    f.write("YES")
+
 """Lightweight bootstrap hook for the optional quick-fix background worker.
 
 The production environment runs a dedicated service that continuously monitors

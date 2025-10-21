@@ -8,6 +8,18 @@ without requiring any manual post-launch edits.
 
 from __future__ import annotations
 
+import builtins
+
+original_import = builtins.__import__
+
+
+def traced_import(name, *args, **kwargs):
+    print(f"[IMPORT TRACE] importing {name}")
+    return original_import(name, *args, **kwargs)
+
+
+builtins.__import__ = traced_import
+
 import argparse
 import json
 import logging
