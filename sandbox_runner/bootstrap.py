@@ -316,20 +316,44 @@ def _start_optional_services(
             continue
         svc_name = f"{mod}_service"
         svc_mod = _OPTIONAL_MODULE_CACHE.get(svc_name)
+        is_quick_fix_service = svc_name == "quick_fix_engine_service"
+        if is_quick_fix_service:
+            print("[MAIN] About to import quick_fix_engine_service", flush=True)
         if svc_mod is None:
             try:
                 svc_mod = _import_optional_module(svc_name)
+                if is_quick_fix_service:
+                    print("[MAIN] Imported quick_fix_engine_service", flush=True)
             except ModuleNotFoundError:
+                if is_quick_fix_service:
+                    print(
+                        "[MAIN] quick_fix_engine_service not found during optional service startup",
+                        flush=True,
+                    )
                 logger.info("%s service not installed", svc_name)
                 continue
             except ImportError:
+                if is_quick_fix_service:
+                    print(
+                        "[MAIN] quick_fix_engine_service raised ImportError during startup",
+                        flush=True,
+                    )
                 logger.warning("failed to import optional service %s", svc_name, exc_info=True)
                 continue
+        elif is_quick_fix_service:
+            print("[MAIN] quick_fix_engine_service module retrieved from cache", flush=True)
         start_fn = getattr(svc_mod, "start", None) or getattr(svc_mod, "main", None)
         if callable(start_fn):
             try:
+                if is_quick_fix_service:
+                    print("[MAIN] Invoking quick_fix_engine_service.start", flush=True)
                 start_fn()  # type: ignore[call-arg]
             except Exception:  # pragma: no cover - best effort
+                if is_quick_fix_service:
+                    print(
+                        "[MAIN] quick_fix_engine_service.start raised an exception",
+                        flush=True,
+                    )
                 logger.warning("failed to launch %s", svc_name, exc_info=True)
 
 
