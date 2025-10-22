@@ -978,6 +978,7 @@ def update_metrics(
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
+    print("[RUN_AUTONOMOUS] main() reached", flush=True)
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
     parser = argparse.ArgumentParser(
