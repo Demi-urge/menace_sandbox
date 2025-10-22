@@ -80,6 +80,28 @@ _qfe_log("os imported")
 import importlib
 _qfe_log("importlib imported")
 
+
+def _start_engine_heartbeat(interval: float = 5.0) -> None:
+    """Emit periodic heartbeats to confirm module-level progress."""
+
+    def _log_heartbeat() -> None:
+        while True:
+            print(
+                f"[HEARTBEAT] engine alive at {time.time()}",
+                flush=True,
+            )
+            time.sleep(interval)
+
+    thread = threading.Thread(target=_log_heartbeat, daemon=True)
+    thread.start()
+
+
+try:
+    _start_engine_heartbeat()
+    print("[QFE:engine] heartbeat thread started", flush=True)
+except Exception as exc:  # pragma: no cover - best effort diagnostics
+    print(f"[QFE:engine] heartbeat thread failed: {exc}", flush=True)
+
 from db_router import GLOBAL_ROUTER, init_db_router
 _qfe_log("db_router imported")
 
@@ -643,6 +665,7 @@ try:  # pragma: no cover - numpy is optional in lightweight environments
     import numpy as np
     _NUMPY_ERROR: ImportError | None = None
     _qfe_log("numpy imported")
+    print("[QFE:engine] post-numpy checkpoint reached", flush=True)
 except ImportError as exc:  # pragma: no cover - provide stub accessor
     _NUMPY_ERROR = exc
 
@@ -663,14 +686,23 @@ except ImportError as exc:  # pragma: no cover - provide stub accessor
 
     np = _MissingNumpy()  # type: ignore[assignment]
 import socket
+print("[QFE:engine] socket import reached", flush=True)
 import contextlib
+print("[QFE:engine] contextlib import reached", flush=True)
 import subprocess
+print("[QFE:engine] subprocess import reached", flush=True)
 from collections import deque
+print("[QFE:engine] collections.deque import reached", flush=True)
 from menace_sandbox.error_cluster_predictor import ErrorClusterPredictor
+print("[QFE:engine] ErrorClusterPredictor import reached", flush=True)
 from menace_sandbox import mutation_logger as MutationLogger
+print("[QFE:engine] mutation_logger import reached", flush=True)
 from menace_sandbox.gpt_memory import GPTMemoryManager
+print("[QFE:engine] GPTMemoryManager import reached", flush=True)
 from menace_sandbox.local_knowledge_module import init_local_knowledge
+print("[QFE:engine] init_local_knowledge import reached", flush=True)
 from gpt_memory_interface import GPTMemoryInterface
+print("[QFE:engine] GPTMemoryInterface import reached", flush=True)
 try:
     from menace_sandbox.gpt_knowledge_service import GPTKnowledgeService
 except ImportError:  # pragma: no cover - fallback for flat layout
