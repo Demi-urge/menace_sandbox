@@ -1179,8 +1179,11 @@ def install_autopurge_command() -> None:
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
+    print("[QFE:sandbox] _cli_main entered", flush=True)
+    print("[QFE:sandbox] retrieving settings", flush=True)
     set_correlation_id(str(uuid.uuid4()))
     settings = get_settings()
+    print("[QFE:sandbox] settings loaded", flush=True)
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
     parser.add_argument(
         "--workflow-sim",
