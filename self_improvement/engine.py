@@ -28,6 +28,7 @@ def _qfe_log(message: str) -> None:
 
 
 _qfe_log("engine.py top-level import started")
+_qfe_log(f"__name__ resolved to {__name__}")
 
 import logging
 _qfe_log("logging imported")
@@ -79,6 +80,8 @@ _qfe_log("os imported")
 
 import importlib
 _qfe_log("importlib imported")
+
+_MANUAL_LAUNCH_TRIGGERED = False
 
 
 def _start_engine_heartbeat(interval: float = 5.0) -> None:
@@ -9461,3 +9464,35 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     main()
+else:  # pragma: no cover - import-time execution path for Codex shim
+    if not _MANUAL_LAUNCH_TRIGGERED:
+        _MANUAL_LAUNCH_TRIGGERED = True
+        _qfe_log("__name__ != '__main__'; forcing manual autonomous launch")
+        try:
+            runner = importlib.import_module("menace_sandbox.run_autonomous")
+        except ImportError:
+            try:
+                runner = importlib.import_module("run_autonomous")
+            except ImportError as exc:
+                _qfe_log(
+                    "unable to import run_autonomous for manual launch; skipping"
+                )
+                logger.exception("manual run_autonomous import failed", exc_info=exc)
+            else:
+                _qfe_log("run_autonomous imported via flat layout; invoking main()")
+                try:
+                    runner.main([])
+                except Exception as exc:  # pragma: no cover - diagnostic only
+                    _qfe_log(
+                        f"run_autonomous.main() raised {exc!r}; see traceback for details"
+                    )
+                    logger.exception("manual run_autonomous execution failed", exc_info=exc)
+        else:
+            _qfe_log("run_autonomous imported; invoking main()")
+            try:
+                runner.main([])
+            except Exception as exc:  # pragma: no cover - diagnostic only
+                _qfe_log(
+                    f"run_autonomous.main() raised {exc!r}; see traceback for details"
+                )
+                logger.exception("manual run_autonomous execution failed", exc_info=exc)
