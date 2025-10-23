@@ -8,18 +8,6 @@ without requiring any manual post-launch edits.
 
 from __future__ import annotations
 
-import builtins
-
-original_import = builtins.__import__
-
-
-def traced_import(name, *args, **kwargs):
-    print(f"[IMPORT TRACE] importing {name}")
-    return original_import(name, *args, **kwargs)
-
-
-builtins.__import__ = traced_import
-
 import argparse
 import json
 import logging
@@ -163,6 +151,8 @@ def main(argv: list[str] | None = None) -> None:
         be pulled from :data:`sys.argv`.
     """
 
+    print("[start_autonomous_sandbox] main() entry", flush=True)
+
     argv_list = list(sys.argv[1:] if argv is None else argv)
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
@@ -255,4 +245,5 @@ def main(argv: list[str] | None = None) -> None:
         set_correlation_id(None)
 
 
-main()
+if __name__ == "__main__":
+    main()
