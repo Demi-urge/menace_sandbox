@@ -130,24 +130,30 @@ def _sync_sandbox_environment(base_path: Path) -> None:
 def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
     """Populate sandbox data directory environment variables early."""
 
+    _console("preparing sandbox data directory environment variables")
     if argv is None:
         argv = sys.argv[1:]
+        _console("no argv provided; defaulting to sys.argv slice")
 
     override_raw = _extract_flag_value(argv, "--sandbox-data-dir")
     override_path = Path(override_raw).expanduser() if override_raw else None
     if override_path is not None:
+        _console(f"sandbox data dir override detected: {override_path}")
         os.environ["SANDBOX_DATA_DIR"] = str(override_path)
 
     data_dir_value = os.environ.get("SANDBOX_DATA_DIR")
     if not data_dir_value:
+        _console("no sandbox data dir specified; using defaults")
         return
 
     base_path = Path(data_dir_value).expanduser()
     os.environ["SANDBOX_DATA_DIR"] = str(base_path)
+    _console(f"sandbox data dir resolved to {base_path}")
 
     if override_path is not None:
         os.environ["SANDBOX_ACTIVE_OVERLAYS"] = str(base_path / "active_overlays.json")
         os.environ["SANDBOX_FAILED_OVERLAYS"] = str(base_path / "failed_overlays.json")
+        _console("applied explicit overlay paths from override")
     else:
         os.environ.setdefault(
             "SANDBOX_ACTIVE_OVERLAYS", str(base_path / "active_overlays.json")
@@ -155,8 +161,10 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
         os.environ.setdefault(
             "SANDBOX_FAILED_OVERLAYS", str(base_path / "failed_overlays.json")
         )
+        _console("ensured default overlay paths are configured")
 
     _sync_sandbox_environment(base_path)
+    _console("sandbox environment paths synchronised")
 
 
 _prepare_sandbox_data_dir_environment()
@@ -331,7 +339,10 @@ def _free_port() -> int:
 def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> None:
     """Start background thread to periodically refresh local knowledge."""
 
+    _console("initialising local knowledge refresh loop")
+
     def _loop() -> None:
+        _console("local knowledge refresh thread entered loop")
         run = 0
         while not _LKM_REFRESH_STOP.wait(LOCAL_KNOWLEDGE_REFRESH_INTERVAL):
             run += 1
@@ -339,19 +350,23 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
                 try:
                     LOCAL_KNOWLEDGE_MODULE.refresh()
                     LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+                    _console(f"local knowledge refresh cycle {run} completed")
                 except Exception:
                     logger.exception(
                         "failed to refresh local knowledge module",
                         extra=log_record(run=run),
                     )
+                    _console(f"local knowledge refresh cycle {run} failed; see logs")
 
     global _LKM_REFRESH_THREAD
     if _LKM_REFRESH_THREAD is None:
         _LKM_REFRESH_THREAD = threading.Thread(target=_loop, daemon=True)
         _LKM_REFRESH_THREAD.start()
+        _console("local knowledge refresh thread started")
 
         def _stop() -> None:
             global _LKM_REFRESH_THREAD
+            _console("stopping local knowledge refresh thread")
             _LKM_REFRESH_STOP.set()
             if _LKM_REFRESH_THREAD is not None:
                 _LKM_REFRESH_THREAD.join(timeout=1.0)
@@ -362,6 +377,7 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
                     )
                 _LKM_REFRESH_THREAD = None
             _LKM_REFRESH_STOP.clear()
+            _console("local knowledge refresh thread stopped")
 
         cleanup_funcs.append(_stop)
 
@@ -1668,6 +1684,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.error("metrics dashboard port %d in use", dash_port)
             dash_port = _free_port()
             logger.info("using port %d for MetricsDashboard", dash_port)
+        _console(f"initialising MetricsDashboard on port {dash_port}")
         from threading import Thread
 
         from menace.metrics_dashboard import MetricsDashboard
@@ -1676,6 +1693,7 @@ def main(argv: List[str] | None = None) -> None:
             Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
             / "roi_history.json"
         )
+        _console(f"MetricsDashboard will use history file {history_file}")
         dash = MetricsDashboard(str(history_file))
         dash_thread = Thread(
             target=dash.run,
@@ -1685,6 +1703,7 @@ def main(argv: List[str] | None = None) -> None:
         logger.info("starting MetricsDashboard on port %d", dash_port)
         dash_thread.start()
         logger.info("MetricsDashboard running on port %d", dash_port)
+        _console(f"MetricsDashboard active on port {dash_port}")
         cleanup_funcs.append(
             lambda: dash_thread and dash_thread.is_alive() and dash_thread.join(0.1)
         )
@@ -1701,10 +1720,14 @@ def main(argv: List[str] | None = None) -> None:
             from menace.self_improvement.engine import SynergyDashboard
         except RuntimeError as exc:
             logger.warning("SynergyDashboard unavailable: %s", exc)
+            _console("SynergyDashboard unavailable; continuing without it")
         else:
             synergy_file = (
                 Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
                 / "synergy_history.db"
+            )
+            _console(
+                f"initialising SynergyDashboard on port {synergy_dash_port} with {synergy_file}"
             )
             s_dash = SynergyDashboard(str(synergy_file))
             dash_t = Thread(
@@ -1715,6 +1738,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.info("starting SynergyDashboard on port %d", synergy_dash_port)
             dash_t.start()
             logger.info("SynergyDashboard running on port %d", synergy_dash_port)
+            _console(f"SynergyDashboard active on port {synergy_dash_port}")
             cleanup_funcs.append(s_dash.stop)
             cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
@@ -1723,12 +1747,14 @@ def main(argv: List[str] | None = None) -> None:
         settings.enable_relevancy_radar
         and settings.relevancy_radar_interval is not None
     ):
+        _console("starting relevancy radar service")
         relevancy_radar = RelevancyRadarService(
             REPO_ROOT, float(settings.relevancy_radar_interval)
         )
         relevancy_radar.start()
         atexit.register(relevancy_radar.stop)
         cleanup_funcs.append(relevancy_radar.stop)
+        _console("relevancy radar service started")
 
     module_history: dict[str, list[float]] = {}
     entropy_history: dict[str, list[float]] = {}
@@ -1791,8 +1817,10 @@ def main(argv: List[str] | None = None) -> None:
         )
 
     if args.recover:
+        _console("recover flag detected; attempting to restore last tracker state")
         tracker = SandboxRecoveryManager.load_last_tracker(data_dir)
         if tracker:
+            _console("previous tracker state found; merging histories")
             last_tracker = tracker
             for mod, vals in tracker.module_deltas.items():
                 module_history.setdefault(mod, []).extend(vals)
@@ -1817,11 +1845,13 @@ def main(argv: List[str] | None = None) -> None:
                         insert_entry(history_conn, entry)
                 except Exception:
                     logger.exception("failed to save synergy history")
+                    _console("failed to persist recovered synergy history; see logs")
             if tracker.roi_history:
                 ema, _ = cli._ema(tracker.roi_history[-args.roi_cycles :])
                 roi_ma_history.append(ema)
     else:
         last_tracker = None
+        _console("no recovery requested; starting fresh tracker state")
 
     run_idx = 0
     while args.runs is None or run_idx < args.runs:
@@ -1857,6 +1887,7 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history,
             synergy_ma_history,
         )
+        _console(f"iteration execution returned tracker={tracker is not None}")
         _console(f"run {run_idx} iteration complete")
         if tracker is None:
             logger.info("completed autonomous run %d", run_idx)
@@ -1870,6 +1901,7 @@ def main(argv: List[str] | None = None) -> None:
                 rows = history_conn.execute(
                     "SELECT entry FROM synergy_history ORDER BY id"
                 ).fetchall()
+                _console("reloaded persisted synergy history from database")
                 synergy_history = [
                     {str(k): float(v) for k, v in json.loads(text).items()}
                     for (text,) in rows
@@ -1882,7 +1914,9 @@ def main(argv: List[str] | None = None) -> None:
                     exc,
                 )
                 synergy_history = []
+                _console("failed to reload synergy history; continuing with empty list")
 
+        _console("updating metrics with latest tracker data")
         converged, ema_val, roi_threshold = update_metrics(
             tracker,
             args,
