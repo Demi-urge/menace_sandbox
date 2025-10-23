@@ -103,8 +103,15 @@ class SelfCodingThresholds:
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
 
 
+_FORCED_FALLBACK_PATHS: set[Path] = set()
+
+
 def _load_config(path: Path | None = None) -> Dict[str, dict]:
     cfg_path = path or _CONFIG_PATH
+    try:
+        cache_key = cfg_path.resolve(strict=False)
+    except Exception:  # pragma: no cover - resolution best effort only
+        cache_key = cfg_path
     try:
         raw = cfg_path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -112,16 +119,26 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
     if not raw.strip():
         return {}
 
+    loader = _FALLBACK_YAML if cache_key in _FORCED_FALLBACK_PATHS else yaml
+
     try:
-        return yaml.safe_load(raw) or {}
+        return loader.safe_load(raw) or {}
     except RecursionError as exc:
         logger.error(
             "detected recursive YAML structure in %s; retrying with fallback parser",  # noqa: E501
             cfg_path,
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
+        _FORCED_FALLBACK_PATHS.add(cache_key)
         try:
             return _FALLBACK_YAML.safe_load(raw) or {}
+        except RecursionError as fb_exc:  # pragma: no cover - defensive guard
+            logger.error(
+                "fallback parser exceeded recursion depth for %s; ignoring corrupt configuration",  # noqa: E501
+                cfg_path,
+                exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
+            )
+            return {}
         except Exception as fb_exc:  # pragma: no cover - defensive guard
             logger.warning(
                 "fallback parser also failed to load %s", cfg_path, exc_info=fb_exc
