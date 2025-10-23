@@ -49,31 +49,6 @@ engine = SelfCodingEngine(
     GPTMemoryManager(),
     context_builder=_context_builder,
 )
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator = get_orchestrator(
-    "CapitalManagementBot",
-    data_bot,
-    engine,
-)
-_thresholds = get_thresholds("CapitalManagementBot")
-persist_sc_thresholds(
-    "CapitalManagementBot",
-    roi_drop=_thresholds.roi_drop,
-    error_increase=_thresholds.error_increase,
-    test_failure_increase=_thresholds.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "CapitalManagementBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_thresholds.roi_drop,
-    error_threshold=_thresholds.error_increase,
-    test_failure_threshold=_thresholds.test_failure_increase,
-)
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -1819,6 +1794,77 @@ class CapitalManagementBot:
         )
         ratio = base * (1.0 + energy * 0.1) * risk
         return max(0.1, min(ratio, 3.0))
+
+
+try:
+    pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+except Exception as exc:  # pragma: no cover - degraded bootstrap
+    logger.warning(
+        "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
+        exc,
+    )
+    pipeline = None
+
+try:
+    evolution_orchestrator = (
+        get_orchestrator("CapitalManagementBot", data_bot, engine)
+        if engine is not None
+        else None
+    )
+except Exception as exc:  # pragma: no cover - orchestrator optional
+    logger.warning(
+        "EvolutionOrchestrator unavailable for CapitalManagementBot: %s",
+        exc,
+    )
+    evolution_orchestrator = None
+
+try:
+    _thresholds = get_thresholds("CapitalManagementBot")
+except Exception as exc:  # pragma: no cover - thresholds optional
+    logger.warning("Threshold lookup failed for CapitalManagementBot: %s", exc)
+    _thresholds = None
+else:
+    try:
+        persist_sc_thresholds(
+            "CapitalManagementBot",
+            roi_drop=_thresholds.roi_drop,
+            error_increase=_thresholds.error_increase,
+            test_failure_increase=_thresholds.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - best effort persistence
+        logger.warning(
+            "failed to persist CapitalManagementBot thresholds: %s",
+            exc,
+        )
+
+if engine is not None and pipeline is not None and _thresholds is not None:
+    try:
+        manager = internalize_coding_bot(
+            "CapitalManagementBot",
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=_thresholds.roi_drop,
+            error_threshold=_thresholds.error_increase,
+            test_failure_threshold=_thresholds.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "failed to initialise self-coding manager for CapitalManagementBot: %s",
+            exc,
+        )
+        manager = None
+else:
+    manager = None
+
+CapitalManagementBot = self_coding_managed(
+    bot_registry=registry,
+    data_bot=data_bot,
+    manager=manager,
+)(CapitalManagementBot)
 
 
 __all__ = [
