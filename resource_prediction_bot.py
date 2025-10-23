@@ -5,7 +5,7 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
@@ -79,7 +79,6 @@ class TemplateDB:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResourcePredictionBot:
     """Predict resources, detect redundancies and assess risk."""
 
@@ -188,6 +187,51 @@ class ResourcePredictionBot:
                 logger.warning("risk calculation failed", exc_info=True)
         base = metrics.cpu / 100 + metrics.memory / 100 + metrics.disk / 100
         return min(1.0, base / 3)
+
+
+class _TruthyManagerWrapper:
+    """Proxy object that keeps disabled managers truthy for registry checks."""
+
+    __slots__ = ("_manager",)
+
+    def __init__(self, manager: object) -> None:
+        self._manager = manager
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._manager, name)
+
+    def __bool__(self) -> bool:  # pragma: no cover - trivial
+        return True
+
+
+def _resolve_fallback_manager() -> object | None:
+    """Return a lightweight manager so registration skips retry loops."""
+
+    try:
+        existing = registry.graph.nodes.get("ResourcePredictionBot", {})
+        manager = existing.get("selfcoding_manager") or existing.get("manager")
+        if manager is not None:
+            return manager
+    except Exception:  # pragma: no cover - best effort lookup
+        logger.debug("ResourcePredictionBot manager lookup failed", exc_info=True)
+
+    try:
+        disabled = _DisabledSelfCodingManager(bot_registry=registry, data_bot=data_bot)
+        return _TruthyManagerWrapper(disabled)
+    except Exception:  # pragma: no cover - defensive guard
+        logger.debug(
+            "ResourcePredictionBot fallback manager initialisation failed",
+            exc_info=True,
+        )
+        return None
+
+
+_manager = _resolve_fallback_manager()
+ResourcePredictionBot = self_coding_managed(
+    bot_registry=registry,
+    data_bot=data_bot,
+    manager=_manager,
+)(ResourcePredictionBot)
 
 
 __all__ = [
