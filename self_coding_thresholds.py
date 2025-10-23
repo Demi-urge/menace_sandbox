@@ -106,6 +106,64 @@ _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
 _FORCED_FALLBACK_PATHS: set[Path] = set()
 
 
+def _decouple_aliases(value: Any, *, _stack: set[int] | None = None) -> Any:
+    """Return ``value`` with recursive YAML aliases removed.
+
+    PyYAML represents recursive anchors by constructing containers that refer
+    to themselves.  Serialising such objects triggers ``RecursionError`` and
+    prevents the lightweight fallback from helping because the recursion lives
+    in the resulting Python object rather than the parser.  This helper walks
+    the structure and produces a new copy while discarding recursive
+    references.  Aliases that simply point to the same sub-structure are
+    deduplicated by value which is sufficient for configuration data.
+    """
+
+    if _stack is None:
+        _stack = set()
+
+    obj_id = id(value)
+    if obj_id in _stack:
+        logger.warning(
+            "detected recursive reference in YAML configuration; pruning cycle",
+        )
+        if isinstance(value, dict):
+            return {}
+        if isinstance(value, (list, tuple, set)):
+            return []
+        return None
+
+    if isinstance(value, dict):
+        _stack.add(obj_id)
+        copy: dict[str, Any] = {}
+        for key, item in value.items():
+            # Keys should already be strings, but convert defensively to avoid
+            # unexpected types introduced via anchors or custom tags.
+            key_str = str(key)
+            copy[key_str] = _decouple_aliases(item, _stack=_stack)
+        _stack.remove(obj_id)
+        return copy
+
+    if isinstance(value, list):
+        _stack.add(obj_id)
+        copy_list = [_decouple_aliases(item, _stack=_stack) for item in value]
+        _stack.remove(obj_id)
+        return copy_list
+
+    if isinstance(value, tuple):
+        _stack.add(obj_id)
+        copy_tuple = tuple(_decouple_aliases(item, _stack=_stack) for item in value)
+        _stack.remove(obj_id)
+        return list(copy_tuple)
+
+    if isinstance(value, set):
+        _stack.add(obj_id)
+        copy_set = [_decouple_aliases(item, _stack=_stack) for item in value]
+        _stack.remove(obj_id)
+        return copy_set
+
+    return value
+
+
 def _load_config(path: Path | None = None) -> Dict[str, dict]:
     cfg_path = path or _CONFIG_PATH
     try:
@@ -122,7 +180,9 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
     loader = _FALLBACK_YAML if cache_key in _FORCED_FALLBACK_PATHS else yaml
 
     try:
-        return loader.safe_load(raw) or {}
+        data = loader.safe_load(raw) or {}
+        cleaned = _decouple_aliases(data)
+        return cleaned if isinstance(cleaned, dict) else {}
     except RecursionError as exc:
         logger.error(
             "detected recursive YAML structure in %s; retrying with fallback parser",  # noqa: E501
@@ -131,7 +191,9 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
         )
         _FORCED_FALLBACK_PATHS.add(cache_key)
         try:
-            return _FALLBACK_YAML.safe_load(raw) or {}
+            data = _FALLBACK_YAML.safe_load(raw) or {}
+            cleaned = _decouple_aliases(data)
+            return cleaned if isinstance(cleaned, dict) else {}
         except RecursionError as fb_exc:  # pragma: no cover - defensive guard
             logger.error(
                 "fallback parser exceeded recursion depth for %s; ignoring corrupt configuration",  # noqa: E501
