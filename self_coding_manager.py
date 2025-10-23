@@ -3277,9 +3277,10 @@ def internalize_coding_bot(
     description = f"internalize:{bot_name}"
 
     def _emit_failure(reason: str) -> None:
-        if manager.data_bot:
+        data_bot_ref = getattr(manager, "data_bot", None)
+        if data_bot_ref:
             try:
-                manager.data_bot.collect(
+                data_bot_ref.collect(
                     bot_name,
                     post_patch_cycle_success=0.0,
                     post_patch_cycle_error=reason,
@@ -3308,6 +3309,8 @@ def internalize_coding_bot(
 
     if module_path is None or not module_path.exists():
         _emit_failure("module_path_missing")
+        if not hasattr(manager, "run_post_patch_cycle"):
+            return manager
         raise RuntimeError("module path unavailable for internalization")
     if provenance_token is None:
         _emit_failure("missing_provenance")
