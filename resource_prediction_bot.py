@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, get_shared_data_bot
 
 from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
 import logging
 
 registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+data_bot = get_shared_data_bot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -89,7 +89,9 @@ class ResourcePredictionBot:
         capital_bot: Optional[CapitalManagementBot] = None,
     ) -> None:
         self.db = db or TemplateDB()
-        self.data_bot = data_bot
+        self.data_bot = data_bot if data_bot is not None else get_shared_data_bot(
+            start_server=False
+        )
         self.capital_bot = capital_bot
         self.graph = nx.DiGraph()
 

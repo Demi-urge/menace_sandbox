@@ -3037,11 +3037,68 @@ class DataBot:
         return float(df["cpu"].mean() + df["memory"].mean())
 
 
+_shared_data_bot_lock = threading.Lock()
+_shared_data_bot: DataBot | None = None
+_shared_data_bot_kwargs: dict[str, object] | None = None
+
+
+def get_shared_data_bot(**kwargs: object) -> DataBot:
+    """Return a process-wide :class:`DataBot` instance.
+
+    ``DataBot`` performs a number of side effects during initialisation such as
+    subscribing to events on the shared bus.  Reusing a single instance avoids
+    duplicated subscriptions when modules are hot reloaded.
+    """
+
+    global _shared_data_bot, _shared_data_bot_kwargs
+    with _shared_data_bot_lock:
+        if _shared_data_bot is None:
+            _shared_data_bot = DataBot(**kwargs)
+            _shared_data_bot_kwargs = dict(kwargs)
+        else:
+            if kwargs and _shared_data_bot_kwargs is not None:
+                mismatched = {
+                    key: value
+                    for key, value in kwargs.items()
+                    if _shared_data_bot_kwargs.get(key) != value
+                }
+                if mismatched:
+                    logger.debug(
+                        "get_shared_data_bot called with differing arguments: %s",
+                        mismatched,
+                    )
+        return _shared_data_bot
+
+
+def reset_shared_data_bot_for_testing() -> None:
+    """Reset the cached ``DataBot`` instance.
+
+    This helper is intended for use in tests so they can control the
+    environment and avoid cross-test contamination.  It does not tear down
+    subscriptions on the existing instance; callers should replace the shared
+    event bus if isolation is required.
+    """
+
+    global _shared_data_bot, _shared_data_bot_kwargs
+    with _shared_data_bot_lock:
+        _shared_data_bot = None
+        _shared_data_bot_kwargs = None
+
+
 # Reuse the shared event bus for the default ``data_bot`` instance so other
 # modules importing ``data_bot`` automatically participate in the global
 # publish/subscribe system.
 _default_db = MetricsDB(Path(__file__).with_name("metrics.db").resolve())
-data_bot = DataBot(db=_default_db, start_server=False, event_bus=_SHARED_EVENT_BUS)
+data_bot = get_shared_data_bot(
+    db=_default_db, start_server=False, event_bus=_SHARED_EVENT_BUS
+)
 
 
-__all__ = ["MetricRecord", "MetricsDB", "DataBot", "data_bot"]
+__all__ = [
+    "MetricRecord",
+    "MetricsDB",
+    "DataBot",
+    "data_bot",
+    "get_shared_data_bot",
+    "reset_shared_data_bot_for_testing",
+]
