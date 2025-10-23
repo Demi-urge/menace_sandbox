@@ -2112,10 +2112,27 @@ def bootstrap(
 
     atexit.register(_cleanup)
 
+    print(
+        "[RUN_AUTONOMOUS] bootstrap complete, launching sandbox",
+        flush=True,
+    )
+    logger.info(
+        "autonomous bootstrap complete; handing off to sandbox runner",
+        extra=log_record(stage="launch"),
+    )
+
     try:
         launch_sandbox(settings=settings)
+        logger.info(
+            "autonomous sandbox run exited cleanly",
+            extra=log_record(stage="shutdown"),
+        )
     finally:
         _cleanup()
+        logger.info(
+            "autonomous cleanup complete",
+            extra=log_record(stage="cleanup"),
+        )
 
 
 if __name__ == "__main__":
