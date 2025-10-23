@@ -234,7 +234,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 sys.exit(2)
             return
+        print("[start_autonomous_sandbox] launching sandbox", flush=True)
         launch_sandbox()
+        print("[start_autonomous_sandbox] sandbox exited", flush=True)
         logger.info("sandbox shutdown", extra=log_record(event="shutdown"))
     except Exception:  # pragma: no cover - defensive catch
         sandbox_crashes_total.inc()

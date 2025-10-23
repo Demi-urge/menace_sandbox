@@ -8,11 +8,7 @@ Initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router` before importing
 modules that touch the database.
 """
 
-print("🔥 RUN STARTED")
-
 import os
-
-print("🌍 ENV OK")
 
 # ``knowledge.local_knowledge`` was used in historical deployments, however the
 # sandbox now ships ``local_knowledge_module`` directly within this repository.
@@ -27,20 +23,6 @@ except ModuleNotFoundError:  # pragma: no cover - default in the sandbox
         if mem_db is None:
             mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
         return _init_local_knowledge(mem_db)
-
-print("📡 local_knowledge module imported")
-
-local_knowledge = init_local_knowledge()
-
-print("✅ local_knowledge loaded")
-
-from sandbox_runner.bootstrap import launch_sandbox
-
-print("🧪 sandbox module imported")
-
-launch_sandbox()
-
-print("🏁 FULL MENACE LAUNCH COMPLETE")
 
 import argparse
 import atexit
