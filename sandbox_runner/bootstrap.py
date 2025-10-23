@@ -1192,21 +1192,22 @@ def launch_sandbox(
     verifier: Callable[..., None] | None = None,
 ) -> None:
     """Run the sandbox runner using ``settings`` for configuration."""
-    print("[QFE:sandbox] launch_sandbox() entered", flush=True)
+    print("[SANDBOX] launch_sandbox() start", flush=True)
     cid = f"bootstrap-launch-{uuid.uuid4()}"
     set_correlation_id(cid)
     sandbox_restart_total.labels(service="bootstrap", reason="launch").inc()
     logger.info("launch sandbox start", extra=log_record(event="start"))
     try:
         settings = bootstrap_environment(settings, verifier)
+        print("[SANDBOX] after bootstrap_environment", flush=True)
         os.environ.setdefault(
             "SANDBOX_REPO_PATH", str(resolve_path(settings.sandbox_repo_path))
         )
         data_dir = resolve_path(settings.sandbox_data_dir)
         os.environ.setdefault("SANDBOX_DATA_DIR", str(data_dir))
-        print("[QFE:sandbox] before _cli_main([])", flush=True)
+        print("[SANDBOX] after environment configuration", flush=True)
         _cli_main([])
-        print("[QFE:sandbox] after _cli_main([])", flush=True)
+        print("[SANDBOX] after CLI main", flush=True)
         logger.info("launch sandbox shutdown", extra=log_record(event="shutdown"))
     except Exception:
         sandbox_crashes_total.inc()
