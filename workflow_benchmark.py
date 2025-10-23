@@ -295,19 +295,22 @@ def benchmark_registered_workflows(
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
 
 
-def _load_callable(path: str) -> Callable[[], bool]:
+def _load_callable(path: str | os.PathLike[str]) -> Callable[[], bool]:
     """Return a callable referenced by ``path``.
 
-    ``path`` should be in ``module:func`` or ``module.func`` format.
+    ``path`` may be a string or :class:`os.PathLike` object using
+    ``module:func`` or ``module.func`` format.
     """
 
-    if ":" in path:
-        mod_name, func_name = path.split(":", 1)
+    path_str = str(path)
+
+    if ":" in path_str:
+        mod_name, func_name = path_str.split(":", 1)
     else:
-        mod_name, func_name = path.rsplit(".", 1)
+        mod_name, func_name = path_str.rsplit(".", 1)
     func = getattr(importlib.import_module(mod_name), func_name)
     if not callable(func):  # pragma: no cover - defensive
-        raise TypeError(f"{path} is not callable")
+        raise TypeError(f"{path_str} is not callable")
     return func
 
 
