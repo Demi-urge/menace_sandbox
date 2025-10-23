@@ -82,6 +82,7 @@ import logging
 import json
 import threading
 import time
+import weakref
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast
@@ -1374,6 +1375,10 @@ class DataBot:
     standard deviations from the mean constitute a breach.
     """
 
+    _bus_subscription_lock = threading.Lock()
+    _bus_dispatchers: Dict[int, Dict[str, Callable[[str, object], None]]] = {}
+    _bus_primary_instance: Dict[int, weakref.ReferenceType["DataBot"]] = {}
+
     def __init__(
         self,
         db: MetricsDB | None = None,
@@ -1622,29 +1627,84 @@ class DataBot:
                     "skipping background refresh",
                 )
 
+    @classmethod
+    def _register_primary_instance(cls, bus_id: int, instance: "DataBot") -> None:
+        """Record *instance* as the active handler for *bus_id*."""
+
+        with cls._bus_subscription_lock:
+            cls._bus_primary_instance[bus_id] = weakref.ref(instance)
+
+    @classmethod
+    def _get_primary_instance(cls, bus_id: int) -> "DataBot | None":
+        with cls._bus_subscription_lock:
+            ref = cls._bus_primary_instance.get(bus_id)
+        if ref is None:
+            return None
+        return ref()
+
+    @classmethod
+    def _make_dispatcher(
+        cls, bus_id: int, handler_name: str
+    ) -> Callable[[str, object], None]:
+        def _dispatch(topic: str, event: object) -> None:
+            instance = cls._get_primary_instance(bus_id)
+            if instance is None:
+                return
+            handler = getattr(instance, handler_name, None)
+            if handler is None:
+                return
+            handler(topic, event)
+
+        return _dispatch
+
+    @classmethod
+    def _ensure_bus_dispatchers(
+        cls, bus: UnifiedEventBus, bus_id: int
+    ) -> None:
+        dispatchers: Dict[str, Callable[[str, object], None]] | None = None
+        with cls._bus_subscription_lock:
+            if bus_id not in cls._bus_dispatchers:
+                dispatchers = {
+                    "self_coding:patch_applied": cls._make_dispatcher(
+                        bus_id, "_on_patch_applied"
+                    ),
+                    "bot:new": cls._make_dispatcher(bus_id, "_on_bot_new"),
+                    "bot:updated": cls._make_dispatcher(bus_id, "_on_bot_updated"),
+                    "thresholds:refresh": cls._make_dispatcher(
+                        bus_id, "_on_thresholds_refresh"
+                    ),
+                }
+                cls._bus_dispatchers[bus_id] = dispatchers
+        if dispatchers is None:
+            return
+        try:
+            for topic, handler in dispatchers.items():
+                bus.subscribe(topic, handler)
+        except Exception:
+            with cls._bus_subscription_lock:
+                cls._bus_dispatchers.pop(bus_id, None)
+            raise
+
     def _ensure_event_subscriptions(self) -> None:
         """Subscribe to shared events once per bus instance."""
 
         if not self.event_bus:
             return
+        bus = self.event_bus
+        bus_id = id(bus)
+        type(self)._register_primary_instance(bus_id, self)
         with self._subscription_lock:
-            if self._subscriptions_registered and self._subscription_bus is self.event_bus:
+            if self._subscriptions_registered and self._subscription_bus is bus:
                 return
-            if self._subscriptions_registered and self._subscription_bus is not self.event_bus:
+            if self._subscriptions_registered and self._subscription_bus is not bus:
                 self._subscriptions_registered = False
-            try:
-                self.event_bus.subscribe(
-                    "self_coding:patch_applied", self._on_patch_applied
-                )
-                self.event_bus.subscribe("bot:new", self._on_bot_new)
-                self.event_bus.subscribe("bot:updated", self._on_bot_updated)
-                self.event_bus.subscribe(
-                    "thresholds:refresh", self._on_thresholds_refresh
-                )
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to subscribe to events")
-            else:
-                self._subscription_bus = self.event_bus
+        try:
+            type(self)._ensure_bus_dispatchers(bus, bus_id)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to subscribe to events")
+        else:
+            with self._subscription_lock:
+                self._subscription_bus = bus
                 self._subscriptions_registered = True
 
     # ------------------------------------------------------------------
