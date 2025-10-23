@@ -31,7 +31,6 @@ import importlib
 import importlib.util
 import json
 import logging
-import os
 import shutil
 import signal
 import socket
@@ -79,6 +78,15 @@ path_for_prompt = getattr(
 from sandbox_settings import SandboxSettings
 
 
+def _console(message: str) -> None:
+    """Emit high-visibility progress output for ``run_autonomous`` steps."""
+
+    print(f"[RUN_AUTONOMOUS] {message}", flush=True)
+
+
+_console("imported run_autonomous module; starting initialisation")
+
+
 def _extract_flag_value(argv: List[str], flag: str) -> str | None:
     """Return the value provided for ``flag`` in ``argv`` if present."""
 
@@ -96,8 +104,10 @@ def _extract_flag_value(argv: List[str], flag: str) -> str | None:
 def _sync_sandbox_environment(base_path: Path) -> None:
     """Update ``sandbox_runner.environment`` paths to point under ``base_path``."""
 
+    _console("synchronising sandbox_runner.environment paths")
     env_mod = sys.modules.get("sandbox_runner.environment")
     if env_mod is None:
+        _console("sandbox_runner.environment module not loaded; skipping sync")
         return
 
     default_active = str(base_path / "active_overlays.json")
@@ -117,6 +127,10 @@ def _sync_sandbox_environment(base_path: Path) -> None:
     except TypeError:
         env_mod._ACTIVE_OVERLAYS_FILE = Path(str(active_path))
         env_mod._FAILED_OVERLAYS_FILE = Path(str(failed_path))
+    _console(
+        "sandbox_runner.environment overlay paths configured to %s and %s"
+        % (env_mod._ACTIVE_OVERLAYS_FILE, env_mod._FAILED_OVERLAYS_FILE)
+    )
 
     filelock_cls = getattr(env_mod, "FileLock", None)
     if filelock_cls is not None:
@@ -125,6 +139,7 @@ def _sync_sandbox_environment(base_path: Path) -> None:
             env_mod._ACTIVE_OVERLAYS_LOCK = filelock_cls(lock_path)
         except Exception:
             env_mod._ACTIVE_OVERLAYS_LOCK = None
+    _console("sandbox_runner.environment synchronisation complete")
 
 
 def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
@@ -167,7 +182,9 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
     _console("sandbox environment paths synchronised")
 
 
+_console("preparing sandbox data directory environment")
 _prepare_sandbox_data_dir_environment()
+_console("sandbox data directory environment prepared")
 
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
@@ -177,15 +194,16 @@ from sandbox_runner.bootstrap import (
 logger = logging.getLogger(__name__)
 
 
-def _console(message: str) -> None:
-    """Emit high-visibility progress output for ``run_autonomous`` steps."""
-
-    print(f"[RUN_AUTONOMOUS] {message}", flush=True)
-
-
+_console("loading sandbox settings")
 settings = SandboxSettings()
+_console("sandbox settings loaded; bootstrapping environment")
 settings = bootstrap_environment(settings, _verify_required_dependencies)
+_console("sandbox environment bootstrap complete")
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
+_console(
+    "SANDBOX_CENTRAL_LOGGING set to %s"
+    % os.environ.get("SANDBOX_CENTRAL_LOGGING")
+)
 LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
@@ -200,6 +218,10 @@ LOCAL_DB_PATH = settings.menace_local_db_path or str(
 )
 SHARED_DB_PATH = settings.menace_shared_db_path or str(resolve_path("shared/global.db"))
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+_console(
+    "database router initialised (menace_id=%s local=%s shared=%s)"
+    % (MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+)
 
 from menace_sandbox.gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance, _load_retention_rules
@@ -217,6 +239,7 @@ if settings.menace_mode.lower() == "production" and settings.database_url.starts
     )
     os.environ["MENACE_MODE"] = "test"
     settings = SandboxSettings()
+    _console("production mode requested with SQLite; switched to test mode")
 
 # Ensure repository root on sys.path when running as a script
 if "menace" not in sys.modules:
@@ -227,6 +250,7 @@ if "menace" not in sys.modules:
 # directory containing this file.  ``SANDBOX_REPO_PATH`` is required in most
 # environments but this fallback keeps unit tests and ad-hoc scripts working.
 REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
+_console(f"repository root resolved to {REPO_ROOT}")
 
 
 spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
@@ -577,9 +601,11 @@ def load_previous_synergy(
 ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
     """Return synergy history and moving averages from ``synergy_history.db``."""
 
+    _console(f"loading previous synergy data from {data_dir}")
     data_dir = Path(resolve_path(data_dir))
     path = data_dir / "synergy_history.db"
     if not path.exists():
+        _console("no prior synergy history found")
         return [], []
     history: list[dict[str, float]] = []
     try:
@@ -602,6 +628,7 @@ def load_previous_synergy(
             exc,
         )
         history = []
+        _console("failed to load previous synergy history; continuing with empty data")
 
     ma_history: list[dict[str, float]] = []
     for idx, entry in enumerate(history):
@@ -612,6 +639,10 @@ def load_previous_synergy(
             ma_entry[k] = ema
         ma_history.append(ma_entry)
 
+    _console(
+        "loaded %d synergy entries with moving averages"
+        % (len(history))
+    )
     return history, ma_history
 
 
@@ -623,22 +654,28 @@ def prepare_presets(
 ) -> tuple[list[dict], str]:
     """Return presets for ``run_idx`` and their source."""
 
+    _console(f"preparing presets for run {run_idx}")
     preset_source = "static file"
+    actions: list = []
     if args.preset_files:
         pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
+        _console(f"loading preset file {pf}")
         try:
             data = json.loads(pf.read_text())
         except json.JSONDecodeError as exc:
             logger.warning("preset file %s is corrupted: %s", pf, exc)
             data = generate_presets(args.preset_count)
             pf.write_text(json.dumps(data))
+            _console("preset file corrupted; regenerated defaults")
         presets_raw = [data] if isinstance(data, dict) else list(data)
         presets = validate_presets(presets_raw)
         logger.info(
             "loaded presets from file", extra=log_record(run=run_idx, presets=presets)
         )
+        _console(f"presets loaded from file with {len(presets)} entries")
     else:
         if getattr(args, "disable_preset_evolution", False):
+            _console("preset evolution disabled; generating defaults")
             presets = validate_presets(generate_presets(args.preset_count))
         else:
             gen_func = getattr(
@@ -647,8 +684,10 @@ def prepare_presets(
                 generate_presets,
             )
             if gen_func is generate_presets:
+                _console("history generator unavailable; generating defaults")
                 presets = validate_presets(generate_presets(args.preset_count))
             else:
+                _console("generating presets from history data")
                 data_dir = resolve_path(
                     args.sandbox_data_dir or settings.sandbox_data_dir
                 )
@@ -684,6 +723,9 @@ def prepare_presets(
             preset_log.log(run_idx, preset_source, actions)
         except Exception:
             logger.exception("failed to log preset details")
+    _console(
+        "presets prepared for run %d using source %s" % (run_idx, preset_source)
+    )
     return presets, preset_source
 
 
@@ -696,6 +738,7 @@ def execute_iteration(
 ) -> tuple[ROITracker | None, ForesightTracker | None]:
     """Run one autonomous iteration using ``presets`` and return trackers."""
 
+    _console("starting autonomous iteration execution")
     recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
     sandbox_runner._sandbox_main = recovery.run
     volatility_threshold = settings.sandbox_volatility_threshold
@@ -704,6 +747,7 @@ def execute_iteration(
     )
     setattr(args, "foresight_tracker", foresight_tracker)
     try:
+        _console("invoking full_autonomous_run")
         full_autonomous_run(
             args,
             synergy_history=synergy_history,
@@ -716,12 +760,15 @@ def execute_iteration(
 
     data_dir = Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
     hist_file = data_dir / "roi_history.json"
+    _console(f"loading ROI history from {hist_file}")
     tracker = ROITracker()
     try:
         tracker.load_history(str(hist_file))
     except Exception:
         logger.exception("failed to load tracker history: %s", hist_file)
+        _console("failed to load ROI history; returning without tracker")
         return None, foresight_tracker
+    _console("autonomous iteration execution complete; tracker loaded")
     return tracker, foresight_tracker
 
 
@@ -748,6 +795,7 @@ def update_metrics(
 ) -> tuple[bool, float, float]:
     """Update histories and return convergence status and EMA."""
 
+    _console(f"updating metrics for run {run_idx}")
     for mod, vals in tracker.module_deltas.items():
         module_history.setdefault(mod, []).extend(vals)
     for mod, vals in tracker.module_entropy_deltas.items():
@@ -978,6 +1026,10 @@ def update_metrics(
                 "roi_std": roi_std_val,
             }
         )
+    _console(
+        "metrics update complete for run %d (converged=%s)"
+        % (run_idx, converged)
+    )
     return converged, ema_val, roi_threshold
 
 
