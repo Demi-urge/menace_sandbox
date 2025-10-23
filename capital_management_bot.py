@@ -8,7 +8,6 @@ from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
@@ -73,6 +72,7 @@ from .retry_utils import retry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
     from .prediction_manager_bot import PredictionManager
+    from .model_automation_pipeline import ModelAutomationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -1796,14 +1796,23 @@ class CapitalManagementBot:
         return max(0.1, min(ratio, 3.0))
 
 
-try:
-    pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-except Exception as exc:  # pragma: no cover - degraded bootstrap
+try:  # pragma: no cover - pipeline import may fail during bootstrap
+    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
+except Exception as exc:
     logger.warning(
         "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
         exc,
     )
     pipeline = None
+else:
+    try:
+        pipeline = _Pipeline(context_builder=_context_builder)
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "ModelAutomationPipeline initialisation failed for CapitalManagementBot: %s",
+            exc,
+        )
+        pipeline = None
 
 try:
     evolution_orchestrator = (
