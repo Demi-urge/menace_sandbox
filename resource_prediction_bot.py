@@ -8,7 +8,7 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Dict, Optional
+from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
 import logging
 
 registry = BotRegistry()
@@ -24,11 +24,13 @@ import pulp
 
 logger = logging.getLogger(__name__)
 
-from .capital_management_bot import CapitalManagementBot
 try:
     import risky  # type: ignore
 except Exception:  # pragma: no cover - optional
     risky = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .capital_management_bot import CapitalManagementBot
 
 
 @dataclass
