@@ -168,6 +168,13 @@ from sandbox_runner.bootstrap import (
 
 logger = logging.getLogger(__name__)
 
+
+def _console(message: str) -> None:
+    """Emit high-visibility progress output for ``run_autonomous`` steps."""
+
+    print(f"[RUN_AUTONOMOUS] {message}", flush=True)
+
+
 settings = SandboxSettings()
 settings = bootstrap_environment(settings, _verify_required_dependencies)
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
@@ -960,9 +967,11 @@ def update_metrics(
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
-    print("[RUN_AUTONOMOUS] main() reached", flush=True)
+
+    _console("main() reached - preparing sandbox environment")
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
+    _console("correlation id initialised; configuring argument parser")
     parser = argparse.ArgumentParser(
         description="Run full autonomous sandbox with environment presets",
     )
@@ -1234,25 +1243,35 @@ def main(argv: List[str] | None = None) -> None:
         help="validate environment settings and exit",
     )
     args = parser.parse_args(argv)
+    _console("arguments parsed; configuring logging")
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+    _console(
+        "logging configured at %s level"
+        % ("DEBUG" if args.verbose else args.log_level)
+    )
 
     if args.foresight_trend:
+        _console("foresight trend mode selected; executing and exiting")
         file, workflow_id = args.foresight_trend
         cli.foresight_trend(file, workflow_id)
         return
     if args.foresight_stable:
+        _console("foresight stability mode selected; executing and exiting")
         file, workflow_id = args.foresight_stable
         cli.foresight_stability(file, workflow_id)
         return
 
     mem_db = args.memory_db or settings.gpt_memory_db
+    _console(f"initialising local knowledge module with memory db {mem_db}")
     global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
     LOCAL_KNOWLEDGE_MODULE = init_local_knowledge(mem_db)
     GPT_MEMORY_MANAGER = LOCAL_KNOWLEDGE_MODULE.memory
     GPT_KNOWLEDGE_SERVICE = LOCAL_KNOWLEDGE_MODULE.knowledge
+    _console("local knowledge module ready")
 
     if args.preset_debug:
+        _console("preset debug enabled; configuring debug file handler")
         os.environ["PRESET_DEBUG"] = "1"
         log_path = args.debug_log_file
         if not log_path:
@@ -1277,24 +1296,31 @@ def main(argv: List[str] | None = None) -> None:
         if env_val is not None:
             port = env_val
     if port is not None:
+        _console(f"attempting to start metrics server on port {port}")
         try:
             logger.info("starting metrics server on port %d", port)
             start_metrics_server(int(port))
             logger.info("metrics server running on port %d", port)
+            _console(f"metrics server running on port {port}")
         except Exception:
             logger.exception("failed to start metrics server")
+            _console(f"failed to start metrics server on port {port}")
 
     logger.info("validating environment variables")
+    _console("validating environment variables")
     check_env()
     logger.info("environment validation complete")
+    _console("environment validation complete")
 
     try:
         settings = SandboxSettings()
     except ValidationError as exc:
         if args.check_settings:
             logger.warning("%s", exc)
+            _console("settings validation failed during check-settings; exiting")
             return
         raise
+    _console("runtime settings loaded")
 
     auto_include_isolated = bool(
         getattr(settings, "auto_include_isolated", True)
@@ -1315,6 +1341,10 @@ def main(argv: List[str] | None = None) -> None:
     args.recursive_orphans = recursive_orphans
     args.recursive_isolated = recursive_isolated
 
+    _console(
+        "calculated sandbox toggles: auto_include_isolated=%s recursive_orphans=%s recursive_isolated=%s"
+        % (auto_include_isolated, recursive_orphans, recursive_isolated)
+    )
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = (
         "1" if auto_include_isolated else "0"
@@ -1377,12 +1407,18 @@ def main(argv: List[str] | None = None) -> None:
     synergy_ma_prev: list[dict[str, float]] = []
     history_conn: sqlite3.Connection | None = None
     if args.save_synergy_history or args.recover:
+        _console("loading previous synergy history from disk")
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
         history_conn = shd.connect_locked(data_dir / "synergy_history.db")
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
+    _console(
+        "synergy history prepared; cycles=%s entries=%d"
+        % (args.synergy_cycles, len(synergy_history))
+    )
 
     if args.preset_files is None:
+        _console("preparing preset files")
         data_dir = Path(
             resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
         )
@@ -1456,10 +1492,16 @@ def main(argv: List[str] | None = None) -> None:
         args.preset_files = [str(preset_file)]
         if created_preset:
             logger.info("created preset file at %s", preset_file)
+        _console(
+            "preset preparation complete using source %s"
+            % ("environment" if env_val else str(preset_file))
+        )
 
     logger.info("performing dependency check")
+    _console("performing dependency check")
     _check_dependencies(settings)
     logger.info("dependency check complete")
+    _console("dependency check complete")
 
     dash_port = args.dashboard_port
     dash_env = settings.auto_dashboard_port
@@ -1471,9 +1513,11 @@ def main(argv: List[str] | None = None) -> None:
         synergy_dash_port = dash_env + 1
 
     cleanup_funcs: list[Callable[[], None]] = []
+    _console("starting local knowledge refresh thread")
     _start_local_knowledge_refresh(cleanup_funcs)
 
     def _cleanup() -> None:
+        _console("running registered cleanup handlers")
         for func in cleanup_funcs:
             try:
                 func()
@@ -1499,6 +1543,7 @@ def main(argv: List[str] | None = None) -> None:
             retention=retention_rules,
             knowledge_service=GPT_KNOWLEDGE_SERVICE,
         )
+        _console("starting memory maintenance thread")
         mem_maint.start()
         cleanup_funcs.append(mem_maint.stop)
     if GPT_KNOWLEDGE_SERVICE is not None:
@@ -1525,6 +1570,7 @@ def main(argv: List[str] | None = None) -> None:
     cleanup_funcs.append(preset_log.close)
     forecast_log = None
     if args.forecast_log:
+        _console(f"forecast logging enabled at {args.forecast_log}")
         forecast_log = ForecastLogger(str(Path(resolve_path(args.forecast_log))))
         cleanup_funcs.append(forecast_log.close)
 
@@ -1557,6 +1603,9 @@ def main(argv: List[str] | None = None) -> None:
                 port,
                 history_file,
             )
+            _console(
+                f"synergy exporter running on port {port} serving {history_file}"
+            )
             exporter_log.record(
                 {"timestamp": int(time.time()), "event": "exporter_started"}
             )
@@ -1565,6 +1614,7 @@ def main(argv: List[str] | None = None) -> None:
             cleanup_funcs.append(exporter_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
+            _console("failed to start synergy exporter; continuing without exporter")
             exporter_log.record(
                 {
                     "timestamp": int(time.time()),
@@ -1604,11 +1654,13 @@ def main(argv: List[str] | None = None) -> None:
                 history_file,
                 weights_file,
             )
+            _console("synergy auto trainer active")
             trainer_monitor = AutoTrainerMonitor(auto_trainer, exporter_log)
             trainer_monitor.start()
             cleanup_funcs.append(trainer_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy auto trainer: %s", exc)
+            _console("failed to start synergy auto trainer; continuing without trainer")
 
     dash_thread = None
     if dash_port:
@@ -1780,12 +1832,17 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
+        _console(
+            "starting autonomous run %d of %s"
+            % (run_idx, args.runs if args.runs is not None else "∞")
+        )
         presets, preset_source = prepare_presets(run_idx, args, settings, preset_log)
         logger.info(
             "using presets from %s",
             preset_source,
             extra=log_record(run=run_idx, preset_source=preset_source),
         )
+        _console(f"presets ready for run {run_idx} from {preset_source}")
         logger.debug(
             "loaded presets from %s: %s",
             preset_source,
@@ -1800,9 +1857,11 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history,
             synergy_ma_history,
         )
+        _console(f"run {run_idx} iteration complete")
         if tracker is None:
             logger.info("completed autonomous run %d", run_idx)
             set_correlation_id(None)
+            _console(f"run {run_idx} completed with no tracker state")
             continue
         last_tracker = tracker
 
@@ -1845,6 +1904,10 @@ def main(argv: List[str] | None = None) -> None:
             threshold_log,
             forecast_log,
         )
+        _console(
+            "metrics updated for run %d (ema=%.3f threshold=%.3f converged=%s)"
+            % (run_idx, ema_val, roi_threshold, converged)
+        )
 
         if foresight_tracker is not None:
             try:
@@ -1884,6 +1947,7 @@ def main(argv: List[str] | None = None) -> None:
 
         logger.info("completed autonomous run %d", run_idx)
         set_correlation_id(None)
+        _console(f"run {run_idx} fully complete")
 
         all_mods = set(module_history) | set(entropy_history)
         if all_mods and all_mods <= flagged and converged:
@@ -1895,6 +1959,9 @@ def main(argv: List[str] | None = None) -> None:
                     flagged_modules=sorted(flagged),
                 ),
             )
+            _console(
+                "all modules converged; stopping after run %d" % run_idx
+            )
             break
 
     _cleanup()
@@ -1903,6 +1970,7 @@ def main(argv: List[str] | None = None) -> None:
     except Exception:
         pass
     cleanup_funcs.clear()
+    _console("cleanup complete; finalising run_autonomous")
 
     if LOCAL_KNOWLEDGE_MODULE is not None:
         try:
@@ -1910,6 +1978,8 @@ def main(argv: List[str] | None = None) -> None:
             LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
         except Exception:
             logger.exception("failed to refresh local knowledge module")
+        else:
+            _console("local knowledge module refreshed")
 
     if exporter_monitor is not None:
         try:
