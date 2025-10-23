@@ -85,7 +85,7 @@ import time
 import weakref
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast
+from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast, Any
 
 from dependency_health import (
     dependency_registry,
@@ -1462,6 +1462,9 @@ class DataBot:
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
         self._thresholds: Dict[str, ROIThresholds] = {}
+        # Cache of the last degradation metrics logged per bot so we only emit
+        # changes instead of spamming identical snapshots to the log output.
+        self._last_degradation_snapshot: Dict[str, Dict[str, Any]] = {}
         self.threshold_update_interval = (
             threshold_update_interval
             if threshold_update_interval is not None
@@ -1706,6 +1709,23 @@ class DataBot:
             with self._subscription_lock:
                 self._subscription_bus = bus
                 self._subscriptions_registered = True
+
+    @staticmethod
+    def _normalize_degradation_event(event: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of *event* with floats rounded for stable comparisons."""
+
+        normalized: Dict[str, Any] = {}
+        for key, value in event.items():
+            if isinstance(value, float):
+                normalized[key] = round(value, 6)
+            elif isinstance(value, list):
+                normalized[key] = [
+                    round(item, 6) if isinstance(item, float) else item
+                    for item in value
+                ]
+            else:
+                normalized[key] = value
+        return normalized
 
     # ------------------------------------------------------------------
     def register_predictor(self, predictor: object) -> None:
@@ -2423,7 +2443,11 @@ class DataBot:
                 "tests_failed": test_failures,
             }
         )
-        self.logger.info("degradation metrics: %s", event)
+        normalized_event = self._normalize_degradation_event(event)
+        last_event = self._last_degradation_snapshot.get(bot)
+        if last_event != normalized_event:
+            self.logger.info("degradation metrics: %s", event)
+            self._last_degradation_snapshot[bot] = normalized_event
         alpha = self.smoothing_factor
         ema["roi"] = alpha * roi + (1.0 - alpha) * avg_roi
         ema["errors"] = alpha * errors + (1.0 - alpha) * avg_err
