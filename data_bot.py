@@ -1464,6 +1464,9 @@ class DataBot:
         )
         self._last_threshold_refresh: Dict[str, float] = {}
         self._monitor_thread: threading.Thread | None = None
+        self._subscription_lock = threading.Lock()
+        self._subscriptions_registered = False
+        self._subscription_bus: UnifiedEventBus | None = None
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1595,18 +1598,7 @@ class DataBot:
                 monitored = list(self.db.monitored_bots())
             except Exception:
                 self.logger.exception("failed to load monitoring schedule")
-        if self.event_bus:
-            try:
-                self.event_bus.subscribe(
-                    "self_coding:patch_applied", self._on_patch_applied
-                )
-                self.event_bus.subscribe("bot:new", self._on_bot_new)
-                self.event_bus.subscribe("bot:updated", self._on_bot_updated)
-                self.event_bus.subscribe(
-                    "thresholds:refresh", self._on_thresholds_refresh
-                )
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to subscribe to events")
+        self._ensure_event_subscriptions()
         for name in monitored:
             try:
                 self.reload_thresholds(name)
@@ -1629,6 +1621,31 @@ class DataBot:
                     "monitoring disabled via MENACE_DISABLE_MONITORING; "
                     "skipping background refresh",
                 )
+
+    def _ensure_event_subscriptions(self) -> None:
+        """Subscribe to shared events once per bus instance."""
+
+        if not self.event_bus:
+            return
+        with self._subscription_lock:
+            if self._subscriptions_registered and self._subscription_bus is self.event_bus:
+                return
+            if self._subscriptions_registered and self._subscription_bus is not self.event_bus:
+                self._subscriptions_registered = False
+            try:
+                self.event_bus.subscribe(
+                    "self_coding:patch_applied", self._on_patch_applied
+                )
+                self.event_bus.subscribe("bot:new", self._on_bot_new)
+                self.event_bus.subscribe("bot:updated", self._on_bot_updated)
+                self.event_bus.subscribe(
+                    "thresholds:refresh", self._on_thresholds_refresh
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to subscribe to events")
+            else:
+                self._subscription_bus = self.event_bus
+                self._subscriptions_registered = True
 
     # ------------------------------------------------------------------
     def register_predictor(self, predictor: object) -> None:
