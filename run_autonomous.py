@@ -127,6 +127,12 @@ def _sync_sandbox_environment(base_path: Path) -> None:
             env_mod._ACTIVE_OVERLAYS_LOCK = None
 
 
+def _console(message: str) -> None:
+    """Emit high-visibility progress output for ``run_autonomous`` steps."""
+
+    print(f"[RUN_AUTONOMOUS] {message}", flush=True)
+
+
 def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
     """Populate sandbox data directory environment variables early."""
 
@@ -175,12 +181,6 @@ from sandbox_runner.bootstrap import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _console(message: str) -> None:
-    """Emit high-visibility progress output for ``run_autonomous`` steps."""
-
-    print(f"[RUN_AUTONOMOUS] {message}", flush=True)
 
 
 settings = SandboxSettings()
