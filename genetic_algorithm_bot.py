@@ -13,10 +13,61 @@ from typing import List
 
 from typing import TYPE_CHECKING
 
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+
+logger = logging.getLogger(__name__)
+
+manager = None
+try:  # pragma: no cover - optional self-coding dependencies
+    from context_builder_util import create_context_builder
+    from .self_coding_engine import SelfCodingEngine
+    from .code_database import CodeDB
+    from .gpt_memory import GPTMemoryManager
+    from .self_coding_manager import internalize_coding_bot
+    from .model_automation_pipeline import ModelAutomationPipeline
+    from .threshold_service import ThresholdService
+    from .self_coding_thresholds import get_thresholds
+    from .shared_evolution_orchestrator import get_orchestrator
+except Exception:  # pragma: no cover - gracefully degrade when optional deps missing
+    logger.debug(
+        "GeneticAlgorithmBot self-coding manager dependencies unavailable", exc_info=True
+    )
+else:  # pragma: no cover - heavy bootstrap exercised in integration flows
+    try:
+        _ga_context_builder = create_context_builder()
+        engine = SelfCodingEngine(
+            CodeDB(), GPTMemoryManager(), context_builder=_ga_context_builder
+        )
+        pipeline = ModelAutomationPipeline(context_builder=_ga_context_builder)
+        thresholds = get_thresholds("GeneticAlgorithmBot")
+        persist_sc_thresholds(
+            "GeneticAlgorithmBot",
+            roi_drop=thresholds.roi_drop,
+            error_increase=thresholds.error_increase,
+            test_failure_increase=thresholds.test_failure_increase,
+        )
+        orchestrator = get_orchestrator("GeneticAlgorithmBot", data_bot, engine)
+        manager = internalize_coding_bot(
+            "GeneticAlgorithmBot",
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+        )
+    except Exception:  # pragma: no cover - fall back to manual mode
+        logger.warning(
+            "GeneticAlgorithmBot self-coding manager initialisation failed; running without autonomous patching",
+            exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
+        manager = None
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -62,7 +113,7 @@ class GAStore:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class GeneticAlgorithmBot:
     """Run a simple DEAP-based genetic algorithm."""
 
