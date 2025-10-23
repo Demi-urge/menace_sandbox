@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import self_coding_managed
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .code_database import CodeDB
+from .gpt_memory import GPTMemoryManager
+from .self_coding_thresholds import get_thresholds
+from .shared_evolution_orchestrator import get_orchestrator
+from .threshold_service import ThresholdService
+from context_builder_util import create_context_builder
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,6 +43,37 @@ from scope_utils import Scope, build_scope_clause, apply_scope
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+_context_builder = create_context_builder()
+engine = SelfCodingEngine(
+    CodeDB(),
+    GPTMemoryManager(),
+    context_builder=_context_builder,
+)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+evolution_orchestrator = get_orchestrator(
+    "CapitalManagementBot",
+    data_bot,
+    engine,
+)
+_thresholds = get_thresholds("CapitalManagementBot")
+persist_sc_thresholds(
+    "CapitalManagementBot",
+    roi_drop=_thresholds.roi_drop,
+    error_increase=_thresholds.error_increase,
+    test_failure_increase=_thresholds.test_failure_increase,
+)
+manager = internalize_coding_bot(
+    "CapitalManagementBot",
+    engine,
+    pipeline,
+    data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    threshold_service=ThresholdService(),
+    roi_threshold=_thresholds.roi_drop,
+    error_threshold=_thresholds.error_increase,
+    test_failure_threshold=_thresholds.test_failure_increase,
+)
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -1058,7 +1098,7 @@ class StrategyTier(str, Enum):
     AGGRESSIVE = "aggressive"
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class CapitalManagementBot:
     """Manage capital and decide reinvestment based on energy score."""
 
