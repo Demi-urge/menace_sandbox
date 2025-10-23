@@ -9,19 +9,21 @@ token.
 """
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, TYPE_CHECKING, Any
 
 from .data_bot import DataBot
-from .capital_management_bot import CapitalManagementBot
 from .system_evolution_manager import SystemEvolutionManager
 from .self_coding_engine import SelfCodingEngine
 from .evolution_orchestrator import EvolutionOrchestrator
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .capital_management_bot import CapitalManagementBot
 
 _shared_orchestrator: EvolutionOrchestrator | None = None
 
 
 @contextmanager
-def _capital_bot_manual_mode() -> Iterator[None]:
+def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
     """Temporarily disable self-coding requirements for ``CapitalManagementBot``.
 
     ``CapitalManagementBot`` is decorated with :func:`self_coding_managed`, which
@@ -34,15 +36,15 @@ def _capital_bot_manual_mode() -> Iterator[None]:
     """
 
     unset = object()
-    previous = getattr(CapitalManagementBot, "_self_coding_manual_mode", unset)
-    CapitalManagementBot._self_coding_manual_mode = True  # type: ignore[attr-defined]
+    previous = getattr(capital_cls, "_self_coding_manual_mode", unset)
+    capital_cls._self_coding_manual_mode = True  # type: ignore[attr-defined]
     try:
         yield
     finally:
         if previous is unset:
-            delattr(CapitalManagementBot, "_self_coding_manual_mode")
+            delattr(capital_cls, "_self_coding_manual_mode")
         else:
-            CapitalManagementBot._self_coding_manual_mode = previous  # type: ignore[attr-defined]
+            capital_cls._self_coding_manual_mode = previous  # type: ignore[attr-defined]
 
 
 def get_orchestrator(
@@ -62,7 +64,9 @@ def get_orchestrator(
     """
     global _shared_orchestrator
     if _shared_orchestrator is None:
-        with _capital_bot_manual_mode():
+        from .capital_management_bot import CapitalManagementBot
+
+        with _capital_bot_manual_mode(CapitalManagementBot):
             capital_bot = CapitalManagementBot()
         evolution_manager = SystemEvolutionManager(bots=[bot_name])
         _shared_orchestrator = EvolutionOrchestrator(
