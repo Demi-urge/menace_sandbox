@@ -27,6 +27,33 @@ def test_load_config_recursion_falls_back(tmp_path: Path, monkeypatch: pytest.Mo
     assert data == fallback_result
 
 
+def test_recursion_switches_future_loads_to_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cfg = tmp_path / "self_coding_thresholds.yaml"
+    cfg.write_text("default: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sct, "_FORCED_FALLBACK_PATHS", set())
+
+    calls: list[str] = []
+
+    def _boom(_: str):
+        calls.append("pyyaml")
+        raise RecursionError("recursive anchor detected")
+
+    fallback_result = {"default": {"roi_drop": -0.25}}
+    monkeypatch.setattr(sct.yaml, "safe_load", _boom)
+    monkeypatch.setattr(sct._FALLBACK_YAML, "safe_load", lambda text: fallback_result)
+
+    assert sct._load_config(cfg) == fallback_result
+    assert calls == ["pyyaml"]
+
+    # Subsequent loads should bypass the primary loader entirely once recursion was detected.
+    monkeypatch.setattr(sct._FALLBACK_YAML, "safe_load", lambda text: {"default": {"roi_drop": -0.33}})
+    monkeypatch.setattr(sct.yaml, "safe_load", lambda text: (_ for _ in ()).throw(RuntimeError("should not be called")))
+
+    data = sct._load_config(cfg)
+    assert data["default"]["roi_drop"] == -0.33
+
+
 def test_dump_config_recursion_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Ensure recursion during dumping switches to the fallback serializer."""
 

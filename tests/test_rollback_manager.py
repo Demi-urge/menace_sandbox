@@ -53,3 +53,22 @@ def test_bot_roles_from_config_allow_write(tmp_path, monkeypatch):
         roles = importlib.reload(roles)
         access_control = importlib.reload(access_control)
         rm = importlib.reload(rm)
+
+
+def test_unknown_bot_uses_write_role(tmp_path, monkeypatch):
+    monkeypatch.delenv("ROLLBACK_DEFAULT_ROLE", raising=False)
+    db_path = tmp_path / "rb.db"
+    mgr = rm.RollbackManager(str(db_path))
+    mgr.register_patch("p4", "nodeD")
+    mgr.rollback("p4", requesting_bot="unlisted-bot")
+    assert not mgr.applied_patches()
+
+
+def test_invalid_default_role_env_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROLLBACK_DEFAULT_ROLE", "invalid-role")
+    db_path = tmp_path / "rb.db"
+    mgr = rm.RollbackManager(str(db_path))
+    mgr.register_patch("p5", "nodeE")
+    mgr.rollback("p5", requesting_bot="another-bot")
+    assert not mgr.applied_patches()
+    monkeypatch.delenv("ROLLBACK_DEFAULT_ROLE", raising=False)

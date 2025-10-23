@@ -30,6 +30,8 @@ try:  # pragma: no cover - import path handling
         READ,
         WRITE,
         BOT_ROLES,
+        DEFAULT_ROLE,
+        ROLE_PERMISSIONS,
         check_permission,
         resolve_bot_role,
     )
@@ -41,6 +43,8 @@ except ImportError:  # pragma: no cover - script execution fallback
         READ,
         WRITE,
         BOT_ROLES,
+        DEFAULT_ROLE,
+        ROLE_PERMISSIONS,
         check_permission,
         resolve_bot_role,
     )
@@ -83,7 +87,18 @@ class RollbackManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.path = path
         self._ensure()
-        self.bot_roles: Dict[str, str] = dict(bot_roles or BOT_ROLES)
+        provided_roles = bot_roles or BOT_ROLES
+        self.bot_roles: Dict[str, str] = dict(provided_roles)
+        fallback_role = os.getenv("ROLLBACK_DEFAULT_ROLE") or self.bot_roles.get("__default__")
+        if not fallback_role:
+            fallback_role = WRITE if WRITE in ROLE_PERMISSIONS else DEFAULT_ROLE
+        if fallback_role not in ROLE_PERMISSIONS:
+            self.logger.warning(
+                "Invalid ROLLBACK_DEFAULT_ROLE '%s'; using %s", fallback_role, WRITE
+            )
+            fallback_role = WRITE if WRITE in ROLE_PERMISSIONS else DEFAULT_ROLE
+        self._default_role = fallback_role
+        self.bot_roles.setdefault("__default__", self._default_role)
         log_path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
         key_source = audit_privkey or os.getenv("AUDIT_PRIVKEY")
         key_path = None if key_source else os.getenv("AUDIT_PRIVKEY_PATH")
@@ -112,7 +127,7 @@ class RollbackManager:
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
             return
-        role = resolve_bot_role(requesting_bot, self.bot_roles)
+        role = resolve_bot_role(requesting_bot, self.bot_roles, default=self._default_role)
         check_permission(role, action)
 
     def _log_attempt(self, requesting_bot: str | None, action: str, details: dict) -> None:
