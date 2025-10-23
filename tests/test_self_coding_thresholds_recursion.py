@@ -70,3 +70,28 @@ def test_dump_config_recursion_falls_back(tmp_path: Path, monkeypatch: pytest.Mo
     sct.update_thresholds("bot-a", path=cfg)
 
     assert cfg.read_text(encoding="utf-8") == rendered
+
+
+def test_recursive_aliases_are_pruned(tmp_path: Path):
+    """Recursive YAML anchors should not bubble into the persisted structure."""
+
+    cfg = tmp_path / "self_coding_thresholds.yaml"
+    cfg.write_text(
+        """
+default: &defaults
+  roi_drop: -0.1
+  loop: *defaults
+bots:
+  demo:
+    <<: *defaults
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    data = sct._load_config(cfg)
+    assert data["default"]["loop"] == {}
+
+    # Updating thresholds should not raise recursion errors now that the
+    # configuration has been sanitised.
+    sct.update_thresholds("demo", path=cfg)
