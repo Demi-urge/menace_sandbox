@@ -496,8 +496,46 @@ def _build_fallback_module(component: str, exc: ModuleNotFoundError) -> ModuleTy
     return module
 
 
-def get_yaml(component: str, *, warn: bool = True):
-    """Return the :mod:`yaml` module or a capable fallback implementation."""
+_FALLBACK_CACHE: dict[str, ModuleType] = {}
+
+
+def _get_cached_fallback(component: str, *, reason: ModuleNotFoundError) -> ModuleType:
+    """Return a cached fallback module instance for ``component``."""
+
+    cache_key = f"{component}:{reason.args[0]}"
+    module = _FALLBACK_CACHE.get(cache_key)
+    if module is None:
+        module = _build_fallback_module(component, reason)
+        _FALLBACK_CACHE[cache_key] = module
+    return module
+
+
+def get_yaml(component: str, *, warn: bool = True, force_fallback: bool = False):
+    """Return a YAML implementation suitable for ``component``.
+
+    Parameters
+    ----------
+    component:
+        Logical component requesting YAML support. Used in warning messages so
+        callers can trace which subsystem fell back to the lightweight
+        implementation.
+    warn:
+        When ``True`` (the default) a warning is emitted if PyYAML is
+        unavailable for ``component``.
+    force_fallback:
+        When ``True`` the lightweight in-repo YAML implementation is returned
+        even if PyYAML is installed. This is useful when callers want a
+        best-effort parser as a secondary option after PyYAML raises an error.
+    """
+
+    if force_fallback:
+        # ``ModuleNotFoundError`` mirrors the real failure mode, ensuring the
+        # fallback module has context for logging/debugging while avoiding
+        # sys.modules tampering when PyYAML is present.
+        return _get_cached_fallback(
+            component,
+            reason=ModuleNotFoundError("forced fallback for component"),
+        )
 
     try:  # pragma: no cover - exercised only when PyYAML is installed
         import yaml  # type: ignore
@@ -508,7 +546,7 @@ def get_yaml(component: str, *, warn: bool = True):
                 component,
                 exc_info=exc,
             )
-        stub = _build_fallback_module(component, exc)
+        stub = _get_cached_fallback(component, reason=exc)
         sys.modules.setdefault("yaml", stub)
         return stub
 

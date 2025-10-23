@@ -56,214 +56,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-import json
 import logging
 import os
 import shlex
 
+from .yaml_fallback import get_yaml
+
 logger = logging.getLogger(__name__)
 
-try:  # pragma: no cover - prefer native PyYAML when available
-    import yaml  # type: ignore
-    _YAML_BACKEND = "pyyaml"
-except ModuleNotFoundError as exc:  # pragma: no cover - graceful degradation
-    class _YamlFallback:
-        """Minimal YAML adapter supporting the sandbox configuration schema."""
-
-        _LITERALS: dict[str, Any] = {
-            "true": True,
-            "false": False,
-            "null": None,
-            "none": None,
-            "~": None,
-        }
-
-        def __init__(self, cause: Exception) -> None:
-            self._cause = cause
-            self._load_warned = False
-            self._dump_warned = False
-
-        # ------------------------------------------------------------------
-        def safe_load(self, text: str | bytes | None) -> Any:
-            if not self._load_warned:
-                logger.warning(
-                    "PyYAML unavailable; using limited in-process parser (%s).",
-                    self._cause,
-                )
-                self._load_warned = True
-            if not text:
-                return {}
-            if isinstance(text, bytes):
-                text = text.decode("utf-8")
-            stripped = text.strip()
-            if not stripped:
-                return {}
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError:
-                pass
-
-            lines = self._prepare_lines(stripped)
-            value, index = self._parse_block(lines, 0, 0)
-            if index != len(lines):
-                logger.debug(
-                    "fallback YAML parser stopped early at line %s of %s", index, len(lines)
-                )
-            return value
-
-        # ------------------------------------------------------------------
-        def safe_dump(self, data: Any, *, sort_keys: bool = False, **_: Any) -> str:
-            if not self._dump_warned:
-                logger.warning(
-                    "PyYAML unavailable; emitting configuration with limited serializer (%s).",
-                    self._cause,
-                )
-                self._dump_warned = True
-            lines = self._render(data, indent=0, sort_keys=sort_keys)
-            return "\n".join(lines) + ("\n" if lines else "")
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _prepare_lines(cls, text: str) -> list[tuple[int, str]]:
-            prepared: list[tuple[int, str]] = []
-            for raw in text.splitlines():
-                if not raw.strip() or raw.lstrip().startswith("#"):
-                    continue
-                indent = len(raw) - len(raw.lstrip(" \t"))
-                prepared.append((indent, raw.strip()))
-            return prepared
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _parse_block(
-            cls, lines: list[tuple[int, str]], index: int, indent: int
-        ) -> tuple[Any, int]:
-            mapping: dict[str, Any] = {}
-            sequence: list[Any] = []
-            mode: str | None = None
-            while index < len(lines):
-                current_indent, content = lines[index]
-                if current_indent < indent:
-                    break
-                if current_indent > indent:
-                    raise ValueError(f"unexpected indentation at line {index + 1}")
-                if content.startswith("- ") or content == "-":
-                    if mode is None:
-                        mode = "seq"
-                    elif mode != "seq":
-                        raise ValueError("mixed sequence and mapping at same indentation")
-                    value_str = content[2:].strip() if len(content) > 2 else ""
-                    if not value_str:
-                        index += 1
-                        value, index = cls._parse_block(lines, index, indent + 2)
-                    else:
-                        value = cls._coerce_scalar(value_str)
-                        index += 1
-                    sequence.append(value)
-                    continue
-                if mode is None:
-                    mode = "map"
-                elif mode != "map":
-                    raise ValueError("mixed sequence and mapping at same indentation")
-                if ":" not in content:
-                    raise ValueError(f"malformed mapping entry: {content!r}")
-                key, remainder = content.split(":", 1)
-                key = key.strip()
-                value_str = remainder.strip()
-                if not value_str:
-                    index += 1
-                    value, index = cls._parse_block(lines, index, indent + 2)
-                else:
-                    value = cls._coerce_scalar(value_str)
-                    index += 1
-                mapping[key] = value
-            if mode == "seq":
-                return sequence, index
-            return mapping, index
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _coerce_scalar(cls, token: str) -> Any:
-            literal = cls._LITERALS.get(token.lower())
-            if token.lower() in cls._LITERALS:
-                return literal
-            if token.startswith(("'", '"')) and token.endswith(("'", '"')):
-                try:
-                    return json.loads(token)
-                except json.JSONDecodeError:
-                    return token.strip('"\'')
-            if token.startswith("[") or token.startswith("{"):
-                try:
-                    return json.loads(token)
-                except json.JSONDecodeError:
-                    return token
-            try:
-                if any(ch in token for ch in ".eE"):
-                    return float(token)
-                return int(token)
-            except ValueError:
-                return token
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _render(
-            cls, value: Any, *, indent: int, sort_keys: bool
-        ) -> list[str]:
-            prefix = " " * indent
-            if isinstance(value, dict):
-                if not value:
-                    return [f"{prefix}{{}}"]
-                items = value.items()
-                if sort_keys:
-                    items = sorted(items, key=lambda item: str(item[0]))
-                lines: list[str] = []
-                for key, val in items:
-                    if cls._is_scalar(val):
-                        lines.append(f"{prefix}{key}: {cls._format_scalar(val)}")
-                    else:
-                        lines.append(f"{prefix}{key}:")
-                        lines.extend(cls._render(val, indent=indent + 2, sort_keys=sort_keys))
-                return lines
-            if isinstance(value, (list, tuple)):
-                seq = list(value)
-                if not seq:
-                    return [f"{prefix}[]"]
-                lines = []
-                for item in seq:
-                    if cls._is_scalar(item):
-                        lines.append(f"{prefix}- {cls._format_scalar(item)}")
-                    else:
-                        lines.append(f"{prefix}-")
-                        lines.extend(
-                            cls._render(item, indent=indent + 2, sort_keys=sort_keys)
-                        )
-                return lines
-            return [f"{prefix}{cls._format_scalar(value)}"]
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _is_scalar(cls, value: Any) -> bool:
-            return isinstance(value, (str, int, float, bool)) or value is None
-
-        # ------------------------------------------------------------------
-        @classmethod
-        def _format_scalar(cls, value: Any) -> str:
-            if isinstance(value, str):
-                if value == "" or value.strip() != value or any(
-                    ch in value for ch in ["\n", "#", ":", "-", "\"", "'"]
-                ):
-                    return json.dumps(value)
-                return value
-            if isinstance(value, bool):
-                return "true" if value else "false"
-            if value is None:
-                return "null"
-            if isinstance(value, (int, float)):
-                return repr(value)
-            return json.dumps(value)
-
-    yaml = _YamlFallback(exc)
-    _YAML_BACKEND = "fallback"
+yaml = get_yaml("self_coding_thresholds")
+_FALLBACK_YAML = get_yaml("self_coding_thresholds", warn=False, force_fallback=True)
+_YAML_BACKEND = "pyyaml" if getattr(yaml, "__file__", None) else "fallback"
 
 from stack_dataset_defaults import normalise_stack_languages
 
@@ -301,12 +104,33 @@ _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
 
 
 def _load_config(path: Path | None = None) -> Dict[str, dict]:
+    cfg_path = path or _CONFIG_PATH
     try:
-        return yaml.safe_load((path or _CONFIG_PATH).read_text()) or {}
+        raw = cfg_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    if not raw.strip():
+        return {}
+
+    try:
+        return yaml.safe_load(raw) or {}
+    except RecursionError as exc:
+        logger.error(
+            "detected recursive YAML structure in %s; retrying with fallback parser",  # noqa: E501
+            cfg_path,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        try:
+            return _FALLBACK_YAML.safe_load(raw) or {}
+        except Exception as fb_exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "fallback parser also failed to load %s", cfg_path, exc_info=fb_exc
+            )
+            return {}
     except Exception as exc:
         logger.warning(
             "failed to load self-coding thresholds from %s using %s backend; falling back to defaults",  # noqa: E501
-            (path or _CONFIG_PATH),
+            cfg_path,
             _YAML_BACKEND,
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
@@ -530,7 +354,20 @@ def update_thresholds(
     if forecast_params is not None:
         cfg["model_params"] = dict(forecast_params)
     try:
-        cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        rendered = yaml.safe_dump(data, sort_keys=False)
+    except RecursionError as exc:
+        logger.error(
+            "detected recursive structure while dumping %s; using fallback serializer",  # noqa: E501
+            cfg_path,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        rendered = _FALLBACK_YAML.safe_dump(data, sort_keys=False)
+    except Exception:
+        # best effort – calling code may log failures
+        return
+
+    try:
+        cfg_path.write_text(rendered, encoding="utf-8")
     except Exception:
         # best effort – calling code may log failures
         pass
