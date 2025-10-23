@@ -80,6 +80,7 @@ class RollbackManager:
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.path = path
         self._ensure()
         self.bot_roles: Dict[str, str] = dict(bot_roles or BOT_ROLES)
@@ -90,16 +91,22 @@ class RollbackManager:
         try:
             priv = load_private_key_material(key_source, path=key_path)
         except Exception:
-            logging.getLogger(__name__).exception(
+            self.logger.exception(
                 "Failed to load audit private key; audit trail entries will be unsigned"
             )
             priv = None
         if not priv:
-            logging.getLogger(__name__).warning(
+            self.logger.warning(
                 "AUDIT_PRIVKEY not set; audit trail entries will not be signed"
             )
-        self.audit_trail = AuditTrail(log_path, priv)
-        self.logger = logging.getLogger(self.__class__.__name__)
+        try:
+            self.audit_trail = AuditTrail(log_path, priv)
+        except ValueError as exc:
+            self.logger.warning(
+                "Invalid audit signing key provided; continuing without signatures: %s",
+                exc,
+            )
+            self.audit_trail = AuditTrail(log_path, None)
         self.event_bus = event_bus
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
