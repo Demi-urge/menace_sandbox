@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Callable
+from typing import Any, Dict, Iterable, List, Callable, TYPE_CHECKING, cast
 import logging
-from typing import TYPE_CHECKING
 from importlib import import_module
 from pathlib import Path
 import sys
@@ -130,19 +129,12 @@ def _resolve_model_automation_pipeline() -> type | None:
     return None
 
 
-try:
-    if _HAS_PACKAGE:
-        from .model_automation_pipeline import ModelAutomationPipeline
-    else:  # pragma: no cover - execution as a script
-        ModelAutomationPipeline = _flat_import("model_automation_pipeline").ModelAutomationPipeline  # type: ignore[attr-defined]
-except Exception as exc:  # pragma: no cover - degraded bootstrap
-    logger.warning(
-        "ModelAutomationPipeline unavailable for WorkflowEvolutionBot: %s",
-        exc,
-    )
+if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .model_automation_pipeline import ModelAutomationPipeline as _ModelAutomationPipeline
+else:  # pragma: no cover - runtime fallback avoids eager import
 
-    class _DeferredPipeline:  # pragma: no cover - lightweight stub
-        """Retry locating the automation pipeline once circular imports settle."""
+    class _DeferredPipeline:
+        """Lazy proxy that instantiates the automation pipeline when needed."""
 
         def __new__(cls, *_args: Any, **_kwargs: Any) -> Any:
             pipeline_cls = _resolve_model_automation_pipeline()
@@ -150,7 +142,9 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
                 raise RuntimeError("ModelAutomationPipeline is unavailable")
             return pipeline_cls(*_args, **_kwargs)
 
-    ModelAutomationPipeline = _DeferredPipeline  # type: ignore[misc, assignment]
+    _ModelAutomationPipeline = _DeferredPipeline  # type: ignore[misc, assignment]
+
+ModelAutomationPipeline = cast("type[Any]", _ModelAutomationPipeline)
 
 try:
     if _HAS_PACKAGE:
