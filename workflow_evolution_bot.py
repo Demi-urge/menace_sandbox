@@ -55,6 +55,11 @@ else:  # pragma: no cover - execution as a script
     DataBot = _data_bot.DataBot  # type: ignore[attr-defined]
     persist_sc_thresholds = _data_bot.persist_sc_thresholds  # type: ignore[attr-defined]
 
+if _HAS_PACKAGE:
+    from .safe_repr import basic_repr
+else:  # pragma: no cover - execution as a script
+    basic_repr = _flat_import("safe_repr").basic_repr  # type: ignore[attr-defined]
+
 try:
     if _HAS_PACKAGE:
         from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -406,6 +411,16 @@ class WorkflowEvolutionBot:
         # Track mutation events for rearranged sequences so benchmarking
         # results can be fed back once available.
         self._rearranged_events: Dict[str, int] = {}
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostic helper
+        return basic_repr(
+            self,
+            attrs={
+                "db": self.db,
+                "intent_clusterer": self.intent_clusterer,
+                "manager": getattr(self, "manager", None),
+            },
+        )
 
     def analyse(self, limit: int = 5) -> List[WorkflowSuggestion]:
         seqs = self.db.top_sequences(3, limit=limit)

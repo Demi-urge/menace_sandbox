@@ -61,6 +61,7 @@ import os
 import shlex
 
 from .yaml_fallback import get_yaml
+from .safe_repr import basic_repr
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,18 @@ class SelfCodingThresholds:
     model: str = "exponential"
     confidence: float = 0.95
     model_params: dict | None = None
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostic helper
+        return basic_repr(
+            self,
+            attrs={
+                "roi_drop": self.roi_drop,
+                "error_increase": self.error_increase,
+                "test_failure_increase": self.test_failure_increase,
+                "auto_recalibrate": self.auto_recalibrate,
+                "model": self.model,
+            },
+        )
 
 
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")

@@ -31,6 +31,11 @@ except Exception:  # pragma: no cover - fallback to stdlib
     from dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
 
+try:  # pragma: no cover - support execution without package context
+    from .safe_repr import basic_repr
+except ImportError:  # pragma: no cover - allow running as a script
+    from safe_repr import basic_repr  # type: ignore
+
 import license_detector
 try:  # pragma: no cover - allow running without vector_service
     from vector_service import EmbeddableDBMixin, EmbeddingBackfill
@@ -1210,6 +1215,18 @@ class PatchRecord:
 
     def __post_init__(self) -> None:
         assert self.filename, "filename cannot be empty"
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostic helper
+        return basic_repr(
+            self,
+            attrs={
+                "filename": self.filename,
+                "description": self.description,
+                "roi_delta": self.roi_delta,
+                "errors_after": self.errors_after,
+                "reverted": self.reverted,
+            },
+        )
 
 
 class PatchHistoryDB:
