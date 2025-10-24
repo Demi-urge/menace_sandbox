@@ -95,6 +95,14 @@ class ResourcePredictionBot:
         self.capital_bot = capital_bot
         self.graph = nx.DiGraph()
 
+    def __repr__(self) -> str:  # pragma: no cover - diagnostic helper
+        return (
+            "<ResourcePredictionBot "
+            f"db={type(self.db).__name__} "
+            f"data_bot={type(self.data_bot).__name__ if self.data_bot else 'None'} "
+            f"capital_bot={type(self.capital_bot).__name__ if self.capital_bot else 'None'}>"
+        )
+
     def predict(self, task: str) -> ResourceMetrics:
         df = self.db.query(task)
         if df.empty:
