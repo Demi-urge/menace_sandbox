@@ -432,15 +432,23 @@ def update_thresholds(
         cfg["confidence"] = float(confidence)
     if forecast_params is not None:
         cfg["model_params"] = dict(forecast_params)
+    safe_data = _decouple_aliases(data)
+    if not isinstance(safe_data, dict):
+        logger.error(
+            "threshold configuration for %s resolved to non-dict after sanitising; aborting persist",
+            bot,
+        )
+        return
+
     try:
-        rendered = yaml.safe_dump(data, sort_keys=False)
+        rendered = yaml.safe_dump(safe_data, sort_keys=False)
     except RecursionError as exc:
         logger.error(
             "detected recursive structure while dumping %s; using fallback serializer",  # noqa: E501
             cfg_path,
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
-        rendered = _FALLBACK_YAML.safe_dump(data, sort_keys=False)
+        rendered = _FALLBACK_YAML.safe_dump(safe_data, sort_keys=False)
     except Exception:
         # best effort – calling code may log failures
         return
