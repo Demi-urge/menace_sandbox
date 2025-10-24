@@ -6,6 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot, get_shared_data_bot
 
 from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
+from .safe_repr import basic_repr
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
@@ -96,11 +97,13 @@ class ResourcePredictionBot:
         self.graph = nx.DiGraph()
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostic helper
-        return (
-            "<ResourcePredictionBot "
-            f"db={type(self.db).__name__} "
-            f"data_bot={type(self.data_bot).__name__ if self.data_bot else 'None'} "
-            f"capital_bot={type(self.capital_bot).__name__ if self.capital_bot else 'None'}>"
+        return basic_repr(
+            self,
+            attrs={
+                "db": self.db,
+                "data_bot": self.data_bot,
+                "capital_bot": self.capital_bot,
+            },
         )
 
     def predict(self, task: str) -> ResourceMetrics:
