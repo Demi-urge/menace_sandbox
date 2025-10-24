@@ -88,8 +88,9 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
     )
     SelfCodingEngine = type("_FallbackEngine", (), {})  # type: ignore[misc, assignment]
 
-def _resolve_model_automation_pipeline() -> type | None:
-    """Return the real ``ModelAutomationPipeline`` when imports stabilise."""
+
+def _load_model_automation_pipeline() -> type | None:
+    """Return the concrete ``ModelAutomationPipeline`` class if available."""
 
     candidates: list[tuple[str, Callable[[], object]]] = []
     if _HAS_PACKAGE:
@@ -131,20 +132,29 @@ def _resolve_model_automation_pipeline() -> type | None:
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .model_automation_pipeline import ModelAutomationPipeline as _ModelAutomationPipeline
-else:  # pragma: no cover - runtime fallback avoids eager import
+else:  # pragma: no cover - runtime alias for typing convenience
+    _ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
 
-    class _DeferredPipeline:
-        """Lazy proxy that instantiates the automation pipeline when needed."""
 
-        def __new__(cls, *_args: Any, **_kwargs: Any) -> Any:
-            pipeline_cls = _resolve_model_automation_pipeline()
-            if pipeline_cls is None:
-                raise RuntimeError("ModelAutomationPipeline is unavailable")
-            return pipeline_cls(*_args, **_kwargs)
+def _create_model_automation_pipeline(
+    *, context_builder: Any
+) -> _ModelAutomationPipeline | None:
+    """Instantiate ``ModelAutomationPipeline`` while avoiding circular imports."""
 
-    _ModelAutomationPipeline = _DeferredPipeline  # type: ignore[misc, assignment]
-
-ModelAutomationPipeline = cast("type[Any]", _ModelAutomationPipeline)
+    pipeline_cls = _load_model_automation_pipeline()
+    if pipeline_cls is None:
+        return None
+    try:
+        return cast("_ModelAutomationPipeline", pipeline_cls)(
+            context_builder=context_builder
+        )
+    except Exception as exc:  # pragma: no cover - defensive bootstrap
+        logger.debug(
+            "Failed to initialise ModelAutomationPipeline: %s",
+            exc,
+            exc_info=True,
+        )
+        return None
 
 try:
     if _HAS_PACKAGE:
@@ -310,14 +320,11 @@ else:
     engine = None  # type: ignore[assignment]
 
 if _context_builder is not None and engine is not None:
-    try:
-        pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-    except Exception as exc:  # pragma: no cover - degraded bootstrap
+    pipeline = _create_model_automation_pipeline(context_builder=_context_builder)
+    if pipeline is None:
         logger.warning(
-            "ModelAutomationPipeline unavailable for WorkflowEvolutionBot: %s",
-            exc,
+            "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
         )
-        pipeline = None
 else:
     pipeline = None
 
