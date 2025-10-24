@@ -56,3 +56,31 @@ def test_save_thresholds_failure_emits_log_and_event(tmp_path, monkeypatch, capl
         bot.check_degradation("beta", 0.0, 0.0)
     assert any("update_thresholds failed" in m for m in caplog.messages)
     assert _has_event(bus, "beta", "save boom")
+
+
+def test_reload_thresholds_recursion_guard(tmp_path, monkeypatch):
+    db_path = tmp_path / "metrics.db"
+    metrics = MetricsDB(path=db_path)
+    bot = DataBot(db=metrics, start_server=False)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("persist exploded")
+
+    monkeypatch.setattr(db, "persist_sc_thresholds", boom)
+
+    class ReentrantLogger:
+        def __init__(self, target):
+            self.target = target
+            self.calls = 0
+
+        def exception(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                self.target.reload_thresholds("alpha")
+
+    logger_stub = ReentrantLogger(bot)
+    bot.logger = logger_stub  # type: ignore[assignment]
+
+    rt = bot.reload_thresholds("alpha")
+    assert isinstance(rt, db.ROIThresholds)
+    assert logger_stub.calls == 1
