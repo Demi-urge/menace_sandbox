@@ -191,7 +191,7 @@ def _render_threshold_yaml(data: Dict[str, Any], *, path: Path, bot: str) -> str
 
     try:
         if _NoAliasSafeDumper is not None:
-            return yaml.safe_dump(  # type: ignore[arg-type]
+            return yaml.dump(  # type: ignore[arg-type]
                 mapping,
                 sort_keys=False,
                 Dumper=_NoAliasSafeDumper,
