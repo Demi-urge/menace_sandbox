@@ -14,6 +14,8 @@ import contextvars
 import importlib
 from types import SimpleNamespace, ModuleType
 
+from .safe_serialization import safe_json_dumps
+
 
 _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
@@ -94,7 +96,7 @@ class JSONFormatter(SafeFormatter):
             data["correlation_id"] = cid
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(data)
+        return safe_json_dumps(data)
 
 
 class _ModuleFilter(logging.Filter):

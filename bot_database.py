@@ -23,6 +23,7 @@ from .auto_link import auto_link
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
+from .safe_serialization import safe_json_dumps, sanitize_for_json
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import get_config
 import warnings
@@ -59,9 +60,10 @@ def _deserialize_list(val: str) -> list[str]:
 
 def _safe_json_dumps(data: Any) -> str:
     try:
-        result = json.dumps(data)
-    except TypeError as exc:
-        raise ValueError(f"unserialisable data: {exc}") from exc
+        result = safe_json_dumps(data)
+    except Exception as exc:
+        cleaned = sanitize_for_json(data)
+        raise ValueError(f"unserialisable data: {exc}; cleaned={cleaned!r}") from exc
     if len(result) > 65535:
         raise ValueError("data blob too large")
     return result
