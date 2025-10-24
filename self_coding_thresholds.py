@@ -54,7 +54,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import logging
 import os
@@ -67,6 +67,17 @@ logger = logging.getLogger(__name__)
 yaml = get_yaml("self_coding_thresholds")
 _FALLBACK_YAML = get_yaml("self_coding_thresholds", warn=False, force_fallback=True)
 _YAML_BACKEND = "pyyaml" if getattr(yaml, "__file__", None) else "fallback"
+
+if hasattr(yaml, "SafeDumper"):
+
+    class _NoAliasSafeDumper(yaml.SafeDumper):  # type: ignore[attr-defined]
+        """Custom dumper that disables YAML anchors to avoid cycles."""
+
+        def ignore_aliases(self, data: Any) -> bool:
+            return True
+
+else:  # pragma: no cover - exercised only when fallback YAML is active
+    _NoAliasSafeDumper = None  # type: ignore[assignment]
 
 from stack_dataset_defaults import normalise_stack_languages
 
@@ -162,6 +173,53 @@ def _decouple_aliases(value: Any, *, _stack: set[int] | None = None) -> Any:
         return copy_set
 
     return value
+
+
+def _render_threshold_yaml(data: Dict[str, Any], *, path: Path, bot: str) -> str | None:
+    """Serialise ``data`` to YAML while guarding against recursive structures."""
+
+    safe_data = _decouple_aliases(data)
+    if not isinstance(safe_data, dict):
+        logger.error(
+            "threshold configuration for %s resolved to non-dict after sanitising; aborting persist",
+            bot,
+        )
+        return None
+
+    mapping = cast(dict[str, Any], safe_data)
+    yaml_error = getattr(yaml, "YAMLError", Exception)
+
+    try:
+        if _NoAliasSafeDumper is not None:
+            return yaml.safe_dump(  # type: ignore[arg-type]
+                mapping,
+                sort_keys=False,
+                Dumper=_NoAliasSafeDumper,
+            )
+        return yaml.safe_dump(mapping, sort_keys=False)  # type: ignore[arg-type]
+    except (RecursionError, yaml_error) as exc:
+        logger.error(
+            "detected recursive structure while dumping %s; using fallback serializer",
+            bot,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+
+    try:
+        return _FALLBACK_YAML.safe_dump(mapping, sort_keys=False)  # type: ignore[arg-type]
+    except RecursionError as exc:  # pragma: no cover - defensive guard
+        logger.error(
+            "fallback serializer exceeded recursion depth for %s; aborting persist",
+            bot,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.error(
+            "fallback serializer failed to dump %s; aborting persist",
+            bot,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+
+    return None
 
 
 def _load_config(path: Path | None = None) -> Dict[str, dict]:
@@ -432,25 +490,8 @@ def update_thresholds(
         cfg["confidence"] = float(confidence)
     if forecast_params is not None:
         cfg["model_params"] = dict(forecast_params)
-    safe_data = _decouple_aliases(data)
-    if not isinstance(safe_data, dict):
-        logger.error(
-            "threshold configuration for %s resolved to non-dict after sanitising; aborting persist",
-            bot,
-        )
-        return
-
-    try:
-        rendered = yaml.safe_dump(safe_data, sort_keys=False)
-    except RecursionError as exc:
-        logger.error(
-            "detected recursive structure while dumping %s; using fallback serializer",  # noqa: E501
-            cfg_path,
-            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
-        )
-        rendered = _FALLBACK_YAML.safe_dump(safe_data, sort_keys=False)
-    except Exception:
-        # best effort – calling code may log failures
+    rendered = _render_threshold_yaml(data, path=cfg_path, bot=bot)
+    if rendered is None:
         return
 
     try:
