@@ -15,6 +15,8 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
+import threading
+import traceback
 import types
 from pathlib import Path
 
@@ -90,4 +92,51 @@ def _patch_dotenv() -> None:
 
 
 _patch_dotenv()
+
+
+def _patch_threading_excepthook() -> None:
+    """Install a resilient ``threading.excepthook`` implementation."""
+
+    original_hook = getattr(threading, "excepthook", None)
+    if not callable(original_hook):  # pragma: no cover - Python < 3.8
+        return
+
+    def _safe_thread_name(thread: threading.Thread | None) -> str:
+        if thread is None:
+            return "thread"
+        try:
+            name = thread.name
+        except Exception:  # pragma: no cover - defensive guard
+            name = None
+        if name:
+            return f"thread {name!r}"
+        ident = getattr(thread, "ident", None)
+        if ident is not None:
+            return f"thread ident={ident}"
+        return "thread"
+
+    def _safe_excepthook(args: threading.ExceptHookArgs) -> None:
+        try:
+            thread_label = _safe_thread_name(getattr(args, "thread", None))
+            stream = getattr(sys, "stderr", None)
+            if stream is not None:
+                try:
+                    stream.write(f"Exception in {thread_label}\n")
+                except Exception:  # pragma: no cover - extremely defensive
+                    pass
+            traceback.print_exception(
+                getattr(args, "exc_type", None),
+                getattr(args, "exc_value", None),
+                getattr(args, "exc_traceback", None),
+            )
+        except Exception:  # pragma: no cover - fallback to default handler
+            try:
+                original_hook(args)
+            except Exception:
+                pass
+
+    threading.excepthook = _safe_excepthook
+
+
+_patch_threading_excepthook()
 
