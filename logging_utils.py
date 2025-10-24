@@ -67,7 +67,19 @@ def set_correlation_id(cid: str | None) -> None:
     _correlation_id.set(cid)
 
 
-class JSONFormatter(logging.Formatter):
+class SafeFormatter(logging.Formatter):
+    """Formatter that degrades gracefully when exception formatting recurses."""
+
+    def formatException(self, ei):  # pragma: no cover - defensive path
+        try:
+            return super().formatException(ei)
+        except RecursionError:
+            return "RecursionError while formatting exception"
+        except Exception as exc:
+            return f"failed to format exception: {exc}"
+
+
+class JSONFormatter(SafeFormatter):
     """Format log records as compact JSON."""
 
     def format(self, record: logging.LogRecord) -> str:  # pragma: no cover - simple
@@ -193,7 +205,8 @@ _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
     "version": 1,
     "formatters": {
         "default": {
-            "format": "%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s"
+            "()": "logging_utils.SafeFormatter",
+            "format": "%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s",
         },
         "json": {"()": "logging_utils.JSONFormatter"},
     },
@@ -320,6 +333,7 @@ __all__ = [
     "setup_logging",
     "get_logger",
     "log_record",
+    "SafeFormatter",
     "JSONFormatter",
     "set_correlation_id",
     "CorrelationIDFilter",
