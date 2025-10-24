@@ -1878,8 +1878,26 @@ def self_coding_managed(
         registries_seen = getattr(cls, "_self_coding_registry_ids", None)
         if not isinstance(registries_seen, set):
             registries_seen = set()
+        else:
+            registries_seen = set(registries_seen)
         registries_seen.add(id(bot_registry))
         cls._self_coding_registry_ids = registries_seen
+
+        hot_swap_active = False
+        hot_swap_probe = getattr(bot_registry, "hot_swap_active", None)
+        if callable(hot_swap_probe):
+            try:
+                hot_swap_active = bool(hot_swap_probe())
+            except Exception:  # pragma: no cover - defensive best effort
+                logger.debug(
+                    "failed to determine hot swap state for %s", name, exc_info=True
+                )
+        if should_update and hot_swap_active:
+            should_update = False
+            logger.debug(
+                "deferring bot update for %s because a hot swap import is active", name
+            )
+
         if should_update:
             try:
                 bot_registry.update_bot(name, module_path, **update_kwargs)
