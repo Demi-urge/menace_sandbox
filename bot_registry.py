@@ -31,6 +31,7 @@ import json
 import os
 import re
 import threading
+from contextlib import contextmanager
 import errno
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
@@ -348,6 +349,37 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "FutureSynergyLongTermLucrativityBot",
     },
 }
+
+_HOT_SWAP_STATE = threading.local()
+
+
+@contextmanager
+def _hot_swap_guard(name: str):
+    """Record that ``name`` is being hot swapped for the duration of the import."""
+
+    stack = getattr(_HOT_SWAP_STATE, "stack", [])
+    stack.append(name)
+    _HOT_SWAP_STATE.stack = stack
+    try:
+        yield
+    finally:
+        try:
+            stack.pop()
+        finally:
+            if stack:
+                _HOT_SWAP_STATE.stack = stack
+            else:
+                try:
+                    delattr(_HOT_SWAP_STATE, "stack")
+                except AttributeError:  # pragma: no cover - defensive cleanup
+                    pass
+
+
+def _hot_swap_active() -> bool:
+    """Return ``True`` when any hot swap import is currently active."""
+
+    stack = getattr(_HOT_SWAP_STATE, "stack", None)
+    return bool(stack)
 
 _UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS = float(
     os.getenv("MENACE_UNSIGNED_PROVENANCE_WARNING_INTERVAL_SECONDS", "300")
@@ -1500,6 +1532,11 @@ class BotRegistry:
             self.schedule_unmanaged_scan()
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to schedule unmanaged bot scan")
+
+    def hot_swap_active(self) -> bool:
+        """Return ``True`` when this registry is performing a hot swap import."""
+
+        return _hot_swap_active()
 
     @classmethod
     def _is_blacklisted_patch(cls, name: str, patch_id: int) -> bool:
@@ -3050,42 +3087,43 @@ class BotRegistry:
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Failed to check manual changes for %s: %s", module_path, exc)
         try:
-            path_obj = Path(module_path)
-            if _is_probable_filesystem_path(module_path):
-                module_name, spec_kwargs = _module_spec_from_path(module_path)
-                spec = importlib.util.spec_from_file_location(
-                    module_name, module_path, **spec_kwargs
-                )
-                if not spec or not spec.loader:
-                    raise ImportError(f"cannot load module from {module_path}")
-                importlib.invalidate_caches()
-                if module_name in sys.modules:
-                    module = sys.modules[module_name]
-                    module.__file__ = module_path
-                    module.__spec__ = spec
-                    spec.loader.exec_module(module)
-                else:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules[module_name] = module
-                    spec.loader.exec_module(module)
-                for alias in _normalise_module_aliases(module_name):
-                    sys.modules.setdefault(alias, module)
-            else:
-                if module_path in sys.modules:
-                    importlib.reload(sys.modules[module_path])
-                else:
-                    importlib.import_module(module_path)
-            node["last_good_module"] = module_path
-            node["last_good_version"] = node.get("version")
-            node["last_good_commit"] = commit
-            node["last_good_patch_id"] = patch_id
-            if self.persist_path:
-                try:
-                    self.save(self.persist_path)
-                except Exception as save_exc:  # pragma: no cover - best effort
-                    logger.error(
-                        "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+            with _hot_swap_guard(name):
+                path_obj = Path(module_path)
+                if _is_probable_filesystem_path(module_path):
+                    module_name, spec_kwargs = _module_spec_from_path(module_path)
+                    spec = importlib.util.spec_from_file_location(
+                        module_name, module_path, **spec_kwargs
                     )
+                    if not spec or not spec.loader:
+                        raise ImportError(f"cannot load module from {module_path}")
+                    importlib.invalidate_caches()
+                    if module_name in sys.modules:
+                        module = sys.modules[module_name]
+                        module.__file__ = module_path
+                        module.__spec__ = spec
+                        spec.loader.exec_module(module)
+                    else:
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[module_name] = module
+                        spec.loader.exec_module(module)
+                    for alias in _normalise_module_aliases(module_name):
+                        sys.modules.setdefault(alias, module)
+                else:
+                    if module_path in sys.modules:
+                        importlib.reload(sys.modules[module_path])
+                    else:
+                        importlib.import_module(module_path)
+                node["last_good_module"] = module_path
+                node["last_good_version"] = node.get("version")
+                node["last_good_commit"] = commit
+                node["last_good_patch_id"] = patch_id
+                if self.persist_path:
+                    try:
+                        self.save(self.persist_path)
+                    except Exception as save_exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                        )
         except Exception as exc:  # pragma: no cover - best effort
             logger.error(
                 "Failed to hot swap bot %s from %s: %s", name, module_path, exc
@@ -3134,31 +3172,32 @@ class BotRegistry:
         if not module_path:
             raise KeyError(f"bot {name!r} has no module path")
         try:
-            path_obj = Path(module_path)
-            if _is_probable_filesystem_path(module_path):
-                module_name, spec_kwargs = _module_spec_from_path(module_path)
-                spec = importlib.util.spec_from_file_location(
-                    module_name, module_path, **spec_kwargs
-                )
-                if not spec or not spec.loader:
-                    raise ImportError(f"cannot load module from {module_path}")
-                importlib.invalidate_caches()
-                if module_name in sys.modules:
-                    module = sys.modules[module_name]
-                    module.__file__ = module_path
-                    module.__spec__ = spec
-                    spec.loader.exec_module(module)
+            with _hot_swap_guard(name):
+                path_obj = Path(module_path)
+                if _is_probable_filesystem_path(module_path):
+                    module_name, spec_kwargs = _module_spec_from_path(module_path)
+                    spec = importlib.util.spec_from_file_location(
+                        module_name, module_path, **spec_kwargs
+                    )
+                    if not spec or not spec.loader:
+                        raise ImportError(f"cannot load module from {module_path}")
+                    importlib.invalidate_caches()
+                    if module_name in sys.modules:
+                        module = sys.modules[module_name]
+                        module.__file__ = module_path
+                        module.__spec__ = spec
+                        spec.loader.exec_module(module)
+                    else:
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[module_name] = module
+                        spec.loader.exec_module(module)
+                    for alias in _normalise_module_aliases(module_name):
+                        sys.modules.setdefault(alias, module)
                 else:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules[module_name] = module
-                    spec.loader.exec_module(module)
-                for alias in _normalise_module_aliases(module_name):
-                    sys.modules.setdefault(alias, module)
-            else:
-                module_name = module_path
-                importlib.invalidate_caches()
-                importlib.import_module(module_name)
-            self.record_heartbeat(name)
+                    module_name = module_path
+                    importlib.invalidate_caches()
+                    importlib.import_module(module_name)
+                self.record_heartbeat(name)
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Health check failed for bot %s: %s", name, exc)
             if prev_state is not None:
