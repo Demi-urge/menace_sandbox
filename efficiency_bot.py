@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from .bot_registry import BotRegistry
-
-from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 import logging
-
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
-logger = logging.getLogger(__name__)
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Iterable, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
+
+from .bot_registry import BotRegistry
+from .coding_bot_interface import self_coding_managed
+from .data_bot import DataBot
 
 try:
     import pandas as pd  # type: ignore
@@ -22,7 +18,6 @@ except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
 from .db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
@@ -33,6 +28,12 @@ from .unified_event_bus import UnifiedEventBus
 from .contrarian_db import ContrarianDB
 from .chatgpt_enhancement_bot import EnhancementDB
 from .database_manager import DB_PATH
+
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
