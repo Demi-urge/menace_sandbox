@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
+from typing import TYPE_CHECKING, Type
+
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .model_automation_pipeline import ModelAutomationPipeline
+else:  # pragma: no cover - runtime fallback keeps runtime import lazy
+    ModelAutomationPipeline = object  # type: ignore[misc, assignment]
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
-from typing import TYPE_CHECKING
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 
@@ -26,7 +31,6 @@ from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator
-import importlib
 
 from .auto_link import auto_link
 
@@ -66,7 +70,42 @@ data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+
+
+def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
+    """Return the concrete :class:`ModelAutomationPipeline` implementation."""
+
+    module_candidates: tuple[str, ...] = (
+        "menace_sandbox.model_automation_pipeline",
+        ".model_automation_pipeline",
+        "model_automation_pipeline",
+    )
+    for dotted in module_candidates:
+        try:
+            module = (
+                importlib.import_module(dotted, __package__)
+                if dotted.startswith(".")
+                else importlib.import_module(dotted)
+            )
+        except ModuleNotFoundError:
+            continue
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if isinstance(pipeline_cls, type):
+            return pipeline_cls  # type: ignore[return-value]
+        try:
+            module = importlib.reload(module)
+        except Exception:
+            continue
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if isinstance(pipeline_cls, type):
+            return pipeline_cls  # type: ignore[return-value]
+    raise ImportError(
+        "ModelAutomationPipeline is unavailable; ensure menace_sandbox is fully initialised"
+    )
+
+
+_PipelineCls = _resolve_pipeline_cls()
+pipeline = _PipelineCls(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("ResearchAggregatorBot", data_bot, engine)
 _th = get_thresholds("ResearchAggregatorBot")
 persist_sc_thresholds(
