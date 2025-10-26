@@ -8,9 +8,20 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 import random
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import List, TYPE_CHECKING
+from functools import lru_cache
 
-from .genetic_algorithm_bot import GeneticAlgorithmBot, GARecord
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .genetic_algorithm_bot import GeneticAlgorithmBot
+
+
+@lru_cache(maxsize=1)
+def _ga_cls() -> type["GeneticAlgorithmBot"]:
+    """Return the :class:`GeneticAlgorithmBot` without importing eagerly."""
+
+    from .genetic_algorithm_bot import GeneticAlgorithmBot as _GeneticAlgorithmBot
+
+    return _GeneticAlgorithmBot
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -45,7 +56,8 @@ class MetaGeneticAlgorithmBot:
     @staticmethod
     def _evaluate(config: GAConfig) -> float:
         """Run a GA with the given configuration and return best ROI."""
-        bot = GeneticAlgorithmBot(pop_size=config.pop_size)
+        bot_cls = _ga_cls()
+        bot = bot_cls(pop_size=config.pop_size)
         if bot.toolbox is None or tools is None:
             return 0.0
         bot.toolbox.register(

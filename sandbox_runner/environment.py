@@ -27,6 +27,7 @@ import json
 import math
 import os
 import yaml
+from functools import lru_cache
 from vector_service.context_builder import ContextBuilder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
@@ -87,6 +88,9 @@ from lock_utils import SandboxLock as FileLock, Timeout
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
 from collections import deque, defaultdict
+
+if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
+    from error_logger import ErrorLogger
 
 T = TypeVar("T")
 
@@ -622,15 +626,21 @@ _FAKER = Faker() if Faker is not None else None
 from . import config as sandbox_config
 from .input_history_db import InputHistoryDB, router as history_router
 from collections import Counter
-try:
-    from error_logger import ErrorLogger
-except ImportError as exc:  # pragma: no cover - required dependency
-    logger.debug("error_logger unavailable", exc_info=exc)
-    raise RuntimeError(
-        "error_logger is required for sandbox operations. Install the package"
-        " providing it (e.g. `pip install menace-sandbox`) or ensure the"
-        " module is available on the PYTHONPATH."
-    ) from exc
+@lru_cache(maxsize=1)
+def _load_error_logger_cls():
+    """Return the :class:`ErrorLogger` implementation lazily."""
+
+    try:
+        from error_logger import ErrorLogger as _ErrorLogger
+    except ImportError as exc:  # pragma: no cover - required dependency
+        logger.debug("error_logger unavailable", exc_info=exc)
+        raise RuntimeError(
+            "error_logger is required for sandbox operations. Install the package"
+            " providing it (e.g. `pip install menace-sandbox`) or ensure the"
+            " module is available on the PYTHONPATH."
+        ) from exc
+
+    return _ErrorLogger
 from knowledge_graph import KnowledgeGraph
 
 from db_router import GLOBAL_ROUTER, init_db_router
@@ -709,7 +719,7 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 # initialised lazily so a ``ContextBuilder`` can be supplied by higher level
 # orchestration code instead of being constructed at import time.
 KNOWLEDGE_GRAPH = KnowledgeGraph()
-ERROR_LOGGER: ErrorLogger | None = None
+ERROR_LOGGER: "ErrorLogger | None" = None
 _ERROR_CONTEXT_BUILDER: ContextBuilder | None = None
 
 
@@ -725,7 +735,8 @@ def get_error_logger(context_builder: ContextBuilder) -> ErrorLogger:
     global ERROR_LOGGER, _ERROR_CONTEXT_BUILDER
     _ERROR_CONTEXT_BUILDER = context_builder
     if ERROR_LOGGER is None:
-        ERROR_LOGGER = ErrorLogger(
+        ErrorLoggerCls = _load_error_logger_cls()
+        ERROR_LOGGER = ErrorLoggerCls(
             knowledge_graph=KNOWLEDGE_GRAPH,
             context_builder=context_builder,
         )
