@@ -14,7 +14,6 @@ import uuid
 import numpy as np
 
 from .data_bot import DataBot
-from .capital_management_bot import CapitalManagementBot
 from .system_evolution_manager import SystemEvolutionManager
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
@@ -56,6 +55,7 @@ except Exception:  # pragma: no cover - flat layout fallback
     from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    from .capital_management_bot import CapitalManagementBot
     from .adaptive_roi_predictor import AdaptiveROIPredictor
     from .self_coding_manager import SelfCodingManager
     from .self_improvement import SelfImprovementEngine
@@ -87,7 +87,7 @@ class EvolutionOrchestrator:
     def __init__(
         self,
         data_bot: DataBot,
-        capital_bot: CapitalManagementBot,
+        capital_bot: "CapitalManagementBot",
         improvement_engine: SelfImprovementEngine,
         evolution_manager: SystemEvolutionManager,
         *,
