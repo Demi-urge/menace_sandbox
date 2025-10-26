@@ -76,28 +76,16 @@ def test_verify_optional_modules_prefers_repo_modules(monkeypatch):
     install_stub("menace_sandbox", package_stub)
 
     real_import_module = importlib.import_module
-    module_cache: dict[str, types.ModuleType] = {}
-    module_paths = {
-        "relevancy_radar": repo_root / "relevancy_radar.py",
-        "quick_fix_engine": repo_root / "quick_fix_engine.py",
-    }
-    alias_map = {
-        name: base
-        for base in module_paths
-        for name in (base, f"menace_sandbox.{base}")
+    blocked_imports = {
+        "relevancy_radar",
+        "menace_sandbox.relevancy_radar",
+        "quick_fix_engine",
+        "menace_sandbox.quick_fix_engine",
     }
 
     def fake_import(name: str, package: str | None = None):
-        target = alias_map.get(name)
-        if target:
-            module = module_cache.get(target)
-            if module is None:
-                module = types.ModuleType(f"menace_sandbox.{target}")
-                module.__file__ = str(module_paths[target])
-                module.__dict__["__version__"] = "0.0"
-                module_cache[target] = module
-            sys.modules[name] = module
-            return module
+        if name in blocked_imports:
+            raise AssertionError(f"unexpected import of optional module {name}")
         return real_import_module(name, package)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
@@ -109,9 +97,6 @@ def test_verify_optional_modules_prefers_repo_modules(monkeypatch):
     try:
         missing = bootstrap._verify_optional_modules(optional_modules, {})
         assert missing == set()
-        for base, module in module_cache.items():
-            assert sys.modules.get(base) is module
-            assert sys.modules.get(f"menace_sandbox.{base}") is module
     finally:
         new_modules = set(sys.modules) - baseline_modules
         for module_name in new_modules:
@@ -122,3 +107,75 @@ def test_verify_optional_modules_prefers_repo_modules(monkeypatch):
             else:
                 sys.modules[name] = module
         sys.modules.update(restored)
+
+
+def test_initialize_autonomous_sandbox_prints_step_e_without_quick_fix(monkeypatch, tmp_path, capsys):
+    import sandbox_runner.bootstrap as bootstrap
+
+    monkeypatch.setattr(bootstrap, "auto_configure_env", lambda settings: None)
+    monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
+    monkeypatch.setattr(bootstrap, "_ensure_sqlite_db", lambda path: None)
+    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda *a, **k: None)
+    monkeypatch.setattr(bootstrap, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(bootstrap, "resolve_path", lambda value: Path(value).resolve())
+    monkeypatch.setattr(bootstrap, "_INITIALISED", False)
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+
+    class _DummyRegistry:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def mark_missing(self, **info):  # type: ignore[no-untyped-def]
+            self.calls.append(("missing", info))
+
+        def mark_available(self, **info):  # type: ignore[no-untyped-def]
+            self.calls.append(("available", info))
+
+        def summary(self) -> dict[str, object]:
+            return {}
+
+    registry = _DummyRegistry()
+    monkeypatch.setattr(bootstrap, "dependency_registry", registry)
+
+    bootstrap._OPTIONAL_MODULE_CACHE.clear()
+    bootstrap._MISSING_OPTIONAL.clear()
+    bootstrap._OPTIONAL_DEPENDENCY_WARNED.clear()
+
+    original_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name: str, *args, **kwargs):
+        if "quick_fix_engine" in name:
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    original_import_optional = bootstrap._import_optional_module
+
+    def fail_quick_fix_import(name: str, *args, **kwargs):
+        if "quick_fix_engine" in name:
+            raise AssertionError("quick_fix_engine import attempted during verification")
+        return original_import_optional(name, *args, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "_import_optional_module", fail_quick_fix_import)
+
+    data_dir = tmp_path / "sandbox-data"
+    settings = types.SimpleNamespace(
+        sandbox_data_dir=str(data_dir),
+        sandbox_required_db_files=(),
+        optional_service_versions={"quick_fix_engine": "1.0"},
+        alignment_baseline_metrics_path="",
+        menace_env_file=str(tmp_path / ".env"),
+    )
+
+    bootstrap._initialize_autonomous_sandbox(
+        settings,
+        start_services=False,
+        start_self_improvement=False,
+    )
+
+    out = capsys.readouterr().out
+    assert "🧬 D: verifying optional modules" in out
+    assert "🧬 E: preparing sandbox data directory" in out
+    assert any(call[0] == "missing" and call[1].get("name") == "quick_fix_engine" for call in registry.calls)
+    assert data_dir.exists()

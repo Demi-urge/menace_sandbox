@@ -370,25 +370,6 @@ def _verify_optional_modules(
     missing: set[str] = set()
     for mod in modules:
         if mod in _OPTIONAL_MODULE_CACHE:
-            continue
-        try:
-            module = _import_optional_module(mod, missing_optional=missing)
-        except ImportError as exc:
-            _record_missing_optional(mod, missing)
-            min_ver = versions.get(mod, "")
-            ver_hint = f">={min_ver}" if min_ver else ""
-            dependency_registry.mark_missing(
-                name=mod,
-                category=DependencyCategory.PYTHON,
-                optional=True,
-                severity=DependencySeverity.INFO,
-                description=f"Optional service module '{mod}'",
-                reason=str(exc),
-                remedy=f"pip install {mod}{ver_hint}",
-                logger=logger,
-            )
-        else:
-            _OPTIONAL_MODULE_CACHE[mod] = module
             dependency_registry.mark_available(
                 name=mod,
                 category=DependencyCategory.PYTHON,
@@ -396,6 +377,36 @@ def _verify_optional_modules(
                 description=f"Optional service module '{mod}'",
                 logger=logger,
             )
+            continue
+        candidates = _candidate_optional_module_names(mod)
+        available = False
+        for candidate in candidates:
+            if _module_available(candidate):
+                available = True
+                break
+        if available:
+            dependency_registry.mark_available(
+                name=mod,
+                category=DependencyCategory.PYTHON,
+                optional=True,
+                description=f"Optional service module '{mod}'",
+                logger=logger,
+            )
+            _clear_missing_optional(mod, missing)
+            continue
+        _record_missing_optional(mod, missing)
+        min_ver = versions.get(mod, "")
+        ver_hint = f">={min_ver}" if min_ver else ""
+        dependency_registry.mark_missing(
+            name=mod,
+            category=DependencyCategory.PYTHON,
+            optional=True,
+            severity=DependencySeverity.INFO,
+            description=f"Optional service module '{mod}'",
+            reason="module specification not found",
+            remedy=f"pip install {mod}{ver_hint}",
+            logger=logger,
+        )
     return missing
 
 

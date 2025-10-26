@@ -8,8 +8,6 @@ have its database weights refreshed before use to ensure accurate context
 retrieval.
 """
 
-print("[QFE] quick_fix_engine module import started", flush=True)
-
 __version__ = "1.0.0"
 
 import ast
@@ -24,19 +22,31 @@ import uuid
 import time
 import py_compile
 import shlex
+import importlib
 import importlib.util
 import sys
 import symtable
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .error_bot import ErrorDB
+    from .self_coding_manager import SelfCodingManager
+    from .self_coding_engine import SelfCodingEngine
+    from .self_improvement.target_region import TargetRegion
+    from vector_service.context_builder import (
+        ContextBuilder,
+        Retriever,
+        FallbackResult,
+        EmbeddingBackfill,
+    )
+    from patch_provenance import PatchLogger
+    from self_improvement.prompt_strategies import PromptStrategy
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
-print("[QFE] attempting to import import_compat", flush=True)
 try:  # pragma: no cover - prefer package import when installed
     from menace_sandbox import import_compat  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - support flat execution
@@ -51,50 +61,301 @@ except ModuleNotFoundError:  # pragma: no cover - support flat execution
     sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
     sys.modules[_HELPER_NAME] = import_compat
     _spec.loader.exec_module(import_compat)
-    print("[QFE] loaded import_compat from local file", flush=True)
 else:  # pragma: no cover - ensure helper aliases exist
     sys.modules.setdefault(_HELPER_NAME, import_compat)
     sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
-print("[QFE] starting import_compat bootstrap", flush=True)
 import_compat.bootstrap(__name__, __file__)
-print("[QFE] finished import_compat bootstrap", flush=True)
 load_internal = import_compat.load_internal
 
-print("[QFE] loading snippet compressor", flush=True)
-compress_snippets = load_internal("snippet_compressor").compress_snippets
-print("[QFE] snippet compressor ready", flush=True)
 
-_codebase_diff_checker = load_internal("codebase_diff_checker")
-generate_code_diff = _codebase_diff_checker.generate_code_diff
-flag_risky_changes = _codebase_diff_checker.flag_risky_changes
-print("[QFE] codebase diff checker ready", flush=True)
+_SNIPPET_COMPRESSOR: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+_CODEBASE_DIFF_MODULE: Any | None = None
+_SANDBOX_SETTINGS_CLS: type | None = None
+_CONTEXT_HELPERS: tuple[Callable[..., Any], Callable[..., Any]] | None = None
+_DYNAMIC_PATH_ROUTER: Any | None = None
+_SKLEARN_VECTORS: tuple[type, type] | None = None
+_KNOWLEDGE_GRAPH_CLS: type | None = None
+_MANAGER_HELPER: Callable[..., Any] | None = None
+_DATA_BOT_CLS: type | None = None
+_RETRY_WITH_BACKOFF: Callable[..., Any] | None = None
+_VECTOR_CONTEXT_MODULE: Any | None = None
+_PATCH_LOGGER_CLS: type | None = None
+_CHUNKING_GETTER: Callable[..., Any] | None = None
+_TARGET_REGION_EXTRACTOR_LOADED = False
+_TARGET_REGION_EXTRACTOR: Callable[..., Any] | None = None
+_PROMPT_STRATEGIES: tuple[type, Callable[..., Any]] | None = None
+_VECTOR_SERVICE_RESULTS: tuple[type, type] | None = None
 
-SandboxSettings = load_internal("sandbox_settings").SandboxSettings
-print("[QFE] sandbox settings loaded", flush=True)
 
-try:  # pragma: no cover - optional dependency
-    _context_builder_util = load_internal("context_builder_util")
-    print("[QFE] context_builder_util module loaded", flush=True)
-    ensure_fresh_weights = _context_builder_util.ensure_fresh_weights
-    create_context_builder = _context_builder_util.create_context_builder
-    print("[QFE] context_builder_util helpers ready", flush=True)
-except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
-    raise RuntimeError(
-        "context_builder_util helpers are required for quick_fix_engine"
-    ) from exc
-except Exception as exc:  # pragma: no cover - required helper failed to import
-    raise RuntimeError(
-        "context_builder_util helpers are required for quick_fix_engine"
-    ) from exc
+def _load_snippet_compressor() -> Callable[[dict[str, Any]], dict[str, Any]]:
+    global _SNIPPET_COMPRESSOR
+    if _SNIPPET_COMPRESSOR is None:
+        _SNIPPET_COMPRESSOR = load_internal("snippet_compressor").compress_snippets
+    return _SNIPPET_COMPRESSOR
 
-_dynamic_path_router = load_internal("dynamic_path_router")
-resolve_path = _dynamic_path_router.resolve_path
-path_for_prompt = _dynamic_path_router.path_for_prompt
-print("[QFE] dynamic_path_router ready", flush=True)
-from collections import Counter
-from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
+
+def compress_snippets(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compress snippets lazily to avoid importing heavy dependencies early."""
+
+    return _load_snippet_compressor()(payload)
+
+
+def _load_codebase_diff_module() -> Any:
+    global _CODEBASE_DIFF_MODULE
+    if _CODEBASE_DIFF_MODULE is None:
+        _CODEBASE_DIFF_MODULE = load_internal("codebase_diff_checker")
+    return _CODEBASE_DIFF_MODULE
+
+
+def generate_code_diff(*args: Any, **kwargs: Any) -> Any:
+    return _load_codebase_diff_module().generate_code_diff(*args, **kwargs)
+
+
+def flag_risky_changes(*args: Any, **kwargs: Any) -> Any:
+    return _load_codebase_diff_module().flag_risky_changes(*args, **kwargs)
+
+
+def _get_sandbox_settings_cls() -> type:
+    global _SANDBOX_SETTINGS_CLS
+    if _SANDBOX_SETTINGS_CLS is None:
+        _SANDBOX_SETTINGS_CLS = load_internal("sandbox_settings").SandboxSettings
+    return _SANDBOX_SETTINGS_CLS
+
+
+def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    global _CONTEXT_HELPERS
+    if _CONTEXT_HELPERS is None:
+        try:
+            module = load_internal("context_builder_util")
+        except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
+            raise RuntimeError(
+                "context_builder_util helpers are required for quick_fix_engine"
+            ) from exc
+        except Exception as exc:  # pragma: no cover - required helper failed to import
+            raise RuntimeError(
+                "context_builder_util helpers are required for quick_fix_engine"
+            ) from exc
+        _CONTEXT_HELPERS = (
+            module.ensure_fresh_weights,
+            module.create_context_builder,
+        )
+    return _CONTEXT_HELPERS
+
+
+def ensure_fresh_weights(builder: Any) -> Any:
+    helper, _ = _get_context_builder_helpers()
+    return helper(builder)
+
+
+def create_context_builder(*args: Any, **kwargs: Any) -> Any:
+    _, factory = _get_context_builder_helpers()
+    return factory(*args, **kwargs)
+
+
+def _get_dynamic_path_router() -> Any:
+    global _DYNAMIC_PATH_ROUTER
+    if _DYNAMIC_PATH_ROUTER is None:
+        _DYNAMIC_PATH_ROUTER = load_internal("dynamic_path_router")
+    return _DYNAMIC_PATH_ROUTER
+
+
+def resolve_path(name: str) -> Path:
+    return _get_dynamic_path_router().resolve_path(name)
+
+
+def path_for_prompt(name: str) -> str:
+    return _get_dynamic_path_router().path_for_prompt(name)
+
+
+def _get_sklearn_vectors() -> tuple[type, type]:
+    global _SKLEARN_VECTORS
+    if _SKLEARN_VECTORS is None:
+        try:
+            from sklearn.cluster import KMeans  # type: ignore
+            from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+        except Exception as exc:  # pragma: no cover - dependency missing
+            raise RuntimeError(
+                "scikit-learn is required for quick_fix_engine clustering"
+            ) from exc
+        _SKLEARN_VECTORS = (KMeans, TfidfVectorizer)
+    return _SKLEARN_VECTORS
+
+
+def _get_knowledge_graph_cls() -> type:
+    global _KNOWLEDGE_GRAPH_CLS
+    if _KNOWLEDGE_GRAPH_CLS is None:
+        _KNOWLEDGE_GRAPH_CLS = load_internal("knowledge_graph").KnowledgeGraph
+    return _KNOWLEDGE_GRAPH_CLS
+
+
+def _get_manager_generate_helper() -> Callable[..., Any]:
+    global _MANAGER_HELPER
+    if _MANAGER_HELPER is None:
+        helper_with_builder = None
+        try:  # pragma: no cover - optional helper
+            helper_with_builder = (
+                load_internal("self_coding_manager")._manager_generate_helper_with_builder
+            )
+        except Exception:
+            helper_with_builder = None
+        if helper_with_builder is not None:
+            _MANAGER_HELPER = helper_with_builder
+        else:
+            try:  # pragma: no cover - optional dependency
+                helper_module = load_internal("coding_bot_interface")
+                helper = helper_module.manager_generate_helper
+            except Exception:
+                raise ImportError(
+                    "Self-coding engine is required for operation"
+                )
+            _MANAGER_HELPER = helper
+    return _MANAGER_HELPER
+
+
+def manager_generate_helper(manager: Any, description: str, **kwargs: Any) -> str:
+    helper = _get_manager_generate_helper()
+    return helper(manager, description, **kwargs)
+
+
+def _get_data_bot_cls() -> type:
+    global _DATA_BOT_CLS
+    if _DATA_BOT_CLS is None:
+        try:  # pragma: no cover - optional dependency
+            _DATA_BOT_CLS = load_internal("data_bot").DataBot
+        except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "data_bot.DataBot is required for quick_fix_engine"
+            ) from exc
+        except Exception as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "data_bot.DataBot is required for quick_fix_engine"
+            ) from exc
+    return _DATA_BOT_CLS
+
+
+def _get_retry_with_backoff() -> Callable[..., Any]:
+    global _RETRY_WITH_BACKOFF
+    if _RETRY_WITH_BACKOFF is None:
+        _RETRY_WITH_BACKOFF = load_internal("resilience").retry_with_backoff
+    return _RETRY_WITH_BACKOFF
+
+
+def _get_vector_context_module() -> Any:
+    global _VECTOR_CONTEXT_MODULE
+    if _VECTOR_CONTEXT_MODULE is None:
+        try:  # pragma: no cover - fail fast if vector service missing
+            _VECTOR_CONTEXT_MODULE = importlib.import_module(
+                "vector_service.context_builder"
+            )
+        except Exception as exc:  # pragma: no cover - provide actionable error
+            raise RuntimeError(
+                "vector_service is required for quick_fix_engine. "
+                "Install it via `pip install vector_service`."
+            ) from exc
+    return _VECTOR_CONTEXT_MODULE
+
+
+def _get_context_builder_types() -> tuple[type, type, type, type]:
+    module = _get_vector_context_module()
+    return (
+        getattr(module, "ContextBuilder"),
+        getattr(module, "Retriever"),
+        getattr(module, "FallbackResult"),
+        getattr(module, "EmbeddingBackfill"),
+    )
+
+
+def _get_patch_logger_cls() -> type:
+    global _PATCH_LOGGER_CLS
+    if _PATCH_LOGGER_CLS is None:
+        try:  # pragma: no cover - optional dependency
+            _PATCH_LOGGER_CLS = importlib.import_module("patch_provenance").PatchLogger
+        except Exception as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "patch_provenance.PatchLogger is required for quick_fix_engine"
+            ) from exc
+    return _PATCH_LOGGER_CLS
+
+
+def _get_chunking_getter() -> Callable[..., Any]:
+    global _CHUNKING_GETTER
+    if _CHUNKING_GETTER is None:
+        try:  # pragma: no cover - optional dependency
+            _CHUNKING_GETTER = importlib.import_module("chunking").get_chunk_summaries
+        except Exception as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "chunking.get_chunk_summaries is required for quick_fix_engine"
+            ) from exc
+    return _CHUNKING_GETTER
+
+
+def get_chunk_summaries(*args: Any, **kwargs: Any) -> Any:
+    return _get_chunking_getter()(*args, **kwargs)
+
+
+def _get_target_region_extractor() -> Callable[..., Any] | None:
+    global _TARGET_REGION_EXTRACTOR, _TARGET_REGION_EXTRACTOR_LOADED
+    if not _TARGET_REGION_EXTRACTOR_LOADED:
+        try:  # pragma: no cover - optional dependency
+            _TARGET_REGION_EXTRACTOR = load_internal("target_region").extract_target_region
+        except Exception:
+            _TARGET_REGION_EXTRACTOR = None
+        _TARGET_REGION_EXTRACTOR_LOADED = True
+    return _TARGET_REGION_EXTRACTOR
+
+
+def extract_target_region(*args: Any, **kwargs: Any) -> Any:
+    extractor = _get_target_region_extractor()
+    if extractor is None:
+        raise RuntimeError("target_region extractor is unavailable")
+    return extractor(*args, **kwargs)
+
+
+def _get_prompt_strategies() -> tuple[type, Callable[..., Any]]:
+    global _PROMPT_STRATEGIES
+    if _PROMPT_STRATEGIES is None:
+        try:  # pragma: no cover - optional dependency
+            module = load_internal("self_improvement.prompt_strategies")
+        except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "self_improvement.prompt_strategies is required for quick_fix_engine"
+            ) from exc
+        except Exception as exc:  # pragma: no cover - missing dependency
+            raise RuntimeError(
+                "self_improvement.prompt_strategies is required for quick_fix_engine"
+            ) from exc
+        _PROMPT_STRATEGIES = (module.PromptStrategy, module.render_prompt)
+    return _PROMPT_STRATEGIES
+
+
+def _get_vector_service_results() -> tuple[type, type]:
+    global _VECTOR_SERVICE_RESULTS
+    if _VECTOR_SERVICE_RESULTS is None:
+        try:  # pragma: no cover - required dependency
+            module = load_internal("vector_service")
+            error_result = getattr(module, "ErrorResult")
+        except ModuleNotFoundError as exc:  # pragma: no cover - fail fast when unavailable
+            raise RuntimeError(
+                "vector_service.ErrorResult is required for quick_fix_engine. "
+                "Install or update `vector_service` to include ErrorResult."
+            ) from exc
+        except Exception as exc:  # pragma: no cover - fail fast when unavailable
+            raise RuntimeError(
+                "vector_service.ErrorResult is required for quick_fix_engine. "
+                "Install or update `vector_service` to include ErrorResult."
+            ) from exc
+        fallback_result = getattr(_get_vector_context_module(), "FallbackResult")
+        _VECTOR_SERVICE_RESULTS = (fallback_result, error_result)
+    return _VECTOR_SERVICE_RESULTS
+
+
+def _get_fallback_result_cls() -> type:
+    return _get_vector_service_results()[0]
+
+
+def _get_error_result_cls() -> type:
+    return _get_vector_service_results()[1]
 
 
 class QuickFixEngineError(RuntimeError):
@@ -128,7 +389,9 @@ class ErrorClusterPredictor:
         self.db = db
         self.max_clusters = max_clusters
         self.min_cluster_size = min_cluster_size
-        self.vectorizer = TfidfVectorizer(**(tfidf_kwargs or {"stop_words": "english"}))
+        kmeans_cls, vectorizer_cls = _get_sklearn_vectors()
+        self.vectorizer = vectorizer_cls(**(tfidf_kwargs or {"stop_words": "english"}))
+        self._kmeans_cls = kmeans_cls
         self.kmeans_kwargs = {"n_init": "auto"}
         if kmeans_kwargs:
             self.kmeans_kwargs.update(kmeans_kwargs)
@@ -138,7 +401,7 @@ class ErrorClusterPredictor:
         matrix = self.vectorizer.fit_transform(traces)
         if n_clusters <= 1:
             return [0] * len(traces)
-        km = KMeans(n_clusters=n_clusters, **self.kmeans_kwargs)
+        km = self._kmeans_cls(n_clusters=n_clusters, **self.kmeans_kwargs)
         return km.fit_predict(matrix).tolist()
 
     def best_cluster(
@@ -664,96 +927,6 @@ def _is_self_coding_manager(candidate: object) -> bool:
         return False
     return isinstance(candidate, cls)
 
-try:  # pragma: no cover - optional helper
-    _manager_generate_helper_with_builder = (
-        load_internal("self_coding_manager")._manager_generate_helper_with_builder
-    )
-except (ModuleNotFoundError, AttributeError):  # pragma: no cover - helper unavailable
-    _manager_generate_helper_with_builder = None  # type: ignore
-except Exception:  # pragma: no cover - helper unavailable
-    _manager_generate_helper_with_builder = None  # type: ignore
-
-KnowledgeGraph = load_internal("knowledge_graph").KnowledgeGraph  # noqa: E402
-
-try:  # pragma: no cover - optional dependency
-    _coding_bot_interface = load_internal("coding_bot_interface")
-    _base_manager_generate_helper = _coding_bot_interface.manager_generate_helper
-except ModuleNotFoundError:
-    def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
-        raise ImportError("Self-coding engine is required for operation")
-except Exception:
-    def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
-        raise ImportError("Self-coding engine is required for operation")
-
-manager_generate_helper = (
-    _manager_generate_helper_with_builder or _base_manager_generate_helper
-)
-try:  # pragma: no cover - optional dependency
-    DataBot = load_internal("data_bot").DataBot  # noqa: E402
-except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError("data_bot.DataBot is required for quick_fix_engine") from exc
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError("data_bot.DataBot is required for quick_fix_engine") from exc
-
-retry_with_backoff = load_internal("resilience").retry_with_backoff  # noqa: E402
-try:  # pragma: no cover - fail fast if vector service missing
-    from vector_service.context_builder import (  # noqa: E402
-        ContextBuilder,
-        Retriever,
-        FallbackResult,
-        EmbeddingBackfill,
-    )
-except Exception as exc:  # pragma: no cover - provide actionable error
-    raise RuntimeError(
-        "vector_service is required for quick_fix_engine. "
-        "Install it via `pip install vector_service`."
-    ) from exc
-try:  # pragma: no cover - optional dependency
-    from patch_provenance import PatchLogger
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "patch_provenance.PatchLogger is required for quick_fix_engine"
-    ) from exc
-try:  # pragma: no cover - optional dependency
-    from chunking import get_chunk_summaries
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "chunking.get_chunk_summaries is required for quick_fix_engine"
-    ) from exc
-try:  # pragma: no cover - optional dependency
-    extract_target_region = load_internal("target_region").extract_target_region
-except ModuleNotFoundError:  # pragma: no cover - extractor unavailable
-    extract_target_region = None  # type: ignore
-except Exception:  # pragma: no cover - extractor unavailable
-    extract_target_region = None  # type: ignore
-try:  # pragma: no cover - optional dependency
-    _prompt_strategies = load_internal("self_improvement.prompt_strategies")
-    PromptStrategy = _prompt_strategies.PromptStrategy
-    render_prompt = _prompt_strategies.render_prompt
-except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "self_improvement.prompt_strategies is required for quick_fix_engine"
-    ) from exc
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "self_improvement.prompt_strategies is required for quick_fix_engine"
-    ) from exc
-
-if TYPE_CHECKING:  # pragma: no cover - import for type checking only
-    from .self_coding_engine import SelfCodingEngine
-    from .self_improvement.target_region import TargetRegion
-try:  # pragma: no cover - required dependency
-    ErrorResult = load_internal("vector_service").ErrorResult  # type: ignore
-except ModuleNotFoundError as exc:  # pragma: no cover - fail fast when unavailable
-    raise RuntimeError(
-        "vector_service.ErrorResult is required for quick_fix_engine. "
-        "Install or update `vector_service` to include ErrorResult."
-    ) from exc
-except Exception as exc:  # pragma: no cover - fail fast when unavailable
-    raise RuntimeError(
-        "vector_service.ErrorResult is required for quick_fix_engine. "
-        "Install or update `vector_service` to include ErrorResult."
-    ) from exc
 try:  # pragma: no cover - optional dependency
     _collect_diff_data = load_internal("human_alignment_flagger")._collect_diff_data
 except ModuleNotFoundError as exc:  # pragma: no cover - missing dependency
@@ -949,7 +1122,9 @@ def generate_patch(
         def _fetch() -> list[str]:
             return graph.related(f"code:{prompt_path}")
         try:
-            related_nodes = retry_with_backoff(_fetch, attempts=2, delay=0.1, logger=logger)
+            related_nodes = _get_retry_with_backoff()(
+                _fetch, attempts=2, delay=0.1, logger=logger
+            )
         except Exception:
             related_nodes = []
         modules = [n.split(":", 1)[1] for n in related_nodes if n.startswith("code:")]
@@ -981,10 +1156,12 @@ def generate_patch(
     if cluster_traces:
         try:
             description += "\n\n" + cluster_traces[0]
-            if extract_target_region is not None and target_region is None:
-                region = extract_target_region(cluster_traces[0])
-                if region and region.filename.endswith(prompt_path):
-                    target_region = region
+            if target_region is None:
+                extractor = _get_target_region_extractor()
+                if extractor is not None:
+                    region = extractor(cluster_traces[0])
+                    if region and region.filename.endswith(prompt_path):
+                        target_region = region
         except Exception:
             logger.exception("failed to incorporate cluster trace")
     analysis = _collect_static_analysis(path)
@@ -1019,7 +1196,8 @@ def generate_patch(
             context_block, _, vectors = ctx_res
         else:
             context_block = ctx_res
-        if isinstance(context_block, (FallbackResult, ErrorResult)):
+        fallback_cls, error_cls = _get_vector_service_results()
+        if isinstance(context_block, (fallback_cls, error_cls)):
             context_block = ""
     except Exception:
         context_block = ""
@@ -1030,6 +1208,7 @@ def generate_patch(
             description += "\n\n" + compressed
     if strategy is not None:
         try:
+            _, render_prompt = _get_prompt_strategies()
             template = render_prompt(strategy, {"module": prompt_path})
         except Exception:
             template = ""
@@ -1049,7 +1228,7 @@ def generate_patch(
 
     if patch_logger is None:
         try:
-            patch_logger = PatchLogger()
+            patch_logger = _get_patch_logger_cls()()
         except Exception:
             patch_logger = None
 
@@ -1092,14 +1271,19 @@ def generate_patch(
             needs_helper = _requires_helper(analysis.hints)
 
             chunks: List[Any] = []
-            if needs_helper and get_chunk_summaries is not None:
-                token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
+            if needs_helper:
                 try:
-                    chunks = get_chunk_summaries(
-                        path, token_limit, context_builder=builder
-                    )
-                except Exception:
-                    chunks = []
+                    chunk_getter = _get_chunking_getter()
+                except RuntimeError:
+                    chunk_getter = None
+                if chunk_getter is not None:
+                    token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
+                    try:
+                        chunks = chunk_getter(
+                            path, token_limit, context_builder=builder
+                        )
+                    except Exception:
+                        chunks = []
             patch_ids: List[int | None] = []
 
             if needs_helper:
@@ -1267,7 +1451,8 @@ def generate_patch(
             diff_struct = generate_code_diff(before_dir, after_dir)
             risk_flags = flag_risky_changes(diff_struct)
             risk_score = min(1.0, len(risk_flags) / 10.0) if risk_flags else 0.0
-            settings = SandboxSettings()
+            settings_cls = _get_sandbox_settings_cls()
+            settings = settings_cls()
             threshold = float(getattr(settings, "diff_risk_threshold", 1.0))
             event_bus = getattr(manager, "event_bus", None)
             if event_bus and risk_flags:
@@ -1307,7 +1492,8 @@ def generate_patch(
                             break
                     else:  # run embedding backfill on success
                         try:
-                            EmbeddingBackfill().run(
+                            _, _, _, embedding_backfill_cls = _get_context_builder_types()
+                            embedding_backfill_cls().run(
                                 db="code",
                                 backend=os.getenv("VECTOR_BACKEND", "annoy"),
                             )
@@ -1469,8 +1655,8 @@ class QuickFixEngine:
         graph: KnowledgeGraph | None = None,
         risk_threshold: float = 0.5,
         predictor: ErrorClusterPredictor | None = None,
-        retriever: Retriever | None = None,
-        context_builder: ContextBuilder,
+        retriever: "Retriever" | None = None,
+        context_builder: "ContextBuilder",
         patch_logger: PatchLogger | None = None,
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
@@ -1499,7 +1685,7 @@ class QuickFixEngine:
         except Exception:
             logger.exception("bot registration failed")
         self.threshold = threshold
-        self.graph = graph or KnowledgeGraph()
+        self.graph = graph or _get_knowledge_graph_cls()()
         self.risk_threshold = risk_threshold
         self.predictor = predictor
         self.retriever = retriever
@@ -1508,7 +1694,7 @@ class QuickFixEngine:
             try:
                 eng = getattr(manager, "engine", None)
                 pdb = getattr(eng, "patch_db", None)
-                patch_logger = PatchLogger(patch_db=pdb)
+                patch_logger = _get_patch_logger_cls()(patch_db=pdb)
             except Exception:
                 patch_logger = None
         self.patch_logger = patch_logger
@@ -1549,8 +1735,9 @@ class QuickFixEngine:
         session_id = uuid.uuid4().hex
         try:
             hits = self.retriever.search(query, top_k=top_k, session_id=session_id)
-            if isinstance(hits, (FallbackResult, ErrorResult)):
-                if isinstance(hits, FallbackResult):
+            fallback_cls, error_cls = _get_vector_service_results()
+            if isinstance(hits, (fallback_cls, error_cls)):
+                if isinstance(hits, fallback_cls):
                     self.logger.debug(
                         "retriever returned fallback for %s: %s",
                         query,
@@ -1640,7 +1827,8 @@ class QuickFixEngine:
                 ctx_block, _sid, cb_vectors = ctx_res
             else:
                 ctx_block = ctx_res
-            if isinstance(ctx_block, (FallbackResult, ErrorResult)):
+            fallback_cls, error_cls = _get_vector_service_results()
+            if isinstance(ctx_block, (fallback_cls, error_cls)):
                 ctx_block = ""
         except Exception:
             ctx_block = ""
@@ -1900,7 +2088,8 @@ class QuickFixEngine:
                     ctx, cb_session, cb_vectors = ctx_res
                 else:
                     ctx, cb_session = ctx_res, cb_session
-                if isinstance(ctx, (FallbackResult, ErrorResult)):
+                fallback_cls, error_cls = _get_vector_service_results()
+                if isinstance(ctx, (fallback_cls, error_cls)):
                     ctx = ""
                     cb_vectors = []
             except Exception:
