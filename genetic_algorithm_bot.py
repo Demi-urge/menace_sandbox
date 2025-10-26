@@ -27,7 +27,7 @@ try:  # pragma: no cover - optional self-coding dependencies
     from .code_database import CodeDB
     from .gpt_memory import GPTMemoryManager
     from .self_coding_manager import internalize_coding_bot
-    from .model_automation_pipeline import ModelAutomationPipeline
+    from .shared.model_pipeline_core import ModelAutomationPipeline
     from .threshold_service import ThresholdService
     from .self_coding_thresholds import get_thresholds
     from .shared_evolution_orchestrator import get_orchestrator
