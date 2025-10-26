@@ -11,7 +11,7 @@ from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
-from .shared_evolution_orchestrator import get_orchestrator
+from .orchestrator_loader import get_orchestrator
 from .threshold_service import ThresholdService
 from context_builder_util import create_context_builder
 from dataclasses import dataclass, field

@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+"""Provide a shared :class:`EvolutionOrchestrator` instance.
+
+This helper lazily constructs an :class:`EvolutionOrchestrator` with minimal
+dependencies and returns the same instance for all callers. Bots retrieving the
+orchestrator can therefore coordinate through a common patch provenance token.
+"""
+
+from contextlib import contextmanager
+from typing import Iterator, TYPE_CHECKING, Any
+
+from .data_bot import DataBot
+from .system_evolution_manager import SystemEvolutionManager
+from .self_coding_engine import SelfCodingEngine
+from .evolution_orchestrator import EvolutionOrchestrator
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .capital_management_bot import CapitalManagementBot
+
+_shared_orchestrator: EvolutionOrchestrator | None = None
+
+
+@contextmanager
+def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
+    """Temporarily disable self-coding requirements for ``CapitalManagementBot``.
+
+    ``CapitalManagementBot`` is decorated with :func:`self_coding_managed`,
+    which normally enforces the presence of a :class:`SelfCodingManager`
+    instance when the self-coding runtime is available. The shared orchestrator
+    is used early during bootstrap before a manager exists, so the instantiation
+    would raise ``RuntimeError``. The decorator exposes a
+    ``_self_coding_manual_mode`` flag to bypass this requirement. This context
+    manager toggles the flag only for the duration of the instantiation,
+    restoring the previous value afterwards.
+    """
+
+    unset = object()
+    previous = getattr(capital_cls, "_self_coding_manual_mode", unset)
+    capital_cls._self_coding_manual_mode = True  # type: ignore[attr-defined]
+    try:
+        yield
+    finally:
+        if previous is unset:
+            delattr(capital_cls, "_self_coding_manual_mode")
+        else:
+            capital_cls._self_coding_manual_mode = previous  # type: ignore[attr-defined]
+
+
+def get_orchestrator(
+    bot_name: str, data_bot: DataBot, engine: SelfCodingEngine
+) -> EvolutionOrchestrator:
+    """Return a singleton ``EvolutionOrchestrator``."""
+
+    global _shared_orchestrator
+    if _shared_orchestrator is None:
+        from .capital_management_bot import CapitalManagementBot
+
+        with _capital_bot_manual_mode(CapitalManagementBot):
+            capital_bot = CapitalManagementBot()
+        evolution_manager = SystemEvolutionManager(bots=[bot_name])
+        _shared_orchestrator = EvolutionOrchestrator(
+            data_bot, capital_bot, engine, evolution_manager
+        )
+    return _shared_orchestrator
+
+
+__all__ = ["get_orchestrator"]
