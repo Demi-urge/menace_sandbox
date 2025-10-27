@@ -609,6 +609,46 @@ def _module_name_from_path(path: Path) -> str:
     return fallback.replace("/", ".").replace("\\", ".") or (leaf or resolved.stem or resolved.name)
 
 
+def _git_status_for_path(path: Path) -> str | None:
+    """Return ``git status --porcelain`` output for ``path`` when available.
+
+    This helper keeps :meth:`BotRegistry.update_bot` resilient when the sandbox
+    runs outside a git checkout (for example when unpacked from an archive).
+    ``git`` commands exit with status 128 in that scenario which previously
+    produced noisy error logs and interrupted hot swaps.  ``None`` is returned
+    when the path is not part of a work tree or when git itself is missing so
+    callers can silently skip manual change detection.
+    """
+
+    candidate = path if path.is_dir() else path.parent
+    try:
+        cwd = candidate.resolve(strict=False)
+    except (OSError, RuntimeError):
+        cwd = candidate.absolute()
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(cwd),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        return None
+
+    if probe.stdout.strip().lower() not in {"true", "1"}:
+        return None
+
+    try:
+        return subprocess.check_output(
+            ["git", "status", "--porcelain", "--", str(path)],
+            cwd=str(cwd),
+        ).decode()
+    except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        return None
+
+
 def _module_spec_from_path(module_path: str) -> tuple[str, dict[str, object]]:
     """Return an importable module name and ``spec_from_file_location`` kwargs."""
 
@@ -2624,6 +2664,7 @@ class BotRegistry:
             self.register_bot(name, is_coding_bot=False)
             node = self.graph.nodes[name]
             unsigned_meta: dict[str, Any] | None = None
+            path_obj = Path(module_path)
 
             if self._commit_already_applied(node, commit):
                 if (
@@ -3080,10 +3121,11 @@ class BotRegistry:
             raise RuntimeError("update blocked: provenance mismatch")
 
         try:
-            status = subprocess.check_output(
-                ["git", "status", "--porcelain", module_path]
-            ).decode()
-            if status.strip() and self.event_bus:
+            status = _git_status_for_path(path_obj)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("Failed to check manual changes for %s: %s", module_path, exc)
+        else:
+            if status and status.strip() and self.event_bus:
                 try:
                     self.event_bus.publish(
                         "bot:manual_change",
@@ -3091,11 +3133,8 @@ class BotRegistry:
                     )
                 except Exception as exc:
                     logger.error("Failed to publish bot:manual_change event: %s", exc)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.error("Failed to check manual changes for %s: %s", module_path, exc)
         try:
             with _hot_swap_guard(name):
-                path_obj = Path(module_path)
                 if _is_probable_filesystem_path(module_path):
                     module_name, spec_kwargs = _module_spec_from_path(module_path)
                     spec = importlib.util.spec_from_file_location(
