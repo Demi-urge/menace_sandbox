@@ -5,20 +5,23 @@ from __future__ import annotations
 This helper lazily constructs an :class:`EvolutionOrchestrator` with minimal
 dependencies and returns the same instance for all callers. Bots retrieving the
 orchestrator can therefore coordinate through a common patch provenance token.
+
+To avoid circular import errors the heavy dependencies are imported only inside
+``get_orchestrator``.  This keeps module initialisation trivial so callers can
+``import orchestrator_loader`` even when :mod:`capital_management_bot` is still
+being evaluated.
 """
 
 from contextlib import contextmanager
 from typing import Iterator, TYPE_CHECKING, Any
 
-from .data_bot import DataBot
-from .system_evolution_manager import SystemEvolutionManager
-from .self_coding_engine import SelfCodingEngine
-from .evolution_orchestrator import EvolutionOrchestrator
-
 if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .data_bot import DataBot
+    from .self_coding_engine import SelfCodingEngine
+    from .evolution_orchestrator import EvolutionOrchestrator
     from .capital_management_bot import CapitalManagementBot
 
-_shared_orchestrator: EvolutionOrchestrator | None = None
+_shared_orchestrator: "EvolutionOrchestrator" | None = None
 
 
 @contextmanager
@@ -48,12 +51,14 @@ def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
 
 
 def get_orchestrator(
-    bot_name: str, data_bot: DataBot, engine: SelfCodingEngine
-) -> EvolutionOrchestrator:
+    bot_name: str, data_bot: "DataBot", engine: "SelfCodingEngine"
+) -> "EvolutionOrchestrator":
     """Return a singleton ``EvolutionOrchestrator``."""
 
     global _shared_orchestrator
     if _shared_orchestrator is None:
+        from .evolution_orchestrator import EvolutionOrchestrator
+        from .system_evolution_manager import SystemEvolutionManager
         from .capital_management_bot import CapitalManagementBot
 
         with _capital_bot_manual_mode(CapitalManagementBot):
