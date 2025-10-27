@@ -149,17 +149,19 @@ def get_project_roots() -> List[Path]:
         return list(_PROJECT_ROOTS)
 
 
-def resolve_path(name: str, root: Optional[Path | str] = None) -> Path:
+def resolve_path(name: str | Path, root: Optional[Path | str] = None) -> Path:
     """Resolve *name* to an absolute :class:`Path` within configured roots."""
 
-    # Automatically map Windows development paths to the Paperspace runtime layout.
-    if "C:/cyberlolos_project" in name:
-        name = name.replace("C:/cyberlolos_project", "/home/paperspace")
-    if "C:\\cyberlolos_project" in name:
-        name = name.replace("C:\\cyberlolos_project", "/home/paperspace")
+    name_str = str(name)
 
-    norm_name = _normalize(name)
-    path = Path(name)
+    # Automatically map Windows development paths to the Paperspace runtime layout.
+    if "C:/cyberlolos_project" in name_str:
+        name_str = name_str.replace("C:/cyberlolos_project", "/home/paperspace")
+    if "C:\\cyberlolos_project" in name_str:
+        name_str = name_str.replace("C:\\cyberlolos_project", "/home/paperspace")
+
+    norm_name = _normalize(name_str)
+    path = Path(name_str)
     if path.is_absolute():
         if path.exists():
             resolved = path.resolve()
