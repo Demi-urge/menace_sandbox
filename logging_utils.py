@@ -14,7 +14,10 @@ import contextvars
 import importlib
 from types import SimpleNamespace, ModuleType
 
-from .safe_serialization import safe_json_dumps
+try:  # pragma: no cover - enable script execution
+    from .safe_serialization import safe_json_dumps
+except ImportError:  # pragma: no cover - fallback when package context missing
+    from safe_serialization import safe_json_dumps
 
 
 _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
