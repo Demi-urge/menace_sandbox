@@ -49,6 +49,12 @@ engine = SelfCodingEngine(
     context_builder=_context_builder,
 )
 
+# ``manager`` is injected later during module import once optional dependencies
+# have been resolved.  Define it up-front so decorators referencing the symbol
+# do not raise ``NameError`` during class creation when the bootstrap sequence
+# has not yet initialised the self-coding manager.
+manager: SelfCodingManager | None = None
+
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover - missing optional dependency
