@@ -10,6 +10,7 @@ import importlib.util
 import _thread
 import json
 import logging
+import os
 import re
 import sqlite3
 import sys
@@ -114,6 +115,13 @@ else:
 
 UnifiedEventBus = load_internal("unified_event_bus").UnifiedEventBus
 WorkflowGraph = load_internal("workflow_graph").WorkflowGraph
+
+_import_guard_module = load_internal("shared.self_coding_import_guard")
+try:
+    self_coding_import_depth = _import_guard_module.self_coding_import_depth  # type: ignore[attr-defined]
+except AttributeError:  # pragma: no cover - compatibility fallback
+    def self_coding_import_depth(_module_path: Any | None = None) -> int:
+        return 0
 
 try:
     _vector_service = load_internal("vector_service")
@@ -1089,10 +1097,105 @@ class TaskHandoffBot:
             logger.warning("failed to close handoff socket: %s", exc)
 
 
+_POST_IMPORT_UPDATE_SCHEDULED = False
+_POST_IMPORT_UPDATE_COMPLETED = False
+
+
+def _normalise_module_reference(value: Any | None) -> str | None:
+    """Return a comparable representation for *value* or ``None``."""
+
+    if value is None:
+        return None
+    try:
+        return str(Path(value).resolve())
+    except Exception:
+        try:
+            return os.fspath(value)  # type: ignore[arg-type]
+        except Exception:
+            return str(value)
+
+
+def _needs_post_import_update(reg: BotRegistry, name: str, module_path: str) -> bool:
+    """Return ``True`` when the registry metadata is out of date."""
+
+    target = _normalise_module_reference(module_path)
+    if not target:
+        return False
+    try:
+        node = reg.graph.nodes.get(name)
+    except Exception:
+        node = None
+    if not node:
+        return True
+    recorded = node.get("module") or reg.modules.get(name)
+    if not recorded:
+        return True
+    current = _normalise_module_reference(recorded)
+    return current != target
+
+
+def _finalise_self_coding_registration() -> None:
+    """Retry ``BotRegistry.update_bot`` once imports have settled."""
+
+    global _POST_IMPORT_UPDATE_SCHEDULED, _POST_IMPORT_UPDATE_COMPLETED
+    try:
+        reg = getattr(TaskHandoffBot, "bot_registry")
+    except AttributeError:
+        reg = None
+    if reg is None:
+        _POST_IMPORT_UPDATE_SCHEDULED = False
+        return
+    name = getattr(TaskHandoffBot, "name", getattr(TaskHandoffBot, "bot_name", "TaskHandoffBot"))
+    module_path = str(Path(__file__).resolve())
+    if not _needs_post_import_update(reg, name, module_path):
+        _POST_IMPORT_UPDATE_COMPLETED = True
+        return
+    try:
+        reg.update_bot(name, module_path)
+    except Exception:
+        _POST_IMPORT_UPDATE_SCHEDULED = False
+        logger.exception("post-import bot update failed for %s", name)
+    else:
+        _POST_IMPORT_UPDATE_COMPLETED = True
+
+
+def ensure_task_handoff_registration(force: bool = False) -> None:
+    """Synchronise registry metadata for :class:`TaskHandoffBot`."""
+
+    global _POST_IMPORT_UPDATE_SCHEDULED, _POST_IMPORT_UPDATE_COMPLETED
+    if force:
+        _POST_IMPORT_UPDATE_SCHEDULED = False
+        _POST_IMPORT_UPDATE_COMPLETED = False
+    if _POST_IMPORT_UPDATE_COMPLETED:
+        return
+    _finalise_self_coding_registration()
+
+
+def _schedule_post_import_update(delay: float = 0.1) -> None:
+    """Schedule a single registry update retry after import-time recursion."""
+
+    global _POST_IMPORT_UPDATE_SCHEDULED
+    if _POST_IMPORT_UPDATE_SCHEDULED or _POST_IMPORT_UPDATE_COMPLETED:
+        return
+    _POST_IMPORT_UPDATE_SCHEDULED = True
+    try:
+        timer = threading.Timer(delay, _finalise_self_coding_registration)
+        timer.daemon = True
+        timer.start()
+    except Exception:
+        _POST_IMPORT_UPDATE_SCHEDULED = False
+        logger.exception("failed to defer TaskHandoffBot registry update")
+
+
+if self_coding_import_depth(Path(__file__)) > 1:
+    _schedule_post_import_update()
+
+
 __all__ = [
     "TaskInfo",
     "TaskPackage",
     "WorkflowRecord",
     "WorkflowDB",
     "TaskHandoffBot",
+    "ensure_task_handoff_registration",
 ]

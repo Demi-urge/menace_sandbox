@@ -3120,19 +3120,21 @@ class BotRegistry:
                     )
             raise RuntimeError("update blocked: provenance mismatch")
 
-        try:
-            status = _git_status_for_path(path_obj)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.error("Failed to check manual changes for %s: %s", module_path, exc)
-        else:
-            if status and status.strip() and self.event_bus:
-                try:
-                    self.event_bus.publish(
-                        "bot:manual_change",
-                        {"name": name, "module": module_path, "reason": "uncommitted_changes"},
-                    )
-                except Exception as exc:
-                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+        status: Optional[str] = None
+        if _is_probable_filesystem_path(module_path):
+            path_obj = Path(module_path)
+            try:
+                status = _git_status_for_path(path_obj)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.error("Failed to check manual changes for %s: %s", module_path, exc)
+        if status and status.strip() and self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "bot:manual_change",
+                    {"name": name, "module": module_path, "reason": "uncommitted_changes"},
+                )
+            except Exception as exc:
+                logger.error("Failed to publish bot:manual_change event: %s", exc)
         try:
             with _hot_swap_guard(name):
                 if _is_probable_filesystem_path(module_path):
