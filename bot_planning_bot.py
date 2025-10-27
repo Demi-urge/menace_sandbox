@@ -14,9 +14,17 @@ except Exception as exc:  # pragma: no cover - critical dependency
 from .self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional to avoid circular imports in tests
     from .model_automation_pipeline import ModelAutomationPipeline
-except Exception:  # pragma: no cover - provide stub when unavailable
-    class ModelAutomationPipeline:  # type: ignore
-        pass
+except Exception as exc:  # pragma: no cover - provide stub when unavailable
+    _pipeline_import_error = exc
+
+    class ModelAutomationPipeline:  # type: ignore[misc]
+        """Fallback stub that surfaces the original import failure."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError(
+                "ModelAutomationPipeline is unavailable; ensure menace is installed "
+                "as a package so relative imports resolve correctly."
+            ) from _pipeline_import_error
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
