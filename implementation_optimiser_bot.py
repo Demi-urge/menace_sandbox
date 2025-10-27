@@ -9,9 +9,16 @@ from typing import List, TYPE_CHECKING, Any, Callable
 import importlib
 import ast
 import logging
+import sys
 import time
 
 logger = logging.getLogger(__name__)
+
+if __package__ in {None, ""}:  # pragma: no cover - runtime execution guard
+    package_root = Path(__file__).resolve().parent.parent
+    package_path = str(package_root)
+    if package_path not in sys.path:
+        sys.path.insert(0, package_path)
 
 from menace_sandbox.self_coding_manager import (
     SelfCodingManager,
