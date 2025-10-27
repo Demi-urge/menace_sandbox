@@ -283,7 +283,7 @@ class _WorkflowStabilityProxy:
 
 STABLE_WORKFLOWS = _WorkflowStabilityProxy()
 try:  # pragma: no cover - optional meta-planning helpers
-    from .meta_planning import PLANNER_INTERVAL
+    from .meta_planning import PLANNER_INTERVAL, resolve_meta_workflow_planner
     from . import meta_planning
     _META_PLANNING_ERROR: Exception | None = None
     _qfe_log("meta_planning imported")
@@ -297,6 +297,13 @@ except Exception as exc:  # pragma: no cover - simplified environments
 
     meta_planning = types.ModuleType("self_improvement.meta_planning")
     meta_planning.MetaWorkflowPlanner = None  # type: ignore[attr-defined]
+
+    def _resolve_meta_workflow_planner(force_reload: bool = False) -> None:
+        return None
+
+    meta_planning.resolve_meta_workflow_planner = (  # type: ignore[attr-defined]
+        _resolve_meta_workflow_planner
+    )
 
     class _FallbackPlanner:
         roi_db = None
@@ -1598,7 +1605,8 @@ class SelfImprovementEngine:
         # cycle is idle.
         self._meta_planner_thread: threading.Thread | None = None
         self._meta_planner_stop: threading.Event | None = None
-        if META_PLANNING_PERIOD > 0 and MetaWorkflowPlanner is not None:
+        planner_cls = resolve_meta_workflow_planner()
+        if META_PLANNING_PERIOD > 0 and planner_cls is not None:
             self._start_meta_planner_thread(float(META_PLANNING_PERIOD))
 
         # Optional background evolution loop using the meta planner
@@ -1606,7 +1614,7 @@ class SelfImprovementEngine:
         self._meta_loop_stop: threading.Event | None = None
         if (
             META_PLANNING_LOOP
-            and MetaWorkflowPlanner is not None
+            and planner_cls is not None
             and self.workflow_evolver is not None
         ):
             self._start_meta_planning_loop(
@@ -1615,14 +1623,15 @@ class SelfImprovementEngine:
 
     def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
         """Use meta planner to suggest new cross-domain workflow chains."""
-        if MetaWorkflowPlanner is None or WorkflowChainSuggester is None:
+        planner_cls = resolve_meta_workflow_planner()
+        if planner_cls is None or WorkflowChainSuggester is None:
             self.logger.debug(
                 "cross-domain chain planning skipped: planner or suggester missing"
             )
             return []
         try:
             builder = create_context_builder()
-            planner = MetaWorkflowPlanner(context_builder=builder)
+            planner = planner_cls(context_builder=builder)
             schedule_specs: dict[str, dict[str, Any]] = {}
             candidate_ids: list[str] = []
             for sched in Path.cwd().glob("*_schedule.json"):
@@ -1720,14 +1729,15 @@ class SelfImprovementEngine:
 
     def _discover_meta_workflows(self) -> list[dict[str, Any]]:
         """Run meta planner, evaluate chains and persist winners."""
-        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+        planner_cls = resolve_meta_workflow_planner()
+        if planner_cls is None or self.workflow_evolver is None:
             self.logger.debug(
                 "meta workflow discovery skipped: planner or evolver missing"
             )
             return []
         try:
             builder = create_context_builder()
-            planner = MetaWorkflowPlanner(context_builder=builder)
+            planner = planner_cls(context_builder=builder)
         except Exception:
             self.logger.exception("meta workflow planner instantiation failed")
             return []
@@ -1847,17 +1857,16 @@ class SelfImprovementEngine:
                 "meta planner execution skipped: workflow_evolver missing"
             )
             raise RuntimeError("workflow_evolver not initialised")
-        planner_cls = (
-            meta_planning.MetaWorkflowPlanner or meta_planning._FallbackPlanner
-        )
-        if planner_cls is meta_planning._FallbackPlanner:
+        planner_cls = resolve_meta_workflow_planner()
+        if planner_cls is None:
+            planner_cls = meta_planning._FallbackPlanner
             self.logger.debug(
                 "MetaWorkflowPlanner unavailable; using fallback planner"
             )
         try:
             planner = (
                 planner_cls(context_builder=create_context_builder())
-                if planner_cls is meta_planning.MetaWorkflowPlanner
+                if planner_cls is not meta_planning._FallbackPlanner
                 else planner_cls()
             )
             workflows: dict[str, Callable[[], Any]] = {}
@@ -2858,16 +2867,15 @@ class SelfImprovementEngine:
                 "meta planning loop skipped: workflow_evolver missing"
             )
             return
-        planner_cls = (
-            meta_planning.MetaWorkflowPlanner or meta_planning._FallbackPlanner
-        )
-        if planner_cls is meta_planning._FallbackPlanner:
+        planner_cls = resolve_meta_workflow_planner()
+        if planner_cls is None:
+            planner_cls = meta_planning._FallbackPlanner
             self.logger.debug(
                 "MetaWorkflowPlanner unavailable; using fallback planner"
             )
         planner = (
             planner_cls(context_builder=create_context_builder())
-            if planner_cls is meta_planning.MetaWorkflowPlanner
+            if planner_cls is not meta_planning._FallbackPlanner
             else planner_cls()
         )
 
