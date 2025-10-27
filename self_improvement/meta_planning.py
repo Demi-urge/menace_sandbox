@@ -144,7 +144,30 @@ def _load_meta_workflow_planner() -> Any | None:
     return None
 
 
-MetaWorkflowPlanner = _load_meta_workflow_planner()
+MetaWorkflowPlanner: Any | None = None
+_META_PLANNER_RESOLVED = False
+
+
+def resolve_meta_workflow_planner(force_reload: bool = False) -> Any | None:
+    """Return the optional :class:`MetaWorkflowPlanner` implementation.
+
+    The resolver defers importing :mod:`meta_workflow_planner` until the
+    planner is explicitly required.  When ``force_reload`` is ``True`` the
+    cached result is discarded and the import is attempted again.
+    """
+
+    global MetaWorkflowPlanner, _META_PLANNER_RESOLVED
+
+    if force_reload:
+        MetaWorkflowPlanner = None
+        _META_PLANNER_RESOLVED = False
+
+    if _META_PLANNER_RESOLVED:
+        return MetaWorkflowPlanner
+
+    MetaWorkflowPlanner = _load_meta_workflow_planner()
+    _META_PLANNER_RESOLVED = True
+    return MetaWorkflowPlanner
 
 
 class _FallbackPlanner:
@@ -1005,13 +1028,14 @@ async def self_improvement_cycle(
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
     cfg = _init.settings
-    if MetaWorkflowPlanner is None:
+    planner_cls = resolve_meta_workflow_planner()
+    if planner_cls is None:
         if getattr(cfg, "enable_meta_planner", False):
             raise RuntimeError("MetaWorkflowPlanner required but not installed")
         logger.warning("MetaWorkflowPlanner unavailable; using fallback planner")
         planner = _FallbackPlanner()
     else:
-        planner = MetaWorkflowPlanner(context_builder=create_context_builder())
+        planner = planner_cls(context_builder=create_context_builder())
 
     mutation_rate = cfg.meta_mutation_rate
     roi_weight = cfg.meta_roi_weight
@@ -1485,6 +1509,7 @@ __all__ = [
     "start_self_improvement_cycle",
     "stop_self_improvement_cycle",
     "reload_settings",
+    "resolve_meta_workflow_planner",
     "PLANNER_INTERVAL",
     "MUTATION_RATE",
     "ROI_WEIGHT",
