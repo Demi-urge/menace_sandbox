@@ -43,6 +43,13 @@ from shared.provenance_state import (
 )
 
 try:
+    from .shared.self_coding_import_guard import is_self_coding_import_active
+except ImportError:  # pragma: no cover - support legacy layout
+    from shared.self_coding_import_guard import (  # type: ignore
+        is_self_coding_import_active,
+    )
+
+try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
@@ -3171,6 +3178,13 @@ class BotRegistry:
                     self.modules[name] = module_path
         if not module_path:
             raise KeyError(f"bot {name!r} has no module path")
+        if is_self_coding_import_active(module_path):
+            logger.debug(
+                "Skipping health check for %s while module import is in progress",
+                name,
+            )
+            self.record_heartbeat(name)
+            return
         try:
             with _hot_swap_guard(name):
                 path_obj = Path(module_path)

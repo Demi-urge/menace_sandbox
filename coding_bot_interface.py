@@ -37,6 +37,17 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
 import time
 
+try:  # pragma: no cover - prefer package-relative import
+    from menace_sandbox.shared.self_coding_import_guard import (
+        self_coding_import_guard,
+        self_coding_import_depth,
+    )
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from shared.self_coding_import_guard import (  # type: ignore
+        self_coding_import_guard,
+        self_coding_import_depth,
+    )
+
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
@@ -1812,97 +1823,112 @@ def self_coding_managed(
         else:
             decision = decision or _ProvenanceDecision(None, None, "signed")
 
-        register_kwargs["is_coding_bot"] = register_as_coding
-        if register_as_coding:
-            register_kwargs["manager"] = manager_instance
-        try:
-            bot_registry.register_bot(**register_kwargs)
-        except TypeError:  # pragma: no cover - legacy registries
-            try:
-                fallback_kwargs = dict(register_kwargs)
-                fallback_kwargs.pop("roi_threshold", None)
-                fallback_kwargs.pop("error_threshold", None)
-                bot_registry.register_bot(**fallback_kwargs)
-            except TypeError:
-                bot_registry.register_bot(name, is_coding_bot=True)
-                if module_path:
-                    try:
-                        node = bot_registry.graph.nodes.get(name)
-                        if node is not None:
-                            node["module"] = module_path
-                        bot_registry.modules[name] = module_path
-                    except Exception:  # pragma: no cover - best effort bookkeeping
-                        logger.debug(
-                            "failed to persist module path for %s after legacy registration",
-                            name,
-                            exc_info=True,
-                        )
+        with self_coding_import_guard(module_path):
+            register_kwargs["is_coding_bot"] = register_as_coding
+            if register_as_coding:
+                register_kwargs["manager"] = manager_instance
 
-        if should_update and update_kwargs:
             try:
-                node = bot_registry.graph.nodes.get(name)
-            except Exception:  # pragma: no cover - best effort
-                node = None
-            if node is not None:
-                existing_commit = node.get("commit")
-                existing_patch = node.get("patch_id")
-                existing_module = node.get("module") or bot_registry.modules.get(name)
-                target_module = module_path
+                bot_registry.register_bot(**register_kwargs)
+            except TypeError:  # pragma: no cover - legacy registries
                 try:
-                    if target_module is not None:
-                        target_module = os.fspath(target_module)
+                    fallback_kwargs = dict(register_kwargs)
+                    fallback_kwargs.pop("roi_threshold", None)
+                    fallback_kwargs.pop("error_threshold", None)
+                    bot_registry.register_bot(**fallback_kwargs)
                 except TypeError:
-                    target_module = str(target_module)
-                if isinstance(existing_module, os.PathLike):
-                    try:
-                        existing_module = os.fspath(existing_module)
-                    except TypeError:
-                        existing_module = str(existing_module)
-                if existing_commit == update_kwargs.get("commit") and existing_patch == update_kwargs.get("patch_id"):
-                    same_module = False
-                    if not target_module or not existing_module:
-                        same_module = True
-                    else:
+                    bot_registry.register_bot(name, is_coding_bot=True)
+                    if module_path:
                         try:
-                            same_module = Path(existing_module).resolve() == Path(str(target_module)).resolve()
-                        except Exception:  # pragma: no cover - filesystem dependent
-                            same_module = str(existing_module) == str(target_module)
-                    if same_module:
-                        should_update = False
-                        logger.debug(
-                            "skipping redundant bot update for %s (patch_id=%s)",
-                            name,
-                            update_kwargs.get("patch_id"),
-                        )
+                            node = bot_registry.graph.nodes.get(name)
+                            if node is not None:
+                                node["module"] = module_path
+                            bot_registry.modules[name] = module_path
+                        except Exception:  # pragma: no cover - best effort bookkeeping
+                            logger.debug(
+                                "failed to persist module path for %s after legacy registration",
+                                name,
+                                exc_info=True,
+                            )
 
-        registries_seen = getattr(cls, "_self_coding_registry_ids", None)
-        if not isinstance(registries_seen, set):
-            registries_seen = set()
-        else:
-            registries_seen = set(registries_seen)
-        registries_seen.add(id(bot_registry))
-        cls._self_coding_registry_ids = registries_seen
+            if should_update and update_kwargs:
+                try:
+                    node = bot_registry.graph.nodes.get(name)
+                except Exception:  # pragma: no cover - best effort
+                    node = None
+                if node is not None:
+                    existing_commit = node.get("commit")
+                    existing_patch = node.get("patch_id")
+                    existing_module = node.get("module") or bot_registry.modules.get(name)
+                    target_module = module_path
+                    try:
+                        if target_module is not None:
+                            target_module = os.fspath(target_module)
+                    except TypeError:
+                        target_module = str(target_module)
+                    if isinstance(existing_module, os.PathLike):
+                        try:
+                            existing_module = os.fspath(existing_module)
+                        except TypeError:
+                            existing_module = str(existing_module)
+                    if (
+                        existing_commit == update_kwargs.get("commit")
+                        and existing_patch == update_kwargs.get("patch_id")
+                    ):
+                        same_module = False
+                        if not target_module or not existing_module:
+                            same_module = True
+                        else:
+                            try:
+                                same_module = Path(existing_module).resolve() == Path(
+                                    str(target_module)
+                                ).resolve()
+                            except Exception:  # pragma: no cover - filesystem dependent
+                                same_module = str(existing_module) == str(target_module)
+                        if same_module:
+                            should_update = False
+                            logger.debug(
+                                "skipping redundant bot update for %s (patch_id=%s)",
+                                name,
+                                update_kwargs.get("patch_id"),
+                            )
 
-        hot_swap_active = False
-        hot_swap_probe = getattr(bot_registry, "hot_swap_active", None)
-        if callable(hot_swap_probe):
-            try:
-                hot_swap_active = bool(hot_swap_probe())
-            except Exception:  # pragma: no cover - defensive best effort
+            registries_seen = getattr(cls, "_self_coding_registry_ids", None)
+            if not isinstance(registries_seen, set):
+                registries_seen = set()
+            else:
+                registries_seen = set(registries_seen)
+            registries_seen.add(id(bot_registry))
+            cls._self_coding_registry_ids = registries_seen
+
+            if should_update and self_coding_import_depth() > 1:
+                should_update = False
                 logger.debug(
-                    "failed to determine hot swap state for %s", name, exc_info=True
+                    "deferring bot update for %s because a nested import is active",
+                    name,
                 )
-        if should_update and hot_swap_active:
-            should_update = False
-            logger.debug(
-                "deferring bot update for %s because a hot swap import is active", name
-            )
 
-        if should_update:
-            try:
-                bot_registry.update_bot(name, module_path, **update_kwargs)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("bot update failed for %s", name)
+            hot_swap_active = False
+            hot_swap_probe = getattr(bot_registry, "hot_swap_active", None)
+            if callable(hot_swap_probe):
+                try:
+                    hot_swap_active = bool(hot_swap_probe())
+                except Exception:  # pragma: no cover - defensive best effort
+                    logger.debug(
+                        "failed to determine hot swap state for %s", name, exc_info=True
+                    )
+            if should_update and hot_swap_active:
+                should_update = False
+                logger.debug(
+                    "deferring bot update for %s because a hot swap import is active",
+                    name,
+                )
+
+            if should_update:
+                try:
+                    bot_registry.update_bot(name, module_path, **update_kwargs)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("bot update failed for %s", name)
 
         cls.bot_registry = bot_registry  # type: ignore[attr-defined]
         cls.data_bot = data_bot  # type: ignore[attr-defined]
