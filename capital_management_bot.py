@@ -36,6 +36,7 @@ import logging
 from collections import deque
 import asyncio
 import statistics
+from importlib import import_module
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -79,6 +80,7 @@ from .retry_utils import retry
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
     from .prediction_manager_bot import PredictionManager
     from .model_automation_pipeline import ModelAutomationPipeline
+    from .self_coding_thresholds import SelfCodingThresholds
 
 logger = logging.getLogger(__name__)
 
@@ -1802,84 +1804,175 @@ class CapitalManagementBot:
         return max(0.1, min(ratio, 3.0))
 
 
-try:  # pragma: no cover - pipeline import may fail during bootstrap
-    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
-except Exception as exc:
-    logger.warning(
-        "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
-        exc,
-    )
-    pipeline = None
-else:
+_pipeline_instance: "ModelAutomationPipeline | None" = None
+evolution_orchestrator: "EvolutionOrchestrator | None" = None
+_manager_lock = threading.Lock()
+_manager_retry_timer: threading.Timer | None = None
+_manager_retry_count = 0
+_MANAGER_MAX_RETRIES = int(os.environ.get("CM_MANAGER_MAX_RETRIES", "5"))
+_MANAGER_RETRY_DELAY = float(os.environ.get("CM_MANAGER_RETRY_DELAY", "0.75"))
+
+
+def _load_pipeline_instance() -> "ModelAutomationPipeline | None":
+    """Instantiate :class:`ModelAutomationPipeline` lazily."""
+
+    global _pipeline_instance
+    if _pipeline_instance is not None:
+        return _pipeline_instance
+    try:  # pragma: no cover - optional dependency
+        module = import_module(f"{__package__}.model_automation_pipeline")
+        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+    except Exception as exc:
+        logger.warning(
+            "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
+            exc,
+        )
+        return None
+    if pipeline_cls is None:
+        logger.warning(
+            "ModelAutomationPipeline module missing ModelAutomationPipeline class",
+        )
+        return None
     try:
-        pipeline = _Pipeline(context_builder=_context_builder)
+        _pipeline_instance = pipeline_cls(context_builder=_context_builder)
     except Exception as exc:  # pragma: no cover - degraded bootstrap
         logger.warning(
             "ModelAutomationPipeline initialisation failed for CapitalManagementBot: %s",
             exc,
         )
-        pipeline = None
+        _pipeline_instance = None
+    return _pipeline_instance
 
-try:
-    evolution_orchestrator = (
-        get_orchestrator("CapitalManagementBot", data_bot, engine)
-        if engine is not None
-        else None
-    )
-except Exception as exc:  # pragma: no cover - orchestrator optional
-    logger.warning(
-        "EvolutionOrchestrator unavailable for CapitalManagementBot: %s",
-        exc,
-    )
-    evolution_orchestrator = None
 
-try:
-    _thresholds = get_thresholds("CapitalManagementBot")
-except Exception as exc:  # pragma: no cover - thresholds optional
-    logger.warning("Threshold lookup failed for CapitalManagementBot: %s", exc)
-    _thresholds = None
-else:
+def _load_evolution_orchestrator() -> "EvolutionOrchestrator | None":
+    """Return a lazily constructed evolution orchestrator."""
+
+    global evolution_orchestrator
+    if evolution_orchestrator is not None:
+        return evolution_orchestrator
+    if engine is None:
+        return None
+    try:  # pragma: no cover - orchestrator optional
+        evolution_orchestrator = get_orchestrator(
+            "CapitalManagementBot", data_bot, engine
+        )
+    except Exception as exc:
+        logger.warning(
+            "EvolutionOrchestrator unavailable for CapitalManagementBot: %s",
+            exc,
+        )
+        evolution_orchestrator = None
+    return evolution_orchestrator
+
+
+def _load_thresholds() -> "SelfCodingThresholds | None":
+    """Fetch persisted thresholds for :class:`CapitalManagementBot`."""
+
     try:
+        thresholds = get_thresholds("CapitalManagementBot")
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning("failed to load CapitalManagementBot thresholds: %s", exc)
+        return None
+    if thresholds is None:
+        return None
+    try:  # pragma: no cover - best effort persistence
         persist_sc_thresholds(
             "CapitalManagementBot",
-            roi_drop=_thresholds.roi_drop,
-            error_increase=_thresholds.error_increase,
-            test_failure_increase=_thresholds.test_failure_increase,
+            roi_drop=thresholds.roi_drop,
+            error_increase=thresholds.error_increase,
+            test_failure_increase=thresholds.test_failure_increase,
         )
-    except Exception as exc:  # pragma: no cover - best effort persistence
+    except Exception as exc:
         logger.warning(
             "failed to persist CapitalManagementBot thresholds: %s",
             exc,
         )
+    return thresholds
 
-if engine is not None and pipeline is not None and _thresholds is not None:
-    try:
-        manager = internalize_coding_bot(
-            "CapitalManagementBot",
-            engine,
-            pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            evolution_orchestrator=evolution_orchestrator,
-            threshold_service=ThresholdService(),
-            roi_threshold=_thresholds.roi_drop,
-            error_threshold=_thresholds.error_increase,
-            test_failure_threshold=_thresholds.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - degraded bootstrap
-        logger.warning(
-            "failed to initialise self-coding manager for CapitalManagementBot: %s",
-            exc,
-        )
-        manager = None
-else:
-    manager = None
+
+def _initialise_self_coding_manager(*, retry: bool = True) -> None:
+    """Bootstrap the self-coding manager once dependencies are available."""
+
+    global manager
+    if manager is not None:
+        return
+    with _manager_lock:
+        if manager is not None:
+            return
+        pipeline = _load_pipeline_instance()
+        thresholds = _load_thresholds()
+        if pipeline is None or thresholds is None:
+            if retry:
+                _schedule_manager_retry()
+            return
+        orchestrator = _load_evolution_orchestrator()
+        try:
+            manager_local = internalize_coding_bot(
+                "CapitalManagementBot",
+                engine,
+                pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                evolution_orchestrator=orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "failed to initialise self-coding manager for CapitalManagementBot: %s",
+                exc,
+            )
+            if retry:
+                _schedule_manager_retry()
+            return
+        manager = manager_local
+        try:
+            setattr(CapitalManagementBot, "manager", manager_local)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug(
+                "unable to bind self-coding manager to CapitalManagementBot", exc_info=True
+            )
+
+
+def _schedule_manager_retry(delay: float | None = None) -> None:
+    """Schedule a retry for :func:`_initialise_self_coding_manager`."""
+
+    global _manager_retry_timer, _manager_retry_count
+    if manager is not None:
+        return
+    if _manager_retry_count >= _MANAGER_MAX_RETRIES:
+        return
+    if _manager_retry_timer is not None and _manager_retry_timer.is_alive():
+        return
+    _manager_retry_count += 1
+    retry_delay = _MANAGER_RETRY_DELAY if delay is None else delay
+
+    def _retry() -> None:
+        _initialise_self_coding_manager(retry=True)
+
+    timer = threading.Timer(retry_delay, _retry)
+    timer.daemon = True
+    _manager_retry_timer = timer
+    timer.start()
+
+
+def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
+    """Public entry point to trigger self-coding bootstrap."""
+
+    _initialise_self_coding_manager(retry=False)
+    return manager
+
 
 CapitalManagementBot = self_coding_managed(
     bot_registry=registry,
     data_bot=data_bot,
     manager=manager,
 )(CapitalManagementBot)
+
+
+_schedule_manager_retry()
 
 
 __all__ = [
@@ -1905,4 +1998,5 @@ __all__ = [
     "get_capital_metrics",
     "CapitalManagementConfig",
     "CapitalManagementBot",
+    "bootstrap_capital_management_self_coding",
 ]
