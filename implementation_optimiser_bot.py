@@ -13,22 +13,25 @@ import time
 
 logger = logging.getLogger(__name__)
 
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-from .self_coding_engine import SelfCodingEngine
-from .threshold_service import ThresholdService
-from .code_database import CodeDB
-from .gpt_memory import GPTMemoryManager
-from .self_coding_thresholds import get_thresholds
+from menace_sandbox.self_coding_manager import (
+    SelfCodingManager,
+    internalize_coding_bot,
+)
+from menace_sandbox.self_coding_engine import SelfCodingEngine
+from menace_sandbox.threshold_service import ThresholdService
+from menace_sandbox.code_database import CodeDB
+from menace_sandbox.gpt_memory import GPTMemoryManager
+from menace_sandbox.self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
-from .bot_registry import BotRegistry
-from .data_bot import DataBot, persist_sc_thresholds
-from .coding_bot_interface import self_coding_managed
-from .task_handoff_bot import TaskPackage, TaskInfo
-from .shared_evolution_orchestrator import get_orchestrator
+from menace_sandbox.bot_registry import BotRegistry
+from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
+from menace_sandbox.coding_bot_interface import self_coding_managed
+from menace_sandbox.task_handoff_bot import TaskPackage, TaskInfo
+from menace_sandbox.shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .model_automation_pipeline import ModelAutomationPipeline
+    from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 else:  # pragma: no cover - runtime fallback
     ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
 
