@@ -2002,6 +2002,10 @@ _WATCHDOG_STALL_THRESHOLD = int(os.getenv("SANDBOX_WATCHDOG_STALL_THRESHOLD", "3
 _WATCHDOG_STALL_WINDOW = float(os.getenv("SANDBOX_WATCHDOG_STALL_WINDOW", "180"))
 _WATCHDOG_COOLDOWN_SECONDS = float(os.getenv("SANDBOX_WATCHDOG_COOLDOWN_SECONDS", "300"))
 _WATCHDOG_RECHECK_SECONDS = float(os.getenv("SANDBOX_WATCHDOG_RECHECK_SECONDS", "60"))
+_WATCHDOG_MIN_BASELINE = max(
+    1.0,
+    float(os.getenv("SANDBOX_WATCHDOG_MIN_BASELINE", "5")),
+)
 _WATCHDOG_COOLDOWN_UNTIL: float | None = None
 _WATCHDOG_COOLDOWN_REASON: str | None = None
 _WATCHDOG_COOLDOWN_LOGGED = False
@@ -5608,17 +5612,22 @@ def watchdog_check() -> None:
 
     now = time.monotonic()
     margin = max(0.0, float(_CLEANUP_WATCHDOG_MARGIN))
+    baseline_floor = max(_WATCHDOG_MIN_BASELINE, max(0.0, _WORKER_CHECK_INTERVAL))
     cleanup_limit_base = max(
         2 * _POOL_CLEANUP_INTERVAL,
         float(_CLEANUP_DURATIONS.get("cleanup", 0.0)) + margin,
         float(_CLEANUP_CURRENT_RUNTIME.get("cleanup", 0.0)) + margin,
     )
+    if cleanup_limit_base <= 0:
+        cleanup_limit_base = baseline_floor
     cleanup_limit = budget.effective_limit("cleanup", cleanup_limit_base)
     reaper_limit_base = max(
         2 * _POOL_CLEANUP_INTERVAL,
         float(_CLEANUP_DURATIONS.get("reaper", 0.0)) + margin,
         float(_CLEANUP_CURRENT_RUNTIME.get("reaper", 0.0)) + margin,
     )
+    if reaper_limit_base <= 0:
+        reaper_limit_base = baseline_floor
     reaper_limit = budget.effective_limit("reaper", reaper_limit_base)
 
     cleanup_elapsed = now - _LAST_CLEANUP_TS

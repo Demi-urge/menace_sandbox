@@ -125,6 +125,7 @@ def _load_environment_subset() -> dict[str, object]:
         "_WATCHDOG_STALL_WINDOW": 10.0,
         "_WATCHDOG_COOLDOWN_SECONDS": 30.0,
         "_WATCHDOG_RECHECK_SECONDS": 15.0,
+        "_WATCHDOG_MIN_BASELINE": 5.0,
         "_WATCHDOG_COOLDOWN_UNTIL": None,
         "_WATCHDOG_COOLDOWN_REASON": None,
         "_WATCHDOG_COOLDOWN_LOGGED": False,
@@ -439,6 +440,30 @@ def test_watchdog_handles_extended_docker_startup(env):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=1.0)
         loop.close()
+
+
+def test_watchdog_enforces_minimum_baseline(env):
+    env.logger.messages.clear()
+    env._POOL_CLEANUP_INTERVAL = 0.0
+    env._WORKER_CHECK_INTERVAL = 0.0
+    env._WATCHDOG_MIN_BASELINE = 2.5
+    env._CLEANUP_WATCHDOG_MARGIN = 0.0
+    env._CLEANUP_DURATIONS["cleanup"] = 0.0
+    env._CLEANUP_DURATIONS["reaper"] = 0.0
+    env._CLEANUP_CURRENT_RUNTIME["cleanup"] = 0.0
+    env._CLEANUP_CURRENT_RUNTIME["reaper"] = 0.0
+    env._CLEANUP_TASK = DummyTask()
+    env._REAPER_TASK = DummyTask()
+    env._WORKER_ACTIVITY["cleanup"] = True
+    env._WORKER_ACTIVITY["reaper"] = True
+    env._LAST_CLEANUP_TS = time.monotonic() - 0.5
+    env._LAST_REAPER_TS = time.monotonic() - 0.5
+
+    env.watchdog_check()
+
+    warnings = [msg for level, msg in env.logger.messages if level == "warning"]
+    assert "cleanup worker stalled" not in warnings
+    assert "reaper worker stalled" not in warnings
 
 
 def test_watchdog_accepts_midpass_heartbeats(env):
