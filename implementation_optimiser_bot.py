@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, TYPE_CHECKING, Any, Callable
 
 import importlib
+import importlib.util
 import ast
 import logging
 import sys
@@ -61,6 +62,24 @@ def _resolve_pipeline_cls() -> type["ModelAutomationPipeline"] | None:
         pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
         if isinstance(pipeline_cls, type):
             return pipeline_cls
+    module_path = Path(__file__).resolve().parent / "model_automation_pipeline.py"
+    if module_path.exists():
+        spec = importlib.util.spec_from_file_location(
+            "menace_sandbox.model_automation_pipeline", module_path
+        )
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules.setdefault(spec.name, module)
+            try:
+                spec.loader.exec_module(module)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "failed to load model_automation_pipeline from %s: %s", module_path, exc
+                )
+            else:
+                pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+                if isinstance(pipeline_cls, type):
+                    return pipeline_cls
     return None
 
 
