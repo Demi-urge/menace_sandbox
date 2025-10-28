@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import threading
 import os
 import sqlite3
 import shutil
@@ -68,6 +69,7 @@ from .cycle import ensure_vector_service
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
 _INITIALISED = False
+_AUTONOMOUS_LAUNCH_RETRY: threading.Timer | None = None
 
 
 logger = get_logger(__name__)
@@ -801,6 +803,35 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
         set_correlation_id(None)
 
 
+def _schedule_autonomous_launch_retry(
+    *, background: bool, force: bool, thread: Any, delay: float = 0.5
+) -> None:
+    """Schedule a retry for :func:`ensure_autonomous_launch`."""
+
+    global _AUTONOMOUS_LAUNCH_RETRY
+
+    if _AUTONOMOUS_LAUNCH_RETRY is not None:
+        _AUTONOMOUS_LAUNCH_RETRY.cancel()
+        _AUTONOMOUS_LAUNCH_RETRY = None
+
+    def _invoke() -> None:
+        global _AUTONOMOUS_LAUNCH_RETRY
+        _AUTONOMOUS_LAUNCH_RETRY = None
+        try:
+            ensure_autonomous_launch(
+                background=background, force=force, thread=thread
+            )
+        except Exception:  # pragma: no cover - best effort retry logging
+            logger.exception(
+                "autonomous launch retry failed", extra=log_record(event="failure")
+            )
+
+    timer = threading.Timer(delay, _invoke)
+    timer.daemon = True
+    _AUTONOMOUS_LAUNCH_RETRY = timer
+    timer.start()
+
+
 def ensure_autonomous_launch(
     *,
     background: bool = True,
@@ -820,7 +851,7 @@ def ensure_autonomous_launch(
         launching the autonomous sandbox.
     """
 
-    global _SELF_IMPROVEMENT_THREAD
+    global _SELF_IMPROVEMENT_THREAD, _AUTONOMOUS_LAUNCH_RETRY
 
     target_thread = thread if thread is not None else _SELF_IMPROVEMENT_THREAD
     if thread is not None:
@@ -843,7 +874,7 @@ def ensure_autonomous_launch(
         )
 
     try:
-        from self_improvement.engine import launch_autonomous_sandbox
+        engine_module = importlib.import_module("self_improvement.engine")
     except ModuleNotFoundError:
         logger.warning(
             "self_improvement.engine unavailable; unable to trigger autonomous launch"
@@ -855,6 +886,36 @@ def ensure_autonomous_launch(
             exc_info=True,
         )
         return False
+
+    manual_triggered = bool(
+        getattr(engine_module, "_MANUAL_LAUNCH_TRIGGERED", False)
+    )
+    launch_autonomous_sandbox = getattr(engine_module, "launch_autonomous_sandbox", None)
+    if not callable(launch_autonomous_sandbox):
+        logger.debug(
+            "launch_autonomous_sandbox not yet available; scheduling retry",
+            extra=log_record(event="pending"),
+        )
+        if not manual_triggered:
+            _schedule_autonomous_launch_retry(
+                background=background, force=force, thread=target_thread
+            )
+        else:
+            logger.debug(
+                "autonomous launch already triggered; skipping retry",
+                extra=log_record(event="skip"),
+            )
+        return False
+
+    if manual_triggered:
+        logger.debug(
+            "autonomous launch flagged as triggered; invoking handler anyway",
+            extra=log_record(event="duplicate"),
+        )
+
+    if _AUTONOMOUS_LAUNCH_RETRY is not None:
+        _AUTONOMOUS_LAUNCH_RETRY.cancel()
+        _AUTONOMOUS_LAUNCH_RETRY = None
 
     launch_autonomous_sandbox(background=background, force=force)
     return True

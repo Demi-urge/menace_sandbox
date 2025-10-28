@@ -452,6 +452,43 @@ def test_ensure_autonomous_launch_forces_dead_thread(monkeypatch):
     assert len(skipped_calls) == 1
 
 
+def test_ensure_autonomous_launch_retries_until_available(monkeypatch):
+    import sandbox_runner.bootstrap as bootstrap
+
+    thread = types.SimpleNamespace(
+        _thread=types.SimpleNamespace(is_alive=lambda: True)
+    )
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", thread)
+
+    engine_module, launch_calls, skipped_calls = _install_engine_stub()
+    launch_impl = engine_module.launch_autonomous_sandbox
+    delattr(engine_module, "launch_autonomous_sandbox")
+
+    scheduled = []
+
+    def fake_schedule(*, background: bool, force: bool, thread, delay: float = 0.5):
+        scheduled.append((background, force, thread, delay))
+        engine_module.launch_autonomous_sandbox = launch_impl  # type: ignore[attr-defined]
+        result = bootstrap.ensure_autonomous_launch(
+            background=background, force=force, thread=thread
+        )
+        assert result is True
+
+    monkeypatch.setattr(
+        bootstrap, "_schedule_autonomous_launch_retry", fake_schedule
+    )
+    monkeypatch.setattr(bootstrap, "_AUTONOMOUS_LAUNCH_RETRY", None)
+
+    result = bootstrap.ensure_autonomous_launch(background=False, force=False)
+
+    assert result is False
+    assert scheduled
+    assert len(scheduled) == 1
+    assert len(launch_calls) == 1
+    assert skipped_calls == []
+    assert engine_module._MANUAL_LAUNCH_TRIGGERED is True
+
+
 def test_initialize_autonomous_sandbox_raises_on_dead_thread(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     data = tmp_path / "data"
