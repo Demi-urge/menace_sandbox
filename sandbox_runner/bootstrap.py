@@ -888,18 +888,28 @@ def ensure_autonomous_launch(
             else False
         )
         logger.warning(
-            "failed to import launch_autonomous_sandbox; scheduling retry",
-            exc_info=True,
+            "failed to import launch_autonomous_sandbox; will retry when available",
             extra=log_record(event="pending"),
         )
-        if not manual_triggered:
+        if manual_triggered:
+            logger.debug(
+                "autonomous launch already triggered; skipping retry",
+                extra=log_record(event="skip"),
+            )
+            return False
+
+        if _AUTONOMOUS_LAUNCH_RETRY is None:
+            logger.debug(
+                "launch_autonomous_sandbox import incomplete; scheduling retry",
+                extra=log_record(event="pending"),
+            )
             _schedule_autonomous_launch_retry(
                 background=background, force=force, thread=target_thread
             )
         else:
             logger.debug(
-                "autonomous launch already triggered; skipping retry",
-                extra=log_record(event="skip"),
+                "autonomous launch retry already scheduled; keeping existing timer",
+                extra=log_record(event="pending"),
             )
         return False
 
