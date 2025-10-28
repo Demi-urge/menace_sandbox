@@ -31,7 +31,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .data_bot import DataBot
-from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from .efficiency_bot import EfficiencyBot
 from .performance_assessment_bot import PerformanceAssessmentBot
@@ -80,6 +79,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
     from .implementation_optimiser_bot import ImplementationOptimiserBot
+    from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 else:  # pragma: no cover - runtime fallback
     HierarchyAssessmentBot = Any  # type: ignore
     BotPlanningBot = Any  # type: ignore
@@ -89,6 +89,9 @@ else:  # pragma: no cover - runtime fallback
     CapitalManagementBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
+    PreExecutionROIBot = Any  # type: ignore
+    BuildTask = Any  # type: ignore
+    ROIResult = Any  # type: ignore
 
 
 def _create_synthesis_task(**kwargs: Any) -> "SynthesisTask":
