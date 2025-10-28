@@ -125,6 +125,28 @@ def test_launch_autonomous_sandbox_background_thread(engine_module, monkeypatch)
 def test_autonomous_bootstrap_invokes_launch(engine_module, monkeypatch):
     # Provide the subset module to autonomous_bootstrap before importing it.
     sys.modules["self_improvement.engine"] = engine_module
+    sys.modules.setdefault(
+        "bot_registry",
+        types.SimpleNamespace(BotRegistry=lambda: object()),
+    )
+    sys.modules.setdefault(
+        "bot_discovery",
+        types.SimpleNamespace(discover_and_register_coding_bots=lambda *_a, **_k: None),
+    )
+    si_pkg = sys.modules.get("self_improvement")
+    if si_pkg is None:
+        si_pkg = types.ModuleType("self_improvement")
+        si_pkg.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["self_improvement"] = si_pkg
+    api_module = types.SimpleNamespace(
+        init_self_improvement=lambda *_a, **_k: None,
+        start_self_improvement_cycle=lambda *_a, **_k: types.SimpleNamespace(
+            start=lambda: None,
+            join=lambda *args, **kwargs: None,
+            stop=lambda: None,
+        ),
+    )
+    sys.modules["self_improvement.api"] = api_module
     bootstrap = importlib.import_module("autonomous_bootstrap")
 
     monkeypatch.setattr(
@@ -163,11 +185,11 @@ def test_autonomous_bootstrap_invokes_launch(engine_module, monkeypatch):
 
     launch_calls: list[dict[str, object]] = []
 
-    def _launch(**kwargs):
+    def _ensure_launch(**kwargs):
         launch_calls.append(kwargs)
-        return None
+        return True
 
-    monkeypatch.setattr(bootstrap, "launch_autonomous_sandbox", _launch)
+    monkeypatch.setattr(bootstrap, "ensure_autonomous_launch", _ensure_launch)
 
     exit_code = bootstrap.main()
 

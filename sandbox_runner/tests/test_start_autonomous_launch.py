@@ -78,8 +78,9 @@ def test_launch_sandbox_starts_self_improvement_thread(tmp_path, monkeypatch):
         bootstrap, "_start_optional_services", lambda *a, **k: None
     )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
-    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda *a, **k: {})
     monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
+    monkeypatch.setattr(bootstrap, "ensure_autonomous_launch", lambda *a, **k: True)
 
     started = threading.Event()
     stop_event = threading.Event()
@@ -114,6 +115,9 @@ def test_launch_sandbox_starts_self_improvement_thread(tmp_path, monkeypatch):
 
     import start_autonomous_sandbox as sas
 
+    monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
+    monkeypatch.setattr(bootstrap, "ensure_autonomous_launch", lambda *a, **k: True)
+
     sas.launch_sandbox()
 
     assert os.environ["SANDBOX_REPO_PATH"] == str(repo)
@@ -143,7 +147,7 @@ def test_launch_sandbox_runs_warmup(tmp_path, monkeypatch):
         bootstrap, "_start_optional_services", lambda *a, **k: None
     )
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
-    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda *a, **k: {})
 
     warmup_called = threading.Event()
 
@@ -187,6 +191,9 @@ def test_launch_sandbox_runs_warmup(tmp_path, monkeypatch):
 
     import start_autonomous_sandbox as sas
 
+    monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
+    monkeypatch.setattr(bootstrap, "ensure_autonomous_launch", lambda *a, **k: True)
+
     sas.launch_sandbox()
 
     assert warmup_called.is_set()
@@ -199,7 +206,7 @@ def test_launch_sandbox_runs_warmup(tmp_path, monkeypatch):
     bootstrap.shutdown_autonomous_sandbox()
 
 
-def test_initialize_triggers_autonomous_launch_once(tmp_path, monkeypatch):
+def test_initialize_does_not_trigger_autonomous_launch(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     data = tmp_path / "data"
     repo.mkdir()
@@ -213,9 +220,15 @@ def test_initialize_triggers_autonomous_launch_once(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_start_optional_services", lambda *a, **k: None)
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_optional_modules", lambda *a, **k: set())
-    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda *a, **k: {})
     monkeypatch.setattr(bootstrap, "_INITIALISED", False)
     monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+    monkeypatch.setattr(bootstrap, "ensure_env", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        bootstrap,
+        "DefaultConfigManager",
+        lambda *_a, **_k: types.SimpleNamespace(apply_defaults=lambda: None),
+    )
 
     engine_module, launch_calls, skipped_calls = _install_engine_stub()
 
@@ -251,7 +264,7 @@ def test_initialize_triggers_autonomous_launch_once(tmp_path, monkeypatch):
     settings.sandbox_central_logging = False
     monkeypatch.setattr(bootstrap, "load_sandbox_settings", lambda: settings)
 
-    bootstrap.initialize_autonomous_sandbox(settings)
+    bootstrap.bootstrap_environment(settings)
 
     stop_event.set()
     thread = bootstrap._SELF_IMPROVEMENT_THREAD
@@ -259,16 +272,13 @@ def test_initialize_triggers_autonomous_launch_once(tmp_path, monkeypatch):
     thread.join(timeout=1)
     assert started.is_set()
 
-    assert len(launch_calls) == 1
-    args, kwargs = launch_calls[0]
-    assert kwargs == {"background": True, "force": True}
-    assert engine_module._MANUAL_LAUNCH_TRIGGERED is True
+    assert launch_calls == []
     assert skipped_calls == []
 
     bootstrap.shutdown_autonomous_sandbox()
 
 
-def test_initialize_respects_manual_launch_guard(tmp_path, monkeypatch):
+def test_launch_sandbox_triggers_autonomous_launch_once(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     data = tmp_path / "data"
     repo.mkdir()
@@ -282,9 +292,81 @@ def test_initialize_respects_manual_launch_guard(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_start_optional_services", lambda *a, **k: None)
     monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
     monkeypatch.setattr(bootstrap, "_verify_optional_modules", lambda *a, **k: set())
-    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda *a, **k: {})
     monkeypatch.setattr(bootstrap, "_INITIALISED", False)
     monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+    monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
+
+    engine_module, launch_calls, skipped_calls = _install_engine_stub()
+
+    started = threading.Event()
+    stop_event = threading.Event()
+
+    def init_self_improvement(settings):
+        return None
+
+    def fake_start_self_improvement_cycle(workflows):
+        def run():
+            started.set()
+            stop_event.wait()
+
+        t = threading.Thread(target=run)
+        return t
+
+    def fake_stop_self_improvement_cycle():
+        stop_event.set()
+
+    api_stub = types.SimpleNamespace(
+        init_self_improvement=init_self_improvement,
+        start_self_improvement_cycle=fake_start_self_improvement_cycle,
+        stop_self_improvement_cycle=fake_stop_self_improvement_cycle,
+    )
+    sys.modules["self_improvement.api"] = api_stub
+
+    settings = SandboxSettings()
+    settings.sandbox_repo_path = str(repo)
+    settings.sandbox_data_dir = str(data)
+    settings.menace_env_file = str(tmp_path / ".env")
+    settings.optional_service_versions = {}
+    settings.sandbox_central_logging = False
+    monkeypatch.setattr(bootstrap, "load_sandbox_settings", lambda: settings)
+
+    import start_autonomous_sandbox as sas
+
+    sas.launch_sandbox()
+
+    stop_event.set()
+    thread = bootstrap._SELF_IMPROVEMENT_THREAD
+    assert thread is not None
+    thread.join(timeout=1)
+    assert started.is_set()
+
+    assert len(launch_calls) == 1
+    args, kwargs = launch_calls[0]
+    assert kwargs == {"background": True, "force": True}
+    assert skipped_calls == []
+
+    bootstrap.shutdown_autonomous_sandbox()
+
+
+def test_launch_sandbox_respects_manual_launch_guard(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    data = tmp_path / "data"
+    repo.mkdir()
+    data.mkdir()
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
+    monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted"))
+
+    import sandbox_runner.bootstrap as bootstrap
+
+    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda *a, **k: None)
+    monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
+    monkeypatch.setattr(bootstrap, "_verify_optional_modules", lambda *a, **k: set())
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda *a, **k: {})
+    monkeypatch.setattr(bootstrap, "_INITIALISED", False)
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+    monkeypatch.setattr(bootstrap, "_cli_main", lambda args: None)
 
     engine_module, launch_calls, skipped_calls = _install_engine_stub()
     engine_module._MANUAL_LAUNCH_TRIGGERED = True  # type: ignore[attr-defined]
@@ -321,7 +403,9 @@ def test_initialize_respects_manual_launch_guard(tmp_path, monkeypatch):
     settings.sandbox_central_logging = False
     monkeypatch.setattr(bootstrap, "load_sandbox_settings", lambda: settings)
 
-    bootstrap.initialize_autonomous_sandbox(settings)
+    import start_autonomous_sandbox as sas
+
+    sas.launch_sandbox()
 
     stop_event.set()
     thread = bootstrap._SELF_IMPROVEMENT_THREAD

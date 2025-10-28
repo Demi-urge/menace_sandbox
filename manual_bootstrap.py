@@ -43,7 +43,10 @@ if not getattr(_menace_pkg, "RAISE_ERRORS", None):
 # === END PATH SETUP ===
 
 from menace_sandbox.environment_bootstrap import EnvironmentBootstrapper
-from menace_sandbox.sandbox_runner.bootstrap import bootstrap_environment
+from menace_sandbox.sandbox_runner.bootstrap import (
+    bootstrap_environment,
+    ensure_autonomous_launch,
+)
 from menace_sandbox.sandbox_settings import SandboxSettings
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -124,6 +127,7 @@ def main(argv: Sequence[str] | None = None, env: MutableMapping[str, str] | None
         else:
             if settings is not None:
                 _describe_settings(logger, settings)
+                ensure_autonomous_launch(force=True)
             logger.info("sandbox bootstrap completed successfully")
     else:
         logger.info("sandbox bootstrap completed successfully (skipped)")
