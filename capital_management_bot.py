@@ -1898,7 +1898,7 @@ def _load_thresholds() -> "SelfCodingThresholds | None":
 def _initialise_self_coding_manager(*, retry: bool = True) -> None:
     """Bootstrap the self-coding manager once dependencies are available."""
 
-    global manager
+    global manager, _manager_retry_timer, _manager_retry_count
     if manager is not None:
         return
     with _manager_lock:
@@ -1941,11 +1941,44 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                 _schedule_manager_retry()
             return
         manager = manager_local
+        if _manager_retry_timer is not None:
+            try:
+                _manager_retry_timer.cancel()
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "unable to cancel pending manager retry timer", exc_info=True
+                )
+            finally:
+                _manager_retry_timer = None
+        _manager_retry_count = 0
         try:
             setattr(CapitalManagementBot, "manager", manager_local)
         except Exception:  # pragma: no cover - defensive
             logger.debug(
                 "unable to bind self-coding manager to CapitalManagementBot", exc_info=True
+            )
+        try:
+            module_path: str | Path
+            try:
+                module_path = Path(__file__).resolve()
+            except Exception:  # pragma: no cover - filesystem edge cases
+                module_path = __file__
+            registry.register_bot(
+                "CapitalManagementBot",
+                roi_threshold=getattr(thresholds, "roi_drop", None),
+                error_threshold=getattr(thresholds, "error_increase", None),
+                test_failure_threshold=getattr(
+                    thresholds, "test_failure_increase", None
+                ),
+                manager=manager_local,
+                data_bot=data_bot,
+                module_path=module_path,
+                is_coding_bot=True,
+            )
+        except Exception:  # pragma: no cover - registry refresh best effort
+            logger.warning(
+                "CapitalManagementBot registry refresh failed during self-coding bootstrap",
+                exc_info=True,
             )
 
 
