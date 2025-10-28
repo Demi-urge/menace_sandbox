@@ -28,6 +28,7 @@ def test_main_skips_environment_bootstrap(monkeypatch):
             calls.append("environment")
 
     monkeypatch.setattr(manual_bootstrap, "bootstrap_environment", fake_bootstrap_environment)
+    monkeypatch.setattr(manual_bootstrap, "ensure_autonomous_launch", lambda *a, **k: None)
     monkeypatch.setattr(manual_bootstrap, "EnvironmentBootstrapper", lambda: FakeBootstrapper())
     monkeypatch.setattr(manual_bootstrap, "_configure_environment", lambda *a, **k: None)
 
@@ -48,6 +49,7 @@ def test_main_runs_environment_only(monkeypatch):
         raise AssertionError("sandbox bootstrap should be skipped")
 
     monkeypatch.setattr(manual_bootstrap, "bootstrap_environment", fail_bootstrap_environment)
+    monkeypatch.setattr(manual_bootstrap, "ensure_autonomous_launch", lambda *a, **k: None)
     monkeypatch.setattr(manual_bootstrap, "EnvironmentBootstrapper", lambda: FakeBootstrapper())
     monkeypatch.setattr(manual_bootstrap, "_configure_environment", lambda *a, **k: None)
 
@@ -69,6 +71,7 @@ def test_main_auto_install_flag(monkeypatch):
             pass
 
     monkeypatch.setattr(manual_bootstrap, "bootstrap_environment", fake_bootstrap_environment)
+    monkeypatch.setattr(manual_bootstrap, "ensure_autonomous_launch", lambda *a, **k: None)
     monkeypatch.setattr(manual_bootstrap, "EnvironmentBootstrapper", lambda: FakeBootstrapper())
     monkeypatch.setattr(manual_bootstrap, "_configure_environment", lambda *a, **k: None)
 
@@ -87,6 +90,7 @@ def test_main_dependency_failure_logs(monkeypatch, caplog):
             raise AssertionError("environment bootstrap should be skipped")
 
     monkeypatch.setattr(manual_bootstrap, "bootstrap_environment", fake_bootstrap_environment)
+    monkeypatch.setattr(manual_bootstrap, "ensure_autonomous_launch", lambda *a, **k: None)
     monkeypatch.setattr(manual_bootstrap, "EnvironmentBootstrapper", lambda: FakeBootstrapper())
     monkeypatch.setattr(manual_bootstrap, "_configure_environment", lambda *a, **k: None)
 

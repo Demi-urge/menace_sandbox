@@ -8,10 +8,10 @@ import types
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
+    ensure_autonomous_launch,
     _verify_required_dependencies,
 )
 from self_improvement.api import init_self_improvement, start_self_improvement_cycle
-from self_improvement.engine import launch_autonomous_sandbox
 from bot_registry import BotRegistry
 from bot_discovery import discover_and_register_coding_bots
 
@@ -91,7 +91,7 @@ def main() -> int:
     )
     thread = start_self_improvement_cycle({"bootstrap": lambda: None})
     thread.start()
-    launch_autonomous_sandbox(background=True, force=True)
+    ensure_autonomous_launch(background=True, force=True)
     logger.info("self-improvement cycle running; press Ctrl+C to stop")
     try:
         thread.join()

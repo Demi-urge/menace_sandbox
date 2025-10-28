@@ -735,13 +735,8 @@ def _initialize_autonomous_sandbox(
                 raise RuntimeError("self-improvement thread terminated unexpectedly")
 
             print("🧱 SI-13: cycle thread healthy")
-            print("🧱 SI-14: triggering autonomous sandbox launch")
-            from self_improvement.engine import launch_autonomous_sandbox
-
-            launch_autonomous_sandbox(background=True, force=True)
-            print("🧱 SI-15: autonomous sandbox launch invoked")
             _SELF_IMPROVEMENT_THREAD = thread
-            print("🧱 SI-16: self-improvement startup complete")
+            print("🧱 SI-14: self-improvement startup complete")
         except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
             logger.warning(
                 "self-improvement components unavailable; skipping startup", exc_info=exc
@@ -804,6 +799,42 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
         raise
     finally:
         set_correlation_id(None)
+
+
+def ensure_autonomous_launch(
+    *, background: bool = True, force: bool = False
+) -> bool:
+    """Invoke ``launch_autonomous_sandbox`` when the bootstrap thread is healthy."""
+
+    thread = _SELF_IMPROVEMENT_THREAD
+    if thread is None:
+        logger.debug("skipping autonomous launch; no self-improvement thread active")
+        return False
+
+    inner = getattr(thread, "_thread", thread)
+    is_alive = getattr(inner, "is_alive", lambda: True)()
+    if not is_alive:
+        logger.warning(
+            "skipping autonomous launch; self-improvement thread is not alive"
+        )
+        return False
+
+    try:
+        from self_improvement.engine import launch_autonomous_sandbox
+    except ModuleNotFoundError:
+        logger.warning(
+            "self_improvement.engine unavailable; unable to trigger autonomous launch"
+        )
+        return False
+    except ImportError:
+        logger.warning(
+            "failed to import launch_autonomous_sandbox; autonomous launch skipped",
+            exc_info=True,
+        )
+        return False
+
+    launch_autonomous_sandbox(background=background, force=force)
+    return True
 
 
 def sandbox_health() -> dict[str, bool | dict[str, str]]:
@@ -1222,6 +1253,7 @@ def launch_sandbox(
         data_dir = resolve_path(settings.sandbox_data_dir)
         os.environ.setdefault("SANDBOX_DATA_DIR", str(data_dir))
         print("[SANDBOX] after environment configuration", flush=True)
+        ensure_autonomous_launch(force=True)
         _cli_main([])
         print("[SANDBOX] after CLI main", flush=True)
         logger.info("launch sandbox shutdown", extra=log_record(event="shutdown"))
