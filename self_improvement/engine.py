@@ -82,6 +82,7 @@ import importlib
 _qfe_log("importlib imported")
 
 _MANUAL_LAUNCH_TRIGGERED = False
+_AUTONOMOUS_SANDBOX_LAUNCH_ENV = "MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT"
 
 
 def _start_engine_heartbeat(interval: float = 5.0) -> None:
@@ -9466,16 +9467,34 @@ def cli(argv: list[str] | None = None) -> None:
     parser.error("unknown command")
 
 
-def main(argv: list[str] | None = None) -> None:
-    cli(argv)
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entry
-    main()
-else:  # pragma: no cover - import-time execution path for Codex shim
-    if not _MANUAL_LAUNCH_TRIGGERED:
-        _MANUAL_LAUNCH_TRIGGERED = True
-        _qfe_log("__name__ != '__main__'; forcing manual autonomous launch")
+def launch_autonomous_sandbox(
+    run_args: list[str] | None = None,
+    *,
+    background: bool = True,
+    force: bool = False,
+):
+    """Launch ``run_autonomous`` respecting compatibility flags."""
+
+    global _MANUAL_LAUNCH_TRIGGERED
+
+    if _MANUAL_LAUNCH_TRIGGERED:
+        _qfe_log("autonomous sandbox launch already triggered; skipping")
+        return None
+
+    if not force and not _is_truthy_env(os.getenv(_AUTONOMOUS_SANDBOX_LAUNCH_ENV)):
+        _qfe_log("autonomous sandbox launch suppressed by environment flag")
+        return None
+
+    _MANUAL_LAUNCH_TRIGGERED = True
+    args = list(run_args or [])
+
+    def _invoke() -> None:
         try:
             runner = importlib.import_module("menace_sandbox.run_autonomous")
         except ImportError:
@@ -9486,21 +9505,39 @@ else:  # pragma: no cover - import-time execution path for Codex shim
                     "unable to import run_autonomous for manual launch; skipping"
                 )
                 logger.exception("manual run_autonomous import failed", exc_info=exc)
+                return
             else:
                 _qfe_log("run_autonomous imported via flat layout; invoking main()")
-                try:
-                    runner.main([])
-                except Exception as exc:  # pragma: no cover - diagnostic only
-                    _qfe_log(
-                        f"run_autonomous.main() raised {exc!r}; see traceback for details"
-                    )
-                    logger.exception("manual run_autonomous execution failed", exc_info=exc)
         else:
             _qfe_log("run_autonomous imported; invoking main()")
-            try:
-                runner.main([])
-            except Exception as exc:  # pragma: no cover - diagnostic only
-                _qfe_log(
-                    f"run_autonomous.main() raised {exc!r}; see traceback for details"
-                )
-                logger.exception("manual run_autonomous execution failed", exc_info=exc)
+
+        try:
+            runner.main(args)
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            _qfe_log(
+                f"run_autonomous.main() raised {exc!r}; see traceback for details"
+            )
+            logger.exception("manual run_autonomous execution failed", exc_info=exc)
+
+    if background:
+        thread = threading.Thread(
+            target=_invoke,
+            name="autonomous-sandbox",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+
+    _invoke()
+    return None
+
+
+def main(argv: list[str] | None = None) -> None:
+    cli(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()
+else:  # pragma: no cover - import-time execution path for Codex shim
+    if _is_truthy_env(os.getenv(_AUTONOMOUS_SANDBOX_LAUNCH_ENV)):
+        launch_autonomous_sandbox(background=True, force=True)
