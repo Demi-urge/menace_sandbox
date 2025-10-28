@@ -735,8 +735,13 @@ def _initialize_autonomous_sandbox(
                 raise RuntimeError("self-improvement thread terminated unexpectedly")
 
             print("🧱 SI-13: cycle thread healthy")
+            print("🧱 SI-14: triggering autonomous sandbox launch")
+            from self_improvement.engine import launch_autonomous_sandbox
+
+            launch_autonomous_sandbox(background=True, force=True)
+            print("🧱 SI-15: autonomous sandbox launch invoked")
             _SELF_IMPROVEMENT_THREAD = thread
-            print("🧱 SI-14: self-improvement startup complete")
+            print("🧱 SI-16: self-improvement startup complete")
         except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
             logger.warning(
                 "self-improvement components unavailable; skipping startup", exc_info=exc
