@@ -91,7 +91,7 @@ def main() -> int:
     )
     thread = start_self_improvement_cycle({"bootstrap": lambda: None})
     thread.start()
-    ensure_autonomous_launch(background=True, force=True)
+    ensure_autonomous_launch(background=True, force=True, thread=thread)
     logger.info("self-improvement cycle running; press Ctrl+C to stop")
     try:
         thread.join()

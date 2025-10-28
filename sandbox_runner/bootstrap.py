@@ -802,22 +802,45 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
 
 
 def ensure_autonomous_launch(
-    *, background: bool = True, force: bool = False
+    *,
+    background: bool = True,
+    force: bool = False,
+    thread: Any | None = None,
 ) -> bool:
-    """Invoke ``launch_autonomous_sandbox`` when the bootstrap thread is healthy."""
+    """Invoke ``launch_autonomous_sandbox`` when the bootstrap thread is healthy.
 
-    thread = _SELF_IMPROVEMENT_THREAD
-    if thread is None:
+    Parameters
+    ----------
+    background, force:
+        Forwarded directly to :func:`self_improvement.engine.launch_autonomous_sandbox`.
+    thread:
+        Optional thread-like object that should be treated as the active
+        self-improvement worker. When provided the argument is persisted to
+        :data:`_SELF_IMPROVEMENT_THREAD` and used for the liveness probe prior to
+        launching the autonomous sandbox.
+    """
+
+    global _SELF_IMPROVEMENT_THREAD
+
+    target_thread = thread if thread is not None else _SELF_IMPROVEMENT_THREAD
+    if thread is not None:
+        _SELF_IMPROVEMENT_THREAD = thread
+
+    if target_thread is None:
         logger.debug("skipping autonomous launch; no self-improvement thread active")
         return False
 
-    inner = getattr(thread, "_thread", thread)
+    inner = getattr(target_thread, "_thread", target_thread)
     is_alive = getattr(inner, "is_alive", lambda: True)()
-    if not is_alive:
+    if not is_alive and not force:
         logger.warning(
             "skipping autonomous launch; self-improvement thread is not alive"
         )
         return False
+    if not is_alive:
+        logger.warning(
+            "forcing autonomous launch despite non-running self-improvement thread"
+        )
 
     try:
         from self_improvement.engine import launch_autonomous_sandbox

@@ -420,6 +420,38 @@ def test_launch_sandbox_respects_manual_launch_guard(tmp_path, monkeypatch):
     bootstrap.shutdown_autonomous_sandbox()
 
 
+def test_ensure_autonomous_launch_forces_dead_thread(monkeypatch):
+    import sandbox_runner.bootstrap as bootstrap
+
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+    engine_module, launch_calls, skipped_calls = _install_engine_stub()
+
+    dead_thread = types.SimpleNamespace(
+        _thread=types.SimpleNamespace(is_alive=lambda: False)
+    )
+
+    result = bootstrap.ensure_autonomous_launch(
+        background=False, force=True, thread=dead_thread
+    )
+
+    assert result is True
+    assert bootstrap._SELF_IMPROVEMENT_THREAD is dead_thread
+    assert len(launch_calls) == 1
+    args, kwargs = launch_calls[0]
+    assert args == ()
+    assert kwargs == {"background": False, "force": True}
+    assert skipped_calls == []
+    assert engine_module._MANUAL_LAUNCH_TRIGGERED is True
+
+    second = bootstrap.ensure_autonomous_launch(
+        background=False, force=True, thread=dead_thread
+    )
+
+    assert second is True
+    assert len(launch_calls) == 1
+    assert len(skipped_calls) == 1
+
+
 def test_initialize_autonomous_sandbox_raises_on_dead_thread(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     data = tmp_path / "data"
