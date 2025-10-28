@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot, get_shared_data_bot
 
 from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
 from .safe_repr import basic_repr
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
+from typing import Iterable, List, Dict, Optional, TYPE_CHECKING, Any
 import logging
+import threading
 
 registry = BotRegistry()
-data_bot = get_shared_data_bot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -23,7 +22,59 @@ import psutil
 import networkx as nx
 import pulp
 
+try:  # pragma: no cover - support flat execution
+    from .shared.self_coding_import_guard import is_self_coding_import_active
+except Exception:  # pragma: no cover - fallback when package layout differs
+    from shared.self_coding_import_guard import is_self_coding_import_active  # type: ignore
+
+from .threshold_service import threshold_service
+
 logger = logging.getLogger(__name__)
+
+
+class _BootstrapDataBotProxy:
+    """Lazily resolve the shared :class:`DataBot` without circular imports."""
+
+    __slots__ = ("_instance", "_lock")
+
+    def __init__(self) -> None:
+        self._instance: DataBot | None = None
+        self._lock = threading.Lock()
+
+    def _ensure(self) -> DataBot:
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    from .data_bot import get_shared_data_bot
+
+                    self._instance = get_shared_data_bot(start_server=False)
+        return self._instance
+
+    def reload_thresholds(self, bot: str | None = None) -> Any:
+        """Reload thresholds using a lightweight path during bootstrap."""
+
+        if self._instance is None and is_self_coding_import_active(__file__):
+            try:
+                return threshold_service.reload(bot)
+            except Exception:  # pragma: no cover - defensive best effort
+                logger.debug(
+                    "threshold reload via service failed for %s", bot, exc_info=True
+                )
+        return self._ensure().reload_thresholds(bot)
+
+    def instance(self) -> DataBot:
+        """Return the underlying shared :class:`DataBot` instance."""
+
+        return self._ensure()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ensure(), name)
+
+    def __bool__(self) -> bool:  # pragma: no cover - trivial
+        return True
+
+
+_DATA_BOT_PROXY = _BootstrapDataBotProxy()
 
 try:
     import risky  # type: ignore
@@ -32,6 +83,10 @@ except Exception:  # pragma: no cover - optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .capital_management_bot import CapitalManagementBot
+    from .data_bot import DataBot
+else:  # pragma: no cover - runtime fallback for type hints
+    CapitalManagementBot = Any  # type: ignore[assignment]
+    DataBot = Any  # type: ignore[assignment]
 
 
 @dataclass
@@ -90,9 +145,14 @@ class ResourcePredictionBot:
         capital_bot: Optional[CapitalManagementBot] = None,
     ) -> None:
         self.db = db or TemplateDB()
-        self.data_bot = data_bot if data_bot is not None else get_shared_data_bot(
-            start_server=False
-        )
+        if data_bot is not None:
+            self.data_bot = data_bot
+        else:
+            try:
+                self.data_bot = _DATA_BOT_PROXY.instance()
+            except Exception:
+                logger.debug("shared data bot unavailable during bootstrap", exc_info=True)
+                self.data_bot = _DATA_BOT_PROXY
         self.capital_bot = capital_bot
         self.graph = nx.DiGraph()
 
@@ -229,7 +289,9 @@ def _resolve_fallback_manager() -> object | None:
         logger.debug("ResourcePredictionBot manager lookup failed", exc_info=True)
 
     try:
-        disabled = _DisabledSelfCodingManager(bot_registry=registry, data_bot=data_bot)
+        disabled = _DisabledSelfCodingManager(
+            bot_registry=registry, data_bot=_DATA_BOT_PROXY
+        )
         return _TruthyManagerWrapper(disabled)
     except Exception:  # pragma: no cover - defensive guard
         logger.debug(
@@ -242,7 +304,7 @@ def _resolve_fallback_manager() -> object | None:
 _manager = _resolve_fallback_manager()
 ResourcePredictionBot = self_coding_managed(
     bot_registry=registry,
-    data_bot=data_bot,
+    data_bot=_DATA_BOT_PROXY,
     manager=_manager,
 )(ResourcePredictionBot)
 
