@@ -881,10 +881,26 @@ def ensure_autonomous_launch(
         )
         return False
     except ImportError:
-        logger.warning(
-            "failed to import launch_autonomous_sandbox; autonomous launch skipped",
-            exc_info=True,
+        engine_module = sys.modules.get("self_improvement.engine")
+        manual_triggered = bool(
+            getattr(engine_module, "_MANUAL_LAUNCH_TRIGGERED", False)
+            if engine_module is not None
+            else False
         )
+        logger.warning(
+            "failed to import launch_autonomous_sandbox; scheduling retry",
+            exc_info=True,
+            extra=log_record(event="pending"),
+        )
+        if not manual_triggered:
+            _schedule_autonomous_launch_retry(
+                background=background, force=force, thread=target_thread
+            )
+        else:
+            logger.debug(
+                "autonomous launch already triggered; skipping retry",
+                extra=log_record(event="skip"),
+            )
         return False
 
     manual_triggered = bool(

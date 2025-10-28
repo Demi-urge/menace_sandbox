@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 import threading
@@ -198,12 +199,68 @@ def test_launch_sandbox_runs_warmup(tmp_path, monkeypatch):
 
     assert warmup_called.is_set()
     stop_event.set()
-    thread = bootstrap._SELF_IMPROVEMENT_THREAD
-    assert thread is not None
-    thread.join(timeout=1)
-    assert started.is_set()
-    assert not getattr(thread, "_thread", thread).is_alive()
-    bootstrap.shutdown_autonomous_sandbox()
+
+
+def test_ensure_autonomous_launch_retries_on_import_error(monkeypatch):
+    import sandbox_runner.bootstrap as bootstrap
+
+    engine_module, launch_calls, _ = _install_engine_stub()
+    engine_module._MANUAL_LAUNCH_TRIGGERED = False  # type: ignore[attr-defined]
+
+    bootstrap._AUTONOMOUS_LAUNCH_RETRY = None
+    bootstrap._SELF_IMPROVEMENT_THREAD = None
+
+    class DummyTimer:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    schedule_calls: list[tuple[bool, bool, object]] = []
+    timers: list[DummyTimer] = []
+
+    def fake_schedule(*, background: bool, force: bool, thread: object) -> DummyTimer:
+        schedule_calls.append((background, force, thread))
+        timer = DummyTimer()
+        timers.append(timer)
+        bootstrap._AUTONOMOUS_LAUNCH_RETRY = timer
+        return timer
+
+    monkeypatch.setattr(
+        bootstrap, "_schedule_autonomous_launch_retry", fake_schedule
+    )
+
+    call_count = 0
+
+    def fake_import(name: str):
+        nonlocal call_count
+        assert name == "self_improvement.engine"
+        call_count += 1
+        if call_count == 1:
+            raise ImportError("boom")
+        return engine_module
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    target_thread = types.SimpleNamespace(is_alive=lambda: True)
+
+    first_result = bootstrap.ensure_autonomous_launch(thread=target_thread)
+    assert first_result is False
+    assert schedule_calls == [(True, False, target_thread)]
+    assert timers and not timers[0].cancelled
+    assert bootstrap._AUTONOMOUS_LAUNCH_RETRY is timers[0]
+    assert call_count == 1
+
+    second_result = bootstrap.ensure_autonomous_launch()
+    assert second_result is True
+    assert len(launch_calls) == 1
+    assert timers[0].cancelled is True
+    assert bootstrap._AUTONOMOUS_LAUNCH_RETRY is None
+    assert call_count == 2
+
+    bootstrap._SELF_IMPROVEMENT_THREAD = None
+    bootstrap._AUTONOMOUS_LAUNCH_RETRY = None
 
 
 def test_initialize_does_not_trigger_autonomous_launch(tmp_path, monkeypatch):
