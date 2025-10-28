@@ -41,6 +41,11 @@ from importlib import import_module
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 
+try:  # pragma: no cover - optional dependency during bootstrap
+    from .shared.self_coding_import_guard import self_coding_import_depth
+except Exception:  # pragma: no cover - support flat execution
+    from shared.self_coding_import_guard import self_coding_import_depth  # type: ignore
+
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 _context_builder = create_context_builder()
@@ -1898,6 +1903,14 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
         return
     with _manager_lock:
         if manager is not None:
+            return
+        if self_coding_import_depth():
+            logger.debug(
+                "deferring CapitalManagementBot self-coding bootstrap; import depth=%s",
+                self_coding_import_depth(),
+            )
+            if retry:
+                _schedule_manager_retry()
             return
         pipeline = _load_pipeline_instance()
         thresholds = _load_thresholds()
