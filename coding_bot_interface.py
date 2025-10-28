@@ -1901,11 +1901,19 @@ def self_coding_managed(
             registries_seen.add(id(bot_registry))
             cls._self_coding_registry_ids = registries_seen
 
-            if should_update and self_coding_import_depth() > 1:
+            patch_id = update_kwargs.get("patch_id")
+            import_depth = self_coding_import_depth()
+
+            if should_update and import_depth > 1:
                 should_update = False
                 logger.debug(
-                    "deferring bot update for %s because a nested import is active",
+                    (
+                        "deferring bot update for %s (patch_id=%s, depth=%s) "
+                        "because a nested import is active"
+                    ),
                     name,
+                    patch_id,
+                    import_depth,
                 )
 
             hot_swap_active = False
@@ -1920,8 +1928,12 @@ def self_coding_managed(
             if should_update and hot_swap_active:
                 should_update = False
                 logger.debug(
-                    "deferring bot update for %s because a hot swap import is active",
+                    (
+                        "deferring bot update for %s (patch_id=%s) "
+                        "because a hot swap import is active"
+                    ),
                     name,
+                    patch_id,
                 )
 
             if should_update:
