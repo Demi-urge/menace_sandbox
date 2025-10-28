@@ -27,6 +27,21 @@ The `.env` file referenced by `MENACE_ENV_FILE` is loaded automatically when
 present. Additional configuration files such as synergy weights or self‑test
 locks are created inside `SANDBOX_DATA_DIR` during execution.
 
+## Deferred sandbox launch
+
+The autonomous sandbox no longer starts as a side effect of importing
+`self_improvement.engine`. Bootstrap sequences should explicitly call
+`launch_autonomous_sandbox()` after their setup is complete. The helper lives in
+`self_improvement.engine` and spawns `run_autonomous.main()` in a background
+thread by default so the bootstrap loop can continue processing events.
+
+Operators that rely on the legacy "launch on import" behaviour can opt back in
+by setting `MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT=1` (truthy values such as
+`true` or `on` are also accepted). The helper honours this compatibility flag at
+import time and suppresses duplicate launches with an internal guard, allowing
+manual invocations from `autonomous_bootstrap.main()` or other tooling to remain
+idempotent.
+
 For information on built-in scenario profiles, hostile input stubs and
 concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md#predefined-profiles),
 [Hostile Input Stub Strategy](sandbox_runner.md#hostile-input-stub-strategy) and
