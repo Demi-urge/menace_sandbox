@@ -719,10 +719,13 @@ from menace_sandbox.error_cluster_predictor import ErrorClusterPredictor
 print("[QFE:engine] ErrorClusterPredictor import reached", flush=True)
 from menace_sandbox import mutation_logger as MutationLogger
 print("[QFE:engine] mutation_logger import reached", flush=True)
+_qfe_log("about to import log_tags")
 try:  # canonical tag constants
     from menace_sandbox.log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    _qfe_log("log_tags imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+    _qfe_log("log_tags imported (flat layout fallback)")
 try:  # helper for standardised GPT memory logging
     from menace_sandbox.memory_logging import log_with_tags, ensure_tags
 except ImportError:  # pragma: no cover - fallback for flat layout
