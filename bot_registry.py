@@ -2061,6 +2061,16 @@ class BotRegistry:
         )
         pipeline = components.pipeline_cls(context_builder=ctx, bot_registry=self)
         db = data_bot or components.data_bot_cls(start_server=False)
+        if data_bot is None:
+            try:
+                helper_name = type(db).__name__
+            except Exception:  # pragma: no cover - defensive best effort
+                helper_name = db.__class__.__name__ if hasattr(db, "__class__") else "unknown"
+            logger.debug(
+                "internalizing %s with freshly instantiated data bot helper %s",
+                name,
+                helper_name,
+            )
         th = _load_self_coding_thresholds(name)
         try:
             components.internalize_coding_bot(
@@ -2073,6 +2083,21 @@ class BotRegistry:
                 error_threshold=getattr(th, "error_increase", None),
                 test_failure_threshold=getattr(th, "test_failure_increase", None),
             )
+            manager_ref = self.graph.nodes.get(name, {}).get("selfcoding_manager")
+            if manager_ref is not None:
+                try:
+                    manager_name = type(manager_ref).__name__
+                except Exception:  # pragma: no cover - defensive best effort
+                    manager_name = (
+                        manager_ref.__class__.__name__
+                        if hasattr(manager_ref, "__class__")
+                        else "unknown"
+                    )
+                logger.debug(
+                    "internalization for %s captured manager helper %s",
+                    name,
+                    manager_name,
+                )
         except Exception as exc:
             missing_modules = _collect_missing_modules(exc)
             missing_resources = _collect_missing_resources(exc)
@@ -2308,8 +2333,26 @@ class BotRegistry:
             node.setdefault("patch_history", [])
             if manager is not None:
                 node["selfcoding_manager"] = manager
+                try:
+                    manager_cls = type(manager).__name__
+                except Exception:  # pragma: no cover - defensive best effort
+                    manager_cls = manager.__class__.__name__ if hasattr(manager, "__class__") else "unknown"
+                logger.debug(
+                    "registered self-coding manager for %s using %s", name, manager_cls
+                )
             if data_bot is not None:
                 node["data_bot"] = data_bot
+                try:
+                    data_bot_cls = type(data_bot).__name__
+                except Exception:  # pragma: no cover - defensive best effort
+                    data_bot_cls = (
+                        data_bot.__class__.__name__
+                        if hasattr(data_bot, "__class__")
+                        else "unknown"
+                    )
+                logger.debug(
+                    "registered data_bot helper for %s using %s", name, data_bot_cls
+                )
                 try:
                     data_bot.check_degradation(
                         name, roi=0.0, errors=0.0, test_failures=0.0
