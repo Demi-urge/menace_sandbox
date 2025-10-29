@@ -65,11 +65,31 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
+@dataclass(frozen=True)
+class _RuntimeDependencies:
+    """Container for lazily created runtime helpers."""
+
+    registry: BotRegistry
+    data_bot: DataBot
+    context_builder: ContextBuilder
+    engine: SelfCodingEngine
+    pipeline: "ModelAutomationPipeline"
+    evolution_orchestrator: "EvolutionOrchestrator | None"
+    manager: SelfCodingManager | None
+
+
+registry: BotRegistry | None = None
+data_bot: DataBot | None = None
+_context_builder: ContextBuilder | None = None
+engine: SelfCodingEngine | None = None
+_PipelineCls: "Type[ModelAutomationPipeline] | None" = None
+pipeline: "ModelAutomationPipeline | None" = None
+evolution_orchestrator: "EvolutionOrchestrator | None" = None
+manager: SelfCodingManager | None = None
+
+_runtime_state: _RuntimeDependencies | None = None
+_self_coding_configured = False
 
 
 def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
@@ -104,28 +124,120 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
     )
 
 
-_PipelineCls = _resolve_pipeline_cls()
-pipeline = _PipelineCls(context_builder=_context_builder)
-evolution_orchestrator = get_orchestrator("ResearchAggregatorBot", data_bot, engine)
-_th = get_thresholds("ResearchAggregatorBot")
-persist_sc_thresholds(
-    "ResearchAggregatorBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "ResearchAggregatorBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
+def _ensure_self_coding_decorated(deps: _RuntimeDependencies) -> None:
+    """Apply :func:`self_coding_managed` once runtime helpers exist."""
+
+    global _self_coding_configured
+    if _self_coding_configured:
+        return
+    bot_cls = globals().get("ResearchAggregatorBot")
+    if bot_cls is None:
+        return
+    decorated = self_coding_managed(
+        bot_registry=deps.registry,
+        data_bot=deps.data_bot,
+        manager=deps.manager,
+    )(bot_cls)
+    if decorated is not bot_cls:
+        globals()["ResearchAggregatorBot"] = decorated
+    _self_coding_configured = True
+
+
+def _ensure_runtime_dependencies() -> _RuntimeDependencies:
+    """Instantiate heavy runtime helpers on demand."""
+
+    global registry
+    global data_bot
+    global _context_builder
+    global engine
+    global _PipelineCls
+    global pipeline
+    global evolution_orchestrator
+    global manager
+    global _runtime_state
+
+    if _runtime_state is not None:
+        _ensure_self_coding_decorated(_runtime_state)
+        return _runtime_state
+
+    reg = registry if registry is not None else BotRegistry()
+    dbot = data_bot if data_bot is not None else DataBot(start_server=False)
+
+    ctx_builder = _context_builder
+    if ctx_builder is None:
+        ctx_builder = create_context_builder()
+
+    eng = engine if engine is not None else SelfCodingEngine(
+        CodeDB(),
+        GPTMemoryManager(),
+        context_builder=ctx_builder,
+    )
+
+    pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
+    pipe = pipeline if pipeline is not None else pipeline_cls(context_builder=ctx_builder)
+
+    try:
+        orchestrator = (
+            evolution_orchestrator
+            if evolution_orchestrator is not None
+            else get_orchestrator("ResearchAggregatorBot", dbot, eng)
+        )
+    except Exception as exc:  # pragma: no cover - fallback for degraded envs
+        logger.warning(
+            "Evolution orchestrator unavailable for ResearchAggregatorBot: %s", exc
+        )
+        orchestrator = None
+
+    thresholds = get_thresholds("ResearchAggregatorBot")
+    try:
+        persist_sc_thresholds(
+            "ResearchAggregatorBot",
+            roi_drop=thresholds.roi_drop,
+            error_increase=thresholds.error_increase,
+            test_failure_increase=thresholds.test_failure_increase,
+        )
+    except Exception:  # pragma: no cover - best effort persistence
+        logger.exception("Failed to persist self-coding thresholds for ResearchAggregatorBot")
+
+    try:
+        mgr = manager if manager is not None else internalize_coding_bot(
+            "ResearchAggregatorBot",
+            eng,
+            pipe,
+            data_bot=dbot,
+            bot_registry=reg,
+            evolution_orchestrator=orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - fallback for degraded envs
+        logger.warning(
+            "Self-coding manager unavailable for ResearchAggregatorBot: %s", exc
+        )
+        mgr = None
+
+    registry = reg
+    data_bot = dbot
+    _context_builder = ctx_builder
+    engine = eng
+    _PipelineCls = pipeline_cls
+    pipeline = pipe
+    evolution_orchestrator = orchestrator
+    manager = mgr
+
+    _runtime_state = _RuntimeDependencies(
+        registry=reg,
+        data_bot=dbot,
+        context_builder=ctx_builder,
+        engine=eng,
+        pipeline=pipe,
+        evolution_orchestrator=orchestrator,
+        manager=mgr,
+    )
+    _ensure_self_coding_decorated(_runtime_state)
+    return _runtime_state
 
 @dataclass
 class ResearchItem:
@@ -824,7 +936,6 @@ class InfoDB(EmbeddableDBMixin):
                 )
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class ResearchAggregatorBot:
     """Collects, refines and stores research with energy-based depth."""
 
@@ -845,15 +956,17 @@ class ResearchAggregatorBot:
         cache_ttl: float = 3600.0,
         *,
         manager: SelfCodingManager | None = None,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
-        builder = context_builder
+        deps = _ensure_runtime_dependencies()
+        _ensure_self_coding_decorated(deps)
+        builder = context_builder or deps.context_builder
         if builder is None:
             raise ValueError("ContextBuilder is required")
-        mgr = manager or globals().get("manager")
+        mgr = manager or deps.manager
         self.manager = mgr
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = data_bot
+        self.data_bot = deps.data_bot
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
         self.info_db = info_db or InfoDB()
@@ -937,6 +1050,10 @@ class ResearchAggregatorBot:
                     )
                 )
         return items
+
+
+if _runtime_state is not None:
+    _ensure_self_coding_decorated(_runtime_state)
 
     def _missing_data_types(self, items: Iterable[ResearchItem], topic: str) -> List[str]:
         """Return data type names that are absent for the given topic."""
