@@ -28,19 +28,30 @@ _stub("composite_workflow_scorer", CompositeWorkflowScorer=object)
 _stub("workflow_evolution_bot", WorkflowEvolutionBot=object)
 _stub("roi_results_db", ROIResultsDB=object)
 _stub("roi_tracker", ROITracker=object)
+
+
+class _FailingWorkflowStabilityDB:
+    init_calls = 0
+
+    def __init__(self, *args, **kwargs):
+        type(self).init_calls += 1
+        raise RuntimeError("stability db unavailable")
+
+
+class _FailingEvolutionHistoryDB:
+    init_calls = 0
+
+    def __init__(self, *args, **kwargs):
+        type(self).init_calls += 1
+        raise RuntimeError("evolution db unavailable")
+
+
+_stub("workflow_stability_db", WorkflowStabilityDB=_FailingWorkflowStabilityDB)
 _stub(
-    "workflow_stability_db",
-    WorkflowStabilityDB=type(
-        "WorkflowStabilityDB",
-        (),
-        {
-            "is_stable": lambda self, *a, **k: False,
-            "mark_stable": lambda self, *a, **k: None,
-            "clear": lambda self, *a, **k: None,
-        },
-    ),
+    "evolution_history_db",
+    EvolutionHistoryDB=_FailingEvolutionHistoryDB,
+    EvolutionEvent=None,
 )
-_stub("evolution_history_db", EvolutionHistoryDB=object, EvolutionEvent=object)
 _stub(
     "mutation_logger",
     log_mutation=lambda **kw: 1,
@@ -76,6 +87,27 @@ for mod in [
 "menace_sandbox.workflow_graph",
 ]:
     sys.modules.pop(mod, None)
+
+
+def test_import_does_not_initialize_databases():
+    assert _FailingWorkflowStabilityDB.init_calls == 0
+    assert _FailingEvolutionHistoryDB.init_calls == 0
+
+
+def test_get_stability_db_lazy(monkeypatch):
+    start = _FailingWorkflowStabilityDB.init_calls
+    monkeypatch.setattr(wem, "_STABILITY_DB", None, raising=False)
+    monkeypatch.setattr(wem, "_STABILITY_DB_INITIALIZED", False, raising=False)
+    assert wem._get_stability_db() is None
+    assert _FailingWorkflowStabilityDB.init_calls == start + 1
+
+
+def test_get_evolution_db_lazy(monkeypatch):
+    start = _FailingEvolutionHistoryDB.init_calls
+    monkeypatch.setattr(wem, "_EVOLUTION_DB", None, raising=False)
+    monkeypatch.setattr(wem, "_EVOLUTION_DB_INITIALIZED", False, raising=False)
+    assert wem._get_evolution_db() is None
+    assert _FailingEvolutionHistoryDB.init_calls == start + 1
 
 
 def _setup(
@@ -146,9 +178,31 @@ def _setup(
         SimpleNamespace(log_mutation=lambda **kw: 1, log_workflow_evolution=lambda **kw: None),
     )
 
-    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "mark_stable", lambda *a, **k: None)
-    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "clear", lambda *a, **k: None)
-    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "is_stable", lambda *a, **k: False)
+    class FakeStabilityDB:
+        def __init__(self):
+            self._ema: dict[str, tuple[float, int]] = {}
+
+        def get_ema(self, workflow_id: str) -> tuple[float, int]:
+            return self._ema.get(workflow_id, (0.0, 0))
+
+        def set_ema(self, workflow_id: str, ema: float, count: int) -> None:
+            self._ema[workflow_id] = (ema, count)
+
+        def mark_stable(self, *args, **kwargs):
+            pass
+
+        def clear(self, *args, **kwargs):
+            pass
+
+        def is_stable(self, *args, **kwargs) -> bool:
+            return False
+
+    fake_stability = FakeStabilityDB()
+    fake_evolution = SimpleNamespace(add=lambda *a, **k: None)
+
+    monkeypatch.setattr(wem, "_get_stability_db", lambda: fake_stability)
+    monkeypatch.setattr(wem, "_TEST_STABILITY_DB", fake_stability, raising=False)
+    monkeypatch.setattr(wem, "_get_evolution_db", lambda: fake_evolution)
     monkeypatch.setattr(wem, "_update_ema", lambda *a, **k: False)
 
     graph_called = {}
@@ -157,6 +211,9 @@ def _setup(
 
         def update_workflow(self, wid, roi=None, synergy_scores=None):
             graph_called["args"] = (wid, roi)
+
+        def add_dependency(self, parent, child, **kwargs):
+            graph_called["dependency"] = (parent, child, kwargs)
     monkeypatch.setattr(wem, "WorkflowGraph", lambda *a, **k: FakeGraph())
 
     summary_called = {}
@@ -183,6 +240,14 @@ def _setup(
         types.ModuleType("menace_sandbox.neuroplasticity"),
     )
     sys.modules["menace_sandbox.neuroplasticity"].PathwayDB = lambda *a, **k: None
+
+    class FakeRunner:
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(modules=[])
+
+    monkeypatch.setattr(
+        wem.sandbox_runner, "WorkflowSandboxRunner", lambda *a, **k: FakeRunner()
+    )
 
     return graph_called, summary_called
 
@@ -307,7 +372,7 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
 
     # Mark candidate workflow 99 as stable
     monkeypatch.setattr(
-        wem.STABLE_WORKFLOWS,
+        wem._TEST_STABILITY_DB,
         "is_stable",
         lambda wid, *a, **k: wid == "99",
     )

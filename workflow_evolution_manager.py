@@ -165,6 +165,46 @@ except Exception:  # pragma: no cover - best effort
 
 logger = logging.getLogger(__name__)
 
+_STABILITY_DB: WorkflowStabilityDB | None = None
+_STABILITY_DB_INITIALIZED = False
+_EVOLUTION_DB: EvolutionHistoryDB | None = None  # type: ignore[assignment]
+_EVOLUTION_DB_INITIALIZED = False
+
+
+def _get_stability_db() -> WorkflowStabilityDB | None:
+    """Return a cached :class:`WorkflowStabilityDB` instance when available."""
+
+    global _STABILITY_DB, _STABILITY_DB_INITIALIZED
+
+    if not _STABILITY_DB_INITIALIZED:
+        _STABILITY_DB_INITIALIZED = True
+        try:
+            _STABILITY_DB = WorkflowStabilityDB()
+        except Exception:  # pragma: no cover - best effort fallback
+            logger.exception("failed to initialize WorkflowStabilityDB")
+            _STABILITY_DB = None
+
+    return _STABILITY_DB
+
+
+def _get_evolution_db() -> EvolutionHistoryDB | None:
+    """Return a cached :class:`EvolutionHistoryDB` instance when available."""
+
+    global _EVOLUTION_DB, _EVOLUTION_DB_INITIALIZED
+
+    if not _EVOLUTION_DB_INITIALIZED:
+        _EVOLUTION_DB_INITIALIZED = True
+        if EvolutionHistoryDB is None:
+            _EVOLUTION_DB = None
+        else:
+            try:
+                _EVOLUTION_DB = EvolutionHistoryDB()
+            except Exception:  # pragma: no cover - best effort fallback
+                logger.exception("failed to initialize EvolutionHistoryDB")
+                _EVOLUTION_DB = None
+
+    return _EVOLUTION_DB
+
 
 def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
     """Persist planner-suggested chains for later evaluation."""
@@ -174,9 +214,6 @@ def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
             save_workflow([{"module": m} for m in chain], path)
         except Exception:
             logger.exception("failed to save planner suggestion", extra={"chain": chain})
-
-STABLE_WORKFLOWS = WorkflowStabilityDB()
-EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
 
 
 def merge_variant_records(
@@ -228,7 +265,11 @@ def _update_ema(workflow_id: str, delta: float) -> bool:
     """Update ROI improvement EMA and return ``True`` when gating triggers."""
 
     alpha = SandboxSettings().roi_ema_alpha
-    ema, count = STABLE_WORKFLOWS.get_ema(workflow_id)
+    stability_db = _get_stability_db()
+    if stability_db is None:
+        return False
+
+    ema, count = stability_db.get_ema(workflow_id)
     ema = alpha * float(delta) + (1 - alpha) * ema
 
     threshold = float(os.getenv("ROI_GATING_THRESHOLD", "0") or 0.0)
@@ -237,14 +278,18 @@ def _update_ema(workflow_id: str, delta: float) -> bool:
     else:
         count = 0
 
-    STABLE_WORKFLOWS.set_ema(workflow_id, ema, count)
+    stability_db.set_ema(workflow_id, ema, count)
 
     limit = int(os.getenv("ROI_GATING_CONSECUTIVE", "0") or 0)
     return limit > 0 and count >= limit
 
 
 def workflow_roi_ema(workflow_id: str | int) -> float:
-    ema, _ = STABLE_WORKFLOWS.get_ema(str(workflow_id))
+    stability_db = _get_stability_db()
+    if stability_db is None:
+        return 0.0
+
+    ema, _ = stability_db.get_ema(str(workflow_id))
     return ema
 
 
@@ -327,9 +372,10 @@ def _evaluate_merge(
     if merged_id:
         workflow_run_summary.record_run(str(merged_id), merged_result.roi_gain)
         setattr(merged_callable, "workflow_id", merged_id)
-        if EVOLUTION_DB is not None and EvolutionEvent is not None:
+        evolution_db = _get_evolution_db()
+        if evolution_db is not None and EvolutionEvent is not None:
             try:  # pragma: no cover - best effort
-                EVOLUTION_DB.add(
+                evolution_db.add(
                     EvolutionEvent(
                         action="merge",
                         before_metric=baseline_roi,
@@ -349,7 +395,8 @@ def _evaluate_merge(
 
 def is_stable(workflow_id: int | str) -> bool:
     """Return ``True`` when *workflow_id* is marked stable."""
-    return STABLE_WORKFLOWS.is_stable(str(workflow_id))
+    stability_db = _get_stability_db()
+    return bool(stability_db and stability_db.is_stable(str(workflow_id)))
 
 
 def evolve(
@@ -384,6 +431,8 @@ def evolve(
     wf_id_str = str(workflow_id)
     results_db = ROIResultsDB()
     tracker = ROITracker()
+    stability_db = _get_stability_db()
+    evolution_db = _get_evolution_db()
 
     # Baseline evaluation
     baseline_scorer = CompositeWorkflowScorer(
@@ -402,7 +451,9 @@ def evolve(
     setattr(workflow_callable, "mutation_description", None)
 
     # Skip variant generation when workflow marked stable and ROI unchanged
-    if STABLE_WORKFLOWS.is_stable(wf_id_str, baseline_roi, tracker.diminishing()):
+    if stability_db and stability_db.is_stable(
+        wf_id_str, baseline_roi, tracker.diminishing()
+    ):
         logger.info("workflow %s marked stable", wf_id_str)
         _, raroi, _ = tracker.calculate_raroi(baseline_roi)
         tracker.score_workflow(wf_id_str, raroi)
@@ -510,7 +561,7 @@ def evolve(
                 if _load_specs is not None:
                     for spec in _load_specs("workflows"):
                         wid = str(spec.get("workflow_id"))
-                        if wid and STABLE_WORKFLOWS.is_stable(wid):
+                        if wid and stability_db and stability_db.is_stable(wid):
                             path = resolve_path(f"workflows/{wid}.workflow.json")
                             if path.exists() and path not in seen_paths:
                                 candidates.append((wid, path))
@@ -520,7 +571,7 @@ def evolve(
                     node_ids = getattr(getattr(graph, "graph", graph), "nodes", lambda: [])
                     for wid in node_ids() if callable(node_ids) else node_ids:
                         wid_str = str(wid)
-                        if STABLE_WORKFLOWS.is_stable(wid_str):
+                        if stability_db and stability_db.is_stable(wid_str):
                             path = resolve_path(f"workflows/{wid_str}.workflow.json")
                             if path.exists() and path not in seen_paths:
                                 candidates.append((wid_str, path))
@@ -625,9 +676,9 @@ def evolve(
             parent_id=parent_id,
         )
 
-        if EVOLUTION_DB is not None and EvolutionEvent is not None:
+        if evolution_db is not None and EvolutionEvent is not None:
             try:
-                EVOLUTION_DB.add(
+                evolution_db.add(
                     EvolutionEvent(
                         action=seq,
                         before_metric=baseline_roi,
@@ -660,8 +711,8 @@ def evolve(
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed logging workflow evolution")
 
-        if _update_ema(wf_id_str, roi_delta):
-            STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
+        if _update_ema(wf_id_str, roi_delta) and stability_db:
+            stability_db.mark_stable(wf_id_str, baseline_roi)
             logger.info("workflow %s stable (ema gating)", wf_id_str)
             try:
                 WorkflowSummaryDB().set_summary(int(workflow_id), "stable")
@@ -693,8 +744,8 @@ def evolve(
     _, final_raroi, _ = tracker.calculate_raroi(best_roi)
     tracker.score_workflow(wf_id_str, final_raroi)
 
-    if delta <= 0:
-        STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
+    if delta <= 0 and stability_db:
+        stability_db.mark_stable(wf_id_str, baseline_roi)
         logger.info("workflow %s stable (delta=%.4f)", wf_id_str, delta)
         try:
             WorkflowSummaryDB().set_summary(int(workflow_id), "stable")
@@ -714,8 +765,8 @@ def evolve(
         _merge_branches_for_parent(wf_id_str)
         return workflow_callable
 
-    if best_variant_seq is not None and delta > 0:
-        STABLE_WORKFLOWS.clear(wf_id_str)
+    if best_variant_seq is not None and delta > 0 and stability_db:
+        stability_db.clear(wf_id_str)
         event_id = MutationLogger.log_mutation(
             change=best_variant_seq,
             reason="promoted",
@@ -841,7 +892,12 @@ def evolve(
                 if _load_specs is not None:
                     for spec in _load_specs("workflows"):
                         wid = str(spec.get("workflow_id"))
-                        if wid and wid != str(new_id) and STABLE_WORKFLOWS.is_stable(wid):
+                        if (
+                            wid
+                            and wid != str(new_id)
+                            and stability_db
+                            and stability_db.is_stable(wid)
+                        ):
                             path = resolve_path(f"workflows/{wid}.workflow.json")
                             if path.exists() and path not in seen_paths:
                                 candidates.append((wid, path))
@@ -851,7 +907,11 @@ def evolve(
                     node_ids = getattr(getattr(graph, "graph", graph), "nodes", lambda: [])
                     for wid in node_ids() if callable(node_ids) else node_ids:
                         wid_str = str(wid)
-                        if wid_str != str(new_id) and STABLE_WORKFLOWS.is_stable(wid_str):
+                        if (
+                            wid_str != str(new_id)
+                            and stability_db
+                            and stability_db.is_stable(wid_str)
+                        ):
                             path = resolve_path(f"workflows/{wid_str}.workflow.json")
                             if path.exists() and path not in seen_paths:
                                 candidates.append((wid_str, path))
