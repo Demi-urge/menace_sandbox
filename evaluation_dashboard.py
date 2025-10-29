@@ -6,6 +6,7 @@ import json
 import logging
 import queue
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 import types
@@ -56,7 +57,7 @@ class _FallbackEvaluationManager:
 
     history: Dict[str, List[Dict[str, Any]]]
 
-    def __init__(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.history = {}
 
     def record(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
@@ -66,7 +67,7 @@ class _FallbackEvaluationManager:
 class _FallbackROITracker:
     """Lightweight ROI tracker stub used when the real implementation is missing."""
 
-    def __init__(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.predicted_roi: List[float] = []
         self.actual_roi: List[float] = []
         self.horizon_mae_history: List[Dict[str, Any]] = []
@@ -83,6 +84,18 @@ class _FallbackROITracker:
         """Return empty structures compatible with the real tracker."""
 
         return {
+            "mae": 0.0,
+            "accuracy": 0.0,
+            "class_counts": {"predicted": {}, "actual": {}},
+            "confusion_matrix": {},
+            "mae_trend": [],
+            "accuracy_trend": [],
+            "scenario_roi_deltas": {},
+            "scenario_raroi": {},
+            "scenario_raroi_delta": {},
+            "scenario_metrics_delta": {},
+            "scenario_synergy_delta": {},
+            "worst_scenario": None,
             "workflow_confidence": {},
             "workflow_mae": {},
             "workflow_variance": {},
@@ -104,7 +117,7 @@ class _FallbackTelemetryBackend:
         return []
 
 
-def _import_or_fallback(name: str, module: str, attr: str, fallback: Any) -> Any:
+def _load_dependency(name: str, module: str, attr: str, fallback: Any) -> Any:
     """Return attribute ``attr`` from ``module`` or ``fallback`` when import fails."""
 
     try:
@@ -120,13 +133,52 @@ def _import_or_fallback(name: str, module: str, attr: str, fallback: Any) -> Any
         return fallback
 
 
-EvaluationManager = _import_or_fallback(
-    "EvaluationManager", "evaluation_manager", "EvaluationManager", _FallbackEvaluationManager
-)
-ROITracker = _import_or_fallback("ROITracker", "roi_tracker", "ROITracker", _FallbackROITracker)
-TelemetryBackend = _import_or_fallback(
-    "TelemetryBackend", "telemetry_backend", "TelemetryBackend", _FallbackTelemetryBackend
-)
+@lru_cache(maxsize=None)
+def _get_evaluation_manager_cls() -> type[_FallbackEvaluationManager]:
+    return _load_dependency(
+        "EvaluationManager", "evaluation_manager", "EvaluationManager", _FallbackEvaluationManager
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_roi_tracker_cls() -> type[_FallbackROITracker]:
+    return _load_dependency("ROITracker", "roi_tracker", "ROITracker", _FallbackROITracker)
+
+
+@lru_cache(maxsize=None)
+def _get_telemetry_backend_cls() -> type[_FallbackTelemetryBackend]:
+    return _load_dependency(
+        "TelemetryBackend", "telemetry_backend", "TelemetryBackend", _FallbackTelemetryBackend
+    )
+
+
+def _instantiate_dependency(
+    name: str,
+    loader: Any,
+    fallback: type,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Instantiate dependency ``name`` using ``loader`` while handling failures."""
+
+    try:
+        cls = loader()
+    except Exception as exc:  # pragma: no cover - exercised via tests
+        logger.warning(
+            "evaluation_dashboard: %s loader failed (%s); using fallback stub",
+            name,
+            exc,
+        )
+        cls = fallback
+    try:
+        return cls(*args, **kwargs)
+    except Exception as exc:  # pragma: no cover - exercised via tests
+        logger.warning(
+            "evaluation_dashboard: %s instantiation failed (%s); using fallback stub",
+            name,
+            exc,
+        )
+        return fallback(*args, **kwargs)
 from .violation_logger import load_persisted_alignment_warnings
 from .scope_utils import Scope
 
@@ -134,6 +186,10 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .evaluation_manager import EvaluationManager as _EvaluationManagerType
     from .roi_tracker import ROITracker as _ROITrackerType
     from .telemetry_backend import TelemetryBackend as _TelemetryBackendType
+else:  # Fallbacks used at runtime when optional deps are absent
+    _EvaluationManagerType = _FallbackEvaluationManager
+    _ROITrackerType = _FallbackROITracker
+    _TelemetryBackendType = _FallbackTelemetryBackend
 
 GOVERNANCE_LOG = resolve_path("sandbox_data") / "governance_outcomes.jsonl"
 
@@ -181,10 +237,26 @@ def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
         return build_lineage(workflow_id)
 
 
+def __getattr__(name: str) -> Any:  # pragma: no cover - trivial delegation
+    if name == "EvaluationManager":
+        cls = _get_evaluation_manager_cls()
+        globals()[name] = cls
+        return cls
+    if name == "ROITracker":
+        cls = _get_roi_tracker_cls()
+        globals()[name] = cls
+        return cls
+    if name == "TelemetryBackend":
+        cls = _get_telemetry_backend_cls()
+        globals()[name] = cls
+        return cls
+    raise AttributeError(name)
+
+
 class EvaluationDashboard:
     """Render :class:`EvaluationManager` history as data frames and weights."""
 
-    def __init__(self, manager: EvaluationManager) -> None:
+    def __init__(self, manager: _EvaluationManagerType) -> None:
         self.manager = manager
         self._lineage_lock = threading.Lock()
         self._lineage_trees: Dict[int, List[Dict[str, Any]]] = {}
@@ -237,9 +309,10 @@ class EvaluationDashboard:
 
     # ------------------------------------------------------------------
     def roi_prediction_panel(
-        self, tracker: ROITracker, window: int | None = None
+        self, tracker: _ROITrackerType | None = None, window: int | None = None
     ) -> Dict[str, Any]:
         """Return ROI prediction stats including trend and confusion metrics."""
+        tracker = _ensure_tracker(tracker)
         summary = tracker.prediction_summary(window)
         workflows: Dict[str, Any] = {}
         wf_conf = summary.get("workflow_confidence", {})
@@ -258,7 +331,7 @@ class EvaluationDashboard:
 
     # ------------------------------------------------------------------
     def roi_prediction_chart(
-        self, tracker: ROITracker, window: int | None = None
+        self, tracker: _ROITrackerType | None = None, window: int | None = None
     ) -> Dict[str, Any]:
         """Return sequences for charting predicted vs actual ROI.
 
@@ -277,6 +350,7 @@ class EvaluationDashboard:
             ``predicted`` and ``actual`` ROI sequences.
         """
 
+        tracker = _ensure_tracker(tracker)
         total = len(tracker.predicted_roi)
         preds = tracker.predicted_roi[-window:] if window else tracker.predicted_roi
         acts = tracker.actual_roi[-len(preds):]
@@ -286,7 +360,7 @@ class EvaluationDashboard:
 
     # ------------------------------------------------------------------
     def roi_prediction_events_panel(
-        self, tracker: ROITracker, window: int | None = None
+        self, tracker: _ROITrackerType | None = None, window: int | None = None
     ) -> Dict[str, Any]:
         """Summarise ``roi_prediction_events`` persisted by ``ROITracker``.
 
@@ -307,6 +381,7 @@ class EvaluationDashboard:
             and the list of recent ``drift_flags``.
         """
 
+        tracker = _ensure_tracker(tracker)
         mae_by_horizon = (
             tracker.horizon_mae_history[-1] if tracker.horizon_mae_history else {}
         )
@@ -396,10 +471,11 @@ class EvaluationDashboard:
 
     # ------------------------------------------------------------------
     def drift_instability_panel(
-        self, tracker: ROITracker, window: int | None = None
+        self, tracker: _ROITrackerType | None = None, window: int | None = None
     ) -> Dict[str, Any]:
         """Return drift flags alongside instability metrics."""
 
+        tracker = _ensure_tracker(tracker)
         drift_flags = tracker.drift_flags[-window:] if window else list(tracker.drift_flags)
         instability = tracker.metrics_history.get("instability", [])
         if window is not None:
@@ -506,6 +582,12 @@ class EvaluationDashboard:
         )
 
 
+def _ensure_tracker(tracker: _ROITrackerType | None) -> _ROITrackerType:
+    if tracker is not None:
+        return tracker
+    return _instantiate_dependency("ROITracker", _get_roi_tracker_cls, _FallbackROITracker)
+
+
 def refresh_dashboard(
     output: str | Path = "evaluation_dashboard.json",
     *,
@@ -519,13 +601,19 @@ def refresh_dashboard(
     regenerate dashboard artefacts after each test cycle or deployment batch.
     """
 
-    tracker = ROITracker()
+    tracker = _instantiate_dependency("ROITracker", _get_roi_tracker_cls, _FallbackROITracker)
     try:
         tracker.load_history(history)
     except Exception:
         pass
-    telemetry = TelemetryBackend(telemetry_db)
-    dash = EvaluationDashboard(EvaluationManager())
+    telemetry = _instantiate_dependency(
+        "TelemetryBackend", _get_telemetry_backend_cls, _FallbackTelemetryBackend, telemetry_db
+    )
+    dash = EvaluationDashboard(
+        _instantiate_dependency(
+            "EvaluationManager", _get_evaluation_manager_cls, _FallbackEvaluationManager
+        )
+    )
     data = {
         "readiness_over_time": dash.readiness_chart(telemetry, scope=scope),
         "readiness_distribution": dash.readiness_distribution_panel(telemetry, scope=scope),

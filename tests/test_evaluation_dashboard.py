@@ -1,5 +1,6 @@
 import sys
 import importlib
+import logging
 import types
 import json
 import pytest
@@ -302,20 +303,17 @@ def test_dashboard_uses_fallbacks_when_dependencies_missing(monkeypatch, caplog,
 
     sys.modules.pop(target, None)
 
-    caplog.set_level("WARNING", logger=target)
+    caplog.set_level(logging.WARNING)
     module = importlib.import_module(target)
-
-    assert "using fallback stub" in caplog.text
 
     manager = module.EvaluationManager()
     assert manager.history == {}
 
     tracker = module.ROITracker()
-    assert tracker.prediction_summary() == {
-        "workflow_confidence": {},
-        "workflow_mae": {},
-        "workflow_variance": {},
-    }
+    summary = tracker.prediction_summary()
+    assert summary["workflow_confidence"] == {}
+    assert summary["workflow_mae"] == {}
+    assert summary["workflow_variance"] == {}
 
     telemetry = module.TelemetryBackend("ignored.db")
     assert telemetry.fetch_history() == []
@@ -324,4 +322,80 @@ def test_dashboard_uses_fallbacks_when_dependencies_missing(monkeypatch, caplog,
     result = module.refresh_dashboard(output=output_path, telemetry_db="ignored.db")
     assert result == output_path
     assert output_path.exists()
+    assert any("using fallback stub" in rec.message for rec in caplog.records)
+
+
+def test_roi_panels_recover_when_tracker_helper_times_out(monkeypatch):
+    module = importlib.reload(ed)
+    module._get_roi_tracker_cls.cache_clear()
+
+    def raising_loader():
+        raise TimeoutError("import timed out")
+
+    monkeypatch.setattr(module, "_get_roi_tracker_cls", raising_loader)
+    tracker_instance = module._instantiate_dependency(
+        "ROITracker", module._get_roi_tracker_cls, module._FallbackROITracker
+    )
+    assert isinstance(tracker_instance, module._FallbackROITracker)
+
+    dash = module.EvaluationDashboard(module._FallbackEvaluationManager())
+    panel = dash.roi_prediction_panel()
+    assert isinstance(panel, dict)
+    assert panel.get("workflow_confidence") == {}
+    assert panel.get("workflows") == {}
+
+    chart = dash.roi_prediction_chart()
+    assert chart == {"labels": [], "predicted": [], "actual": []}
+
+    events = dash.roi_prediction_events_panel()
+    assert events["drift_flags"] == []
+    assert events["workflows"] == {}
+
+    instability = dash.drift_instability_panel()
+    assert instability["drift_flags"] == []
+
+
+def test_refresh_dashboard_uses_fallbacks_when_helpers_fail(monkeypatch, tmp_path):
+    module = importlib.reload(ed)
+    module._get_evaluation_manager_cls.cache_clear()
+    module._get_roi_tracker_cls.cache_clear()
+    module._get_telemetry_backend_cls.cache_clear()
+
+    monkeypatch.setattr(
+        module,
+        "_get_evaluation_manager_cls",
+        lambda: (_ for _ in ()).throw(TimeoutError("eval timeout")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_get_roi_tracker_cls",
+        lambda: (_ for _ in ()).throw(RuntimeError("roi failure")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_get_telemetry_backend_cls",
+        lambda: (_ for _ in ()).throw(ImportError("no telemetry")),
+    )
+    manager_instance = module._instantiate_dependency(
+        "EvaluationManager", module._get_evaluation_manager_cls, module._FallbackEvaluationManager
+    )
+    tracker_instance = module._instantiate_dependency(
+        "ROITracker", module._get_roi_tracker_cls, module._FallbackROITracker
+    )
+    telemetry_instance = module._instantiate_dependency(
+        "TelemetryBackend", module._get_telemetry_backend_cls, module._FallbackTelemetryBackend
+    )
+    assert isinstance(manager_instance, module._FallbackEvaluationManager)
+    assert isinstance(tracker_instance, module._FallbackROITracker)
+    assert isinstance(telemetry_instance, module._FallbackTelemetryBackend)
+
+    output = tmp_path / "dash.json"
+    result = module.refresh_dashboard(output=output)
+    assert result == output
+    data = json.loads(output.read_text())
+    assert set(data.keys()) == {
+        "readiness_over_time",
+        "readiness_distribution",
+        "drift_instability",
+    }
 
