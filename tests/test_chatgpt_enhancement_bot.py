@@ -84,6 +84,59 @@ sys.modules.setdefault("coding_bot_interface", types.SimpleNamespace(self_coding
 import menace.chatgpt_enhancement_bot as ceb
 
 
+def test_chatgpt_enhancement_bot_lazily_creates_dependencies(monkeypatch):
+    registry_inits: list[bool] = []
+    data_bot_inits: list[bool] = []
+
+    class RecordingRegistry:
+        def __init__(self) -> None:
+            registry_inits.append(True)
+            self.graph = types.SimpleNamespace(nodes={})
+            self.modules = {}
+
+        def register_bot(self, *args, **kwargs):  # pragma: no cover - simple stub
+            return None
+
+        def update_bot(self, *args, **kwargs):  # pragma: no cover - simple stub
+            return None
+
+        def hot_swap_active(self) -> bool:  # pragma: no cover - simple stub
+            return False
+
+    class RecordingDataBot:
+        def __init__(self, *, start_server=False):
+            data_bot_inits.append(start_server)
+
+        def reload_thresholds(self, _name):  # pragma: no cover - simple stub
+            return types.SimpleNamespace(
+                roi_drop=None,
+                error_threshold=None,
+                test_failure_threshold=None,
+            )
+
+    assert ceb._registry_cache is None
+    assert ceb._data_bot_cache is None
+
+    monkeypatch.setattr(ceb, "_registry_cache", None, raising=False)
+    monkeypatch.setattr(ceb, "_data_bot_cache", None, raising=False)
+    monkeypatch.setattr(ceb, "BotRegistry", RecordingRegistry, raising=False)
+    monkeypatch.setattr(ceb, "DataBot", RecordingDataBot, raising=False)
+
+    class _DummyBuilder:
+        def refresh_db_weights(self):
+            return {}
+
+    bot = ceb.ChatGPTEnhancementBot(
+        client=None,
+        db=object(),
+        override_manager=None,
+        context_builder=_DummyBuilder(),
+    )
+    assert bot is not None
+    assert registry_inits == [True]
+    assert data_bot_inits == [False]
+
+
 def test_summarise_text():
     text = "A. B. C."
     summary = ceb.summarise_text(text, ratio=0.34)
