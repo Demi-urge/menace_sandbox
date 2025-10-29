@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List
 import types
-from relevancy_radar import flagged_modules
+from .relevancy_radar import flagged_modules
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
