@@ -8,8 +8,10 @@ from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple, TYPE_CHECKING, Type
 import uuid
 
 registry = BotRegistry()
@@ -22,11 +24,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .resource_prediction_bot import ResourceMetrics, TemplateDB
 from .data_bot import DataBot
-from .capital_management_bot import CapitalManagementBot
-from typing import TYPE_CHECKING
 from .retry_utils import retry
-
-from .prediction_manager_bot import PredictionManager
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
 from db_router import GLOBAL_ROUTER, init_db_router
@@ -41,9 +39,30 @@ except Exception as exc:  # pragma: no cover - explicit failure
     ) from exc
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .capital_management_bot import CapitalManagementBot
+    from .prediction_manager_bot import PredictionManager
     from .resources_bot import ResourcesBot
     from .contrarian_model_bot import ContrarianModelBot
     from .bot_database import BotDB
+else:  # pragma: no cover - runtime fallback for optional deps
+    CapitalManagementBot = Any  # type: ignore[assignment]
+    PredictionManager = Any  # type: ignore[assignment]
+
+
+@lru_cache(maxsize=1)
+def _capital_management_bot_cls() -> Type["CapitalManagementBot"]:
+    """Return the capital manager class lazily via :mod:`importlib`."""
+
+    module = import_module(".capital_management_bot", __package__)
+    return module.CapitalManagementBot  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _prediction_manager_cls() -> Type["PredictionManager"]:
+    """Return the prediction manager class lazily via :mod:`importlib`."""
+
+    module = import_module(".prediction_manager_bot", __package__)
+    return module.PredictionManager  # type: ignore[attr-defined]
 
 
 @dataclass

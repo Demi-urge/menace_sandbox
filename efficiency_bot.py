@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from datetime import datetime
+from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Type
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import self_coding_managed
@@ -18,8 +20,6 @@ except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
 from .db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from .capital_management_bot import CapitalManagementBot
-from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 from .bot_database import BotDB
 from .code_database import CodeDB
@@ -34,6 +34,30 @@ registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing helpers only
+    from .capital_management_bot import CapitalManagementBot
+    from .prediction_manager_bot import PredictionManager
+else:  # pragma: no cover - runtime fallback when optional deps missing
+    CapitalManagementBot = Any  # type: ignore[assignment]
+    PredictionManager = Any  # type: ignore[assignment]
+
+
+@lru_cache(maxsize=1)
+def _capital_management_bot_cls() -> Type["CapitalManagementBot"]:
+    """Resolve :class:`CapitalManagementBot` lazily to avoid circular imports."""
+
+    module = import_module(".capital_management_bot", __package__)
+    return module.CapitalManagementBot  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _prediction_manager_cls() -> Type["PredictionManager"]:
+    """Resolve :class:`PredictionManager` lazily to avoid circular imports."""
+
+    module = import_module(".prediction_manager_bot", __package__)
+    return module.PredictionManager  # type: ignore[attr-defined]
 
 
 @dataclass

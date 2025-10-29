@@ -6,8 +6,10 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
+from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Dict, List, Callable, Optional, Any
+from typing import TYPE_CHECKING, Iterable, Dict, List, Callable, Optional, Any, Type
 import logging
 
 registry = BotRegistry()
@@ -37,6 +39,16 @@ except Exception:  # pragma: no cover - predictor missing
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .prediction_manager_bot import PredictionManager
+else:  # pragma: no cover - runtime fallback when dependency missing
+    PredictionManager = Any  # type: ignore[assignment]
+
+
+@lru_cache(maxsize=1)
+def _prediction_manager_cls() -> Type["PredictionManager"]:
+    """Resolve :class:`PredictionManager` lazily via :mod:`importlib`."""
+
+    module = import_module(".prediction_manager_bot", __package__)
+    return module.PredictionManager  # type: ignore[attr-defined]
 
 
 logger = logging.getLogger(__name__)
@@ -152,9 +164,8 @@ class PreExecutionROIBot:
         self.event_bus = event_bus
         if prediction_manager is None:
             try:
-                from .prediction_manager_bot import PredictionManager
-
-                prediction_manager = PredictionManager(
+                prediction_cls = _prediction_manager_cls()
+                prediction_manager = prediction_cls(
                     data_bot=self.data_bot,
                 )
             except Exception:
