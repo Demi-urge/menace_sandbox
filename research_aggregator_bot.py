@@ -25,12 +25,13 @@ from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
+    from .capital_management_bot import CapitalManagementBot
 import sqlite3
 import time
 from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Iterator
+from typing import Any, Iterable, List, Optional, Iterator, cast
 
 from .auto_link import auto_link
 
@@ -54,7 +55,6 @@ except Exception:  # pragma: no cover - optional dependency
     VideoResearchBot = None  # type: ignore
 from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
-from .capital_management_bot import CapitalManagementBot
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from vector_service import EmbeddableDBMixin, ContextBuilder
 from snippet_compressor import compress_snippets
@@ -87,6 +87,7 @@ _PipelineCls: "Type[ModelAutomationPipeline] | None" = None
 pipeline: "ModelAutomationPipeline | None" = None
 evolution_orchestrator: "EvolutionOrchestrator | None" = None
 manager: SelfCodingManager | None = None
+_CapitalManagerCls: "Type[CapitalManagementBot] | None" = None
 
 _runtime_state: _RuntimeDependencies | None = None
 _self_coding_configured = False
@@ -122,6 +123,39 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
     raise ImportError(
         "ModelAutomationPipeline is unavailable; ensure menace_sandbox is fully initialised"
     )
+
+
+def _get_capital_manager_class() -> "Type[CapitalManagementBot]":
+    """Import and return :class:`CapitalManagementBot` lazily."""
+
+    global _CapitalManagerCls
+    if _CapitalManagerCls is not None:
+        return _CapitalManagerCls
+
+    module_candidates: tuple[str, ...] = (
+        "menace_sandbox.capital_management_bot",
+        ".capital_management_bot",
+        "capital_management_bot",
+    )
+    last_error: Exception | None = None
+    for dotted in module_candidates:
+        try:
+            module = (
+                importlib.import_module(dotted, __package__)
+                if dotted.startswith(".")
+                else importlib.import_module(dotted)
+            )
+        except ModuleNotFoundError as exc:
+            last_error = exc
+            continue
+        capital_cls = getattr(module, "CapitalManagementBot", None)
+        if isinstance(capital_cls, type):
+            typed_cls = cast("Type[CapitalManagementBot]", capital_cls)
+            _CapitalManagerCls = typed_cls
+            return typed_cls
+    raise ImportError(
+        "CapitalManagementBot is unavailable; ensure menace_sandbox is fully initialised"
+    ) from last_error
 
 
 def _ensure_self_coding_decorated(deps: _RuntimeDependencies) -> None:
@@ -979,7 +1013,10 @@ class ResearchAggregatorBot:
         self.chatgpt_bot = chatgpt_bot
         if self.chatgpt_bot and getattr(self.chatgpt_bot, "send_callback", None) is None:
             self.chatgpt_bot.send_callback = self.receive_chatgpt
-        self.capital_manager = capital_manager or CapitalManagementBot()
+        if capital_manager is None:
+            capital_cls = _get_capital_manager_class()
+            capital_manager = capital_cls()
+        self.capital_manager = capital_manager
         self.enhancement_interval = enhancement_interval
         self._last_enhancement_time = 0.0
         self.sources_queried: List[str] = []
