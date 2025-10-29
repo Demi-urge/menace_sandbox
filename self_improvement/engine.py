@@ -892,36 +892,90 @@ def bootstrap(*args: object, **kwargs: object) -> int:  # type: ignore[override]
 
     bootstrap_fn = _load_bootstrap()
     return bootstrap_fn(*args, **kwargs)
+_qfe_log("SI-2f.1 importing menace_sandbox.research_aggregator_bot")
 from menace_sandbox.research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
     InfoDB,
 )
+_qfe_log("SI-2f.1 menace_sandbox.research_aggregator_bot imported")
+
+_qfe_log("SI-2f.2 importing menace_sandbox.model_automation_pipeline")
 from menace_sandbox.model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
+_qfe_log("SI-2f.2 menace_sandbox.model_automation_pipeline imported")
+
+_qfe_log("SI-2f.3 importing context_builder_util")
 from context_builder_util import create_context_builder
+_qfe_log("SI-2f.3 context_builder_util imported")
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from vector_service.context_builder import ContextBuilder
+_qfe_log("SI-2f.4 importing menace_sandbox.diagnostic_manager")
 from menace_sandbox.diagnostic_manager import DiagnosticManager
+_qfe_log("SI-2f.4 menace_sandbox.diagnostic_manager imported")
+
+_qfe_log("SI-2f.5 importing menace_sandbox.error_bot")
 from menace_sandbox.error_bot import ErrorBot, ErrorDB
+_qfe_log("SI-2f.5 menace_sandbox.error_bot imported")
+
+_qfe_log("SI-2f.6 importing menace_sandbox.data_bot")
 from menace_sandbox.data_bot import MetricsDB, DataBot
+_qfe_log("SI-2f.6 menace_sandbox.data_bot imported")
+
+_qfe_log("SI-2f.7 importing menace_sandbox.code_database")
 from menace_sandbox.code_database import PatchHistoryDB
+_qfe_log("SI-2f.7 menace_sandbox.code_database imported")
+
+_qfe_log("SI-2f.8 importing menace_sandbox.patch_score_backend")
 from menace_sandbox.patch_score_backend import PatchScoreBackend, backend_from_url
+_qfe_log("SI-2f.8 menace_sandbox.patch_score_backend imported")
+
+_qfe_log("SI-2f.9 importing menace_sandbox.capital_management_bot")
 from menace_sandbox.capital_management_bot import CapitalManagementBot
+_qfe_log("SI-2f.9 menace_sandbox.capital_management_bot imported")
+
+_qfe_log("SI-2f.10 importing menace_sandbox.learning_engine")
 from menace_sandbox.learning_engine import LearningEngine
+_qfe_log("SI-2f.10 menace_sandbox.learning_engine imported")
+
+_qfe_log("SI-2f.11 importing menace_sandbox.unified_event_bus")
 from menace_sandbox.unified_event_bus import UnifiedEventBus
+_qfe_log("SI-2f.11 menace_sandbox.unified_event_bus imported")
+
+_qfe_log("SI-2f.12 importing menace_sandbox.neuroplasticity")
 from menace_sandbox.neuroplasticity import PathwayRecord, Outcome
+_qfe_log("SI-2f.12 menace_sandbox.neuroplasticity imported")
+
+_qfe_log("SI-2f.13 importing menace_sandbox.self_coding_engine")
 from menace_sandbox.self_coding_engine import SelfCodingEngine
+_qfe_log("SI-2f.13 menace_sandbox.self_coding_engine imported")
+
+_qfe_log("SI-2f.14 importing self_improvement.target_region")
 from .target_region import TargetRegion
+_qfe_log("SI-2f.14 self_improvement.target_region imported")
+
+_qfe_log("SI-2f.15 importing menace_sandbox.action_planner")
 from menace_sandbox.action_planner import ActionPlanner
+_qfe_log("SI-2f.15 menace_sandbox.action_planner imported")
+
+_qfe_log("SI-2f.16 importing menace_sandbox.evolution_history_db")
 from menace_sandbox.evolution_history_db import EvolutionHistoryDB
+_qfe_log("SI-2f.16 menace_sandbox.evolution_history_db imported")
+
+_qfe_log("SI-2f.17 importing menace_sandbox.synergy_weight_cli")
 from menace_sandbox import synergy_weight_cli
+_qfe_log("SI-2f.17 menace_sandbox.synergy_weight_cli imported")
+
+_qfe_log("SI-2f.18 importing menace_sandbox.synergy_history_db")
 from menace_sandbox import synergy_history_db as shd
+_qfe_log("SI-2f.18 menace_sandbox.synergy_history_db imported")
 try:  # pragma: no cover - optional dependency
+    _qfe_log("SI-2f.19 importing menace_sandbox.adaptive_roi_predictor")
     from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+    _qfe_log("SI-2f.19 menace_sandbox.adaptive_roi_predictor imported")
     _HAS_ADAPTIVE_ROI_PREDICTOR = True
 except ImportError as exc:  # pragma: no cover - fallback for tests
     get_logger(__name__).warning(
@@ -935,16 +989,30 @@ except ImportError as exc:  # pragma: no cover - fallback for tests
         return []
 
     _HAS_ADAPTIVE_ROI_PREDICTOR = False
+_qfe_log("SI-2f.20 importing menace_sandbox.adaptive_roi_dataset")
 from menace_sandbox.adaptive_roi_dataset import build_dataset
+_qfe_log("SI-2f.20 menace_sandbox.adaptive_roi_dataset imported")
 try:  # pragma: no cover - optional dependency
+    _qfe_log("SI-2f.21 importing menace_sandbox.roi_tracker")
     from menace_sandbox.roi_tracker import ROITracker
+    _qfe_log("SI-2f.21 menace_sandbox.roi_tracker imported")
     _ROI_TRACKER_ERROR: ImportError | None = None
 except ImportError as exc:  # pragma: no cover - best effort fallback
     ROITracker = None  # type: ignore[assignment]
     _ROI_TRACKER_ERROR = exc
+_qfe_log("SI-2f.22 importing menace_sandbox.foresight_tracker")
 from menace_sandbox.foresight_tracker import ForesightTracker
+_qfe_log("SI-2f.22 menace_sandbox.foresight_tracker imported")
+
+_qfe_log("SI-2f.23 importing menace_sandbox.truth_adapter")
 from menace_sandbox.truth_adapter import TruthAdapter
+_qfe_log("SI-2f.23 menace_sandbox.truth_adapter imported")
+
+_qfe_log("SI-2f.24 importing menace_sandbox.evaluation_history_db")
 from menace_sandbox.evaluation_history_db import EvaluationHistoryDB
+_qfe_log("SI-2f.24 menace_sandbox.evaluation_history_db imported")
+
+_qfe_log("SI-2f.25 importing menace_sandbox.self_improvement_policy")
 from menace_sandbox.self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -953,11 +1021,27 @@ from menace_sandbox.self_improvement_policy import (
     ActorCriticStrategy,
     torch as sip_torch,
 )
+_qfe_log("SI-2f.25 menace_sandbox.self_improvement_policy imported")
+
+_qfe_log("SI-2f.26 importing menace_sandbox.pre_execution_roi_bot")
 from menace_sandbox.pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
+_qfe_log("SI-2f.26 menace_sandbox.pre_execution_roi_bot imported")
+
+_qfe_log("SI-2f.27 importing menace_sandbox.env_config")
 from menace_sandbox.env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
+_qfe_log("SI-2f.27 menace_sandbox.env_config imported")
+
+_qfe_log("SI-2f.28 importing self_improvement.dashboards")
 from .dashboards import SynergyDashboard, load_synergy_history
+_qfe_log("SI-2f.28 self_improvement.dashboards imported")
+
+_qfe_log("SI-2f.29 importing self_improvement.metrics")
 from . import metrics as _si_metrics
+_qfe_log("SI-2f.29 self_improvement.metrics imported")
+
+_qfe_log("SI-2f.30 importing self_improvement.baseline_tracker")
 from .baseline_tracker import BaselineTracker, TRACKER as GLOBAL_BASELINE_TRACKER
+_qfe_log("SI-2f.30 self_improvement.baseline_tracker imported")
 
 
 from .learners import (
@@ -1084,14 +1168,30 @@ class SelfImprovementEngine:
     ) -> None:
         _ensure_engine_heartbeat()
         try:
+            print(
+                "\U0001F4E6 SI-2f.local importing menace_sandbox.local_knowledge_module",
+                flush=True,
+            )
             from menace_sandbox.local_knowledge_module import (
                 LocalKnowledgeModule as _LocalKnowledgeModule,
                 init_local_knowledge as _init_local_knowledge,
             )
+            print(
+                "\u2705 SI-2f.local menace_sandbox.local_knowledge_module imported",
+                flush=True,
+            )
         except ImportError:  # pragma: no cover - support flat execution
+            print(
+                "\U0001F4E6 SI-2f.local importing local_knowledge_module (flat)",
+                flush=True,
+            )
             from local_knowledge_module import (  # type: ignore
                 LocalKnowledgeModule as _LocalKnowledgeModule,
                 init_local_knowledge as _init_local_knowledge,
+            )
+            print(
+                "\u2705 SI-2f.local local_knowledge_module imported (flat)",
+                flush=True,
             )
 
         if gpt_memory is None:
