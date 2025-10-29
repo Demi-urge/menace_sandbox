@@ -319,6 +319,26 @@ def test_ensure_autonomous_launch_import_error_coalesces_retry(monkeypatch):
     bootstrap._AUTONOMOUS_LAUNCH_RETRY = None
 
 
+def test_ensure_autonomous_launch_warns_when_thread_missing(monkeypatch, caplog):
+    import sandbox_runner.bootstrap as bootstrap
+
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_THREAD", None)
+    monkeypatch.setattr(bootstrap, "_AUTONOMOUS_LAUNCH_RETRY", None)
+    message = "self-improvement components unavailable; skipping startup"
+    monkeypatch.setattr(bootstrap, "_SELF_IMPROVEMENT_LAST_ERROR", message)
+
+    caplog.set_level("WARNING")
+
+    result = bootstrap.ensure_autonomous_launch()
+
+    assert result is False
+    assert any(
+        "skipping autonomous launch; no self-improvement thread active" in record.message
+        and message in record.message
+        for record in caplog.records
+    )
+
+
 def test_initialize_does_not_trigger_autonomous_launch(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     data = tmp_path / "data"

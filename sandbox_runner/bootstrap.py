@@ -68,6 +68,7 @@ from .cycle import ensure_vector_service
 
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
+_SELF_IMPROVEMENT_LAST_ERROR: str | None = None
 _INITIALISED = False
 _AUTONOMOUS_LAUNCH_RETRY: threading.Timer | None = None
 
@@ -560,7 +561,7 @@ def _initialize_autonomous_sandbox(
     """
 
     settings = settings or load_sandbox_settings()
-    global _INITIALISED, _SELF_IMPROVEMENT_THREAD
+    global _INITIALISED, _SELF_IMPROVEMENT_THREAD, _SELF_IMPROVEMENT_LAST_ERROR
     if _INITIALISED and start_services and start_self_improvement:
         return settings
 
@@ -738,12 +739,18 @@ def _initialize_autonomous_sandbox(
 
             print("🧱 SI-13: cycle thread healthy")
             _SELF_IMPROVEMENT_THREAD = thread
+            _SELF_IMPROVEMENT_LAST_ERROR = None
             print("🧱 SI-14: self-improvement startup complete")
         except ModuleNotFoundError as exc:  # pragma: no cover - optional feature missing
+            _SELF_IMPROVEMENT_LAST_ERROR = (
+                "self-improvement components unavailable; skipping startup"
+                f" ({exc})"
+            )
             logger.warning(
                 "self-improvement components unavailable; skipping startup", exc_info=exc
             )
         except Exception as exc:  # pragma: no cover - best effort
+            _SELF_IMPROVEMENT_LAST_ERROR = f"self-improvement startup failed: {exc}"
             logger.error("self-improvement startup failed", exc_info=True)
             raise RuntimeError("self-improvement startup failed") from exc
 
@@ -852,13 +859,18 @@ def ensure_autonomous_launch(
     """
 
     global _SELF_IMPROVEMENT_THREAD, _AUTONOMOUS_LAUNCH_RETRY
+    global _SELF_IMPROVEMENT_LAST_ERROR
 
     target_thread = thread if thread is not None else _SELF_IMPROVEMENT_THREAD
     if thread is not None:
         _SELF_IMPROVEMENT_THREAD = thread
 
     if target_thread is None:
-        logger.debug("skipping autonomous launch; no self-improvement thread active")
+        warning = "skipping autonomous launch; no self-improvement thread active"
+        if _SELF_IMPROVEMENT_LAST_ERROR:
+            warning = f"{warning} ({_SELF_IMPROVEMENT_LAST_ERROR})"
+        logger.warning(warning)
+        print(f"⚠️ {warning}")
         return False
 
     inner = getattr(target_thread, "_thread", target_thread)
