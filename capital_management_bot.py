@@ -46,14 +46,10 @@ try:  # pragma: no cover - optional dependency during bootstrap
 except Exception:  # pragma: no cover - support flat execution
     from shared.self_coding_import_guard import self_coding_import_depth  # type: ignore
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(
-    CodeDB(),
-    GPTMemoryManager(),
-    context_builder=_context_builder,
-)
+_registry_instance: BotRegistry | None = None
+_data_bot_instance: DataBot | None = None
+_context_builder_instance: object | None = None
+_engine_instance: SelfCodingEngine | None = None
 
 # ``manager`` is injected later during module import once optional dependencies
 # have been resolved.  Define it up-front so decorators referencing the symbol
@@ -94,6 +90,46 @@ def _get_router(router: DBRouter | None = None) -> DBRouter:
     """Return an initialised :class:`DBRouter` instance."""
 
     return router or GLOBAL_ROUTER or init_db_router("capital")
+
+
+def _get_registry() -> BotRegistry:
+    """Return a cached :class:`BotRegistry` instance."""
+
+    global _registry_instance
+    if _registry_instance is None:
+        _registry_instance = BotRegistry()
+    return _registry_instance
+
+
+def _get_data_bot() -> DataBot:
+    """Return a cached :class:`DataBot` instance."""
+
+    global _data_bot_instance
+    if _data_bot_instance is None:
+        _data_bot_instance = DataBot(start_server=False)
+    return _data_bot_instance
+
+
+def _get_context_builder() -> object:
+    """Return the shared context builder instance."""
+
+    global _context_builder_instance
+    if _context_builder_instance is None:
+        _context_builder_instance = create_context_builder()
+    return _context_builder_instance
+
+
+def _get_engine() -> SelfCodingEngine:
+    """Return a cached :class:`SelfCodingEngine` instance."""
+
+    global _engine_instance
+    if _engine_instance is None:
+        _engine_instance = SelfCodingEngine(
+            CodeDB(),
+            GPTMemoryManager(),
+            context_builder=_get_context_builder(),
+        )
+    return _engine_instance
 
 
 # ---------------------------------------------------------------------------
@@ -1086,8 +1122,7 @@ class StrategyTier(str, Enum):
     AGGRESSIVE = "aggressive"
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
-class CapitalManagementBot:
+class _CapitalManagementBot:
     """Manage capital and decide reinvestment based on energy score."""
 
     prediction_profile = {"scope": ["energy"], "risk": ["medium"]}
@@ -1839,7 +1874,7 @@ def _load_pipeline_instance() -> "ModelAutomationPipeline | None":
         )
         return None
     try:
-        _pipeline_instance = pipeline_cls(context_builder=_context_builder)
+        _pipeline_instance = pipeline_cls(context_builder=_get_context_builder())
     except Exception as exc:  # pragma: no cover - degraded bootstrap
         logger.warning(
             "ModelAutomationPipeline initialisation failed for CapitalManagementBot: %s",
@@ -1855,11 +1890,9 @@ def _load_evolution_orchestrator() -> "EvolutionOrchestrator | None":
     global evolution_orchestrator
     if evolution_orchestrator is not None:
         return evolution_orchestrator
-    if engine is None:
-        return None
     try:  # pragma: no cover - orchestrator optional
         evolution_orchestrator = get_orchestrator(
-            "CapitalManagementBot", data_bot, engine
+            "CapitalManagementBot", _get_data_bot(), _get_engine()
         )
     except Exception as exc:
         logger.warning(
@@ -1919,13 +1952,15 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                 _schedule_manager_retry()
             return
         orchestrator = _load_evolution_orchestrator()
+        registry_obj = _get_registry()
+        data_bot_obj = _get_data_bot()
         try:
             manager_local = internalize_coding_bot(
                 "CapitalManagementBot",
-                engine,
+                _get_engine(),
                 pipeline,
-                data_bot=data_bot,
-                bot_registry=registry,
+                data_bot=data_bot_obj,
+                bot_registry=registry_obj,
                 evolution_orchestrator=orchestrator,
                 threshold_service=ThresholdService(),
                 roi_threshold=thresholds.roi_drop,
@@ -1952,7 +1987,8 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                 _manager_retry_timer = None
         _manager_retry_count = 0
         try:
-            setattr(CapitalManagementBot, "manager", manager_local)
+            capital_cls = _get_capital_management_bot_class()
+            setattr(capital_cls, "manager", manager_local)
         except Exception:  # pragma: no cover - defensive
             logger.debug(
                 "unable to bind self-coding manager to CapitalManagementBot", exc_info=True
@@ -1963,7 +1999,7 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                 module_path = Path(__file__).resolve()
             except Exception:  # pragma: no cover - filesystem edge cases
                 module_path = __file__
-            registry.register_bot(
+            registry_obj.register_bot(
                 "CapitalManagementBot",
                 roi_threshold=getattr(thresholds, "roi_drop", None),
                 error_threshold=getattr(thresholds, "error_increase", None),
@@ -1971,7 +2007,7 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                     thresholds, "test_failure_increase", None
                 ),
                 manager=manager_local,
-                data_bot=data_bot,
+                data_bot=data_bot_obj,
                 module_path=module_path,
                 is_coding_bot=True,
             )
@@ -2025,7 +2061,7 @@ def _resolve_decorator_manager() -> object | None:
     if manager is not None:
         return manager
     try:
-        existing = registry.graph.nodes.get("CapitalManagementBot", {})
+        existing = _get_registry().graph.nodes.get("CapitalManagementBot", {})
         helper = existing.get("selfcoding_manager") or existing.get("manager")
         if helper is not None:
             return helper
@@ -2033,7 +2069,9 @@ def _resolve_decorator_manager() -> object | None:
         logger.debug("CapitalManagementBot manager lookup failed", exc_info=True)
 
     try:
-        disabled = _DisabledSelfCodingManager(bot_registry=registry, data_bot=data_bot)
+        disabled = _DisabledSelfCodingManager(
+            bot_registry=_get_registry(), data_bot=_get_data_bot()
+        )
     except Exception:  # pragma: no cover - defensive
         logger.debug(
             "CapitalManagementBot fallback manager initialisation failed",
@@ -2050,12 +2088,37 @@ def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
     return manager
 
 
-_decorator_manager = _resolve_decorator_manager()
-CapitalManagementBot = self_coding_managed(
-    bot_registry=registry,
-    data_bot=data_bot,
-    manager=_decorator_manager,
-)(CapitalManagementBot)
+_capital_bot_class: type[_CapitalManagementBot] | None = None
+
+
+def _get_capital_management_bot_class() -> type[_CapitalManagementBot]:
+    """Return the decorated :class:`CapitalManagementBot` implementation."""
+
+    global _capital_bot_class
+    if _capital_bot_class is None:
+        decorator_manager = _resolve_decorator_manager()
+        _capital_bot_class = self_coding_managed(
+            bot_registry=_get_registry(),
+            data_bot=_get_data_bot(),
+            manager=decorator_manager,
+        )(_CapitalManagementBot)
+    return _capital_bot_class
+
+
+def __getattr__(name: str) -> object:
+    if name == "CapitalManagementBot":
+        cls = _get_capital_management_bot_class()
+        globals()[name] = cls
+        return cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:  # pragma: no cover - trivial
+    return sorted(set(globals()) | {"CapitalManagementBot"})
+
+
+if TYPE_CHECKING:
+    CapitalManagementBot = _CapitalManagementBot
 
 
 _schedule_manager_retry()
