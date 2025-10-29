@@ -5,7 +5,7 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import _DisabledSelfCodingManager, self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
@@ -2004,6 +2004,45 @@ def _schedule_manager_retry(delay: float | None = None) -> None:
     timer.start()
 
 
+class _TruthyManagerProxy:
+    """Wrapper that keeps fallback managers truthy for registry checks."""
+
+    __slots__ = ("_manager",)
+
+    def __init__(self, manager_obj: object) -> None:
+        self._manager = manager_obj
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._manager, name)
+
+    def __bool__(self) -> bool:  # pragma: no cover - trivial
+        return True
+
+
+def _resolve_decorator_manager() -> object | None:
+    """Return a manager placeholder so registration avoids retry loops."""
+
+    if manager is not None:
+        return manager
+    try:
+        existing = registry.graph.nodes.get("CapitalManagementBot", {})
+        helper = existing.get("selfcoding_manager") or existing.get("manager")
+        if helper is not None:
+            return helper
+    except Exception:  # pragma: no cover - best effort lookup
+        logger.debug("CapitalManagementBot manager lookup failed", exc_info=True)
+
+    try:
+        disabled = _DisabledSelfCodingManager(bot_registry=registry, data_bot=data_bot)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug(
+            "CapitalManagementBot fallback manager initialisation failed",
+            exc_info=True,
+        )
+        return None
+    return _TruthyManagerProxy(disabled)
+
+
 def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
     """Public entry point to trigger self-coding bootstrap."""
 
@@ -2011,10 +2050,11 @@ def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
     return manager
 
 
+_decorator_manager = _resolve_decorator_manager()
 CapitalManagementBot = self_coding_managed(
     bot_registry=registry,
     data_bot=data_bot,
-    manager=manager,
+    manager=_decorator_manager,
 )(CapitalManagementBot)
 
 
