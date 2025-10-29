@@ -296,95 +296,178 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - best effort
         get_io_signature = None  # type: ignore[misc]
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+_RUNTIME_CACHE: dict[str, Any] | None = None
 
-try:
-    _context_builder = create_context_builder()
-except Exception as exc:  # pragma: no cover - degraded bootstrap
-    logger.warning(
-        "Context builder unavailable for WorkflowEvolutionBot: %s",
-        exc,
-    )
-    _context_builder = None
 
-if _context_builder is not None:
+def _ensure_runtime_dependencies() -> dict[str, Any]:
+    """Instantiate expensive runtime dependencies on demand."""
+
+    global _RUNTIME_CACHE
+    if _RUNTIME_CACHE is not None:
+        return _RUNTIME_CACHE
+
+    runtime: dict[str, Any] = {}
+
     try:
-        engine = SelfCodingEngine(
-            CodeDB(),
-            GPTMemoryManager(),
-            context_builder=_context_builder,
-        )
+        registry_local = BotRegistry()
+    except Exception as exc:  # pragma: no cover - defensive bootstrap
+        logger.warning("BotRegistry unavailable for WorkflowEvolutionBot: %s", exc)
+
+        class _FallbackBotRegistry:
+            modules: dict[str, str] = {}
+            graph = type("_Graph", (), {"nodes": {}})()
+
+            def register_bot(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            def update_bot(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            def hot_swap_active(self) -> bool:
+                return False
+
+        registry_local = _FallbackBotRegistry()  # type: ignore[assignment]
+
+    runtime["registry"] = registry_local
+
+    try:
+        data_bot_local = DataBot(start_server=False)
+    except Exception as exc:  # pragma: no cover - defensive bootstrap
+        logger.warning("DataBot unavailable for WorkflowEvolutionBot: %s", exc)
+
+        class _FallbackDataBot:
+            def reload_thresholds(self, *_args: Any, **_kwargs: Any) -> Any:
+                return None
+
+        data_bot_local = _FallbackDataBot()  # type: ignore[assignment]
+
+    runtime["data_bot"] = data_bot_local
+
+    try:
+        context_builder = create_context_builder()
     except Exception as exc:  # pragma: no cover - degraded bootstrap
         logger.warning(
-            "SelfCodingEngine unavailable; WorkflowEvolutionBot will run without self-coding manager: %s",
+            "Context builder unavailable for WorkflowEvolutionBot: %s",
             exc,
         )
+        context_builder = None
+
+    runtime["context_builder"] = context_builder
+
+    if context_builder is not None:
+        try:
+            engine = SelfCodingEngine(
+                CodeDB(),
+                GPTMemoryManager(),
+                context_builder=context_builder,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "SelfCodingEngine unavailable; WorkflowEvolutionBot will run without self-coding manager: %s",
+                exc,
+            )
+            engine = None  # type: ignore[assignment]
+    else:
         engine = None  # type: ignore[assignment]
-else:
-    engine = None  # type: ignore[assignment]
 
-if _context_builder is not None and engine is not None:
-    pipeline = _create_model_automation_pipeline(context_builder=_context_builder)
-    if pipeline is None:
-        logger.warning(
-            "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
-        )
-else:
-    pipeline = None
+    runtime["engine"] = engine
 
-try:
-    evolution_orchestrator = (
-        get_orchestrator("WorkflowEvolutionBot", data_bot, engine)
-        if engine is not None
-        else None
-    )
-except Exception as exc:  # pragma: no cover - orchestrator optional
-    logger.warning(
-        "EvolutionOrchestrator unavailable for WorkflowEvolutionBot: %s",
-        exc,
-    )
-    evolution_orchestrator = None
+    if context_builder is not None and engine is not None:
+        pipeline = _create_model_automation_pipeline(context_builder=context_builder)
+        if pipeline is None:
+            logger.warning(
+                "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
+            )
+    else:
+        pipeline = None
 
-try:
-    _th = get_thresholds("WorkflowEvolutionBot")
-except Exception as exc:  # pragma: no cover - thresholds optional
-    logger.warning("Threshold lookup failed for WorkflowEvolutionBot: %s", exc)
-    _th = None
+    runtime["pipeline"] = pipeline
 
-if _th is not None:
     try:
-        persist_sc_thresholds(
-            "WorkflowEvolutionBot",
-            roi_drop=_th.roi_drop,
-            error_increase=_th.error_increase,
-            test_failure_increase=_th.test_failure_increase,
+        evolution_orchestrator = (
+            get_orchestrator("WorkflowEvolutionBot", data_bot_local, engine)
+            if engine is not None
+            else None
         )
-    except Exception as exc:  # pragma: no cover - best effort persistence
-        logger.warning("failed to persist WorkflowEvolutionBot thresholds: %s", exc)
-
-if engine is not None and pipeline is not None and _th is not None:
-    try:
-        manager = internalize_coding_bot(
-            "WorkflowEvolutionBot",
-            engine,
-            pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            evolution_orchestrator=evolution_orchestrator,
-            threshold_service=ThresholdService(),
-            roi_threshold=_th.roi_drop,
-            error_threshold=_th.error_increase,
-            test_failure_threshold=_th.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - degraded bootstrap
+    except Exception as exc:  # pragma: no cover - orchestrator optional
         logger.warning(
-            "failed to initialise self-coding manager for WorkflowEvolutionBot: %s",
+            "EvolutionOrchestrator unavailable for WorkflowEvolutionBot: %s",
             exc,
         )
-        manager = None
-else:
-    manager = None
+        evolution_orchestrator = None
+
+    runtime["evolution_orchestrator"] = evolution_orchestrator
+
+    try:
+        thresholds = get_thresholds("WorkflowEvolutionBot")
+    except Exception as exc:  # pragma: no cover - thresholds optional
+        logger.warning("Threshold lookup failed for WorkflowEvolutionBot: %s", exc)
+        thresholds = None
+
+    runtime["thresholds"] = thresholds
+
+    if thresholds is not None:
+        try:
+            persist_sc_thresholds(
+                "WorkflowEvolutionBot",
+                roi_drop=thresholds.roi_drop,
+                error_increase=thresholds.error_increase,
+                test_failure_increase=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - best effort persistence
+            logger.warning("failed to persist WorkflowEvolutionBot thresholds: %s", exc)
+
+    if engine is not None and pipeline is not None and thresholds is not None:
+        try:
+            manager_local = internalize_coding_bot(
+                "WorkflowEvolutionBot",
+                engine,
+                pipeline,
+                data_bot=data_bot_local,
+                bot_registry=registry_local,
+                evolution_orchestrator=evolution_orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "failed to initialise self-coding manager for WorkflowEvolutionBot: %s",
+                exc,
+            )
+            manager_local = None
+    else:
+        manager_local = None
+
+    runtime["manager"] = manager_local
+
+    _RUNTIME_CACHE = runtime
+    return runtime
+
+
+def _ensure_self_coding_bootstrap(cls: type) -> None:
+    """Apply ``self_coding_managed`` lazily when runtime is needed."""
+
+    if getattr(cls, "_self_coding_bootstrapped", False):
+        return
+    runtime = _ensure_runtime_dependencies()
+    manager = runtime.get("manager")
+    decorated = self_coding_managed(
+        bot_registry=runtime["registry"],
+        data_bot=runtime["data_bot"],
+        manager=manager,
+    )(cls)
+    # ``self_coding_managed`` decorates the class in place, but return value is
+    # used defensively to make intent explicit.
+    assert decorated is cls
+    cls._self_coding_bootstrapped = True
+
+
+class _LazySelfCodingMeta(type):
+    def __call__(cls, *args: Any, **kwargs: Any):  # type: ignore[override]
+        _ensure_self_coding_bootstrap(cls)
+        return super().__call__(*args, **kwargs)
 
 
 @dataclass
@@ -393,8 +476,7 @@ class WorkflowSuggestion:
     expected_roi: float
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
-class WorkflowEvolutionBot:
+class WorkflowEvolutionBot(metaclass=_LazySelfCodingMeta):
     """Suggest workflow improvements from PathwayDB statistics."""
 
     def __init__(
@@ -404,10 +486,24 @@ class WorkflowEvolutionBot:
         intent_clusterer: IntentClusterer | None = None,
         manager: SelfCodingManager | None = None,
     ) -> None:
+        runtime: dict[str, Any] | None = None
+        try:
+            runtime = _ensure_runtime_dependencies()
+        except Exception as exc:  # pragma: no cover - defensive bootstrap
+            logger.debug(
+                "WorkflowEvolutionBot runtime dependencies unavailable during init: %s",
+                exc,
+                exc_info=True,
+            )
+
         self.db = pathway_db or PathwayDB()
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = data_bot
+        self.data_bot = runtime.get("data_bot") if runtime is not None else None
+        if manager is None and runtime is not None:
+            manager = runtime.get("manager")
+        if manager is not None:
+            self.manager = manager
         # Track mutation events for rearranged sequences so benchmarking
         # results can be fed back once available.
         self._rearranged_events: Dict[str, int] = {}
