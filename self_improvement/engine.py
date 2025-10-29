@@ -726,10 +726,15 @@ try:  # canonical tag constants
 except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
     _qfe_log("log_tags imported (flat layout fallback)")
+_qfe_log("📦 SI-2f.memlog importing menace_sandbox.memory_logging")
 try:  # helper for standardised GPT memory logging
     from menace_sandbox.memory_logging import log_with_tags, ensure_tags
+    _qfe_log("✅ SI-2f.memlog menace_sandbox.memory_logging imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.memlog importing memory_logging (flat)")
     from memory_logging import log_with_tags, ensure_tags  # type: ignore
+    _qfe_log("✅ SI-2f.memlog memory_logging imported (flat)")
+_qfe_log("📦 SI-2f.feedback importing menace_sandbox.knowledge_retriever")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.knowledge_retriever import (
         get_feedback,
@@ -738,7 +743,9 @@ try:  # pragma: no cover - allow flat imports
         recent_improvement_path,
         recent_error_fix,
     )
+    _qfe_log("✅ SI-2f.feedback menace_sandbox.knowledge_retriever imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.feedback importing knowledge_retriever (flat)")
     from knowledge_retriever import (  # type: ignore
         get_feedback,
         get_error_fixes,
@@ -746,109 +753,195 @@ except ImportError:  # pragma: no cover - fallback for flat layout
         recent_improvement_path,
         recent_error_fix,
     )
+    _qfe_log("✅ SI-2f.feedback knowledge_retriever imported (flat)")
+_qfe_log("📦 SI-2f.radar importing menace_sandbox.relevancy_radar")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.relevancy_radar import RelevancyRadar, scan as radar_scan, radar
+    _qfe_log("✅ SI-2f.radar menace_sandbox.relevancy_radar imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.radar importing relevancy_radar (flat)")
     from relevancy_radar import RelevancyRadar, scan as radar_scan, radar  # type: ignore
+    _qfe_log("✅ SI-2f.radar relevancy_radar imported (flat)")
+_qfe_log("📦 SI-2f.retire importing menace_sandbox.module_retirement_service")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.module_retirement_service import ModuleRetirementService
+    _qfe_log("✅ SI-2f.retire menace_sandbox.module_retirement_service imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.retire importing module_retirement_service (flat)")
     try:
         from module_retirement_service import ModuleRetirementService  # type: ignore
+        _qfe_log("✅ SI-2f.retire module_retirement_service imported (flat)")
     except ImportError:  # pragma: no cover - last resort
+        _qfe_log("⚠️ SI-2f.retire module_retirement_service unavailable")
         ModuleRetirementService = object  # type: ignore
+_qfe_log("📦 SI-2f.relevancy importing menace_sandbox.relevancy_metrics_db")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.relevancy_metrics_db import RelevancyMetricsDB
+    _qfe_log("✅ SI-2f.relevancy menace_sandbox.relevancy_metrics_db imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.relevancy importing relevancy_metrics_db (flat)")
     from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
+    _qfe_log("✅ SI-2f.relevancy relevancy_metrics_db imported (flat)")
+_qfe_log("📦 SI-2f.intent importing menace_sandbox.intent_clusterer")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.intent_clusterer import IntentClusterer
+    _qfe_log("✅ SI-2f.intent menace_sandbox.intent_clusterer imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.intent importing intent_clusterer (flat)")
     from intent_clusterer import IntentClusterer  # type: ignore
+    _qfe_log("✅ SI-2f.intent intent_clusterer imported (flat)")
+_qfe_log("📦 SI-2f.universal importing menace_sandbox.universal_retriever")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.universal_retriever import UniversalRetriever
+    _qfe_log("✅ SI-2f.universal menace_sandbox.universal_retriever imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.universal importing universal_retriever (flat)")
     from universal_retriever import UniversalRetriever  # type: ignore
+    _qfe_log("✅ SI-2f.universal universal_retriever imported (flat)")
+_qfe_log("📦 SI-2f.chain importing menace_sandbox.workflow_chain_suggester")
 try:  # pragma: no cover - optional planner integration
     from menace_sandbox.workflow_chain_suggester import WorkflowChainSuggester
+    _qfe_log("✅ SI-2f.chain menace_sandbox.workflow_chain_suggester imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.chain importing workflow_chain_suggester (flat)")
     try:
         from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
+        _qfe_log("✅ SI-2f.chain workflow_chain_suggester imported (flat)")
     except ImportError:  # pragma: no cover - best effort
+        _qfe_log("⚠️ SI-2f.chain workflow_chain_suggester unavailable")
         WorkflowChainSuggester = None  # type: ignore
+_qfe_log("📦 SI-2f.meta importing menace_sandbox.meta_workflow_planner")
 try:  # pragma: no cover - optional planner integration
     from menace_sandbox.meta_workflow_planner import MetaWorkflowPlanner
+    _qfe_log("✅ SI-2f.meta menace_sandbox.meta_workflow_planner imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.meta importing meta_workflow_planner (flat)")
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
+        _qfe_log("✅ SI-2f.meta meta_workflow_planner imported (flat)")
     except ImportError:  # pragma: no cover - best effort
+        _qfe_log("⚠️ SI-2f.meta meta_workflow_planner unavailable")
         MetaWorkflowPlanner = None  # type: ignore
+_qfe_log("📦 SI-2f.synth importing menace_sandbox.workflow_synthesizer")
 try:  # pragma: no cover - optional consumer
     from menace_sandbox.workflow_synthesizer import consume_planner_suggestions
+    _qfe_log("✅ SI-2f.synth menace_sandbox.workflow_synthesizer imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.synth importing workflow_synthesizer (flat)")
     try:
         from workflow_synthesizer import consume_planner_suggestions  # type: ignore
+        _qfe_log("✅ SI-2f.synth workflow_synthesizer imported (flat)")
     except ImportError:  # pragma: no cover - best effort
+        _qfe_log("⚠️ SI-2f.synth workflow_synthesizer unavailable")
         consume_planner_suggestions = None  # type: ignore
+_qfe_log("📦 SI-2f.orphan importing sandbox_runner.orphan_discovery")
 try:  # pragma: no cover - optional dependency
     from sandbox_runner.orphan_discovery import (
         append_orphan_classifications,
         append_orphan_cache,
         append_orphan_traces,
     )
+    _qfe_log("✅ SI-2f.orphan sandbox_runner.orphan_discovery imported")
 except ImportError:  # pragma: no cover - best effort fallback
+    _qfe_log("⚠️ SI-2f.orphan sandbox_runner.orphan_discovery unavailable")
     append_orphan_classifications = append_orphan_cache = append_orphan_traces = None  # type: ignore
+_qfe_log("📦 SI-2f.alignment importing menace_sandbox.human_alignment_flagger")
 from menace_sandbox.human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
     flag_alignment_issues,
     _collect_diff_data,
 )
+_qfe_log("✅ SI-2f.alignment menace_sandbox.human_alignment_flagger imported")
+_qfe_log("📦 SI-2f.alignment importing menace_sandbox.human_alignment_agent")
 from menace_sandbox.human_alignment_agent import HumanAlignmentAgent
+_qfe_log("✅ SI-2f.alignment menace_sandbox.human_alignment_agent imported")
+_qfe_log("📦 SI-2f.audit importing menace_sandbox.audit_logger")
 from menace_sandbox.audit_logger import log_event as audit_log_event, get_recent_events
+_qfe_log("✅ SI-2f.audit menace_sandbox.audit_logger imported")
+_qfe_log("📦 SI-2f.violation importing menace_sandbox.violation_logger")
 from menace_sandbox.violation_logger import log_violation
+_qfe_log("✅ SI-2f.violation menace_sandbox.violation_logger imported")
+_qfe_log("📦 SI-2f.review importing menace_sandbox.alignment_review_agent")
 from menace_sandbox.alignment_review_agent import AlignmentReviewAgent
+_qfe_log("✅ SI-2f.review menace_sandbox.alignment_review_agent imported")
+_qfe_log("📦 SI-2f.governance importing menace_sandbox.governance")
 from menace_sandbox.governance import check_veto, load_rules
+_qfe_log("✅ SI-2f.governance menace_sandbox.governance imported")
+_qfe_log("📦 SI-2f.dashboard importing menace_sandbox.evaluation_dashboard")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.evaluation_dashboard import append_governance_result
+    _qfe_log("✅ SI-2f.dashboard menace_sandbox.evaluation_dashboard imported")
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
+    _qfe_log("📦 SI-2f.dashboard importing evaluation_dashboard (flat)")
     try:
         from evaluation_dashboard import append_governance_result  # type: ignore
+        _qfe_log("✅ SI-2f.dashboard evaluation_dashboard imported (flat)")
     except ImportError:  # pragma: no cover - best effort fallback
+        _qfe_log("⚠️ SI-2f.dashboard evaluation_dashboard unavailable")
         append_governance_result = lambda *a, **k: None  # type: ignore
+_qfe_log("📦 SI-2f.deploy importing menace_sandbox.deployment_governance")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.deployment_governance import evaluate as deployment_evaluate
+    _qfe_log("✅ SI-2f.deploy menace_sandbox.deployment_governance imported")
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
+    _qfe_log("📦 SI-2f.deploy importing deployment_governance (flat)")
     try:
         from deployment_governance import evaluate as deployment_evaluate  # type: ignore
+        _qfe_log("✅ SI-2f.deploy deployment_governance imported (flat)")
     except ImportError:  # pragma: no cover - best effort fallback
+        _qfe_log("⚠️ SI-2f.deploy deployment_governance unavailable")
         def deployment_evaluate(*_: object, **__: object) -> dict[str, object] | None:
             """Fallback deployment evaluation used when governance tools are missing."""
             return None
+_qfe_log("📦 SI-2f.border importing menace_sandbox.borderline_bucket")
 try:
     from menace_sandbox.borderline_bucket import BorderlineBucket
+    _qfe_log("✅ SI-2f.border menace_sandbox.borderline_bucket imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.border importing borderline_bucket (flat)")
     from borderline_bucket import BorderlineBucket  # type: ignore
+    _qfe_log("✅ SI-2f.border borderline_bucket imported (flat)")
+_qfe_log("📦 SI-2f.foresight importing menace_sandbox.foresight_gate")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.foresight_gate import ForesightDecision, is_foresight_safe_to_promote
+    _qfe_log("✅ SI-2f.foresight menace_sandbox.foresight_gate imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.foresight importing foresight_gate (flat)")
     from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
+    _qfe_log("✅ SI-2f.foresight foresight_gate imported (flat)")
+_qfe_log("📦 SI-2f.upgrade importing menace_sandbox.upgrade_forecaster")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.upgrade_forecaster import UpgradeForecaster
+    _qfe_log("✅ SI-2f.upgrade menace_sandbox.upgrade_forecaster imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.upgrade importing upgrade_forecaster (flat)")
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
+    _qfe_log("✅ SI-2f.upgrade upgrade_forecaster imported (flat)")
+_qfe_log("📦 SI-2f.graph importing menace_sandbox.workflow_graph")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.workflow_graph import WorkflowGraph
+    _qfe_log("✅ SI-2f.graph menace_sandbox.workflow_graph imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.graph importing workflow_graph (flat)")
     from workflow_graph import WorkflowGraph  # type: ignore
+    _qfe_log("✅ SI-2f.graph workflow_graph imported (flat)")
+_qfe_log("📦 SI-2f.forecast importing menace_sandbox.forecast_logger")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.forecast_logger import ForecastLogger, log_forecast_record
+    _qfe_log("✅ SI-2f.forecast menace_sandbox.forecast_logger imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.forecast importing forecast_logger (flat)")
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
+    _qfe_log("✅ SI-2f.forecast forecast_logger imported (flat)")
+_qfe_log("📦 SI-2f.workflow importing menace_sandbox.workflow_evolution_manager")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.workflow_evolution_manager import WorkflowEvolutionManager
+    _qfe_log("✅ SI-2f.workflow menace_sandbox.workflow_evolution_manager imported")
 except ImportError:  # pragma: no cover - fallback for flat layout
+    _qfe_log("📦 SI-2f.workflow importing workflow_evolution_manager (flat)")
     from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
+    _qfe_log("✅ SI-2f.workflow workflow_evolution_manager imported (flat)")
 
 logger = get_logger(__name__)
 
