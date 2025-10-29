@@ -3,10 +3,11 @@ from __future__ import annotations
 """Utilities for visualising evaluation results."""
 
 import json
+import logging
 import queue
 import threading
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 import types
 from .relevancy_radar import flagged_modules
 
@@ -47,11 +48,92 @@ except Exception:  # pragma: no cover - optional
 
     pd = types.SimpleNamespace(DataFrame=_SimpleDataFrame)
 
-from .evaluation_manager import EvaluationManager
-from .roi_tracker import ROITracker
-from .telemetry_backend import TelemetryBackend
+logger = logging.getLogger(__name__)
+
+
+class _FallbackEvaluationManager:
+    """Minimal replacement used when :mod:`evaluation_manager` is unavailable."""
+
+    history: Dict[str, List[Dict[str, Any]]]
+
+    def __init__(self) -> None:
+        self.history = {}
+
+    def record(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
+        """Compatibility shim matching the real API."""
+
+
+class _FallbackROITracker:
+    """Lightweight ROI tracker stub used when the real implementation is missing."""
+
+    def __init__(self) -> None:
+        self.predicted_roi: List[float] = []
+        self.actual_roi: List[float] = []
+        self.horizon_mae_history: List[Dict[str, Any]] = []
+        self.drift_flags: List[Any] = []
+        self.metrics_history: Dict[str, List[Any]] = {}
+        self.workflow_predicted_roi: List[Any] = []
+        self.needs_review: set[Any] = set()
+        self.drift_metrics: Dict[str, Any] = {}
+
+    def load_history(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
+        """Compatibility shim matching the real API."""
+
+    def prediction_summary(self, window: int | None = None) -> Dict[str, Dict[str, Any]]:
+        """Return empty structures compatible with the real tracker."""
+
+        return {
+            "workflow_confidence": {},
+            "workflow_mae": {},
+            "workflow_variance": {},
+        }
+
+    def classification_accuracy(self, window: int | None = None) -> float:
+        """Return neutral accuracy for compatibility with the real tracker."""
+
+        return 0.0
+
+
+class _FallbackTelemetryBackend:
+    """Telemetry stub returning empty history when backend is missing."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
+        pass
+
+    def fetch_history(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return []
+
+
+def _import_or_fallback(name: str, module: str, attr: str, fallback: Any) -> Any:
+    """Return attribute ``attr`` from ``module`` or ``fallback`` when import fails."""
+
+    try:
+        pkg = __package__ or "menace_sandbox"
+        mod = __import__(f"{pkg}.{module}", fromlist=[attr])
+        return getattr(mod, attr)
+    except Exception as exc:  # pragma: no cover - exercised via tests
+        logger.warning(
+            "evaluation_dashboard: failed to import %s (%s); using fallback stub",
+            name,
+            exc,
+        )
+        return fallback
+
+
+EvaluationManager = _import_or_fallback(
+    "EvaluationManager", "evaluation_manager", "EvaluationManager", _FallbackEvaluationManager
+)
+ROITracker = _import_or_fallback("ROITracker", "roi_tracker", "ROITracker", _FallbackROITracker)
+TelemetryBackend = _import_or_fallback(
+    "TelemetryBackend", "telemetry_backend", "TelemetryBackend", _FallbackTelemetryBackend
+)
 from .violation_logger import load_persisted_alignment_warnings
 from .scope_utils import Scope
+
+if TYPE_CHECKING:  # pragma: no cover - import only for type checking
+    from .evaluation_manager import EvaluationManager as _EvaluationManagerType
+    from .roi_tracker import ROITracker as _ROITrackerType
+    from .telemetry_backend import TelemetryBackend as _TelemetryBackendType
 
 GOVERNANCE_LOG = resolve_path("sandbox_data") / "governance_outcomes.jsonl"
 

@@ -1,4 +1,5 @@
 import sys
+import importlib
 import types
 import json
 import pytest
@@ -291,4 +292,36 @@ def test_relevancy_radar_panel_includes_impact_and_flag(tmp_path, monkeypatch):
     panel = dash.relevancy_radar_panel()
     assert panel and panel[0]["impact"] == pytest.approx(2.5)
     assert panel[0]["flag"] == "retire"
+
+
+def test_dashboard_uses_fallbacks_when_dependencies_missing(monkeypatch, caplog, tmp_path):
+    target = "menace_sandbox.evaluation_dashboard"
+    for dependency in ("evaluation_manager", "roi_tracker", "telemetry_backend"):
+        sentinel = types.ModuleType(f"menace_sandbox.{dependency}")
+        monkeypatch.setitem(sys.modules, f"menace_sandbox.{dependency}", sentinel)
+
+    sys.modules.pop(target, None)
+
+    caplog.set_level("WARNING", logger=target)
+    module = importlib.import_module(target)
+
+    assert "using fallback stub" in caplog.text
+
+    manager = module.EvaluationManager()
+    assert manager.history == {}
+
+    tracker = module.ROITracker()
+    assert tracker.prediction_summary() == {
+        "workflow_confidence": {},
+        "workflow_mae": {},
+        "workflow_variance": {},
+    }
+
+    telemetry = module.TelemetryBackend("ignored.db")
+    assert telemetry.fetch_history() == []
+
+    output_path = tmp_path / "dash.json"
+    result = module.refresh_dashboard(output=output_path, telemetry_db="ignored.db")
+    assert result == output_path
+    assert output_path.exists()
 
