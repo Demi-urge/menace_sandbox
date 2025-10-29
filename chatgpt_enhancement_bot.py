@@ -24,8 +24,42 @@ from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+
+_registry_cache: BotRegistry | None = None
+_data_bot_cache: DataBot | None = None
+_managed_bot_class: type | None = None
+
+
+def _get_bot_dependencies() -> tuple[BotRegistry, DataBot]:
+    """Return cached BotRegistry/DataBot instances, creating them lazily."""
+
+    global _registry_cache, _data_bot_cache
+    if _registry_cache is None:
+        try:
+            _registry_cache = BotRegistry()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("BotRegistry unavailable: %s", exc)
+            raise
+    if _data_bot_cache is None:
+        try:
+            _data_bot_cache = DataBot(start_server=False)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("DataBot unavailable: %s", exc)
+            raise
+    return _registry_cache, _data_bot_cache
+
+
+def _ensure_self_coding(cls: type) -> type:
+    """Apply ``self_coding_managed`` lazily when the bot is instantiated."""
+
+    global _managed_bot_class
+    if _managed_bot_class is not None:
+        return _managed_bot_class
+
+    registry, data_bot = _get_bot_dependencies()
+    decorated = self_coding_managed(bot_registry=registry, data_bot=data_bot)(cls)
+    _managed_bot_class = decorated
+    return decorated
 
 from . import RAISE_ERRORS
 from vector_service.context_builder import ContextBuilder
@@ -43,6 +77,17 @@ from .scope_utils import Scope, build_scope_clause
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+
+
+class _SelfCodingBootstrapMeta(type):
+    """Metaclass ensuring self-coding helpers load lazily."""
+
+    def __call__(cls, *args: Any, **kwargs: Any):  # type: ignore[override]
+        managed_cls = _ensure_self_coding(cls)
+        if managed_cls is not cls:
+            globals()[cls.__name__] = managed_cls
+            return managed_cls(*args, **kwargs)
+        return super().__call__(*args, **kwargs)
 
 try:
     from gensim.summarization import summarize  # type: ignore
@@ -1027,8 +1072,7 @@ def parse_enhancements(data: dict[str, object] | str) -> List[Enhancement]:
     return enhancements
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
-class ChatGPTEnhancementBot:
+class ChatGPTEnhancementBot(metaclass=_SelfCodingBootstrapMeta):
     """Generate and store improvement ideas via ChatGPT."""
     def __init__(
         self,
