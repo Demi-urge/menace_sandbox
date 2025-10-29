@@ -100,11 +100,22 @@ def _start_engine_heartbeat(interval: float = 5.0) -> None:
     thread.start()
 
 
-try:
-    _start_engine_heartbeat()
-    print("[QFE:engine] heartbeat thread started", flush=True)
-except Exception as exc:  # pragma: no cover - best effort diagnostics
-    print(f"[QFE:engine] heartbeat thread failed: {exc}", flush=True)
+_HEARTBEAT_STARTED = False
+
+
+def _ensure_engine_heartbeat() -> None:
+    """Start the lightweight heartbeat thread on first use."""
+
+    global _HEARTBEAT_STARTED
+    if _HEARTBEAT_STARTED:
+        return
+    try:
+        _start_engine_heartbeat()
+        print("[QFE:engine] heartbeat thread started", flush=True)
+    except Exception as exc:  # pragma: no cover - best effort diagnostics
+        print(f"[QFE:engine] heartbeat thread failed: {exc}", flush=True)
+    finally:
+        _HEARTBEAT_STARTED = True
 
 from db_router import GLOBAL_ROUTER, init_db_router
 _qfe_log("db_router imported")
@@ -708,16 +719,6 @@ from menace_sandbox.error_cluster_predictor import ErrorClusterPredictor
 print("[QFE:engine] ErrorClusterPredictor import reached", flush=True)
 from menace_sandbox import mutation_logger as MutationLogger
 print("[QFE:engine] mutation_logger import reached", flush=True)
-from menace_sandbox.gpt_memory import GPTMemoryManager
-print("[QFE:engine] GPTMemoryManager import reached", flush=True)
-from menace_sandbox.local_knowledge_module import init_local_knowledge
-print("[QFE:engine] init_local_knowledge import reached", flush=True)
-from gpt_memory_interface import GPTMemoryInterface
-print("[QFE:engine] GPTMemoryInterface import reached", flush=True)
-try:
-    from menace_sandbox.gpt_knowledge_service import GPTKnowledgeService
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 try:  # canonical tag constants
     from menace_sandbox.log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except ImportError:  # pragma: no cover - fallback for flat layout
@@ -726,10 +727,6 @@ try:  # helper for standardised GPT memory logging
     from menace_sandbox.memory_logging import log_with_tags, ensure_tags
 except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags, ensure_tags  # type: ignore
-try:  # pragma: no cover - allow flat imports
-    from menace_sandbox.local_knowledge_module import LocalKnowledgeModule
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from local_knowledge_module import LocalKnowledgeModule  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.knowledge_retriever import (
         get_feedback,
@@ -1085,6 +1082,18 @@ class SelfImprovementEngine:
         runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        _ensure_engine_heartbeat()
+        try:
+            from menace_sandbox.local_knowledge_module import (
+                LocalKnowledgeModule as _LocalKnowledgeModule,
+                init_local_knowledge as _init_local_knowledge,
+            )
+        except ImportError:  # pragma: no cover - support flat execution
+            from local_knowledge_module import (  # type: ignore
+                LocalKnowledgeModule as _LocalKnowledgeModule,
+                init_local_knowledge as _init_local_knowledge,
+            )
+
         if gpt_memory is None:
             gpt_memory = kwargs.get("gpt_memory_manager")
         self.interval = interval
@@ -1347,12 +1356,12 @@ class SelfImprovementEngine:
             gpt_memory
             or getattr(self_coding_engine, "gpt_memory", None)
             or getattr(self_coding_engine, "gpt_memory_manager", None)
-            or init_local_knowledge(
+            or _init_local_knowledge(
                 SandboxSettings().gpt_memory_db
             ).memory
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
-        self.local_knowledge = LocalKnowledgeModule(
+        self.local_knowledge = _LocalKnowledgeModule(
             manager=self.gpt_memory, service=knowledge_service
         )
         self.knowledge_service = self.local_knowledge.knowledge
