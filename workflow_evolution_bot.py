@@ -296,105 +296,166 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - best effort
         get_io_signature = None  # type: ignore[misc]
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
-try:
-    _context_builder = create_context_builder()
-except Exception as exc:  # pragma: no cover - degraded bootstrap
-    logger.warning(
-        "Context builder unavailable for WorkflowEvolutionBot: %s",
-        exc,
-    )
-    _context_builder = None
-
-if _context_builder is not None:
-    try:
-        engine = SelfCodingEngine(
-            CodeDB(),
-            GPTMemoryManager(),
-            context_builder=_context_builder,
-        )
-    except Exception as exc:  # pragma: no cover - degraded bootstrap
-        logger.warning(
-            "SelfCodingEngine unavailable; WorkflowEvolutionBot will run without self-coding manager: %s",
-            exc,
-        )
-        engine = None  # type: ignore[assignment]
-else:
-    engine = None  # type: ignore[assignment]
-
-if _context_builder is not None and engine is not None:
-    pipeline = _create_model_automation_pipeline(context_builder=_context_builder)
-    if pipeline is None:
-        logger.warning(
-            "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
-        )
-else:
-    pipeline = None
-
-try:
-    evolution_orchestrator = (
-        get_orchestrator("WorkflowEvolutionBot", data_bot, engine)
-        if engine is not None
-        else None
-    )
-except Exception as exc:  # pragma: no cover - orchestrator optional
-    logger.warning(
-        "EvolutionOrchestrator unavailable for WorkflowEvolutionBot: %s",
-        exc,
-    )
-    evolution_orchestrator = None
-
-try:
-    _th = get_thresholds("WorkflowEvolutionBot")
-except Exception as exc:  # pragma: no cover - thresholds optional
-    logger.warning("Threshold lookup failed for WorkflowEvolutionBot: %s", exc)
-    _th = None
-
-if _th is not None:
-    try:
-        persist_sc_thresholds(
-            "WorkflowEvolutionBot",
-            roi_drop=_th.roi_drop,
-            error_increase=_th.error_increase,
-            test_failure_increase=_th.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - best effort persistence
-        logger.warning("failed to persist WorkflowEvolutionBot thresholds: %s", exc)
-
-if engine is not None and pipeline is not None and _th is not None:
-    try:
-        manager = internalize_coding_bot(
-            "WorkflowEvolutionBot",
-            engine,
-            pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            evolution_orchestrator=evolution_orchestrator,
-            threshold_service=ThresholdService(),
-            roi_threshold=_th.roi_drop,
-            error_threshold=_th.error_increase,
-            test_failure_threshold=_th.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - degraded bootstrap
-        logger.warning(
-            "failed to initialise self-coding manager for WorkflowEvolutionBot: %s",
-            exc,
-        )
-        manager = None
-else:
-    manager = None
-
-
 @dataclass
 class WorkflowSuggestion:
     sequence: str
     expected_roi: float
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
-class WorkflowEvolutionBot:
+@dataclass
+class _RuntimeDependencies:
+    registry: BotRegistry
+    data_bot: DataBot
+    context_builder: Any
+    engine: Any | None
+    pipeline: Any | None
+    thresholds: Any | None
+    manager: Any | None
+    evolution_orchestrator: Any | None
+
+
+_RUNTIME_DEPENDENCIES: _RuntimeDependencies | None = None
+_DECORATED_CLASS_READY = False
+
+
+def _ensure_runtime_dependencies() -> _RuntimeDependencies:
+    """Instantiate and cache runtime helpers for the bot."""
+
+    global _RUNTIME_DEPENDENCIES
+    if _RUNTIME_DEPENDENCIES is not None:
+        return _RUNTIME_DEPENDENCIES
+
+    registry = BotRegistry()
+    data_bot = DataBot(start_server=False)
+
+    try:
+        context_builder = create_context_builder()
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "Context builder unavailable for WorkflowEvolutionBot: %s",
+            exc,
+        )
+        context_builder = None
+
+    engine: Any | None
+    if context_builder is not None:
+        try:
+            engine = SelfCodingEngine(
+                CodeDB(),
+                GPTMemoryManager(),
+                context_builder=context_builder,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "SelfCodingEngine unavailable; WorkflowEvolutionBot will run without self-coding manager: %s",
+                exc,
+            )
+            engine = None
+    else:
+        engine = None
+
+    if context_builder is not None and engine is not None:
+        pipeline = _create_model_automation_pipeline(context_builder=context_builder)
+        if pipeline is None:
+            logger.warning(
+                "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
+            )
+    else:
+        pipeline = None
+
+    try:
+        evolution_orchestrator = (
+            get_orchestrator("WorkflowEvolutionBot", data_bot, engine)
+            if engine is not None
+            else None
+        )
+    except Exception as exc:  # pragma: no cover - orchestrator optional
+        logger.warning(
+            "EvolutionOrchestrator unavailable for WorkflowEvolutionBot: %s",
+            exc,
+        )
+        evolution_orchestrator = None
+
+    try:
+        thresholds = get_thresholds("WorkflowEvolutionBot")
+    except Exception as exc:  # pragma: no cover - thresholds optional
+        logger.warning("Threshold lookup failed for WorkflowEvolutionBot: %s", exc)
+        thresholds = None
+
+    if thresholds is not None:
+        try:
+            persist_sc_thresholds(
+                "WorkflowEvolutionBot",
+                roi_drop=thresholds.roi_drop,
+                error_increase=thresholds.error_increase,
+                test_failure_increase=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - best effort persistence
+            logger.warning("failed to persist WorkflowEvolutionBot thresholds: %s", exc)
+
+    manager: Any | None = None
+    if engine is not None and pipeline is not None and thresholds is not None:
+        try:
+            manager = internalize_coding_bot(
+                "WorkflowEvolutionBot",
+                engine,
+                pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                evolution_orchestrator=evolution_orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap
+            logger.warning(
+                "failed to initialise self-coding manager for WorkflowEvolutionBot: %s",
+                exc,
+            )
+            manager = None
+
+    _RUNTIME_DEPENDENCIES = _RuntimeDependencies(
+        registry=registry,
+        data_bot=data_bot,
+        context_builder=context_builder,
+        engine=engine,
+        pipeline=pipeline,
+        thresholds=thresholds,
+        manager=manager,
+        evolution_orchestrator=evolution_orchestrator,
+    )
+    return _RUNTIME_DEPENDENCIES
+
+
+def _ensure_class_decorated() -> type:
+    """Ensure the bot class is registered with runtime helpers."""
+
+    global _DECORATED_CLASS_READY
+    if _DECORATED_CLASS_READY:
+        return WorkflowEvolutionBot
+
+    deps = _ensure_runtime_dependencies()
+    cls = globals()["WorkflowEvolutionBot"]
+    decorated = self_coding_managed(
+        bot_registry=deps.registry,
+        data_bot=deps.data_bot,
+        manager=deps.manager,
+    )(cls)
+    globals()["WorkflowEvolutionBot"] = decorated
+    _DECORATED_CLASS_READY = True
+    return decorated
+
+
+class _WorkflowEvolutionMeta(type):
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        decorated = _ensure_class_decorated()
+        if decorated is not cls:
+            return type.__call__(decorated, *args, **kwargs)
+        return super().__call__(*args, **kwargs)
+
+
+class WorkflowEvolutionBot(metaclass=_WorkflowEvolutionMeta):
     """Suggest workflow improvements from PathwayDB statistics."""
 
     def __init__(
@@ -404,10 +465,15 @@ class WorkflowEvolutionBot:
         intent_clusterer: IntentClusterer | None = None,
         manager: SelfCodingManager | None = None,
     ) -> None:
+        runtime = _ensure_runtime_dependencies()
         self.db = pathway_db or PathwayDB()
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = data_bot
+        self.data_bot = runtime.data_bot
+        if manager is None:
+            manager = getattr(self, "manager", None) or runtime.manager
+        if manager is not None:
+            setattr(self, "manager", manager)
         # Track mutation events for rearranged sequences so benchmarking
         # results can be fed back once available.
         self._rearranged_events: Dict[str, int] = {}
