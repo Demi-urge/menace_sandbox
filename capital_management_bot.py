@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import _DisabledSelfCodingManager, self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -47,7 +46,7 @@ except Exception:  # pragma: no cover - support flat execution
     from shared.self_coding_import_guard import self_coding_import_depth  # type: ignore
 
 _registry_instance: BotRegistry | None = None
-_data_bot_instance: DataBot | None = None
+_data_bot_instance: "DataBot | None" = None
 _context_builder_instance: object | None = None
 _engine_instance: SelfCodingEngine | None = None
 
@@ -79,6 +78,7 @@ except Exception:  # pragma: no cover - fallback when unavailable
 from .retry_utils import retry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .data_bot import DataBot
     from .prediction_manager_bot import PredictionManager
     from .model_automation_pipeline import ModelAutomationPipeline
     from .self_coding_thresholds import SelfCodingThresholds
@@ -101,12 +101,14 @@ def _get_registry() -> BotRegistry:
     return _registry_instance
 
 
-def _get_data_bot() -> DataBot:
+def _get_data_bot() -> "DataBot":
     """Return a cached :class:`DataBot` instance."""
 
     global _data_bot_instance
     if _data_bot_instance is None:
-        _data_bot_instance = DataBot(start_server=False)
+        from .data_bot import DataBot as _DataBot
+
+        _data_bot_instance = _DataBot(start_server=False)
     return _data_bot_instance
 
 
@@ -1387,8 +1389,9 @@ class _CapitalManagementBot:
         else:
             df = [{"amount": a} for a in amounts]
         try:
+            detector = _get_data_bot()
             return cast(
-                list[int], DataBot.detect_anomalies(df, "amount", threshold=threshold)
+                list[int], detector.detect_anomalies(df, "amount", threshold=threshold)
             )
         except Exception as exc:
             logger.exception("anomaly detection failed: %s", exc)
@@ -1914,7 +1917,9 @@ def _load_thresholds() -> "SelfCodingThresholds | None":
     if thresholds is None:
         return None
     try:  # pragma: no cover - best effort persistence
-        persist_sc_thresholds(
+        from .data_bot import persist_sc_thresholds as _persist_sc_thresholds
+
+        _persist_sc_thresholds(
             "CapitalManagementBot",
             roi_drop=thresholds.roi_drop,
             error_increase=thresholds.error_increase,
