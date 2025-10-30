@@ -44,6 +44,7 @@ __all__ = [
     "init_db_router",
     "GLOBAL_ROUTER",
     "queue_insert",
+    "configure_db_router_audit_logging",
 ]
 
 
@@ -256,7 +257,7 @@ def _load_table_overrides() -> None:
     ``local`` and ``deny`` arrays.
     """
 
-    global _audit_log_path
+    global _audit_log_candidate
 
     shared_env = os.getenv("DB_ROUTER_SHARED_TABLES", "")
     local_env = os.getenv("DB_ROUTER_LOCAL_TABLES", "")
@@ -281,8 +282,8 @@ def _load_table_overrides() -> None:
             shared_extra.update(data.get("shared", []))
             local_extra.update(data.get("local", []))
             deny_extra.update(data.get("deny", []))
-            if not _audit_log_path:
-                _audit_log_path = data.get("audit_log")
+            if not _audit_log_candidate:
+                _audit_log_candidate = data.get("audit_log")
         except Exception:
             # Ignore malformed config files; routing will fall back to defaults.
             pass
@@ -302,15 +303,18 @@ _log_format = os.getenv("DB_ROUTER_LOG_FORMAT", "json").lower()
 
 # Optional audit log for table accesses. When ``DB_ROUTER_AUDIT_LOG`` is defined
 # or ``audit_log`` is provided in the DB router config, entries are appended to
-# the referenced file as JSON lines.
-_audit_log_path: str | None = os.getenv("DB_ROUTER_AUDIT_LOG")
+# the referenced file as JSON lines once audit logging has been initialised via
+# :func:`configure_db_router_audit_logging`.
+_audit_log_candidate: str | None = os.getenv("DB_ROUTER_AUDIT_LOG")
+_audit_log_path: str | None = None
+_audit_logging_enabled = False
 _load_table_overrides()
 
 
 def _record_audit(entry: dict[str, str]) -> None:
     """Persist *entry* to the audit log when configured."""
 
-    if not _audit_log_path:
+    if not _audit_logging_enabled or not _audit_log_path:
         return
     try:
         directory = os.path.dirname(_audit_log_path)
@@ -320,6 +324,24 @@ def _record_audit(entry: dict[str, str]) -> None:
             fh.write(json.dumps(entry) + "\n")
     except Exception:  # pragma: no cover - best effort
         pass
+
+
+def configure_db_router_audit_logging(*, audit_log_path: str | None = None) -> None:
+    """Enable audit logging for DB router activity.
+
+    The audit log path may be provided explicitly via ``audit_log_path`` or is
+    resolved from environment/configuration captured during module import.  No
+    directories are created and no files are written until the first audit
+    record is produced.
+    """
+
+    global _audit_log_path, _audit_logging_enabled
+
+    if audit_log_path is None:
+        audit_log_path = _audit_log_candidate
+
+    _audit_log_path = audit_log_path
+    _audit_logging_enabled = bool(_audit_log_path)
 
 
 # Global router instance used by modules that rely on a single router without
@@ -875,6 +897,8 @@ def init_db_router(
     else:
         shared_path = Path(shared_db_path).expanduser().resolve()
         shared_path_str = str(shared_path)
+
+    configure_db_router_audit_logging()
 
     GLOBAL_ROUTER = DBRouter(menace_id, local_path_str, shared_path_str)
     return GLOBAL_ROUTER
