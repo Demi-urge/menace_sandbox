@@ -286,7 +286,6 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
     with sqlite3.connect(
         db_path,
         timeout=_SQLITE_TIMEOUT_SECONDS,
-        isolation_level="EXCLUSIVE",
     ) as conn:
         _configure_sqlite_connection(conn)
         _ensure_db(conn)
@@ -297,7 +296,7 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
         )
         try:
             with closing(conn.cursor()) as cur:
-                cur.execute("BEGIN EXCLUSIVE")
+                cur.execute("BEGIN IMMEDIATE")
             logger.debug(
                 "Creating audit cursor (event=%s, thread=%s)",
                 payload.event_id,
