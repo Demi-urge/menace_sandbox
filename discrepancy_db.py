@@ -11,7 +11,33 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal
 
-from vector_service import EmbeddableDBMixin
+logger = logging.getLogger(__name__)
+
+try:
+    from embeddable_db_mixin import EmbeddableDBMixin as _DirectEmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+    _DirectEmbeddableDBMixin = None
+
+try:  # pragma: no cover - prefer vector_service when fully available
+    from vector_service import EmbeddableDBMixin as _VectorEmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
+    _VectorEmbeddableDBMixin = None
+
+if _DirectEmbeddableDBMixin is not None and (
+    _VectorEmbeddableDBMixin is None
+    or getattr(_VectorEmbeddableDBMixin, "__init__", object.__init__) is object.__init__
+):
+    if _VectorEmbeddableDBMixin is not None:
+        logger.debug(
+            "vector_service provided stub EmbeddableDBMixin; using direct import instead"
+        )
+    EmbeddableDBMixin = _DirectEmbeddableDBMixin
+else:
+    if _VectorEmbeddableDBMixin is None:
+        logger.debug(
+            "vector_service module unavailable; using stub EmbeddableDBMixin"
+        )
+    EmbeddableDBMixin = _VectorEmbeddableDBMixin or object  # type: ignore[assignment]
 
 try:  # pragma: no cover - package and top-level imports
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
@@ -19,8 +45,6 @@ try:  # pragma: no cover - package and top-level imports
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
     from scope_utils import build_scope_clause
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
