@@ -88,21 +88,22 @@ def export_to_csv(jsonl_path: Path, csv_path: Path) -> None:
 
 def _ensure_db(conn: sqlite3.Connection) -> None:
     """Create tables if they do not already exist."""
-    cur = conn.cursor()
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS events (
-            event_id TEXT PRIMARY KEY,
-            timestamp TEXT,
-            event_type TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS event_data (
-            event_id TEXT,
-            key TEXT,
-            value TEXT
-        )"""
-    )
+
+    with closing(conn.cursor()) as cur:
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS events (
+                event_id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                event_type TEXT
+            )"""
+        )
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS event_data (
+                event_id TEXT,
+                key TEXT,
+                value TEXT
+            )"""
+        )
     conn.commit()
 
 
@@ -152,23 +153,21 @@ def _write_event(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
     """Persist *payload* using *conn* within a single transaction."""
 
     _ensure_db(conn)
-    cur = conn.cursor()
     try:
-        cur.execute(
-            "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
-            (payload.event_id, payload.timestamp, payload.event_type),
-        )
-        for key, value in payload.data.items():
+        with closing(conn.cursor()) as cur:
             cur.execute(
-                "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
-                (payload.event_id, key, _coerce_value(value)),
+                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+                (payload.event_id, payload.timestamp, payload.event_type),
             )
+            for key, value in payload.data.items():
+                cur.execute(
+                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                    (payload.event_id, key, _coerce_value(value)),
+                )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    finally:
-        cur.close()
 
 
 def _write_event_with_retry(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
