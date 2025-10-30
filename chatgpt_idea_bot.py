@@ -39,7 +39,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from . import database_manager, RAISE_ERRORS  # noqa: E402
+from . import database_manager  # noqa: E402
+from .error_flags import RAISE_ERRORS  # noqa: E402
 from .database_management_bot import DatabaseManagementBot  # noqa: E402
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT

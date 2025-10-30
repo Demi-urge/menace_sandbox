@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover - optional dependency
 from typing import TYPE_CHECKING
 
 from .db_router import DBRouter
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 from .bot_dev_config import BotDevConfig
 from .models_repo import (
     MODELS_REPO_PATH,

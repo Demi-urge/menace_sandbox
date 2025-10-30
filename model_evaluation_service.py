@@ -20,7 +20,7 @@ from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _Async
 from typing import TYPE_CHECKING
 
 from .retry_utils import publish_with_retry
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 if TYPE_CHECKING:  # pragma: no cover - avoid heavy import
     from .watchdog import Watchdog

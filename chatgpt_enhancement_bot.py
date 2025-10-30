@@ -61,7 +61,7 @@ def _ensure_self_coding(cls: type) -> type:
     _managed_bot_class = decorated
     return decorated
 
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 from vector_service.context_builder import ContextBuilder
 try:  # canonical tag constants
     from .log_tags import IMPROVEMENT_PATH, INSIGHT

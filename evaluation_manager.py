@@ -15,7 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .unified_event_bus import UnifiedEventBus
 
 from .evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 from .learning_engine import LearningEngine
 from .unified_learning_engine import UnifiedLearningEngine

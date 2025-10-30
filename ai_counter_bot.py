@@ -32,7 +32,7 @@ import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 

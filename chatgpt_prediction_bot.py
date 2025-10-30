@@ -54,7 +54,7 @@ LOG_FORMAT = os.environ.get(
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-from . import RAISE_ERRORS  # noqa: E402
+from .error_flags import RAISE_ERRORS  # noqa: E402
 
 from .mirror_bot import sentiment_score  # noqa: E402
 try:  # pragma: no cover - optional dependency

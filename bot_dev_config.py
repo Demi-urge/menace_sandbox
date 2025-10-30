@@ -7,7 +7,7 @@ from pathlib import Path
 import os
 from typing import List, Callable, Dict
 
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 
 @dataclass

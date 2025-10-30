@@ -47,8 +47,7 @@ if _ensure_yaml is not None:  # pragma: no cover - simple guard
 # Provide a legacy alias expected by some bootstrapping utilities.
 sys.modules.setdefault("menace", sys.modules[__name__])
 
-# Allow optional exception propagation in modules that normally swallow errors.
-RAISE_ERRORS = os.getenv("MENACE_RAISE_ERRORS") == "1"
+from .error_flags import RAISE_ERRORS
 
 # ``roi_calculator`` depends on the optional ``PyYAML`` package which is not
 # installed in the pared-down execution environment used for tests. Import the
@@ -347,6 +346,7 @@ if not os.getenv("MENACE_LIGHT_IMPORTS"):
 
 __all__ = [
     "__version__",
+    "RAISE_ERRORS",
     "ROICalculator",
     "roi_calculator",
     "ErrorParser",

@@ -11,7 +11,7 @@ from scope_utils import Scope, build_scope_clause, apply_scope
 
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .borderline_bucket import BorderlineBucket
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .deployment_bot import DeploymentBot

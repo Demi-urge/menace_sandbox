@@ -14,7 +14,7 @@ from filelock import FileLock
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - allow running as standalone module
-    from . import RAISE_ERRORS
+    from .error_flags import RAISE_ERRORS
 except Exception:  # pragma: no cover - fallback when not part of package
     RAISE_ERRORS = False
 
