@@ -14,15 +14,16 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from dynamic_path_router import resolve_dir
 from db_router import GLOBAL_ROUTER, init_db_router
 
 # Directory and default log paths
 LOG_DIR = resolve_dir("logs")
+AUDIT_SQLITE_DIR = LOG_DIR / "audit"
 JSONL_PATH = LOG_DIR / "audit_log.jsonl"
-SQLITE_PATH = LOG_DIR / "audit_log.db"
+SQLITE_PATH = AUDIT_SQLITE_DIR / "audit_log.db"
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 def _ensure_log_dir() -> None:
     """Create the log directory if missing."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    AUDIT_SQLITE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def generate_event_id(event_type: str) -> str:
@@ -150,9 +152,30 @@ def _coerce_value(value: Any) -> str:
     return str(value)
 
 
+def _resolve_sqlite_target(
+    db_path: str | Path | None,
+    operation: str,
+) -> Tuple[str, sqlite3.Connection | None]:
+    """Return the database path and optional router connection for *operation*."""
+
+    if db_path is not None and str(db_path):
+        return str(Path(db_path).expanduser()), None
+
+    router = GLOBAL_ROUTER or init_db_router("default")
+    conn = router.get_connection("events", operation)
+    return _connection_database_path(conn), conn
+
+
 def _write_event(db_path: str, payload: _AuditPayload) -> None:
     """Persist *payload* into *db_path* within an isolated connection."""
 
+    thread_name = threading.current_thread().name
+    logger.debug(
+        "Opening fresh audit DB connection (event=%s, db=%s, thread=%s)",
+        payload.event_id,
+        db_path,
+        thread_name,
+    )
     with sqlite3.connect(
         db_path,
         timeout=_SQLITE_TIMEOUT_SECONDS,
@@ -162,7 +185,17 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA journal_mode=DELETE")
         _ensure_db(conn)
+        logger.debug(
+            "Starting audit transaction (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
         with conn:
+            logger.debug(
+                "Creating audit cursor (event=%s, thread=%s)",
+                payload.event_id,
+                thread_name,
+            )
             with closing(conn.cursor()) as cur:
                 cur.execute(
                     "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
@@ -173,6 +206,16 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
                         "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
                         (payload.event_id, key, _coerce_value(value)),
                     )
+            logger.debug(
+                "Audit event queued for commit (event=%s, thread=%s)",
+                payload.event_id,
+                thread_name,
+            )
+        logger.debug(
+            "Committed audit event (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
 
 
 def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
@@ -198,6 +241,12 @@ def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload)
     """Persist *payload* using an existing in-memory connection."""
 
     _ensure_db(conn)
+    thread_name = threading.current_thread().name
+    logger.debug(
+        "Writing audit event via shared connection (event=%s, thread=%s)",
+        payload.event_id,
+        thread_name,
+    )
     try:
         with closing(conn.cursor()) as cur:
             cur.execute(
@@ -209,7 +258,17 @@ def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload)
                     "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
                     (payload.event_id, key, _coerce_value(value)),
                 )
+        logger.debug(
+            "Audit event queued for commit on shared connection (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
         conn.commit()
+        logger.debug(
+            "Committed audit event on shared connection (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
     except Exception:
         conn.rollback()
         raise
@@ -277,20 +336,21 @@ class _SQLiteWriterRegistry:
 _SQLITE_WRITERS = _SQLiteWriterRegistry()
 
 
-def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_PATH) -> str:
+def log_to_sqlite(
+    event_type: str,
+    data: Dict[str, Any],
+    db_path: str | Path = SQLITE_PATH,
+) -> str:
     """Store an event in the SQLite log."""
 
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
-    router = GLOBAL_ROUTER or init_db_router("default")
-    conn = router.get_connection("events", "write")
     payload = _AuditPayload(event_id, event_type, ts, dict(data))
 
-    override_path = str(db_path) if db_path is not None else ""
-    database_path = override_path or _connection_database_path(conn)
-    if database_path in (":memory:", ""):
-        _write_event_in_connection(conn, payload)
+    database_path, router_conn = _resolve_sqlite_target(db_path, "write")
+    if database_path in (":memory:", "") and router_conn is not None:
+        _write_event_in_connection(router_conn, payload)
     else:
         _SQLITE_WRITERS.write(database_path, payload)
 
@@ -300,21 +360,22 @@ def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_P
 def get_recent_events(
     limit: int = 100,
     jsonl_path: str = JSONL_PATH,
-    db_path: str = SQLITE_PATH,
+    db_path: str | Path = SQLITE_PATH,
 ) -> List[Dict[str, Any]]:
     """Return the most recent events from the JSONL or SQLite log."""
     if limit <= 0:
         return []
-    router = GLOBAL_ROUTER or init_db_router("default")
-    conn = router.get_connection("events")
-    override_path = str(db_path) if db_path is not None else ""
-    database_path = override_path or _connection_database_path(conn)
+    database_path, router_conn = _resolve_sqlite_target(db_path, "read")
 
-    target_conn: sqlite3.Connection
-    if database_path in (":memory:", ""):
-        target_conn = conn
-    else:
+    target_conn: sqlite3.Connection | None = router_conn
+    if not (database_path in (":memory:", "") and router_conn is not None):
         target_conn = sqlite3.connect(database_path)
+        target_conn.execute("PRAGMA busy_timeout=5000")
+        target_conn.execute("PRAGMA synchronous=NORMAL")
+        target_conn.execute("PRAGMA journal_mode=DELETE")
+
+    if target_conn is None:
+        raise RuntimeError("Unable to resolve SQLite connection for audit events")
 
     try:
         _ensure_db(target_conn)
@@ -338,7 +399,7 @@ def get_recent_events(
                 pass
             events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
     finally:
-        if target_conn is not conn:
+        if target_conn is not None and target_conn is not router_conn:
             target_conn.close()
     if events:
         return list(reversed(events))
