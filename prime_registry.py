@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import ast
 import logging
+import sqlite3
+from contextlib import closing
 import sys
 
 
@@ -22,8 +24,52 @@ def _ensure_package_importable() -> None:
 
 _ensure_package_importable()
 
-from menace_sandbox import db_router
-from menace_sandbox.bot_registry import BotRegistry
+class _RegistryWriter:
+    """Persist bot-module mappings to the on-disk registry."""
+
+    def __init__(self) -> None:
+        self._modules: dict[str, str] = {}
+
+    def register(self, name: str, module_path: Path) -> None:
+        self._modules[name] = str(module_path)
+
+    def save(self, dest: Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(dest)) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_nodes(
+                    name TEXT PRIMARY KEY,
+                    module TEXT,
+                    version INTEGER,
+                    last_good_module TEXT,
+                    last_good_version INTEGER
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_edges(
+                    from_bot TEXT,
+                    to_bot TEXT,
+                    weight REAL,
+                    PRIMARY KEY(from_bot, to_bot)
+                )
+                """
+            )
+            cur.execute("DELETE FROM bot_nodes")
+            cur.execute("DELETE FROM bot_edges")
+            for name, module in sorted(self._modules.items()):
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO bot_nodes(
+                        name, module, version, last_good_module, last_good_version
+                    ) VALUES(?, ?, NULL, NULL, NULL)
+                    """,
+                    (name, module),
+                )
+            conn.commit()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -121,18 +167,16 @@ def _iter_bot_modules(root: Path) -> list[Path]:
 # Path to your persistent registry cache
 persist_path = Path(__file__).resolve().with_name("bot_graph.db")
 
-# Reset any pre-existing router so the generated database uses ``persist_path``.
-db_router.GLOBAL_ROUTER = None
-
-# Create or load registry
-registry = BotRegistry()
+# Collect discovered modules in a lightweight writer to avoid importing the
+# full runtime registry (which pulls in hundreds of supporting modules).
+registry = _RegistryWriter()
 
 # Discover and register all _bot.py files with their module paths
 bot_dir = Path(__file__).resolve().parent
 registered: dict[str, Path] = {}
 for module in _iter_bot_modules(bot_dir):
     for class_name in _iter_decorated_bot_classes(module):
-        registry.register_bot(class_name, module_path=str(module))
+        registry.register(class_name, module)
         registered[class_name] = module
 
 if registered:
@@ -143,6 +187,5 @@ else:
     logger.info("No decorated bots discovered.")
 
 # Save the populated registry
-persist_path.parent.mkdir(parents=True, exist_ok=True)
 registry.save(persist_path)
 logger.info("Registry saved to %s", persist_path)
