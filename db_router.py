@@ -519,6 +519,18 @@ class LoggedCursor(sqlite3.Cursor):
             yield from super().__iter__()
 
 
+def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
+    """Apply pragmatic settings that reduce writer contention."""
+
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # Some SQLite builds (e.g. older Android) do not support WAL mode; ignore.
+        pass
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+
+
 class LoggedConnection(sqlite3.Connection):
     """Connection whose cursors automatically log row counts."""
 
@@ -570,6 +582,7 @@ class DBRouter:
             local_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
         self.local_conn.menace_id = menace_id
+        _configure_sqlite_connection(self.local_conn)
 
         if shared_db_path != ":memory:":
             os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
@@ -577,6 +590,7 @@ class DBRouter:
             shared_db_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
         self.shared_conn.menace_id = menace_id
+        _configure_sqlite_connection(self.shared_conn)
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.

@@ -6,6 +6,7 @@ import csv
 import json
 import random
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -97,27 +98,48 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_SQLITE_LOCK_MESSAGE = "database is locked"
+_SQLITE_MAX_RETRIES = 5
+_SQLITE_BASE_DELAY = 0.05
+
+
+def _should_retry_sqlite(exc: sqlite3.OperationalError) -> bool:
+    return _SQLITE_LOCK_MESSAGE in str(exc).lower()
+
+
 def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_PATH) -> str:
     """Store an event in the SQLite log."""
+
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
     router = GLOBAL_ROUTER or init_db_router("default")
-    conn = router.get_connection("events")
-    _ensure_db(conn)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
-        (event_id, ts, event_type),
-    )
-    for key, value in data.items():
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
-        cur.execute(
-            "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
-            (event_id, key, str(value)),
-        )
-    conn.commit()
+    conn = router.get_connection("events", operation="write")
+
+    for attempt in range(_SQLITE_MAX_RETRIES):
+        try:
+            _ensure_db(conn)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+                (event_id, ts, event_type),
+            )
+            for key, value in data.items():
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value)
+                cur.execute(
+                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                    (event_id, key, str(value)),
+                )
+            conn.commit()
+            break
+        except sqlite3.OperationalError as exc:
+            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
+                delay = _SQLITE_BASE_DELAY * (2**attempt)
+                time.sleep(delay)
+                continue
+            raise
+
     return event_id
 
 
