@@ -193,6 +193,14 @@ class _AuditPayload:
     data: Dict[str, Any]
 
 
+@dataclass(slots=True)
+class _QueuedAuditEvent:
+    """Deferred audit payload waiting for an explicit flush."""
+
+    payload: _AuditPayload
+    db_path: str | Path
+
+
 def _should_retry_sqlite(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return any(fragment in message for fragment in _SQLITE_RETRY_MESSAGES)
@@ -339,6 +347,123 @@ def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
         raise last_error
 
 
+def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
+    """Persist *payload* using an existing in-memory connection."""
+
+    _configure_sqlite_connection(conn)
+    _ensure_db(conn)
+    thread_name = threading.current_thread().name
+    logger.debug(
+        "Writing audit event via shared connection (event=%s, thread=%s)",
+        payload.event_id,
+        thread_name,
+    )
+    try:
+        with closing(conn.cursor()) as cur:
+            cur.execute(
+                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+                (payload.event_id, payload.timestamp, payload.event_type),
+            )
+            for key, value in payload.data.items():
+                cur.execute(
+                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                    (payload.event_id, key, _coerce_value(value)),
+                )
+        logger.debug(
+            "Audit event queued for commit on shared connection (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
+        conn.commit()
+        logger.debug(
+            "Committed audit event on shared connection (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
+    except Exception:
+        conn.rollback()
+        raise
+
+
+class _SQLiteWorker:
+    """Background worker that serialises writes to a SQLite database."""
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._queue: queue.Queue[tuple[_AuditPayload, queue.Queue[Exception | None]]] = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"audit-sqlite-writer-{Path(db_path).stem or 'memory'}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def write(self, payload: _AuditPayload) -> None:
+        """Synchronously persist *payload* using the worker thread."""
+
+        result: queue.Queue[Exception | None] = queue.Queue(maxsize=1)
+        self._queue.put((payload, result))
+        error = result.get()
+        if error is not None:
+            raise error
+
+    def _run(self) -> None:
+        while True:
+            payload, result = self._queue.get()
+            try:
+                _write_event_with_retry(self._db_path, payload)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "Failed to persist audit event %s: %s",
+                    payload.event_id,
+                    exc,
+                )
+                result.put(exc)
+            else:
+                result.put(None)
+
+
+class _SQLiteWriterRegistry:
+    """Lazy registry mapping database paths to writer threads."""
+
+    def __init__(self) -> None:
+        self._workers: Dict[str, _SQLiteWorker] = {}
+        self._lock = threading.Lock()
+
+    def write(self, db_path: str, payload: _AuditPayload) -> None:
+        worker = self._get_worker(db_path)
+        worker.write(payload)
+
+    def _get_worker(self, db_path: str) -> _SQLiteWorker:
+        with self._lock:
+            worker = self._workers.get(db_path)
+            if worker is None:
+                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+                worker = _SQLiteWorker(db_path)
+                self._workers[db_path] = worker
+            return worker
+
+
+_SQLITE_WRITERS = _SQLiteWriterRegistry()
+
+
+_AUDIT_QUEUE_LOCK = threading.Lock()
+_AUDIT_QUEUE: List[_QueuedAuditEvent] = []
+
+
+def _mirror_payload_to_sqlite(
+    db_path_spec: str | Path,
+    payload: _AuditPayload,
+) -> None:
+    """Mirror *payload* into SQLite according to *db_path_spec*."""
+
+    database_path, router_conn = _resolve_sqlite_target(db_path_spec, "write")
+    if database_path in (":memory:", "") and router_conn is not None:
+        _write_event_in_connection(router_conn, payload)
+    elif database_path:
+        _SQLITE_WRITERS.write(database_path, payload)
+
+
 def log_to_sqlite(
     event_type: str,
     data: Dict[str, Any],
@@ -350,12 +475,12 @@ def log_to_sqlite(
     record = _build_record(event_type, dict(data))
     _append_record_to_jsonl(record, jsonl_path)
 
-    database_path, router_conn = _resolve_sqlite_target(db_path, "write")
     payload = _AuditPayload(
         record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
     )
 
     try:
+        _mirror_payload_to_sqlite(db_path, payload)
         if database_path in (":memory:", ""):
             if router_conn is not None:
                 logger.debug(
@@ -372,6 +497,65 @@ def log_to_sqlite(
         )
 
     return record["event_id"]
+
+
+def queue_event_for_later(
+    event_type: str,
+    data: Dict[str, Any],
+    db_path: str | Path = SQLITE_PATH,
+    jsonl_path: Path | str = JSONL_PATH,
+) -> str:
+    """Queue an audit event for deferred SQLite persistence.
+
+    The event is written to the append-only JSONL log immediately while the SQLite
+    mirror is postponed until :func:`flush_queued_events` is invoked.  This is
+    useful when the SQLite database is temporarily locked by long-running read
+    transactions.
+    """
+
+    record = _build_record(event_type, dict(data))
+    _append_record_to_jsonl(record, jsonl_path)
+    queued = _QueuedAuditEvent(
+        payload=_AuditPayload(
+            record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
+        ),
+        db_path=db_path,
+    )
+    with _AUDIT_QUEUE_LOCK:
+        _AUDIT_QUEUE.append(queued)
+    return record["event_id"]
+
+
+def flush_queued_events() -> None:
+    """Flush any deferred audit events to SQLite.
+
+    Events that fail to persist remain queued and a :class:`RuntimeError` is
+    raised to signal the partial failure.
+    """
+
+    with _AUDIT_QUEUE_LOCK:
+        if not _AUDIT_QUEUE:
+            return
+        pending = list(_AUDIT_QUEUE)
+        _AUDIT_QUEUE.clear()
+
+    failures: List[_QueuedAuditEvent] = []
+    for queued in pending:
+        try:
+            _mirror_payload_to_sqlite(queued.db_path, queued.payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to flush queued audit event %s: %s",
+                queued.payload.event_id,
+                exc,
+            )
+            failures.append(queued)
+
+    if failures:
+        with _AUDIT_QUEUE_LOCK:
+            # Preserve ordering by re-inserting failed events at the front.
+            _AUDIT_QUEUE[:0] = failures
+        raise RuntimeError("Failed to flush one or more queued audit events")
 
 
 def _read_events_from_jsonl(jsonl_path: Path | str, limit: int) -> List[Dict[str, Any]]:
@@ -456,5 +640,7 @@ __all__ = [
     "log_event",
     "export_to_csv",
     "log_to_sqlite",
+    "queue_event_for_later",
+    "flush_queued_events",
     "get_recent_events",
 ]
