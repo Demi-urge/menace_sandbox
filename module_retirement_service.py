@@ -3,21 +3,42 @@ from __future__ import annotations
 """Service for archiving, compressing, or replacing modules flagged for retirement."""
 
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 import logging
 import shutil
 
 from dynamic_path_router import resolve_path
 
 from module_graph_analyzer import build_import_graph
-from vector_service.context_builder import ContextBuilder
-from self_coding_manager import SelfCodingManager
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,
     compressed_modules_total,
     replaced_modules_total,
 )
+
+
+ContextBuilder: Optional[type[Any]]
+_context_builder_import_error: Optional[Exception]
+try:  # pragma: no cover - optional heavy dependency
+    from vector_service.context_builder import ContextBuilder as _RealContextBuilder
+except Exception as exc:  # pragma: no cover - allow module import without optional deps
+    _context_builder_import_error = exc
+    ContextBuilder = None
+else:
+    _context_builder_import_error = None
+    ContextBuilder = _RealContextBuilder
+
+SelfCodingManager: Optional[type[Any]]
+_self_coding_manager_import_error: Optional[Exception]
+try:  # pragma: no cover - optional heavy dependency
+    from self_coding_manager import SelfCodingManager as _RealSelfCodingManager
+except Exception as exc:  # pragma: no cover - allow module import without optional deps
+    _self_coding_manager_import_error = exc
+    SelfCodingManager = None
+else:
+    _self_coding_manager_import_error = None
+    SelfCodingManager = _RealSelfCodingManager
 
 
 class ModuleRetirementService:
@@ -30,8 +51,18 @@ class ModuleRetirementService:
         context_builder: ContextBuilder,
         manager: SelfCodingManager,
     ) -> None:
+        if ContextBuilder is None:
+            raise RuntimeError(
+                "vector_service.context_builder.ContextBuilder is unavailable"
+            ) from _context_builder_import_error
         if context_builder is None:
             raise ValueError("ContextBuilder is required")
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
+        if SelfCodingManager is None:
+            raise RuntimeError(
+                "self_coding_manager.SelfCodingManager is unavailable"
+            ) from _self_coding_manager_import_error
         if manager is None:
             raise ValueError("SelfCodingManager is required")
         if not isinstance(manager, SelfCodingManager):
