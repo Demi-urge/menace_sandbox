@@ -47,6 +47,9 @@ if _ensure_yaml is not None:  # pragma: no cover - simple guard
 # Provide a legacy alias expected by some bootstrapping utilities.
 sys.modules.setdefault("menace", sys.modules[__name__])
 
+# Allow optional exception propagation in modules that normally swallow errors.
+RAISE_ERRORS = os.getenv("MENACE_RAISE_ERRORS") == "1"
+
 # ``roi_calculator`` depends on the optional ``PyYAML`` package which is not
 # installed in the pared-down execution environment used for tests. Import the
 # calculator lazily and degrade gracefully when the dependency is absent so that
@@ -318,9 +321,6 @@ if "sklearn" not in sys.modules and _sk_dir.is_dir():
         sys.modules[f"sklearn.{sub}"] = mod_sub
 
 logger = logging.getLogger(__name__)
-
-# Allow optional exception propagation in modules that normally swallow errors.
-RAISE_ERRORS = os.getenv("MENACE_RAISE_ERRORS") == "1"
 
 if not os.getenv("MENACE_LIGHT_IMPORTS"):
     _submodules = [
