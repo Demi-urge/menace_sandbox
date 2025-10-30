@@ -176,6 +176,22 @@ def _coerce_value(value: Any) -> str:
     return str(value)
 
 
+def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
+    """Apply defensive PRAGMA settings to *conn* and close cursors eagerly."""
+
+    pragmas = (
+        "PRAGMA busy_timeout=5000",
+        "PRAGMA synchronous=NORMAL",
+        "PRAGMA journal_mode=WAL",
+    )
+    for pragma in pragmas:
+        with closing(conn.execute(pragma)) as cur:
+            # ``PRAGMA busy_timeout`` returns no rows while ``journal_mode`` does.
+            # Fetching ensures the cursor is closed immediately, avoiding lingering
+            # statements that can block subsequent commits.
+            cur.fetchall()
+
+
 def _resolve_sqlite_target(
     db_path: str | Path | None,
     operation: str,
@@ -203,18 +219,17 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
     with sqlite3.connect(
         db_path,
         timeout=_SQLITE_TIMEOUT_SECONDS,
-        isolation_level=None,
+        isolation_level="EXCLUSIVE",
     ) as conn:
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA journal_mode=DELETE")
+        _configure_sqlite_connection(conn)
         _ensure_db(conn)
         logger.debug(
             "Starting audit transaction (event=%s, thread=%s)",
             payload.event_id,
             thread_name,
         )
-        with conn:
+        try:
+            conn.execute("BEGIN EXCLUSIVE")
             logger.debug(
                 "Creating audit cursor (event=%s, thread=%s)",
                 payload.event_id,
@@ -235,11 +250,16 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
                 payload.event_id,
                 thread_name,
             )
-        logger.debug(
-            "Committed audit event (event=%s, thread=%s)",
-            payload.event_id,
-            thread_name,
-        )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            logger.debug(
+                "Committed audit event (event=%s, thread=%s)",
+                payload.event_id,
+                thread_name,
+            )
 
 
 def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
@@ -264,6 +284,7 @@ def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
 def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
     """Persist *payload* using an existing in-memory connection."""
 
+    _configure_sqlite_connection(conn)
     _ensure_db(conn)
     thread_name = threading.current_thread().name
     logger.debug(
@@ -421,10 +442,10 @@ def get_recent_events(
 
         target_conn: sqlite3.Connection | None = router_conn
         if not (database_path in (":memory:", "") and router_conn is not None):
-            target_conn = sqlite3.connect(database_path)
-            target_conn.execute("PRAGMA busy_timeout=5000")
-            target_conn.execute("PRAGMA synchronous=NORMAL")
-            target_conn.execute("PRAGMA journal_mode=DELETE")
+            target_conn = sqlite3.connect(database_path, timeout=_SQLITE_TIMEOUT_SECONDS)
+
+        if target_conn is not None:
+            _configure_sqlite_connection(target_conn)
 
         if target_conn is None:
             raise RuntimeError("Unable to resolve SQLite connection for audit events")
