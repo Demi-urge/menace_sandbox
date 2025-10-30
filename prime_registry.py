@@ -90,6 +90,18 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         except ValueError:
             parts = path.parts
 
+        # ``git`` worktrees may place the repository metadata outside of
+        # ``root`` while exposing it through ``.git`` entries.  When those
+        # entries contain branch names that happen to end in ``_bot.py`` (for
+        # example ``fix-foo-bot.py``), ``rglob`` will happily return them and we
+        # would later attempt to ``ast.parse`` their contents.  Git reference
+        # files are not Python source files which results in noisy syntax
+        # warnings and, on some systems, a noticeable slowdown while the parser
+        # churns through the VCS metadata.  Filtering out anything under a VCS
+        # directory keeps the discovery focused on actual source modules.
+        if any(part in {".git", ".hg", ".svn"} for part in parts):
+            continue
+
         if any(part in ignore or part.startswith("test") for part in parts):
             continue
         if any(part.startswith(".") for part in parts):
