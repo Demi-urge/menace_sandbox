@@ -15,9 +15,9 @@ from dynamic_path_router import resolve_dir
 import hashlib
 
 
-# Default log file within the repository
-DEFAULT_LOG_PATH = resolve_dir("logs") / "shared_db_access.log"
-DEFAULT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+# Default log file within the repository.  Resolved lazily to avoid running
+# project root discovery (which may shell out to ``git``) during import.
+DEFAULT_LOG_PATH: Path | None = None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -52,6 +52,17 @@ class _LockedRotatingFileHandler(RotatingFileHandler):
                 logging.FileHandler.emit(self, record)
             finally:
                 flock(fd, LOCK_UN)
+
+
+def _default_log_path() -> Path:
+    """Return the default log path, initialising it lazily."""
+
+    global DEFAULT_LOG_PATH
+
+    if DEFAULT_LOG_PATH is None:
+        DEFAULT_LOG_PATH = (resolve_dir("logs") / "shared_db_access.log").resolve()
+
+    return Path(DEFAULT_LOG_PATH)
 
 
 def _get_logger(path: Path) -> logging.Logger:
@@ -111,7 +122,10 @@ def log_db_access(
     }
 
     # Determine log path and ensure directory exists
-    path = Path(log_path).resolve() if log_path is not None else DEFAULT_LOG_PATH
+    if log_path is not None:
+        path = Path(log_path).resolve()
+    else:
+        path = _default_log_path()
     state_path = Path(f"{path}.state")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
