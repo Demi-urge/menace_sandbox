@@ -6,7 +6,6 @@ import csv
 import importlib
 import json
 import logging
-import queue
 import random
 import sqlite3
 import threading
@@ -272,6 +271,8 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
         db_path,
         thread_name,
     )
+    if db_path not in (":memory:", ""):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(
         db_path,
         timeout=_SQLITE_TIMEOUT_SECONDS,
@@ -338,106 +339,6 @@ def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
         raise last_error
 
 
-def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
-    """Persist *payload* using an existing in-memory connection."""
-
-    _configure_sqlite_connection(conn)
-    _ensure_db(conn)
-    thread_name = threading.current_thread().name
-    logger.debug(
-        "Writing audit event via shared connection (event=%s, thread=%s)",
-        payload.event_id,
-        thread_name,
-    )
-    try:
-        with closing(conn.cursor()) as cur:
-            cur.execute(
-                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
-                (payload.event_id, payload.timestamp, payload.event_type),
-            )
-            for key, value in payload.data.items():
-                cur.execute(
-                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
-                    (payload.event_id, key, _coerce_value(value)),
-                )
-        logger.debug(
-            "Audit event queued for commit on shared connection (event=%s, thread=%s)",
-            payload.event_id,
-            thread_name,
-        )
-        conn.commit()
-        logger.debug(
-            "Committed audit event on shared connection (event=%s, thread=%s)",
-            payload.event_id,
-            thread_name,
-        )
-    except Exception:
-        conn.rollback()
-        raise
-
-
-class _SQLiteWorker:
-    """Background worker that serialises writes to a SQLite database."""
-
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._queue: queue.Queue[tuple[_AuditPayload, queue.Queue[Exception | None]]] = queue.Queue()
-        self._thread = threading.Thread(
-            target=self._run,
-            name=f"audit-sqlite-writer-{Path(db_path).stem or 'memory'}",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def write(self, payload: _AuditPayload) -> None:
-        """Synchronously persist *payload* using the worker thread."""
-
-        result: queue.Queue[Exception | None] = queue.Queue(maxsize=1)
-        self._queue.put((payload, result))
-        error = result.get()
-        if error is not None:
-            raise error
-
-    def _run(self) -> None:
-        while True:
-            payload, result = self._queue.get()
-            try:
-                _write_event_with_retry(self._db_path, payload)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.warning(
-                    "Failed to persist audit event %s: %s",
-                    payload.event_id,
-                    exc,
-                )
-                result.put(exc)
-            else:
-                result.put(None)
-
-
-class _SQLiteWriterRegistry:
-    """Lazy registry mapping database paths to writer threads."""
-
-    def __init__(self) -> None:
-        self._workers: Dict[str, _SQLiteWorker] = {}
-        self._lock = threading.Lock()
-
-    def write(self, db_path: str, payload: _AuditPayload) -> None:
-        worker = self._get_worker(db_path)
-        worker.write(payload)
-
-    def _get_worker(self, db_path: str) -> _SQLiteWorker:
-        with self._lock:
-            worker = self._workers.get(db_path)
-            if worker is None:
-                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-                worker = _SQLiteWorker(db_path)
-                self._workers[db_path] = worker
-            return worker
-
-
-_SQLITE_WRITERS = _SQLiteWriterRegistry()
-
-
 def log_to_sqlite(
     event_type: str,
     data: Dict[str, Any],
@@ -455,10 +356,14 @@ def log_to_sqlite(
     )
 
     try:
-        if database_path in (":memory:", "") and router_conn is not None:
-            _write_event_in_connection(router_conn, payload)
+        if database_path in (":memory:", ""):
+            if router_conn is not None:
+                logger.debug(
+                    "Skipping SQLite audit mirror for in-memory database (event=%s)",
+                    payload.event_id,
+                )
         elif database_path:
-            _SQLITE_WRITERS.write(database_path, payload)
+            _write_event_with_retry(database_path, payload)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
