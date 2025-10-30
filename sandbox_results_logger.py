@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict
 
@@ -32,6 +33,8 @@ def record_run(metrics: Dict[str, Any]) -> None:
     with _lock:
         conn = sqlite3.connect(_DB_PATH)
         try:
+            with closing(conn.execute("PRAGMA journal_mode=WAL;")) as cursor:
+                cursor.fetchall()
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (

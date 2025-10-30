@@ -38,11 +38,15 @@ def _ensure_schema() -> None:
         if _SCHEMA_INITIALISED:
             return
         with sqlite3.connect(DB_PATH) as conn:  # noqa: SQL001
+            with closing(conn.execute("PRAGMA journal_mode=WAL;")) as cursor:
+                cursor.fetchall()
             _init_db(conn)
         _SCHEMA_INITIALISED = True
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
+    with closing(conn.execute("PRAGMA journal_mode=WAL;")) as cursor:
+        cursor.fetchall()
     cur = conn.cursor()
     cur.execute(
         """
@@ -102,6 +106,8 @@ def log_interaction(
 
     _ensure_schema()
     with sqlite3.connect(DB_PATH) as conn:  # noqa: SQL001
+        with closing(conn.execute("PRAGMA journal_mode=WAL;")) as cursor:
+            cursor.fetchall()
         with closing(conn.cursor()) as cur:
             try:
                 raw_json = json.dumps(raw)
