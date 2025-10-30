@@ -14,11 +14,175 @@ from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
 from uuid import uuid4
 import os
 import logging
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from functools import lru_cache
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+
+class _LazyBotRegistry:
+    """Lightweight proxy deferring :class:`BotRegistry` construction."""
+
+    def __init__(self) -> None:
+        self._real: BotRegistry | None = None
+        self._pending: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        self.graph = SimpleNamespace(nodes={})
+        self.modules: dict[str, Any] = {}
+
+    def register_bot(
+        self,
+        name: str,
+        *,
+        roi_threshold: float | None = None,
+        error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
+        manager: Any | None = None,
+        data_bot: Any | None = None,
+        module_path: str | os.PathLike[str] | None = None,
+        is_coding_bot: bool = False,
+    ) -> str:
+        if self._real is None:
+            self.graph.nodes.setdefault(name, {})
+            self.modules.setdefault(name, module_path)
+            self._pending.append(
+                (
+                    "register_bot",
+                    (name,),
+                    {
+                        "roi_threshold": roi_threshold,
+                        "error_threshold": error_threshold,
+                        "test_failure_threshold": test_failure_threshold,
+                        "manager": manager,
+                        "data_bot": data_bot,
+                        "module_path": module_path,
+                        "is_coding_bot": is_coding_bot,
+                    },
+                )
+            )
+            return str(uuid4())
+        return str(
+            self._real.register_bot(  # type: ignore[return-value]
+                name,
+                roi_threshold=roi_threshold,
+                error_threshold=error_threshold,
+                test_failure_threshold=test_failure_threshold,
+                manager=manager,
+                data_bot=data_bot,
+                module_path=module_path,
+                is_coding_bot=is_coding_bot,
+            )
+        )
+
+    def update_bot(
+        self,
+        name: str,
+        module_path: str | os.PathLike[str],
+        *,
+        patch_id: int | None = None,
+        commit: str | None = None,
+    ) -> None:
+        if self._real is None:
+            self._pending.append(
+                (
+                    "update_bot",
+                    (name, module_path),
+                    {"patch_id": patch_id, "commit": commit},
+                )
+            )
+            return
+        self._real.update_bot(
+            name,
+            module_path,
+            patch_id=patch_id,
+            commit=commit,
+        )
+
+    def hot_swap_active(self) -> bool:
+        if self._real is None:
+            return False
+        return bool(self._real.hot_swap_active())
+
+    def _hydrate(self) -> BotRegistry:
+        if self._real is None:
+            real = BotRegistry()
+            for method, args, kwargs in self._pending:
+                getattr(real, method)(*args, **kwargs)
+            self._pending.clear()
+            self.graph = real.graph
+            self.modules = real.modules
+            self._real = real
+        return self._real
+
+    def __getattr__(self, name: str) -> Any:
+        if name in {"register_bot", "update_bot", "hot_swap_active"}:
+            return object.__getattribute__(self, name)
+        return getattr(self._hydrate(), name)
+
+
+class _LazyDataBot:
+    """Proxy delaying :class:`DataBot` instantiation."""
+
+    def __init__(self) -> None:
+        self._real: DataBot | None = None
+        self._pending_thresholds: set[str] = set()
+
+    def reload_thresholds(self, name: str) -> Any:
+        if self._real is None:
+            self._pending_thresholds.add(name)
+            return SimpleNamespace(
+                roi_drop=None,
+                error_threshold=None,
+                test_failure_threshold=None,
+            )
+        return self._real.reload_thresholds(name)
+
+    def _hydrate(self) -> DataBot:
+        if self._real is None:
+            real = DataBot(start_server=False)
+            self._real = real
+            pending = list(self._pending_thresholds)
+            self._pending_thresholds.clear()
+            for metric in pending:
+                try:
+                    real.reload_thresholds(metric)
+                except Exception:
+                    logging.getLogger(__name__).debug(
+                        "threshold reload failed during hydration for %s",
+                        metric,
+                        exc_info=True,
+                    )
+        return self._real
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._hydrate(), name)
+
+
+_REGISTRY_PROXY = _LazyBotRegistry()
+_DATA_BOT_PROXY = _LazyDataBot()
+
+
+def _get_registry_proxy() -> _LazyBotRegistry:
+    """Return the lazy registry proxy used for self-coding decorators."""
+
+    return _REGISTRY_PROXY
+
+
+def _get_data_bot_proxy() -> _LazyDataBot:
+    """Return the lazy data bot proxy used for self-coding decorators."""
+
+    return _DATA_BOT_PROXY
+
+
+@lru_cache(maxsize=1)
+def _get_registry() -> BotRegistry:
+    """Instantiate and return the shared :class:`BotRegistry`."""
+
+    return _REGISTRY_PROXY._hydrate()
+
+
+@lru_cache(maxsize=1)
+def _get_data_bot() -> DataBot:
+    """Instantiate and return the shared :class:`DataBot`."""
+
+    return _DATA_BOT_PROXY._hydrate()
 
 try:
     import pandas as pd  # type: ignore
@@ -114,7 +278,9 @@ def _future_prediction_classes() -> Dict[str, Any]:
     return {name: getattr(module, name, None) for name in FUTURE_PREDICTION_EXPORTS}
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class AverageMetricBot:
     """Predict metrics by averaging recent values."""
 
@@ -141,7 +307,9 @@ class AverageMetricBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FlexibilityPredictionBot:
     """Predict upcoming flexibility by averaging recent data."""
 
@@ -170,7 +338,9 @@ class FlexibilityPredictionBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class AntifragilityPredictionBot:
     """Predict upcoming antifragility by averaging recent data."""
 
@@ -199,7 +369,9 @@ class AntifragilityPredictionBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class ShannonEntropyPredictionBot:
     """Predict upcoming Shannon entropy by averaging recent data."""
 
@@ -228,7 +400,9 @@ class ShannonEntropyPredictionBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class AverageSynergyMetricBot:
     """Predict synergy metrics by averaging recent data."""
 
@@ -270,7 +444,9 @@ class AverageSynergyMetricBot:
             return 0.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class AverageSynergyROIBot(AverageSynergyMetricBot):
     """Predict synergy ROI by averaging recent data."""
 
@@ -284,7 +460,9 @@ class AverageSynergyROIBot(AverageSynergyMetricBot):
         super().__init__("synergy_roi", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergySecurityScoreBot(AverageSynergyMetricBot):
     """Predict upcoming synergy security score."""
 
@@ -294,7 +472,9 @@ class FutureSynergySecurityScoreBot(AverageSynergyMetricBot):
         super().__init__("synergy_security_score", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyEfficiencyBot(AverageSynergyMetricBot):
     """Predict upcoming synergy efficiency."""
 
@@ -304,7 +484,9 @@ class FutureSynergyEfficiencyBot(AverageSynergyMetricBot):
         super().__init__("synergy_efficiency", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyAntifragilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy antifragility."""
 
@@ -314,7 +496,9 @@ class FutureSynergyAntifragilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_antifragility", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyResilienceBot(AverageSynergyMetricBot):
     """Predict upcoming synergy resilience."""
 
@@ -324,7 +508,9 @@ class FutureSynergyResilienceBot(AverageSynergyMetricBot):
         super().__init__("synergy_resilience", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyShannonEntropyBot(AverageSynergyMetricBot):
     """Predict upcoming synergy Shannon entropy."""
 
@@ -334,7 +520,9 @@ class FutureSynergyShannonEntropyBot(AverageSynergyMetricBot):
         super().__init__("synergy_shannon_entropy", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyFlexibilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy flexibility."""
 
@@ -344,7 +532,9 @@ class FutureSynergyFlexibilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_flexibility", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyEnergyConsumptionBot(AverageSynergyMetricBot):
     """Predict upcoming synergy energy consumption."""
 
@@ -354,7 +544,9 @@ class FutureSynergyEnergyConsumptionBot(AverageSynergyMetricBot):
         super().__init__("synergy_energy_consumption", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyAdaptabilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy adaptability."""
 
@@ -364,7 +556,9 @@ class FutureSynergyAdaptabilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_adaptability", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergySafetyRatingBot(AverageSynergyMetricBot):
     """Predict upcoming synergy safety rating."""
 
@@ -374,7 +568,9 @@ class FutureSynergySafetyRatingBot(AverageSynergyMetricBot):
         super().__init__("synergy_safety_rating", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyRiskIndexBot(AverageSynergyMetricBot):
     """Predict upcoming synergy risk index."""
 
@@ -384,7 +580,9 @@ class FutureSynergyRiskIndexBot(AverageSynergyMetricBot):
         super().__init__("synergy_risk_index", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyRecoveryTimeBot(AverageSynergyMetricBot):
     """Predict upcoming synergy recovery time."""
 
@@ -394,7 +592,9 @@ class FutureSynergyRecoveryTimeBot(AverageSynergyMetricBot):
         super().__init__("synergy_recovery_time", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyDiscrepancyCountBot(AverageSynergyMetricBot):
     """Predict upcoming synergy discrepancy count."""
 
@@ -404,7 +604,9 @@ class FutureSynergyDiscrepancyCountBot(AverageSynergyMetricBot):
         super().__init__("synergy_discrepancy_count", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyGPUUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy GPU usage."""
 
@@ -414,7 +616,9 @@ class FutureSynergyGPUUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_gpu_usage", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyCPUUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy CPU usage."""
 
@@ -424,7 +628,9 @@ class FutureSynergyCPUUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_cpu_usage", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyMemoryUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy memory usage."""
 
@@ -434,7 +640,9 @@ class FutureSynergyMemoryUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_memory_usage", data_bot)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(
+    bot_registry=_get_registry_proxy(), data_bot=_get_data_bot_proxy()
+)
 class FutureSynergyLongTermLucrativityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy long term lucrativity."""
 
