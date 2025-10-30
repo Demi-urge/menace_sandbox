@@ -90,6 +90,18 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         except ValueError:
             parts = path.parts
 
+        # ``Path.parts`` preserves the name of every directory component.  When
+        # the repository is connected to a remote, Git stores remote tracking
+        # branches under ``.git/refs`` using the branch name as the file name.
+        # Some of our historical branches end with ``_bot.py`` which satisfies
+        # the glob above.  Traversing those reference files caused the
+        # registry priming command to attempt ``ast.parse`` on Git metadata,
+        # resulting in noisy "invalid decimal literal" warnings and slowing the
+        # boot process to a crawl.  Filtering out anything within a VCS
+        # directory keeps the discovery focused on actual Python modules.
+        if any(part in {".git", ".hg", ".svn"} for part in parts):
+            continue
+
         # ``git`` worktrees may place the repository metadata outside of
         # ``root`` while exposing it through ``.git`` entries.  When those
         # entries contain branch names that happen to end in ``_bot.py`` (for
@@ -99,9 +111,6 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         # warnings and, on some systems, a noticeable slowdown while the parser
         # churns through the VCS metadata.  Filtering out anything under a VCS
         # directory keeps the discovery focused on actual source modules.
-        if any(part in {".git", ".hg", ".svn"} for part in parts):
-            continue
-
         if any(part in ignore or part.startswith("test") for part in parts):
             continue
         if any(part.startswith(".") for part in parts):
