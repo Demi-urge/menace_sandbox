@@ -524,7 +524,7 @@ class LoggedCursor(sqlite3.Cursor):
             "read" if is_read else "write",
             table,
             row_count,
-            db_logging=not is_schema_change,
+            db_logging=(not is_schema_change and not is_read),
         )
         return self
 
@@ -548,7 +548,7 @@ class LoggedCursor(sqlite3.Cursor):
             "read" if is_read else "write",
             table,
             row_count,
-            db_logging=not is_schema_change,
+            db_logging=(not is_schema_change and not is_read),
         )
         return self
 
