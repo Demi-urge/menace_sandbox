@@ -70,10 +70,25 @@ def _iter_decorated_bot_classes(module: Path) -> list[str]:
 def _iter_bot_modules(root: Path) -> list[Path]:
     """Return bot module paths under *root* while skipping test helpers."""
 
-    ignore = {"tests", "unit_tests", "docs"}
+    ignore = {
+        "tests",
+        "unit_tests",
+        "docs",
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+    }
     modules: list[Path] = []
     for path in root.rglob("*_bot.py"):
-        if any(part in ignore or part.startswith("test") for part in path.parts):
+        parts = path.parts
+        if any(part in ignore or part.startswith("test") for part in parts):
+            continue
+        if any(part.startswith(".") for part in parts):
             continue
         modules.append(path)
     return modules
