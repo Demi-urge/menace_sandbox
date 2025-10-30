@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import queue
 import random
 import sqlite3
+import threading
 import time
+from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -18,6 +23,9 @@ from db_router import GLOBAL_ROUTER, init_db_router
 LOG_DIR = resolve_dir("logs")
 JSONL_PATH = LOG_DIR / "audit_log.jsonl"
 SQLITE_PATH = LOG_DIR / "audit_log.db"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_log_dir() -> None:
@@ -98,13 +106,161 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-_SQLITE_LOCK_MESSAGE = "database is locked"
+_SQLITE_RETRY_MESSAGES = (
+    "database is locked",
+    "database schema is locked",
+    "cannot commit transaction - sql statements in progress",
+)
 _SQLITE_MAX_RETRIES = 5
 _SQLITE_BASE_DELAY = 0.05
 
 
+@dataclass(slots=True)
+class _AuditPayload:
+    """Container for an audit record awaiting persistence."""
+
+    event_id: str
+    event_type: str
+    timestamp: str
+    data: Dict[str, Any]
+
+
 def _should_retry_sqlite(exc: sqlite3.OperationalError) -> bool:
-    return _SQLITE_LOCK_MESSAGE in str(exc).lower()
+    message = str(exc).lower()
+    return any(fragment in message for fragment in _SQLITE_RETRY_MESSAGES)
+
+
+def _connection_database_path(conn: sqlite3.Connection) -> str:
+    """Return the on-disk path for *conn*'s ``main`` database."""
+
+    with closing(conn.execute("PRAGMA database_list")) as cursor:
+        for _, name, path in cursor.fetchall():
+            if name == "main":
+                return path or ":memory:"
+    return ":memory:"
+
+
+def _coerce_value(value: Any) -> str:
+    """Convert *value* into a SQLite-friendly string."""
+
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
+def _write_event(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
+    """Persist *payload* using *conn* within a single transaction."""
+
+    _ensure_db(conn)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+            (payload.event_id, payload.timestamp, payload.event_type),
+        )
+        for key, value in payload.data.items():
+            cur.execute(
+                "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                (payload.event_id, key, _coerce_value(value)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+
+
+def _write_event_with_retry(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
+    """Persist *payload* retrying transient SQLite failures."""
+
+    last_error: Exception | None = None
+    for attempt in range(_SQLITE_MAX_RETRIES):
+        try:
+            _write_event(conn, payload)
+            return
+        except sqlite3.OperationalError as exc:
+            last_error = exc
+            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
+                delay = _SQLITE_BASE_DELAY * (2**attempt)
+                time.sleep(delay)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+
+
+class _SQLiteWorker:
+    """Background worker that serialises writes to a SQLite database."""
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._queue: queue.Queue[tuple[_AuditPayload, queue.Queue[Exception | None]]] = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"audit-sqlite-writer-{Path(db_path).stem or 'memory'}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def write(self, payload: _AuditPayload) -> None:
+        """Synchronously persist *payload* using the worker thread."""
+
+        result: queue.Queue[Exception | None] = queue.Queue(maxsize=1)
+        self._queue.put((payload, result))
+        error = result.get()
+        if error is not None:
+            raise error
+
+    def _run(self) -> None:
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        try:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA synchronous=NORMAL")
+
+            while True:
+                payload, result = self._queue.get()
+                try:
+                    _write_event_with_retry(conn, payload)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        "Failed to persist audit event %s: %s",
+                        payload.event_id,
+                        exc,
+                    )
+                    result.put(exc)
+                else:
+                    result.put(None)
+        finally:
+            conn.close()
+
+
+class _SQLiteWriterRegistry:
+    """Lazy registry mapping database paths to writer threads."""
+
+    def __init__(self) -> None:
+        self._workers: Dict[str, _SQLiteWorker] = {}
+        self._lock = threading.Lock()
+
+    def write(self, db_path: str, payload: _AuditPayload) -> None:
+        worker = self._get_worker(db_path)
+        worker.write(payload)
+
+    def _get_worker(self, db_path: str) -> _SQLiteWorker:
+        with self._lock:
+            worker = self._workers.get(db_path)
+            if worker is None:
+                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+                worker = _SQLiteWorker(db_path)
+                self._workers[db_path] = worker
+            return worker
+
+
+_SQLITE_WRITERS = _SQLiteWriterRegistry()
 
 
 def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_PATH) -> str:
@@ -114,31 +270,17 @@ def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_P
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
     router = GLOBAL_ROUTER or init_db_router("default")
-    conn = router.get_connection("events", operation="write")
+    conn = router.get_connection("events")
+    payload = _AuditPayload(event_id, event_type, ts, dict(data))
 
-    for attempt in range(_SQLITE_MAX_RETRIES):
-        try:
-            _ensure_db(conn)
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
-                (event_id, ts, event_type),
-            )
-            for key, value in data.items():
-                if isinstance(value, (dict, list)):
-                    value = json.dumps(value)
-                cur.execute(
-                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
-                    (event_id, key, str(value)),
-                )
-            conn.commit()
-            break
-        except sqlite3.OperationalError as exc:
-            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
-                delay = _SQLITE_BASE_DELAY * (2**attempt)
-                time.sleep(delay)
-                continue
-            raise
+    database_path = _connection_database_path(conn)
+    override_path = str(db_path) if db_path is not None else ""
+    if database_path in (":memory:", "") and override_path not in (":memory:", ""):
+        database_path = override_path
+    if database_path in (":memory:", ""):
+        _write_event_with_retry(conn, payload)
+    else:
+        _SQLITE_WRITERS.write(database_path, payload)
 
     return event_id
 
