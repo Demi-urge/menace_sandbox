@@ -42,19 +42,43 @@ def generate_event_id(event_type: str) -> str:
     return f"{event_type}-{ts}-{suffix}"
 
 
-def log_event(event_type: str, data: Dict[str, Any], jsonl_path: Path = JSONL_PATH) -> str:
-    """Append an event record to the JSONL audit log."""
+def _normalise_jsonl_path(jsonl_path: Path | str) -> Path:
+    """Return the resolved :class:`Path` for *jsonl_path*."""
+
+    path = Path(jsonl_path)
+    if not path.is_absolute():
+        path = LOG_DIR / path
+    return path
+
+
+def _append_record_to_jsonl(record: Dict[str, Any], jsonl_path: Path | str = JSONL_PATH) -> None:
+    """Append *record* to the append-only JSONL audit log."""
+
     _ensure_log_dir()
-    event_id = generate_event_id(event_type)
-    record = {
+    path = _normalise_jsonl_path(jsonl_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def _build_record(event_type: str, data: Dict[str, Any], event_id: str | None = None) -> Dict[str, Any]:
+    """Return the serialisable record for *event_type* and *data*."""
+
+    record_id = event_id or generate_event_id(event_type)
+    return {
         "timestamp": datetime.utcnow().isoformat(),
         "event_type": event_type,
-        "event_id": event_id,
+        "event_id": record_id,
         "data": data,
     }
-    with jsonl_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
-    return event_id
+
+
+def log_event(event_type: str, data: Dict[str, Any], jsonl_path: Path | str = JSONL_PATH) -> str:
+    """Append an event record to the JSONL audit log."""
+
+    record = _build_record(event_type, data)
+    _append_record_to_jsonl(record, jsonl_path)
+    return record["event_id"]
 
 
 def export_to_csv(jsonl_path: Path, csv_path: Path) -> None:
@@ -340,75 +364,108 @@ def log_to_sqlite(
     event_type: str,
     data: Dict[str, Any],
     db_path: str | Path = SQLITE_PATH,
+    jsonl_path: Path | str = JSONL_PATH,
 ) -> str:
-    """Store an event in the SQLite log."""
+    """Store an event in the append-only log with a best-effort SQLite mirror."""
 
-    _ensure_log_dir()
-    event_id = generate_event_id(event_type)
-    ts = datetime.utcnow().isoformat()
-    payload = _AuditPayload(event_id, event_type, ts, dict(data))
+    record = _build_record(event_type, dict(data))
+    _append_record_to_jsonl(record, jsonl_path)
 
     database_path, router_conn = _resolve_sqlite_target(db_path, "write")
-    if database_path in (":memory:", "") and router_conn is not None:
-        _write_event_in_connection(router_conn, payload)
-    else:
-        _SQLITE_WRITERS.write(database_path, payload)
+    payload = _AuditPayload(
+        record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
+    )
 
-    return event_id
+    try:
+        if database_path in (":memory:", "") and router_conn is not None:
+            _write_event_in_connection(router_conn, payload)
+        elif database_path:
+            _SQLITE_WRITERS.write(database_path, payload)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning(
+            "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
+            payload.event_id,
+            exc,
+        )
+
+    return record["event_id"]
+
+
+def _read_events_from_jsonl(jsonl_path: Path | str, limit: int) -> List[Dict[str, Any]]:
+    """Return at most *limit* events from the append-only JSONL log."""
+
+    if limit <= 0:
+        return []
+    path = _normalise_jsonl_path(jsonl_path)
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8") as fh:
+        lines = [json.loads(line) for line in fh if line.strip()]
+    lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return lines[:limit][::-1]
 
 
 def get_recent_events(
     limit: int = 100,
-    jsonl_path: str = JSONL_PATH,
+    jsonl_path: Path | str = JSONL_PATH,
     db_path: str | Path = SQLITE_PATH,
 ) -> List[Dict[str, Any]]:
-    """Return the most recent events from the JSONL or SQLite log."""
+    """Return the most recent events preferring SQLite with JSONL fallback."""
+
     if limit <= 0:
         return []
-    database_path, router_conn = _resolve_sqlite_target(db_path, "read")
 
-    target_conn: sqlite3.Connection | None = router_conn
-    if not (database_path in (":memory:", "") and router_conn is not None):
-        target_conn = sqlite3.connect(database_path)
-        target_conn.execute("PRAGMA busy_timeout=5000")
-        target_conn.execute("PRAGMA synchronous=NORMAL")
-        target_conn.execute("PRAGMA journal_mode=DELETE")
-
-    if target_conn is None:
-        raise RuntimeError("Unable to resolve SQLite connection for audit events")
-
+    events: List[Dict[str, Any]] = []
     try:
-        _ensure_db(target_conn)
-        events: List[Dict[str, Any]] = []
-        with closing(target_conn.cursor()) as cur:
-            cur.execute(
-                "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
-            )
-            event_rows = cur.fetchall()
-        for event_id, ts, etype in event_rows:
-            with closing(target_conn.cursor()) as data_cur:
-                data_cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
-                key_values = data_cur.fetchall()
-            data = {k: v for k, v in key_values}
-            try:
-                for k, v in data.items():
-                    if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
-                        data[k] = json.loads(v)
-            except Exception:
-                pass
-            events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
-    finally:
-        if target_conn is not None and target_conn is not router_conn:
-            target_conn.close()
+        database_path, router_conn = _resolve_sqlite_target(db_path, "read")
+
+        target_conn: sqlite3.Connection | None = router_conn
+        if not (database_path in (":memory:", "") and router_conn is not None):
+            target_conn = sqlite3.connect(database_path)
+            target_conn.execute("PRAGMA busy_timeout=5000")
+            target_conn.execute("PRAGMA synchronous=NORMAL")
+            target_conn.execute("PRAGMA journal_mode=DELETE")
+
+        if target_conn is None:
+            raise RuntimeError("Unable to resolve SQLite connection for audit events")
+
+        try:
+            _ensure_db(target_conn)
+            with closing(target_conn.cursor()) as cur:
+                cur.execute(
+                    "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                event_rows = cur.fetchall()
+            for event_id, ts, etype in event_rows:
+                with closing(target_conn.cursor()) as data_cur:
+                    data_cur.execute(
+                        "SELECT key, value FROM event_data WHERE event_id=?", (event_id,)
+                    )
+                    key_values = data_cur.fetchall()
+                data = {k: v for k, v in key_values}
+                try:
+                    for k, v in data.items():
+                        if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
+                            data[k] = json.loads(v)
+                except Exception:
+                    pass
+                events.append(
+                    {"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data}
+                )
+        finally:
+            if target_conn is not None and target_conn is not router_conn:
+                target_conn.close()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning(
+            "Failed to read audit events from SQLite (%s). Falling back to JSONL only.",
+            exc,
+        )
+        events = []
+
     if events:
         return list(reversed(events))
-    if not Path(jsonl_path).exists():
-        return []
-    with Path(jsonl_path).open("r", encoding="utf-8") as fh:
-        lines = [json.loads(line) for line in fh if line.strip()]
-    lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    return lines[:limit][::-1]
+    return _read_events_from_jsonl(jsonl_path, limit)
 
 
 __all__ = [
