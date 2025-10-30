@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import importlib
 import json
 import logging
 import queue
@@ -14,10 +15,12 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, TYPE_CHECKING
 
 from dynamic_path_router import resolve_dir
-from db_router import GLOBAL_ROUTER, init_db_router
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from db_router import DBRouter
 
 # Directory and default log paths
 LOG_DIR = resolve_dir("logs")
@@ -27,6 +30,44 @@ SQLITE_PATH = AUDIT_SQLITE_DIR / "audit_log.db"
 
 
 logger = logging.getLogger(__name__)
+
+
+GLOBAL_ROUTER: "DBRouter | None" = None
+
+
+def _lazy_init_db_router(*args: Any, **kwargs: Any):
+    """Import and proxy :func:`db_router.init_db_router` on first use."""
+
+    module = importlib.import_module("db_router")
+    init_fn = getattr(module, "init_db_router")
+    global init_db_router
+    init_db_router = init_fn  # type: ignore[assignment]
+    return init_fn(*args, **kwargs)
+
+
+init_db_router: Callable[..., "DBRouter"] = _lazy_init_db_router  # type: ignore[assignment]
+
+
+def _get_db_router() -> "DBRouter":
+    """Return a shared :class:`~db_router.DBRouter`, importing lazily."""
+
+    global GLOBAL_ROUTER, init_db_router
+
+    if GLOBAL_ROUTER is not None:
+        return GLOBAL_ROUTER
+
+    module = importlib.import_module("db_router")
+    module_router = getattr(module, "GLOBAL_ROUTER", None)
+    if module_router is not None:
+        GLOBAL_ROUTER = module_router
+
+    if init_db_router is _lazy_init_db_router:
+        init_db_router = getattr(module, "init_db_router")  # type: ignore[assignment]
+
+    if GLOBAL_ROUTER is None:
+        GLOBAL_ROUTER = init_db_router("default")
+
+    return GLOBAL_ROUTER
 
 
 def _ensure_log_dir() -> None:
@@ -216,7 +257,7 @@ def _resolve_sqlite_target(
     if db_path is not None and str(db_path):
         return str(Path(db_path).expanduser()), None
 
-    router = GLOBAL_ROUTER or init_db_router("default")
+    router = _get_db_router()
     conn = router.get_connection("events", operation)
     return _connection_database_path(conn), conn
 
