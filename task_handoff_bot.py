@@ -88,30 +88,54 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
 
     DataBot = _FallbackDataBot  # type: ignore[assignment]
 
-try:
-    self_coding_managed = load_internal("coding_bot_interface").self_coding_managed
-except Exception as exc:  # pragma: no cover - optional dependency fallback
-    logger.warning(
-        "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
-        exc,
-    )
+_self_coding_import_warning_emitted = False
+_self_coding_disabled_warning_emitted = False
 
-    def self_coding_managed(**_kwargs: Any) -> Callable[[type], type]:
-        def decorator(cls: type) -> type:
-            return cls
 
-        return decorator
-else:
+def _noop_self_coding_decorator(**_kwargs: Any) -> Callable[[type], type]:
+    def decorator(cls: type) -> type:
+        return cls
+
+    return decorator
+
+
+def self_coding_managed(**kwargs: Any) -> Callable[[type], type]:
+    """Defer importing the coding bot interface to avoid circular imports."""
+
+    global _self_coding_import_warning_emitted
+    global _self_coding_disabled_warning_emitted
+
     if _data_bot_fallback:
-        logger.warning(
-            "Self-coding integration disabled because DataBot fallback is active.",
-        )
+        if not _self_coding_disabled_warning_emitted:
+            logger.warning(
+                "Self-coding integration disabled because DataBot fallback is active.",
+            )
+            _self_coding_disabled_warning_emitted = True
+        return _noop_self_coding_decorator(**kwargs)
 
-        def self_coding_managed(**_kwargs: Any) -> Callable[[type], type]:
-            def decorator(cls: type) -> type:
-                return cls
+    try:
+        interface_mod = load_internal("coding_bot_interface")
+    except Exception as exc:  # pragma: no cover - optional dependency fallback
+        if not _self_coding_import_warning_emitted:
+            logger.warning(
+                "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
+                exc,
+            )
+            _self_coding_import_warning_emitted = True
+        return _noop_self_coding_decorator(**kwargs)
 
-            return decorator
+    try:
+        decorator_factory = interface_mod.self_coding_managed  # type: ignore[attr-defined]
+    except AttributeError as exc:  # pragma: no cover - compatibility fallback
+        if not _self_coding_import_warning_emitted:
+            logger.warning(
+                "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
+                exc,
+            )
+            _self_coding_import_warning_emitted = True
+        return _noop_self_coding_decorator(**kwargs)
+
+    return decorator_factory(**kwargs)
 
 UnifiedEventBus = load_internal("unified_event_bus").UnifiedEventBus
 WorkflowGraph = load_internal("workflow_graph").WorkflowGraph
