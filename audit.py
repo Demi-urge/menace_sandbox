@@ -13,6 +13,7 @@ from threading import Lock
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 from dynamic_path_router import resolve_dir
 import hashlib
+from audit_utils import safe_write_audit
 
 
 # Default log file within the repository.  Resolved lazily to avoid running
@@ -176,27 +177,33 @@ def log_db_access(
         except OSError:
             pass
         try:
-            with sqlite3.connect(db_path) as conn:
+            def _persist(conn: sqlite3.Connection) -> None:
                 with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
                     pragma.fetchall()
-                with closing(conn.cursor()) as cur:
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS shared_db_audit (
-                            action TEXT,
-                            "table" TEXT,
-                            rows INTEGER,
-                            menace_id TEXT,
-                            timestamp TEXT
+                try:
+                    with closing(conn.cursor()) as cur:
+                        cur.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS shared_db_audit (
+                                action TEXT,
+                                "table" TEXT,
+                                rows INTEGER,
+                                menace_id TEXT,
+                                timestamp TEXT
+                            )
+                            """
                         )
-                        """
-                    )
-                    cur.execute(
-                        'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
-                        ' VALUES (?, ?, ?, ?, ?)',
-                        (action, table_name, row_count, menace_id, record["timestamp"]),
-                    )
-                conn.commit()
+                        cur.execute(
+                            'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
+                            ' VALUES (?, ?, ?, ?, ?)',
+                            (action, table_name, row_count, menace_id, record["timestamp"]),
+                        )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+
+            safe_write_audit(db_path, _persist, logger=_module_logger)
         except (sqlite3.Error, SystemError) as exc:
             _module_logger.debug("failed to persist shared_db_audit entry: %s", exc)
 

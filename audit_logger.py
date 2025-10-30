@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple, TYPE_CHECKING
 
+from audit_utils import safe_write_audit
 from dynamic_path_router import resolve_dir
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -283,10 +284,8 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
     )
     if db_path not in (":memory:", ""):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(
-        db_path,
-        timeout=_SQLITE_TIMEOUT_SECONDS,
-    ) as conn:
+    
+    def _persist(conn: sqlite3.Connection) -> None:
         _configure_sqlite_connection(conn)
         _ensure_db(conn)
         logger.debug(
@@ -327,6 +326,13 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
                 payload.event_id,
                 thread_name,
             )
+
+    safe_write_audit(
+        db_path,
+        _persist,
+        timeout=_SQLITE_TIMEOUT_SECONDS,
+        logger=logger,
+    )
 
 
 def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
