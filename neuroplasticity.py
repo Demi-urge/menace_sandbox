@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Any, Iterable, List, Sequence, Tuple
+from contextlib import closing
 import logging
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,16 @@ class PathwayDB:
         )
         self.conn.commit()
 
+    def _fetchone(self, query: str, params: Sequence[Any] | None = None):
+        with closing(self.conn.cursor()) as cur:
+            cur.execute(query, params or ())
+            return cur.fetchone()
+
+    def _fetchall(self, query: str, params: Sequence[Any] | None = None):
+        with closing(self.conn.cursor()) as cur:
+            cur.execute(query, params or ())
+            return cur.fetchall()
+
     def log(self, rec: PathwayRecord) -> int:
         cur = self.conn.execute(
             """
@@ -138,11 +149,10 @@ class PathwayDB:
         return pid
 
     def _update_meta(self, pid: int, rec: PathwayRecord) -> None:
-        cur = self.conn.execute(
+        row = self._fetchone(
             "SELECT frequency, avg_exec_time, success_rate, avg_roi, last_activation FROM metadata WHERE pathway_id=?",
             (pid,),
         )
-        row = cur.fetchone()
         if isinstance(rec.outcome, Outcome):
             oc = rec.outcome
         else:
@@ -184,10 +194,10 @@ class PathwayDB:
         )
 
     def reinforce_link(self, from_id: int, to_id: int, weight: float = 1.0) -> None:
-        cur = self.conn.execute(
-            "SELECT weight FROM links WHERE from_id=? AND to_id=?", (from_id, to_id)
+        row = self._fetchone(
+            "SELECT weight FROM links WHERE from_id=? AND to_id=?",
+            (from_id, to_id),
         )
-        row = cur.fetchone()
         new_w = (row[0] if row else 0.0) + weight
         self.conn.execute(
             "REPLACE INTO links(from_id, to_id, weight) VALUES(?,?,?)",
@@ -210,10 +220,10 @@ class PathwayDB:
     def _record_ngrams(self, ids: List[int], n: int) -> None:
         for i in range(len(ids) - n + 1):
             seq = "-".join(str(s) for s in ids[i : i + n])
-            row = self.conn.execute(
+            row = self._fetchone(
                 "SELECT weight FROM ngrams WHERE n=? AND seq=?",
                 (n, seq),
-            ).fetchone()
+            )
             new_w = (row[0] if row else 0.0) + 1.0
             self.conn.execute(
                 "REPLACE INTO ngrams(n, seq, weight) VALUES(?,?,?)",
@@ -222,83 +232,74 @@ class PathwayDB:
 
     def next_pathway(self, pid: int) -> int | None:
         """Return the most strongly linked pathway after *pid*."""
-        cur = self.conn.execute(
+        row = self._fetchone(
             "SELECT to_id FROM links WHERE from_id=? ORDER BY weight DESC LIMIT 1",
             (pid,),
         )
-        row = cur.fetchone()
         return int(row[0]) if row else None
 
     def is_highly_myelinated(self, pid: int, threshold: float = 1.0) -> bool:
         """Return True if the pathway's score exceeds *threshold*."""
-        cur = self.conn.execute(
+        row = self._fetchone(
             "SELECT myelination_score FROM metadata WHERE pathway_id=?",
             (pid,),
         )
-        row = cur.fetchone()
         return bool(row and row[0] >= threshold)
 
     def similar_actions(self, actions: str, limit: int = 5) -> List[Tuple[int, float]]:
         """Return pathways with similar action traces."""
-        cur = self.conn.execute(
+        rows = self._fetchall(
             "SELECT id FROM pathways WHERE actions LIKE ?",
             (f"%{actions}%",),
         )
-        ids = [r[0] for r in cur.fetchall()]
+        ids = [r[0] for r in rows]
         if not ids:
             return []
         qmarks = ",".join("?" for _ in ids)
-        cur = self.conn.execute(
+        return self._fetchall(
             f"SELECT pathway_id, myelination_score FROM metadata WHERE pathway_id IN ({qmarks}) ORDER BY myelination_score DESC LIMIT ?",
             (*ids, limit),
         )
-        return cur.fetchall()
 
     def top_pathways(self, limit: int = 5) -> List[Tuple[int, float]]:
-        cur = self.conn.execute(
+        return self._fetchall(
             "SELECT pathway_id, myelination_score FROM metadata ORDER BY myelination_score DESC LIMIT ?",
             (limit,),
         )
-        return cur.fetchall()
 
     def top_sequences(self, n: int = 3, limit: int = 5) -> List[Tuple[str, float]]:
-        cur = self.conn.execute(
+        return self._fetchall(
             "SELECT seq, weight FROM ngrams WHERE n=? ORDER BY weight DESC LIMIT ?",
             (n, limit),
         )
-        return cur.fetchall()
 
     def highest_myelination_score(self) -> float:
         """Return the highest myelination score currently recorded."""
-        cur = self.conn.execute(
-            "SELECT MAX(myelination_score) FROM metadata"
-        )
-        row = cur.fetchone()
+        row = self._fetchone("SELECT MAX(myelination_score) FROM metadata")
         return float(row[0] or 0.0)
 
     def merge_macro_pathways(self, weight_threshold: float = 3.0) -> None:
         """Create combined pathways for strongly linked pairs."""
-        cur = self.conn.execute(
+        pairs = self._fetchall(
             "SELECT from_id, to_id FROM links WHERE weight>=?",
             (weight_threshold,),
         )
-        pairs = cur.fetchall()
         for from_id, to_id in pairs:
-            row1 = self.conn.execute(
+            row1 = self._fetchone(
                 "SELECT actions FROM pathways WHERE id=?",
                 (from_id,),
-            ).fetchone()
-            row2 = self.conn.execute(
+            )
+            row2 = self._fetchone(
                 "SELECT actions FROM pathways WHERE id=?",
                 (to_id,),
-            ).fetchone()
+            )
             if not row1 or not row2:
                 continue
             actions = f"{row1[0]}->{row2[0]}"
-            metas = self.conn.execute(
+            metas = self._fetchall(
                 "SELECT frequency, avg_exec_time, success_rate, avg_roi FROM metadata WHERE pathway_id IN (?,?)",
                 (from_id, to_id),
-            ).fetchall()
+            )
             if not metas:
                 continue
             freq = sum(m[0] for m in metas)

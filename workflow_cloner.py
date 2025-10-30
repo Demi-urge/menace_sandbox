@@ -14,6 +14,7 @@ import logging
 import random
 import threading
 import time
+from contextlib import closing
 from typing import Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -81,20 +82,24 @@ class WorkflowCloner:
         return var
 
     def _clone(self, pid: int) -> None:
-        row = self.db.conn.execute(
-            "SELECT actions FROM pathways WHERE id=?",
-            (pid,),
-        ).fetchone()
+        with closing(self.db.conn.cursor()) as cur:
+            cur.execute(
+                "SELECT actions FROM pathways WHERE id=?",
+                (pid,),
+            )
+            row = cur.fetchone()
         if not row:
             return
         actions = row[0]
         tasks = [a.strip() for a in actions.split("->") if a.strip()]
         if not tasks:
             return
-        before_row = self.db.conn.execute(
-            "SELECT avg_roi FROM metadata WHERE pathway_id=?",
-            (pid,),
-        ).fetchone()
+        with closing(self.db.conn.cursor()) as cur:
+            cur.execute(
+                "SELECT avg_roi FROM metadata WHERE pathway_id=?",
+                (pid,),
+            )
+            before_row = cur.fetchone()
         before = float(before_row[0] or 0.0) if before_row else 0.0
         after = before
         if self.ga_manager:
