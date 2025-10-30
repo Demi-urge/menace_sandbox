@@ -1708,11 +1708,12 @@ def self_coding_managed(
 ) -> Callable[[type], type]:
     """Class decorator registering bots with helper services.
 
-    ``bot_registry`` and ``data_bot`` instances must be provided when applying
-    the decorator.  When ``manager`` is supplied, instances will default to this
-    :class:`SelfCodingManager` when resolving helpers.  The bot's name is
-    registered with ``bot_registry`` during class creation so registration does
-    not depend on instantiation.
+    ``bot_registry`` and ``data_bot`` may be provided as instances or callables
+    that create the helper lazily.  When ``manager`` is supplied, instances will
+    default to this :class:`SelfCodingManager` when resolving helpers.  The bot's
+    name is registered with ``bot_registry`` the first time an instance is
+    created so importing a module does not eagerly construct the helper
+    dependencies.
     """
 
     if bot_registry is None or data_bot is None:
@@ -1728,232 +1729,276 @@ def self_coding_managed(
             module_path = ""
         if not module_path:
             module_path = getattr(cls, "__module__", "")
-        roi_t = err_t = None
-        if hasattr(data_bot, "reload_thresholds"):
-            try:
-                t = data_bot.reload_thresholds(name)
-                roi_t = getattr(t, "roi_drop", None)
-                err_t = getattr(t, "error_threshold", None)
-                _ensure_threshold_entry(name, t)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("threshold reload failed for %s", name)
         manager_instance = manager
-        if manager_instance is None:
-            # Defer expensive manager bootstrap until the bot is instantiated to
-            # avoid circular imports during module import time (for example when
-            # ``CapitalManagementBot`` is constructed inside the automation
-            # pipeline).  Runtime availability checks remain so purely offline
-            # environments continue to receive the explicit warning.
-            if not _self_coding_runtime_available():
-                manager_instance = _DisabledSelfCodingManager(
-                    bot_registry=bot_registry,
-                    data_bot=data_bot,
-                )
-                logger.warning(
-                    "self-coding runtime unavailable; %s will run without autonomous patching",
-                    name,
-                )
-
+        module_provenance = _extract_module_provenance(sys.modules.get(cls.__module__))
         update_kwargs: dict[str, Any] = {}
         should_update = True
         register_as_coding = True
         decision: _ProvenanceDecision | None = None
-        module_provenance = _extract_module_provenance(sys.modules.get(cls.__module__))
+        resolved_registry: BotRegistry | None = None
+        resolved_data_bot: DataBot | None = None
+        bootstrap_lock = threading.Lock()
+        bootstrap_done = False
 
-        register_kwargs = dict(
-            name=name,
-            roi_threshold=roi_t,
-            error_threshold=err_t,
-            manager=manager_instance,
-            data_bot=data_bot,
-            module_path=module_path,
-            is_coding_bot=True,
-        )
+        def _resolve_candidate(candidate: Any) -> Any:
+            if getattr(candidate, "__self_coding_lazy__", False):
+                return candidate()
+            return candidate
 
-        try:
-            update_sig = inspect.signature(bot_registry.update_bot)
-        except (AttributeError, TypeError, ValueError):  # pragma: no cover - best effort
-            update_sig = None
+        def _bootstrap_helpers() -> tuple[BotRegistry, DataBot]:
+            nonlocal manager_instance, update_kwargs, should_update, register_as_coding
+            nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
 
-        expects_provenance = False
-        if update_sig is not None:
-            params = update_sig.parameters
-            expects_provenance = "patch_id" in params and "commit" in params
+            if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
+                return resolved_registry, resolved_data_bot
 
-        if expects_provenance:
-            manager_sources: list[object] = []
-            if manager is not None:
-                manager_sources.append(manager)
-            if manager_instance is not None and manager_instance not in manager_sources:
-                manager_sources.append(manager_instance)
-            try:
-                ctx_manager = MANAGER_CONTEXT.get(None)
-            except LookupError:  # pragma: no cover - defensive
-                ctx_manager = None
-            if ctx_manager is not None and ctx_manager not in manager_sources:
-                manager_sources.append(ctx_manager)
+            with bootstrap_lock:
+                if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
+                    return resolved_registry, resolved_data_bot
 
-            decision = _resolve_provenance_decision(
-                name, module_path or None, manager_sources, module_provenance
-            )
-            if decision.available:
-                update_kwargs["patch_id"] = decision.patch_id
-                update_kwargs["commit"] = decision.commit
-                if decision.mode == "unsigned":
-                    _warn_unsigned_once(name)
-            else:
-                should_update = False
-                register_as_coding = False
-                logger.info(
-                    "skipping bot update for %s due to missing provenance metadata",
-                    name,
-                )
-                reason = decision.reason or "provenance metadata unavailable"
-                if not isinstance(manager_instance, _DisabledSelfCodingManager):
-                    manager_instance = _DisabledSelfCodingManager(
-                        bot_registry=bot_registry,
-                        data_bot=data_bot,
-                    )
-                register_kwargs["manager"] = None
-                logger.warning(
-                    "strict provenance policy prevents self-coding bootstrap for %s; operating without autonomous patching (%s)",
-                    name,
-                    reason,
-                )
-        else:
-            decision = decision or _ProvenanceDecision(None, None, "signed")
+                registry_obj = _resolve_candidate(bot_registry)
+                data_bot_obj = _resolve_candidate(data_bot)
+                if registry_obj is None or data_bot_obj is None:
+                    raise RuntimeError("BotRegistry and DataBot instances are required")
 
-        with self_coding_import_guard(module_path):
-            register_kwargs["is_coding_bot"] = register_as_coding
-            if register_as_coding:
-                register_kwargs["manager"] = manager_instance
-
-            try:
-                bot_registry.register_bot(**register_kwargs)
-            except TypeError:  # pragma: no cover - legacy registries
-                try:
-                    fallback_kwargs = dict(register_kwargs)
-                    fallback_kwargs.pop("roi_threshold", None)
-                    fallback_kwargs.pop("error_threshold", None)
-                    bot_registry.register_bot(**fallback_kwargs)
-                except TypeError:
-                    bot_registry.register_bot(name, is_coding_bot=True)
-                    if module_path:
-                        try:
-                            node = bot_registry.graph.nodes.get(name)
-                            if node is not None:
-                                node["module"] = module_path
-                            bot_registry.modules[name] = module_path
-                        except Exception:  # pragma: no cover - best effort bookkeeping
-                            logger.debug(
-                                "failed to persist module path for %s after legacy registration",
-                                name,
-                                exc_info=True,
-                            )
-
-            if should_update and update_kwargs:
-                try:
-                    node = bot_registry.graph.nodes.get(name)
-                except Exception:  # pragma: no cover - best effort
-                    node = None
-                if node is not None:
-                    existing_commit = node.get("commit")
-                    existing_patch = node.get("patch_id")
-                    existing_module = node.get("module") or bot_registry.modules.get(name)
-                    target_module = module_path
+                roi_t = err_t = None
+                if hasattr(data_bot_obj, "reload_thresholds"):
                     try:
-                        if target_module is not None:
-                            target_module = os.fspath(target_module)
-                    except TypeError:
-                        target_module = str(target_module)
-                    if isinstance(existing_module, os.PathLike):
-                        try:
-                            existing_module = os.fspath(existing_module)
-                        except TypeError:
-                            existing_module = str(existing_module)
-                    if (
-                        existing_commit == update_kwargs.get("commit")
-                        and existing_patch == update_kwargs.get("patch_id")
-                    ):
-                        same_module = False
-                        if not target_module or not existing_module:
-                            same_module = True
-                        else:
-                            try:
-                                same_module = Path(existing_module).resolve() == Path(
-                                    str(target_module)
-                                ).resolve()
-                            except Exception:  # pragma: no cover - filesystem dependent
-                                same_module = str(existing_module) == str(target_module)
-                        if same_module:
-                            should_update = False
-                            logger.debug(
-                                "skipping redundant bot update for %s (patch_id=%s)",
-                                name,
-                                update_kwargs.get("patch_id"),
-                            )
+                        t = data_bot_obj.reload_thresholds(name)
+                        roi_t = getattr(t, "roi_drop", None)
+                        err_t = getattr(t, "error_threshold", None)
+                        _ensure_threshold_entry(name, t)
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("threshold reload failed for %s", name)
 
-            registries_seen = getattr(cls, "_self_coding_registry_ids", None)
-            if not isinstance(registries_seen, set):
-                registries_seen = set()
-            else:
-                registries_seen = set(registries_seen)
-            registries_seen.add(id(bot_registry))
-            cls._self_coding_registry_ids = registries_seen
-
-            patch_id = update_kwargs.get("patch_id")
-            import_depth = self_coding_import_depth()
-
-            if should_update and import_depth > 1:
-                should_update = False
-                logger.debug(
-                    (
-                        "deferring bot update for %s (patch_id=%s, depth=%s) "
-                        "because a nested import is active"
-                    ),
-                    name,
-                    patch_id,
-                    import_depth,
-                )
-
-            hot_swap_active = False
-            hot_swap_probe = getattr(bot_registry, "hot_swap_active", None)
-            if callable(hot_swap_probe):
-                try:
-                    hot_swap_active = bool(hot_swap_probe())
-                except Exception:  # pragma: no cover - defensive best effort
-                    logger.debug(
-                        "failed to determine hot swap state for %s", name, exc_info=True
+                manager_local = manager_instance
+                if manager_local is None and not _self_coding_runtime_available():
+                    manager_local = _DisabledSelfCodingManager(
+                        bot_registry=registry_obj,
+                        data_bot=data_bot_obj,
                     )
-            if should_update and hot_swap_active:
-                should_update = False
-                logger.debug(
-                    (
-                        "deferring bot update for %s (patch_id=%s) "
-                        "because a hot swap import is active"
-                    ),
-                    name,
-                    patch_id,
+                    logger.warning(
+                        "self-coding runtime unavailable; %s will run without autonomous patching",
+                        name,
+                    )
+
+                register_kwargs = dict(
+                    name=name,
+                    roi_threshold=roi_t,
+                    error_threshold=err_t,
+                    manager=manager_local,
+                    data_bot=data_bot_obj,
+                    module_path=module_path,
+                    is_coding_bot=True,
                 )
 
-            if should_update:
                 try:
-                    bot_registry.update_bot(name, module_path, **update_kwargs)
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("bot update failed for %s", name)
+                    update_sig = inspect.signature(registry_obj.update_bot)
+                except (AttributeError, TypeError, ValueError):  # pragma: no cover - best effort
+                    update_sig = None
 
-        cls.bot_registry = bot_registry  # type: ignore[attr-defined]
-        cls.data_bot = data_bot  # type: ignore[attr-defined]
+                update_kwargs_local: dict[str, Any] = {}
+                should_update_local = True
+                register_as_coding_local = True
+                decision_local: _ProvenanceDecision | None = None
+
+                expects_provenance = False
+                if update_sig is not None:
+                    params = update_sig.parameters
+                    expects_provenance = "patch_id" in params and "commit" in params
+
+                if expects_provenance:
+                    manager_sources: list[object] = []
+                    if manager is not None:
+                        manager_sources.append(manager)
+                    if manager_local is not None and manager_local not in manager_sources:
+                        manager_sources.append(manager_local)
+                    try:
+                        ctx_manager = MANAGER_CONTEXT.get(None)
+                    except LookupError:  # pragma: no cover - defensive
+                        ctx_manager = None
+                    if ctx_manager is not None and ctx_manager not in manager_sources:
+                        manager_sources.append(ctx_manager)
+
+                    decision_local = _resolve_provenance_decision(
+                        name, module_path or None, manager_sources, module_provenance
+                    )
+                    if decision_local.available:
+                        update_kwargs_local["patch_id"] = decision_local.patch_id
+                        update_kwargs_local["commit"] = decision_local.commit
+                        if decision_local.mode == "unsigned":
+                            _warn_unsigned_once(name)
+                    else:
+                        should_update_local = False
+                        register_as_coding_local = False
+                        logger.info(
+                            "skipping bot update for %s due to missing provenance metadata",
+                            name,
+                        )
+                        reason = decision_local.reason or "provenance metadata unavailable"
+                        if not isinstance(manager_local, _DisabledSelfCodingManager):
+                            manager_local = _DisabledSelfCodingManager(
+                                bot_registry=registry_obj,
+                                data_bot=data_bot_obj,
+                            )
+                        register_kwargs["manager"] = None
+                        logger.warning(
+                            "strict provenance policy prevents self-coding bootstrap for %s; operating without autonomous patching (%s)",
+                            name,
+                            reason,
+                        )
+                else:
+                    decision_local = decision_local or _ProvenanceDecision(None, None, "signed")
+
+                with self_coding_import_guard(module_path):
+                    register_kwargs["is_coding_bot"] = register_as_coding_local
+                    if register_as_coding_local:
+                        register_kwargs["manager"] = manager_local
+
+                    try:
+                        registry_obj.register_bot(**register_kwargs)
+                    except TypeError:  # pragma: no cover - legacy registries
+                        try:
+                            fallback_kwargs = dict(register_kwargs)
+                            fallback_kwargs.pop("roi_threshold", None)
+                            fallback_kwargs.pop("error_threshold", None)
+                            registry_obj.register_bot(**fallback_kwargs)
+                        except TypeError:
+                            registry_obj.register_bot(name, is_coding_bot=True)
+                            if module_path:
+                                try:
+                                    node = registry_obj.graph.nodes.get(name)
+                                    if node is not None:
+                                        node["module"] = module_path
+                                    registry_obj.modules[name] = module_path
+                                except Exception:  # pragma: no cover - best effort bookkeeping
+                                    logger.debug(
+                                        "failed to persist module path for %s after legacy registration",
+                                        name,
+                                        exc_info=True,
+                                    )
+
+                    if should_update_local and update_kwargs_local:
+                        try:
+                            node = registry_obj.graph.nodes.get(name)
+                        except Exception:  # pragma: no cover - best effort
+                            node = None
+                        if node is not None:
+                            existing_commit = node.get("commit")
+                            existing_patch = node.get("patch_id")
+                            existing_module = node.get("module") or registry_obj.modules.get(name)
+                            target_module = module_path
+                            try:
+                                if target_module is not None:
+                                    target_module = os.fspath(target_module)
+                            except TypeError:
+                                target_module = str(target_module)
+                            if isinstance(existing_module, os.PathLike):
+                                try:
+                                    existing_module = os.fspath(existing_module)
+                                except TypeError:
+                                    existing_module = str(existing_module)
+                            if (
+                                existing_commit == update_kwargs_local.get("commit")
+                                and existing_patch == update_kwargs_local.get("patch_id")
+                            ):
+                                same_module = False
+                                if not target_module or not existing_module:
+                                    same_module = True
+                                else:
+                                    try:
+                                        same_module = Path(existing_module).resolve() == Path(
+                                            str(target_module)
+                                        ).resolve()
+                                    except Exception:  # pragma: no cover - filesystem dependent
+                                        same_module = str(existing_module) == str(target_module)
+                                if same_module:
+                                    should_update_local = False
+                                    logger.debug(
+                                        "skipping redundant bot update for %s (patch_id=%s)",
+                                        name,
+                                        update_kwargs_local.get("patch_id"),
+                                    )
+
+                    registries_seen = getattr(cls, "_self_coding_registry_ids", None)
+                    if not isinstance(registries_seen, set):
+                        registries_seen = set()
+                    else:
+                        registries_seen = set(registries_seen)
+                    registries_seen.add(id(registry_obj))
+                    cls._self_coding_registry_ids = registries_seen
+
+                    patch_id = update_kwargs_local.get("patch_id")
+                    import_depth = self_coding_import_depth()
+
+                    if should_update_local and import_depth > 1:
+                        should_update_local = False
+                        logger.debug(
+                            (
+                                "deferring bot update for %s (patch_id=%s, depth=%s) "
+                                "because a nested import is active"
+                            ),
+                            name,
+                            patch_id,
+                            import_depth,
+                        )
+
+                    hot_swap_active = False
+                    hot_swap_probe = getattr(registry_obj, "hot_swap_active", None)
+                    if callable(hot_swap_probe):
+                        try:
+                            hot_swap_active = bool(hot_swap_probe())
+                        except Exception:  # pragma: no cover - defensive best effort
+                            logger.debug(
+                                "failed to determine hot swap state for %s", name, exc_info=True
+                            )
+                    if should_update_local and hot_swap_active:
+                        should_update_local = False
+                        logger.debug(
+                            (
+                                "deferring bot update for %s (patch_id=%s) "
+                                "because a hot swap import is active"
+                            ),
+                            name,
+                            patch_id,
+                        )
+
+                    if should_update_local:
+                        try:
+                            registry_obj.update_bot(name, module_path, **update_kwargs_local)
+                        except Exception:  # pragma: no cover - best effort
+                            logger.exception("bot update failed for %s", name)
+
+                cls.bot_registry = registry_obj  # type: ignore[attr-defined]
+                cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
+                cls.manager = manager_local  # type: ignore[attr-defined]
+                cls._self_coding_manual_mode = not register_as_coding_local
+
+                manager_instance = manager_local
+                update_kwargs = update_kwargs_local
+                should_update = should_update_local
+                register_as_coding = register_as_coding_local
+                decision = decision_local
+                resolved_registry = registry_obj
+                resolved_data_bot = data_bot_obj
+                bootstrap_done = True
+
+                return registry_obj, data_bot_obj
+
+        cls.bot_registry = None  # type: ignore[attr-defined]
+        cls.data_bot = None  # type: ignore[attr-defined]
         cls.manager = manager_instance  # type: ignore[attr-defined]
-        cls._self_coding_manual_mode = not register_as_coding
+        cls._self_coding_manual_mode = True
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
             orchestrator: EvolutionOrchestrator | None = kwargs.pop(
                 "evolution_orchestrator", None
             )
+            registry_obj, data_bot_obj = _bootstrap_helpers()
+            manager_default = manager_instance
             manager_local: SelfCodingManager | None = kwargs.get(
-                "manager", manager_instance
+                "manager", manager_default
             )
             orig_init(self, *args, **kwargs)
             try:
@@ -1964,7 +2009,7 @@ def self_coding_managed(
                     _module_path,
                     manager_local,
                 ) = _resolve_helpers(
-                    self, bot_registry, data_bot, orchestrator, manager_local
+                    self, registry_obj, data_bot_obj, orchestrator, manager_local
                 )
             except RuntimeError as exc:
                 raise RuntimeError(f"{cls.__name__}: {exc}") from exc

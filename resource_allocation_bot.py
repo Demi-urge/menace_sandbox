@@ -14,9 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple, TYPE_CHECKING, Type
 import uuid
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -30,13 +27,82 @@ from .contrarian_db import ContrarianDB
 from db_router import GLOBAL_ROUTER, init_db_router
 from snippet_compressor import compress_snippets
 
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
-except Exception as exc:  # pragma: no cover - explicit failure
-    raise ImportError(
-        "vector_service is required for ResourceAllocationBot; "
-        "install via `pip install vector_service`"
-    ) from exc
+_registry_instance: BotRegistry | None = None
+_data_bot_instance: DataBot | None = None
+_vector_types: tuple[Type[Any] | None, Type[Any], Type[Any]] | None = None
+_vector_import_error: Exception | None = None
+
+
+class _FallbackResultStub:  # pragma: no cover - lightweight sentinel
+    """Fallback placeholder when the vector service is unavailable."""
+
+
+class _ErrorResultStub:  # pragma: no cover - lightweight sentinel
+    """Fallback placeholder when the vector service is unavailable."""
+
+
+def _get_registry() -> BotRegistry:
+    """Return a cached :class:`BotRegistry` instance."""
+
+    global _registry_instance
+    if _registry_instance is None:
+        _registry_instance = BotRegistry()
+    return _registry_instance
+
+
+def _get_data_bot() -> DataBot:
+    """Return a cached :class:`DataBot` instance."""
+
+    global _data_bot_instance
+    if _data_bot_instance is None:
+        _data_bot_instance = DataBot(start_server=False)
+    return _data_bot_instance
+
+
+_get_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+
+def _load_vector_types() -> tuple[Type[Any] | None, Type[Any], Type[Any]]:
+    """Import vector service classes lazily, logging failures."""
+
+    global _vector_types, _vector_import_error
+    if _vector_types is not None:
+        return _vector_types
+
+    try:  # pragma: no cover - optional dependency
+        from vector_service.context_builder import (  # type: ignore
+            ContextBuilder as _ContextBuilder,
+            FallbackResult as _FallbackResult,
+            ErrorResult as _ErrorResult,
+        )
+    except Exception as exc:  # pragma: no cover - explicit fallback
+        logging.getLogger(__name__).warning(
+            "vector_service.context_builder unavailable: %s", exc
+        )
+        _vector_import_error = exc
+        _vector_types = (None, _FallbackResultStub, _ErrorResultStub)
+    else:
+        _vector_import_error = None
+        globals()["ContextBuilder"] = _ContextBuilder  # type: ignore[assignment]
+        globals()["FallbackResult"] = _FallbackResult  # type: ignore[assignment]
+        globals()["ErrorResult"] = _ErrorResult  # type: ignore[assignment]
+        _vector_types = (_ContextBuilder, _FallbackResult, _ErrorResult)
+
+    return _vector_types
+
+
+def _get_context_builder_cls() -> Type[Any] | None:
+    """Return the optional :class:`ContextBuilder` type when available."""
+
+    return _load_vector_types()[0]
+
+
+def _get_vector_result_types() -> Tuple[Type[Any], Type[Any]]:
+    """Return classes identifying vector service fallback results."""
+
+    _, fallback_type, error_type = _load_vector_types()
+    return fallback_type, error_type
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -44,9 +110,17 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
     from .contrarian_model_bot import ContrarianModelBot
     from .bot_database import BotDB
+    from vector_service.context_builder import (  # type: ignore
+        ContextBuilder,
+        FallbackResult,
+        ErrorResult,
+    )
 else:  # pragma: no cover - runtime fallback for optional deps
     CapitalManagementBot = Any  # type: ignore[assignment]
     PredictionManager = Any  # type: ignore[assignment]
+    ContextBuilder = Any  # type: ignore[assignment]
+    FallbackResult = _FallbackResultStub  # type: ignore[assignment]
+    ErrorResult = _ErrorResultStub  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=1)
@@ -110,7 +184,7 @@ class AllocationDB:
         return pd.read_sql("SELECT bot, roi, active, ts FROM allocations", self.conn)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=_get_registry, data_bot=_get_data_bot)
 class ResourceAllocationBot:
     """Manage resources and optimise ROI across bots."""
 
@@ -356,7 +430,8 @@ class ResourceAllocationBot:
         try:
             ctx_res = builder.build(bot, session_id=session_id)
             context = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if isinstance(context, (FallbackResult, ErrorResult)):
+            fallback_type, error_type = _get_vector_result_types()
+            if isinstance(context, (fallback_type, error_type)):
                 context = ""
             elif context:
                 context = compress_snippets({"snippet": context}).get("snippet", context)
