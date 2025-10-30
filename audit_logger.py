@@ -194,6 +194,14 @@ class _AuditPayload:
     data: Dict[str, Any]
 
 
+@dataclass(slots=True)
+class _QueuedAuditEvent:
+    """Deferred audit payload waiting for an explicit flush."""
+
+    payload: _AuditPayload
+    db_path: str | Path
+
+
 def _should_retry_sqlite(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return any(fragment in message for fragment in _SQLITE_RETRY_MESSAGES)
@@ -438,6 +446,23 @@ class _SQLiteWriterRegistry:
 _SQLITE_WRITERS = _SQLiteWriterRegistry()
 
 
+_AUDIT_QUEUE_LOCK = threading.Lock()
+_AUDIT_QUEUE: List[_QueuedAuditEvent] = []
+
+
+def _mirror_payload_to_sqlite(
+    db_path_spec: str | Path,
+    payload: _AuditPayload,
+) -> None:
+    """Mirror *payload* into SQLite according to *db_path_spec*."""
+
+    database_path, router_conn = _resolve_sqlite_target(db_path_spec, "write")
+    if database_path in (":memory:", "") and router_conn is not None:
+        _write_event_in_connection(router_conn, payload)
+    elif database_path:
+        _SQLITE_WRITERS.write(database_path, payload)
+
+
 def log_to_sqlite(
     event_type: str,
     data: Dict[str, Any],
@@ -449,16 +474,12 @@ def log_to_sqlite(
     record = _build_record(event_type, dict(data))
     _append_record_to_jsonl(record, jsonl_path)
 
-    database_path, router_conn = _resolve_sqlite_target(db_path, "write")
     payload = _AuditPayload(
         record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
     )
 
     try:
-        if database_path in (":memory:", "") and router_conn is not None:
-            _write_event_in_connection(router_conn, payload)
-        elif database_path:
-            _SQLITE_WRITERS.write(database_path, payload)
+        _mirror_payload_to_sqlite(db_path, payload)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
@@ -467,6 +488,65 @@ def log_to_sqlite(
         )
 
     return record["event_id"]
+
+
+def queue_event_for_later(
+    event_type: str,
+    data: Dict[str, Any],
+    db_path: str | Path = SQLITE_PATH,
+    jsonl_path: Path | str = JSONL_PATH,
+) -> str:
+    """Queue an audit event for deferred SQLite persistence.
+
+    The event is written to the append-only JSONL log immediately while the SQLite
+    mirror is postponed until :func:`flush_queued_events` is invoked.  This is
+    useful when the SQLite database is temporarily locked by long-running read
+    transactions.
+    """
+
+    record = _build_record(event_type, dict(data))
+    _append_record_to_jsonl(record, jsonl_path)
+    queued = _QueuedAuditEvent(
+        payload=_AuditPayload(
+            record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
+        ),
+        db_path=db_path,
+    )
+    with _AUDIT_QUEUE_LOCK:
+        _AUDIT_QUEUE.append(queued)
+    return record["event_id"]
+
+
+def flush_queued_events() -> None:
+    """Flush any deferred audit events to SQLite.
+
+    Events that fail to persist remain queued and a :class:`RuntimeError` is
+    raised to signal the partial failure.
+    """
+
+    with _AUDIT_QUEUE_LOCK:
+        if not _AUDIT_QUEUE:
+            return
+        pending = list(_AUDIT_QUEUE)
+        _AUDIT_QUEUE.clear()
+
+    failures: List[_QueuedAuditEvent] = []
+    for queued in pending:
+        try:
+            _mirror_payload_to_sqlite(queued.db_path, queued.payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to flush queued audit event %s: %s",
+                queued.payload.event_id,
+                exc,
+            )
+            failures.append(queued)
+
+    if failures:
+        with _AUDIT_QUEUE_LOCK:
+            # Preserve ordering by re-inserting failed events at the front.
+            _AUDIT_QUEUE[:0] = failures
+        raise RuntimeError("Failed to flush one or more queued audit events")
 
 
 def _read_events_from_jsonl(jsonl_path: Path | str, limit: int) -> List[Dict[str, Any]]:
@@ -551,5 +631,7 @@ __all__ = [
     "log_event",
     "export_to_csv",
     "log_to_sqlite",
+    "queue_event_for_later",
+    "flush_queued_events",
     "get_recent_events",
 ]
