@@ -177,6 +177,8 @@ def log_db_access(
             pass
         try:
             with sqlite3.connect(db_path) as conn:
+                with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
+                    pragma.fetchall()
                 with closing(conn.cursor()) as cur:
                     cur.execute(
                         """
