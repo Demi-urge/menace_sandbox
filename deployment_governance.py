@@ -17,9 +17,36 @@ import json
 import logging
 from pathlib import Path
 
-import yaml
-from jsonschema import ValidationError, validate
 from dynamic_path_router import resolve_path
+
+_JSONSCHEMA_AVAILABLE = True
+
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully
+    yaml = None  # type: ignore
+    _YAML_IMPORT_ERROR = exc
+    class _YAMLError(RuntimeError):
+        """Fallback error used when PyYAML is unavailable."""
+
+    _YAML_ERROR_TYPE = _YAMLError
+else:  # pragma: no cover - attribute used when available
+    _YAML_IMPORT_ERROR = None
+    _YAML_ERROR_TYPE = yaml.YAMLError  # type: ignore[attr-defined]
+
+try:  # pragma: no cover - optional dependency
+    from jsonschema import ValidationError, validate
+except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully
+    class ValidationError(ValueError):
+        """Fallback validation error when ``jsonschema`` is unavailable."""
+
+    _JSONSCHEMA_IMPORT_ERROR = exc
+    _JSONSCHEMA_AVAILABLE = False
+
+    def validate(*_: object, **__: object) -> None:
+        return None
+else:  # pragma: no cover - attribute used when available
+    _JSONSCHEMA_IMPORT_ERROR = None
 
 if __package__:  # pragma: no cover - allow both package and direct execution
     from .override_validator import validate_override_file
@@ -44,6 +71,9 @@ else:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+if not _JSONSCHEMA_AVAILABLE:
+    logger.warning("jsonschema not available; skipping deployment governance schema validation")
 
 
 def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
@@ -176,11 +206,16 @@ def _load_rules(path: str | None = None) -> List[Rule]:
         if candidate.exists():
             try:
                 with candidate.open("r", encoding="utf-8") as fh:
-                    data = (
-                        json.load(fh)
-                        if candidate.suffix == ".json"
-                        else yaml.safe_load(fh)
-                    )
+                    if candidate.suffix == ".json":
+                        data = json.load(fh)
+                    else:
+                        if yaml is None:  # pragma: no cover - optional dependency missing
+                            logger.warning(
+                                "PyYAML not available; skipping governance rules file %s",
+                                candidate,
+                            )
+                            continue
+                        data = yaml.safe_load(fh)
                 with schema_path.open("r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
@@ -188,7 +223,7 @@ def _load_rules(path: str | None = None) -> List[Rule]:
                 OSError,
                 ValidationError,
                 json.JSONDecodeError,
-                yaml.YAMLError,
+                _YAML_ERROR_TYPE,
             ) as exc:
                 logger.error(
                     "Invalid deployment governance rules file %s: %s", candidate, exc
@@ -243,11 +278,16 @@ def _load_policy(path: str | None = None) -> Mapping[str, Any]:
         if candidate.exists():
             try:
                 with candidate.open("r", encoding="utf-8") as fh:
-                    data = (
-                        json.load(fh)
-                        if candidate.suffix == ".json"
-                        else yaml.safe_load(fh)
-                    )
+                    if candidate.suffix == ".json":
+                        data = json.load(fh)
+                    else:
+                        if yaml is None:  # pragma: no cover - optional dependency missing
+                            logger.warning(
+                                "PyYAML not available; skipping deployment policy file %s",
+                                candidate,
+                            )
+                            continue
+                        data = yaml.safe_load(fh)
                 with schema_path.open("r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
@@ -255,7 +295,7 @@ def _load_policy(path: str | None = None) -> Mapping[str, Any]:
                 OSError,
                 ValidationError,
                 json.JSONDecodeError,
-                yaml.YAMLError,
+                _YAML_ERROR_TYPE,
             ) as exc:
                 logger.error("Invalid deployment policy file %s: %s", candidate, exc)
                 raise ValueError(f"invalid policy file: {candidate}") from exc
