@@ -179,6 +179,21 @@ def _coerce_value(value: Any) -> str:
 def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
     """Apply defensive PRAGMA settings to *conn* and close cursors eagerly."""
 
+    # ``sqlite3.Connection.interrupt`` forcefully aborts any in-flight statements
+    # associated with the connection.  In normal operation the newly-created
+    # connections used by the audit mirror should not have pending work, but in
+    # practice CPython may cache low-level SQLite handles between calls.  An
+    # interrupt ensures we start from a clean slate even if a previous statement
+    # was left unfinished by an interpreter-level quirk.
+    try:
+        conn.interrupt()
+    except Exception:  # pragma: no cover - extremely defensive
+        # ``interrupt`` was added in Python 3.6 and may raise if the underlying
+        # connection has already been finalised.  Failing closed keeps the
+        # configuration logic resilient on older runtimes while still giving us
+        # best-effort protection against zombie statements.
+        logger.debug("SQLite interrupt failed during configuration", exc_info=True)
+
     pragmas = (
         "PRAGMA busy_timeout=5000",
         "PRAGMA synchronous=NORMAL",
