@@ -55,6 +55,7 @@ def test_async_metric_scopes(tmp_path, monkeypatch):
     res = asyncio.run(
         cmb.fetch_capital_metrics_async(metric_names=["m"], scope="local")
     )
+    assert isinstance(res, cmb.CapitalMetrics)
     assert res["m"] == 1.0
     res = asyncio.run(
         cmb.fetch_capital_metrics_async(metric_names=["m"], scope="global")

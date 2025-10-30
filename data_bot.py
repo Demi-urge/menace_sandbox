@@ -83,7 +83,7 @@ import json
 import threading
 import time
 import weakref
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from datetime import datetime
 from typing import Iterable, List, Dict, TYPE_CHECKING, Callable, cast, Any
 from contextlib import contextmanager
@@ -168,6 +168,9 @@ _forecasting_module = load_internal("forecasting")
 ForecastModel = _forecasting_module.ForecastModel
 create_model = _forecasting_module.create_model
 
+_data_interfaces_module = load_internal("data_interfaces")
+RawMetrics = _data_interfaces_module.RawMetrics
+
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from menace_sandbox.capital_management_bot import CapitalManagementBot as _CapitalManagementBot
     from menace_sandbox.self_improvement.baseline_tracker import BaselineTracker as _BaselineTracker
@@ -183,6 +186,8 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
 else:
     CapitalManagementBot = object  # type: ignore[assignment]
     BaselineTracker = object  # type: ignore[assignment]
+
+MetricRecord = RawMetrics
 
 
 def _create_baseline_tracker(*args: object, **kwargs: object) -> "BaselineTracker":
@@ -485,43 +490,7 @@ def load_sc_thresholds(
         raise
 
 
-@dataclass
-class MetricRecord:
-    """Metrics captured for a bot at a point in time."""
-
-    bot: str
-    cpu: float
-    memory: float
-    response_time: float
-    disk_io: float
-    net_io: float
-    errors: int
-    tests_failed: int = 0
-    tests_run: int = 0
-    revenue: float = 0.0
-    expense: float = 0.0
-    security_score: float = 0.0
-    safety_rating: float = 0.0
-    adaptability: float = 0.0
-    antifragility: float = 0.0
-    shannon_entropy: float = 0.0
-    efficiency: float = 0.0
-    flexibility: float = 0.0
-    gpu_usage: float = 0.0
-    projected_lucrativity: float = 0.0
-    profitability: float = 0.0
-    patch_complexity: float = 0.0
-    patch_entropy: float = 0.0
-    energy_consumption: float = 0.0
-    resilience: float = 0.0
-    network_latency: float = 0.0
-    throughput: float = 0.0
-    risk_index: float = 0.0
-    maintainability: float = 0.0
-    code_quality: float = 0.0
-    patch_success: float | None = None
-    patch_failure_reason: str = ""
-    ts: str = datetime.utcnow().isoformat()
+MetricRecord = RawMetrics
 
 
 class MetricsDB:
