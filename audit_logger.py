@@ -6,10 +6,12 @@ import csv
 import importlib
 import json
 import logging
+import queue
 import random
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -179,7 +181,7 @@ _SQLITE_RETRY_MESSAGES = (
     "cannot commit transaction - sql statements in progress",
 )
 _SQLITE_MAX_RETRIES = 5
-_SQLITE_BASE_DELAY = 0.05
+_SQLITE_BASE_DELAY = 0.1
 _SQLITE_TIMEOUT_SECONDS = 30.0
 
 
@@ -338,8 +340,8 @@ def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
             return
         except sqlite3.OperationalError as exc:
             last_error = exc
-            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
-                delay = _SQLITE_BASE_DELAY * (2**attempt)
+            if _should_retry_sqlite(exc) and attempt < _SQLITE_MAX_RETRIES - 1:
+                delay = _SQLITE_BASE_DELAY * (attempt + 1)
                 time.sleep(delay)
                 continue
             raise
@@ -347,42 +349,59 @@ def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
         raise last_error
 
 
+_IN_MEMORY_LOCKS: "weakref.WeakKeyDictionary[sqlite3.Connection, threading.RLock]" = (
+    weakref.WeakKeyDictionary()
+)
+_IN_MEMORY_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for_connection(conn: sqlite3.Connection) -> threading.RLock:
+    with _IN_MEMORY_LOCKS_GUARD:
+        lock = _IN_MEMORY_LOCKS.get(conn)
+        if lock is None:
+            lock = threading.RLock()
+            _IN_MEMORY_LOCKS[conn] = lock
+        return lock
+
+
 def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
     """Persist *payload* using an existing in-memory connection."""
 
-    _configure_sqlite_connection(conn)
-    _ensure_db(conn)
-    thread_name = threading.current_thread().name
-    logger.debug(
-        "Writing audit event via shared connection (event=%s, thread=%s)",
-        payload.event_id,
-        thread_name,
-    )
-    try:
-        with closing(conn.cursor()) as cur:
-            cur.execute(
-                "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
-                (payload.event_id, payload.timestamp, payload.event_type),
-            )
-            for key, value in payload.data.items():
+    lock = _lock_for_connection(conn)
+    with lock:
+        _configure_sqlite_connection(conn)
+        _ensure_db(conn)
+        thread_name = threading.current_thread().name
+        logger.debug(
+            "Writing audit event via shared connection (event=%s, thread=%s)",
+            payload.event_id,
+            thread_name,
+        )
+        try:
+            with closing(conn.cursor()) as cur:
                 cur.execute(
-                    "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
-                    (payload.event_id, key, _coerce_value(value)),
+                    "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+                    (payload.event_id, payload.timestamp, payload.event_type),
                 )
-        logger.debug(
-            "Audit event queued for commit on shared connection (event=%s, thread=%s)",
-            payload.event_id,
-            thread_name,
-        )
-        conn.commit()
-        logger.debug(
-            "Committed audit event on shared connection (event=%s, thread=%s)",
-            payload.event_id,
-            thread_name,
-        )
-    except Exception:
-        conn.rollback()
-        raise
+                for key, value in payload.data.items():
+                    cur.execute(
+                        "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                        (payload.event_id, key, _coerce_value(value)),
+                    )
+            logger.debug(
+                "Audit event queued for commit on shared connection (event=%s, thread=%s)",
+                payload.event_id,
+                thread_name,
+            )
+            conn.commit()
+            logger.debug(
+                "Committed audit event on shared connection (event=%s, thread=%s)",
+                payload.event_id,
+                thread_name,
+            )
+        except Exception:
+            conn.rollback()
+            raise
 
 
 class _SQLiteWorker:
@@ -481,14 +500,6 @@ def log_to_sqlite(
 
     try:
         _mirror_payload_to_sqlite(db_path, payload)
-        if database_path in (":memory:", ""):
-            if router_conn is not None:
-                logger.debug(
-                    "Skipping SQLite audit mirror for in-memory database (event=%s)",
-                    payload.event_id,
-                )
-        elif database_path:
-            _write_event_with_retry(database_path, payload)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
