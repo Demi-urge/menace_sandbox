@@ -285,7 +285,8 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
             thread_name,
         )
         try:
-            conn.execute("BEGIN EXCLUSIVE")
+            with closing(conn.cursor()) as cur:
+                cur.execute("BEGIN EXCLUSIVE")
             logger.debug(
                 "Creating audit cursor (event=%s, thread=%s)",
                 payload.event_id,
