@@ -18,7 +18,7 @@ if __package__:
     from .retry_utils import publish_with_retry
 else:  # pragma: no cover - fallback for direct execution
     from retry_utils import publish_with_retry  # type: ignore
-from db_router import GLOBAL_ROUTER
+import db_router
 import sqlite3
 from sandbox_settings import SandboxSettings
 from logging_utils import (
@@ -121,11 +121,21 @@ def _build_file_handler(
         return fallback_cls(path_str, **kwargs)
 
 
-def _use_router_for_alignment(alignment_db_path: Path) -> bool:
+def _global_router() -> "db_router.DBRouter | None":
+    """Return the live global router reference if initialised."""
+
+    return getattr(db_router, "GLOBAL_ROUTER", None)
+
+
+def _use_router_for_alignment(
+    alignment_db_path: Path, router: "db_router.DBRouter | None" = None
+) -> bool:
     """Return ``True`` when the global router should service alignment logs."""
 
+    if router is None:
+        router = _global_router()
     return (
-        GLOBAL_ROUTER is not None
+        router is not None
         and alignment_db_path.resolve() == Path(DEFAULT_ALIGNMENT_DB_PATH).resolve()
     )
 
@@ -136,8 +146,9 @@ def _alignment_conn() -> sqlite3.Connection:
 
     alignment_db_path = Path(ALIGNMENT_DB_PATH)
 
-    if _use_router_for_alignment(alignment_db_path):
-        return GLOBAL_ROUTER.get_connection("errors")
+    router = _global_router()
+    if router is not None and _use_router_for_alignment(alignment_db_path, router):
+        return router.get_connection("errors")
 
     alignment_db_path.parent.mkdir(parents=True, exist_ok=True)
     with _alignment_conn_lock:
