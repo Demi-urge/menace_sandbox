@@ -30,9 +30,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Set, Iterable, Mapping, Any
-
-from audit import log_db_access
+from typing import Set, Iterable, Mapping, Any, Callable
 from dynamic_path_router import get_project_root, resolve_path
 
 
@@ -311,6 +309,28 @@ _audit_logging_enabled = False
 _load_table_overrides()
 
 
+_LogDBAccess = Callable[..., None]
+_log_db_access_fn: _LogDBAccess | None = None
+
+
+def _ensure_log_db_access() -> _LogDBAccess:
+    """Return :func:`audit.log_db_access`, importing it on first use."""
+
+    global _log_db_access_fn
+
+    if _log_db_access_fn is None:
+        from audit import log_db_access as _impl
+
+        _log_db_access_fn = _impl
+    return _log_db_access_fn
+
+
+def _log_db_access(*args: object, **kwargs: object) -> None:
+    """Invoke :func:`audit.log_db_access` using a lazily imported handle."""
+
+    _ensure_log_db_access()(*args, **kwargs)
+
+
 def _record_audit(entry: dict[str, str]) -> None:
     """Persist *entry* to the audit log when configured."""
 
@@ -361,6 +381,8 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
     ``DB_ROUTER_QUEUE_DIR`` environment variable.
     """
 
+    _ensure_log_db_access()
+
     from db_write_queue import append_record
 
     if table in DENY_TABLES:
@@ -385,7 +407,7 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
 
         append_record(table, record, menace_id, queue_dir=queue_dir)
         conn = GLOBAL_ROUTER.shared_conn if GLOBAL_ROUTER else None
-        log_db_access("write", table, 1, menace_id, db_conn=conn)
+        _log_db_access("write", table, 1, menace_id, db_conn=conn)
 
         _record_audit(entry)
     elif table in LOCAL_TABLES:
@@ -476,26 +498,34 @@ class LoggedCursor(sqlite3.Cursor):
                 from_seen = True
         return "unknown"
 
-    def _log(self, action: str, table: str, row_count: int) -> None:
-        log_db_access(
-            action,
-            table,
-            row_count,
-            self.menace_id,
-            db_conn=self.connection,
-        )
+    def _log(
+        self, action: str, table: str, row_count: int, *, db_logging: bool = True
+    ) -> None:
+        kwargs: dict[str, object] = {}
+        if db_logging:
+            kwargs["db_conn"] = self.connection
+        _log_db_access(action, table, row_count, self.menace_id, **kwargs)
 
     def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
         super().execute(sql, parameters or ())
         table = self._table_from_sql(sql)
-        is_read = sql.lstrip().upper().startswith("SELECT")
+        normalised = sql.lstrip()
+        upper = normalised.upper()
+        first_word = upper.split(None, 1)[0] if upper else ""
+        is_schema_change = first_word in {"CREATE", "ALTER", "DROP", "PRAGMA"}
+        is_read = upper.startswith("SELECT")
         if is_read:
             self._rows = super().fetchall()
             row_count = len(self._rows)
         else:
             self._rows = None
             row_count = self.rowcount if self.rowcount != -1 else 0
-        self._log("read" if is_read else "write", table, row_count)
+        self._log(
+            "read" if is_read else "write",
+            table,
+            row_count,
+            db_logging=not is_schema_change,
+        )
         return self
 
     def executemany(
@@ -503,14 +533,23 @@ class LoggedCursor(sqlite3.Cursor):
     ):  # type: ignore[override]
         super().executemany(sql, seq_of_parameters)
         table = self._table_from_sql(sql)
-        is_read = sql.lstrip().upper().startswith("SELECT")
+        normalised = sql.lstrip()
+        upper = normalised.upper()
+        first_word = upper.split(None, 1)[0] if upper else ""
+        is_schema_change = first_word in {"CREATE", "ALTER", "DROP", "PRAGMA"}
+        is_read = upper.startswith("SELECT")
         if is_read:
             self._rows = super().fetchall()
             row_count = len(self._rows)
         else:
             self._rows = None
             row_count = self.rowcount if self.rowcount != -1 else 0
-        self._log("read" if is_read else "write", table, row_count)
+        self._log(
+            "read" if is_read else "write",
+            table,
+            row_count,
+            db_logging=not is_schema_change,
+        )
         return self
 
     def fetchone(self):  # type: ignore[override]
@@ -613,6 +652,7 @@ class DBRouter:
         )  # type: ignore[assignment]
         self.shared_conn.menace_id = menace_id
         _configure_sqlite_connection(self.shared_conn)
+        _ensure_log_db_access()
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
@@ -761,7 +801,7 @@ class DBRouter:
         from db_write_queue import append_record, queue_insert as queue_insert_record
         append_record(table_name, values, self.menace_id)
         queue_insert_record(table_name, values, hash_fields)
-        log_db_access(
+        _log_db_access(
             "write",
             table_name,
             1,

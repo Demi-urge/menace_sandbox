@@ -28,17 +28,38 @@ import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Callable
 
 from db_dedup import compute_content_hash, insert_if_unique
 from db_write_queue import remove_processed_lines
 from env_config import SHARED_QUEUE_DIR, SYNC_INTERVAL
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 
-from audit import log_db_access
-
 
 logger = logging.getLogger(__name__)
+
+_LogDBAccess = Callable[..., None]
+_log_db_access_fn: _LogDBAccess | None = None
+
+
+def _ensure_log_db_access() -> _LogDBAccess:
+    """Return :func:`audit.log_db_access`, importing it on demand."""
+
+    global _log_db_access_fn
+
+    if _log_db_access_fn is None:
+        from audit import log_db_access as _impl
+
+        _log_db_access_fn = _impl
+    return _log_db_access_fn
+
+
+def _log_db_access(
+    action: str, table: str, rows: int, menace_id: str, **kwargs: object
+) -> None:
+    """Record database access without importing :mod:`audit` during module load."""
+
+    _ensure_log_db_access()(action, table, rows, menace_id, **kwargs)
 
 
 @dataclass
@@ -115,6 +136,8 @@ def process_queue_file(
     rerunning after a crash avoids duplicating work.
     """
 
+    _ensure_log_db_access()
+
     failed_path = path.parent / "queue.failed.jsonl"
     processed_log = path.parent / "processed.log"
     stats = Stats()
@@ -178,7 +201,7 @@ def process_queue_file(
 
         if content_hash in processed_hashes:
             stats.duplicates += 1
-            log_db_access("write", table, 0, menace_id)
+            _log_db_access("write", table, 0, menace_id)
             processed_lines += 1
             continue
 
@@ -186,14 +209,14 @@ def process_queue_file(
             existing = conn.execute(
                 f"SELECT id FROM {table} WHERE content_hash=?", (content_hash,)
             ).fetchone()
-            log_db_access("read", table, 1 if existing else 0, menace_id)
+            _log_db_access("read", table, 1 if existing else 0, menace_id)
             if existing:
                 stats.duplicates += 1
                 logger.info(
                     "duplicate",
                     extra={"table": table, "menace_id": menace_id, "id": existing[0]},
                 )
-                log_db_access("write", table, 0, menace_id)
+                _log_db_access("write", table, 0, menace_id)
                 _append_lines(processed_log, [content_hash + "\n"])
                 processed_hashes.add(content_hash)
                 processed_lines += 1
@@ -208,7 +231,7 @@ def process_queue_file(
                 conn=conn,
             )
             conn.commit()
-            log_db_access("write", table, 1, menace_id)
+            _log_db_access("write", table, 1, menace_id)
             stats.processed += 1
             _append_lines(processed_log, [content_hash + "\n"])
             processed_hashes.add(content_hash)
