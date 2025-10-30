@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
+from contextlib import closing
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -22,17 +24,22 @@ try:
     DB_PATH = resolve_path(_DB_ENV)
 except FileNotFoundError:
     DB_PATH = resolve_path(".") / _DB_ENV
-_CONN: sqlite3.Connection | None = None
+_SCHEMA_INITIALISED = False
+_SCHEMA_LOCK = threading.Lock()
 
 
-def _get_conn() -> sqlite3.Connection:
-    """Return a cached SQLite connection and initialise the schema."""
+def _ensure_schema() -> None:
+    """Initialise the prompts schema once per process."""
 
-    global _CONN
-    if _CONN is None:
-        _CONN = sqlite3.connect(DB_PATH)  # noqa: P204,SQL001
-        _init_db(_CONN)
-    return _CONN
+    global _SCHEMA_INITIALISED
+    if _SCHEMA_INITIALISED:
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_INITIALISED:
+            return
+        with sqlite3.connect(DB_PATH) as conn:  # noqa: SQL001
+            _init_db(conn)
+        _SCHEMA_INITIALISED = True
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -93,55 +100,56 @@ def log_interaction(
 ) -> None:
     """Record a single prompt/completion pair in the SQLite log."""
 
-    conn = _get_conn()
-    try:
-        raw_json = json.dumps(raw)
-    except Exception:  # pragma: no cover - defensive
-        raw_json = json.dumps(None)
-    parsed_obj: Any = None
-    try:
-        parsed_obj = json.loads(text)
-    except Exception:
-        pass
-    try:
-        parsed_json = json.dumps(parsed_obj)
-    except Exception:  # pragma: no cover - defensive
-        parsed_json = json.dumps(None)
+    _ensure_schema()
+    with sqlite3.connect(DB_PATH) as conn:  # noqa: SQL001
+        with closing(conn.cursor()) as cur:
+            try:
+                raw_json = json.dumps(raw)
+            except Exception:  # pragma: no cover - defensive
+                raw_json = json.dumps(None)
+            parsed_obj: Any = None
+            try:
+                parsed_obj = json.loads(text)
+            except Exception:
+                pass
+            try:
+                parsed_json = json.dumps(parsed_obj)
+            except Exception:  # pragma: no cover - defensive
+                parsed_json = json.dumps(None)
 
-    usage = (raw.get("usage") if isinstance(raw, dict) else {}) or {}
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO prompts(
-            prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
-            examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
-            prompt_tokens, completion_tokens, latency_ms, backend, input_tokens, output_tokens, cost
-        )
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            prompt_obj.user,
-            prompt_obj.user,
-            raw_json,
-            parsed_json,
-            text,
-            parsed_json,
-            json.dumps(getattr(prompt_obj, "examples", [])),
-            getattr(prompt_obj, "vector_confidence", None),
-            json.dumps(getattr(prompt_obj, "vector_confidences", [])),
-            json.dumps(list(tags or [])),
-            raw.get("model") or getattr(prompt_obj, "model", None),
-            datetime.utcnow().isoformat(),
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            raw.get("latency_ms") if isinstance(raw, dict) else None,
-            backend,
-            usage.get("input_tokens") or usage.get("prompt_tokens"),
-            usage.get("output_tokens") or usage.get("completion_tokens"),
-            usage.get("cost"),
-        ),
-    )
-    conn.commit()
+            usage = (raw.get("usage") if isinstance(raw, dict) else {}) or {}
+            cur.execute(
+                """
+                INSERT INTO prompts(
+                    prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
+                    examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
+                    prompt_tokens, completion_tokens, latency_ms, backend, input_tokens, output_tokens, cost
+                )
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    prompt_obj.user,
+                    prompt_obj.user,
+                    raw_json,
+                    parsed_json,
+                    text,
+                    parsed_json,
+                    json.dumps(getattr(prompt_obj, "examples", [])),
+                    getattr(prompt_obj, "vector_confidence", None),
+                    json.dumps(getattr(prompt_obj, "vector_confidences", [])),
+                    json.dumps(list(tags or [])),
+                    raw.get("model") or getattr(prompt_obj, "model", None),
+                    datetime.utcnow().isoformat(),
+                    usage.get("prompt_tokens"),
+                    usage.get("completion_tokens"),
+                    raw.get("latency_ms") if isinstance(raw, dict) else None,
+                    backend,
+                    usage.get("input_tokens") or usage.get("prompt_tokens"),
+                    usage.get("output_tokens") or usage.get("completion_tokens"),
+                    usage.get("cost"),
+                ),
+            )
+        conn.commit()
 
 
 def fetch_logs(
@@ -163,7 +171,7 @@ def fetch_logs(
         returned.
     """
 
-    conn = _get_conn()
+    _ensure_schema()
     query = (
         "SELECT prompt, completion_parsed, examples, vector_confidence, "
         "outcome_tags, model, backend, timestamp, completion_raw, "
@@ -185,7 +193,9 @@ def fetch_logs(
         query += " LIMIT ?"
         params.append(limit)
 
-    rows = conn.execute(query, params).fetchall()
+    with sqlite3.connect(DB_PATH) as conn:  # noqa: SQL001
+        with closing(conn.cursor()) as cur:
+            rows = cur.execute(query, params).fetchall()
     results: List[Dict[str, Any]] = []
     for row in rows:
         (
