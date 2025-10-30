@@ -475,6 +475,21 @@ _AUDIT_QUEUE_LOCK = threading.Lock()
 _AUDIT_QUEUE: List[_QueuedAuditEvent] = []
 
 
+_BOOTSTRAP_QUEUEING_LOCK = threading.Lock()
+_BOOTSTRAP_QUEUEING_ENABLED = True
+
+
+def _set_bootstrap_queueing_enabled(enabled: bool) -> None:
+    global _BOOTSTRAP_QUEUEING_ENABLED
+    with _BOOTSTRAP_QUEUEING_LOCK:
+        _BOOTSTRAP_QUEUEING_ENABLED = enabled
+
+
+def _is_bootstrap_queueing_enabled() -> bool:
+    with _BOOTSTRAP_QUEUEING_LOCK:
+        return _BOOTSTRAP_QUEUEING_ENABLED
+
+
 def _mirror_payload_to_sqlite(
     db_path_spec: str | Path,
     payload: _AuditPayload,
@@ -488,6 +503,28 @@ def _mirror_payload_to_sqlite(
         _SQLITE_WRITERS.write(database_path, payload)
 
 
+def _prepare_payload(
+    event_type: str,
+    data: Dict[str, Any],
+    jsonl_path: Path | str,
+) -> Tuple[Dict[str, Any], _AuditPayload]:
+    record = _build_record(event_type, dict(data))
+    _append_record_to_jsonl(record, jsonl_path)
+    payload = _AuditPayload(
+        record["event_id"],
+        record["event_type"],
+        record["timestamp"],
+        dict(record["data"]),
+    )
+    return record, payload
+
+
+def _enqueue_for_later(db_path: str | Path, payload: _AuditPayload) -> None:
+    queued = _QueuedAuditEvent(payload=payload, db_path=db_path)
+    with _AUDIT_QUEUE_LOCK:
+        _AUDIT_QUEUE.append(queued)
+
+
 def log_to_sqlite(
     event_type: str,
     data: Dict[str, Any],
@@ -496,21 +533,19 @@ def log_to_sqlite(
 ) -> str:
     """Store an event in the append-only log with a best-effort SQLite mirror."""
 
-    record = _build_record(event_type, dict(data))
-    _append_record_to_jsonl(record, jsonl_path)
+    record, payload = _prepare_payload(event_type, data, jsonl_path)
 
-    payload = _AuditPayload(
-        record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
-    )
-
-    try:
-        _mirror_payload_to_sqlite(db_path, payload)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning(
-            "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
-            payload.event_id,
-            exc,
-        )
+    if _is_bootstrap_queueing_enabled():
+        _enqueue_for_later(db_path, payload)
+    else:
+        try:
+            _mirror_payload_to_sqlite(db_path, payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
+                payload.event_id,
+                exc,
+            )
 
     return record["event_id"]
 
@@ -529,17 +564,20 @@ def queue_event_for_later(
     transactions.
     """
 
-    record = _build_record(event_type, dict(data))
-    _append_record_to_jsonl(record, jsonl_path)
-    queued = _QueuedAuditEvent(
-        payload=_AuditPayload(
-            record["event_id"], record["event_type"], record["timestamp"], dict(record["data"])
-        ),
-        db_path=db_path,
-    )
-    with _AUDIT_QUEUE_LOCK:
-        _AUDIT_QUEUE.append(queued)
+    record, payload = _prepare_payload(event_type, data, jsonl_path)
+    _enqueue_for_later(db_path, payload)
     return record["event_id"]
+
+
+def queue_event(
+    event_type: str,
+    data: Dict[str, Any],
+    db_path: str | Path = SQLITE_PATH,
+    jsonl_path: Path | str = JSONL_PATH,
+) -> str:
+    """Queue an audit event ensuring durability once flushed."""
+
+    return queue_event_for_later(event_type, data, db_path=db_path, jsonl_path=jsonl_path)
 
 
 def flush_queued_events() -> None:
@@ -551,6 +589,7 @@ def flush_queued_events() -> None:
 
     with _AUDIT_QUEUE_LOCK:
         if not _AUDIT_QUEUE:
+            _set_bootstrap_queueing_enabled(False)
             return
         pending = list(_AUDIT_QUEUE)
         _AUDIT_QUEUE.clear()
@@ -572,6 +611,14 @@ def flush_queued_events() -> None:
             # Preserve ordering by re-inserting failed events at the front.
             _AUDIT_QUEUE[:0] = failures
         raise RuntimeError("Failed to flush one or more queued audit events")
+
+    _set_bootstrap_queueing_enabled(False)
+
+
+def init() -> None:
+    """Initialise the audit logger and disable bootstrap queueing."""
+
+    flush_queued_events()
 
 
 def _read_events_from_jsonl(jsonl_path: Path | str, limit: int) -> List[Dict[str, Any]]:
@@ -656,7 +703,9 @@ __all__ = [
     "log_event",
     "export_to_csv",
     "log_to_sqlite",
+    "queue_event",
     "queue_event_for_later",
     "flush_queued_events",
+    "init",
     "get_recent_events",
 ]
