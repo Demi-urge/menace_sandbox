@@ -12,6 +12,7 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from .orchestrator_loader import get_orchestrator
 from .threshold_service import ThresholdService
+from .data_interfaces import CapitalMetrics, DataBotInterface
 from context_builder_util import create_context_builder
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -20,6 +21,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
     Callable,
     Tuple,
@@ -46,7 +48,7 @@ except Exception:  # pragma: no cover - support flat execution
     from shared.self_coding_import_guard import self_coding_import_depth  # type: ignore
 
 _registry_instance: BotRegistry | None = None
-_data_bot_instance: "DataBot | None" = None
+_data_bot_instance: DataBotInterface | None = None
 _context_builder_instance: object | None = None
 _engine_instance: SelfCodingEngine | None = None
 
@@ -101,14 +103,14 @@ def _get_registry() -> BotRegistry:
     return _registry_instance
 
 
-def _get_data_bot() -> "DataBot":
+def _get_data_bot() -> DataBotInterface:
     """Return a cached :class:`DataBot` instance."""
 
     global _data_bot_instance
     if _data_bot_instance is None:
         from .data_bot import DataBot as _DataBot
 
-        _data_bot_instance = _DataBot(start_server=False)
+        _data_bot_instance = cast(DataBotInterface, _DataBot(start_server=False))
     return _data_bot_instance
 
 
@@ -308,6 +310,25 @@ def get_bot_performance_score(metrics: Iterable[float]) -> float:
         return 0.0
 
 
+def _normalise_capital_metrics(data: Mapping[str, float]) -> CapitalMetrics:
+    """Convert raw mapping to :class:`CapitalMetrics`."""
+
+    extras = {
+        k: float(v)
+        for k, v in data.items()
+        if k not in CapitalMetrics._STANDARD_FIELDS
+    }
+    return CapitalMetrics(
+        capital=float(data.get("capital", 0.0)),
+        profit_trend=float(data.get("profit_trend", 0.0)),
+        load=float(data.get("load", 0.0)),
+        success_rate=float(data.get("success_rate", 0.0)),
+        deploy_efficiency=float(data.get("deploy_efficiency", 0.0)),
+        failure_rate=float(data.get("failure_rate", 0.0)),
+        extras=extras,
+    )
+
+
 def get_capital_metrics(
     db_path: Path | str = METRICS_DB_PATH,
     *,
@@ -315,7 +336,7 @@ def get_capital_metrics(
     fallbacks: Optional[Dict[str, float]] = None,
     error_bot: "ErrorBot" | None = None,
     webhook_url: str | None = None,
-) -> Dict[str, float]:
+) -> CapitalMetrics:
     """Return latest capital metrics from *db_path* with validation."""
     metrics = {}
     cache = cache or {}
@@ -341,7 +362,7 @@ def get_capital_metrics(
         except Exception:
             logger.exception("failed fetching metric %s", name)
             metrics[name] = cache.get(name, fallbacks.get(name, 0.0))
-    return metrics
+    return _normalise_capital_metrics(metrics)
 
 
 async def fetch_capital_metrics_async(
@@ -354,7 +375,7 @@ async def fetch_capital_metrics_async(
     webhook_url: str | None = None,
     scope: Literal["local", "global", "all"] = "local",
     source_menace_id: str | None = None,
-) -> Dict[str, float]:
+    ) -> CapitalMetrics:
     """Asynchronously fetch capital metrics from the database."""
     metric_names = list(
         metric_names
@@ -393,7 +414,7 @@ async def fetch_capital_metrics_async(
             continue
         key, val = cast(tuple[str, float], res)
         data[key] = val
-    return data
+    return _normalise_capital_metrics(data)
 
 
 @dataclass
@@ -1134,7 +1155,7 @@ class _CapitalManagementBot:
         ledger: CapitalLedger | None = None,
         allocation_ledger: CapitalAllocationLedger | None = None,
         engine: EnergyScoreEngine | None = None,
-        data_bot: "DataBot" | None = None,
+        data_bot: DataBotInterface | None = None,
         pathway_db: "PathwayDB" | None = None,
         prediction_manager: "PredictionManager" | None = None,
         trend_predictor: TrendPredictor | None = None,
@@ -1298,14 +1319,16 @@ class _CapitalManagementBot:
         calling code can remain oblivious to transient issues.
         """
 
+        metrics_obj: CapitalMetrics | None = None
         metrics: Dict[str, float] = {}
         try:
-            metrics = get_capital_metrics(
+            metrics_obj = get_capital_metrics(
                 self.config.metrics_db_path,
                 fallbacks=self.config.metric_fallbacks,
                 error_bot=self.error_bot,
                 webhook_url=self.webhook_url,
             )
+            metrics = metrics_obj.to_dict()
         except Exception as exc:  # pragma: no cover - runtime fetch issues
             logger.exception("get_metrics failed, falling back to simulation: %s", exc)
 
@@ -1330,6 +1353,9 @@ class _CapitalManagementBot:
                 logger.exception("corrupted metric %s=%r: %s", key, val, exc)
                 metrics[key] = 0.0
 
+        if metrics_obj is not None:
+            extras = {k: v for k, v in metrics_obj.extras.items() if k not in metrics}
+            metrics.update(extras)
         return metrics
 
     # ------------------------------------------------------------------
@@ -2133,6 +2159,7 @@ __all__ = [
     "LedgerEntry",
     "CapitalLedger",
     "CapitalAllocationLedger",
+    "CapitalMetrics",
     "ROIEvent",
     "ROIEventDB",
     "ProfitRecord",
