@@ -20,7 +20,7 @@ from email.message import EmailMessage
 from typing import Iterable, Callable, TYPE_CHECKING
 
 try:
-    from . import RAISE_ERRORS
+    from .error_flags import RAISE_ERRORS
 except Exception:  # pragma: no cover - fallback when package missing
     RAISE_ERRORS = False
 from db_router import GLOBAL_ROUTER

@@ -8,7 +8,7 @@ import logging
 
 from .error_bot import ErrorBot
 from .unified_event_bus import EventBus
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 logger = logging.getLogger(__name__)
 

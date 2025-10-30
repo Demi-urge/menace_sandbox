@@ -6,7 +6,7 @@ from .unified_event_bus import UnifiedEventBus
 from .evaluation_manager import EvaluationManager
 from .evaluation_history_db import EvaluationRecord
 import logging
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 logger = logging.getLogger(__name__)
 

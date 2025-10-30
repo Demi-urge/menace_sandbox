@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from . import RAISE_ERRORS
+from .error_flags import RAISE_ERRORS
 
 logger = logging.getLogger(__name__)
 
