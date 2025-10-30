@@ -221,6 +221,10 @@ class _SQLiteWorker:
                 pass
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA synchronous=NORMAL")
+            try:
+                conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+            except sqlite3.OperationalError:
+                pass
 
             while True:
                 payload, result = self._queue.get()
@@ -270,13 +274,11 @@ def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_P
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
     router = GLOBAL_ROUTER or init_db_router("default")
-    conn = router.get_connection("events")
+    conn = router.get_connection("events", "write")
     payload = _AuditPayload(event_id, event_type, ts, dict(data))
 
-    database_path = _connection_database_path(conn)
     override_path = str(db_path) if db_path is not None else ""
-    if database_path in (":memory:", "") and override_path not in (":memory:", ""):
-        database_path = override_path
+    database_path = override_path or _connection_database_path(conn)
     if database_path in (":memory:", ""):
         _write_event_with_retry(conn, payload)
     else:
@@ -295,23 +297,36 @@ def get_recent_events(
         return []
     router = GLOBAL_ROUTER or init_db_router("default")
     conn = router.get_connection("events")
-    _ensure_db(conn)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
-        (limit,),
-    )
-    events: List[Dict[str, Any]] = []
-    for event_id, ts, etype in cur.fetchall():
-        cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
-        data = {k: v for k, v in cur.fetchall()}
-        try:
-            for k, v in data.items():
-                if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
-                    data[k] = json.loads(v)
-        except Exception:
-            pass
-        events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
+    override_path = str(db_path) if db_path is not None else ""
+    database_path = override_path or _connection_database_path(conn)
+
+    target_conn: sqlite3.Connection
+    if database_path in (":memory:", ""):
+        target_conn = conn
+    else:
+        target_conn = sqlite3.connect(database_path)
+
+    try:
+        _ensure_db(target_conn)
+        cur = target_conn.cursor()
+        cur.execute(
+            "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+        events: List[Dict[str, Any]] = []
+        for event_id, ts, etype in cur.fetchall():
+            cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
+            data = {k: v for k, v in cur.fetchall()}
+            try:
+                for k, v in data.items():
+                    if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
+                        data[k] = json.loads(v)
+            except Exception:
+                pass
+            events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
+    finally:
+        if target_conn is not conn:
+            target_conn.close()
     if events:
         return list(reversed(events))
     if not Path(jsonl_path).exists():
