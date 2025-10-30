@@ -6,7 +6,6 @@ import csv
 import importlib
 import json
 import logging
-import queue
 import random
 import sqlite3
 import threading
@@ -280,6 +279,8 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
         db_path,
         thread_name,
     )
+    if db_path not in (":memory:", ""):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(
         db_path,
         timeout=_SQLITE_TIMEOUT_SECONDS,
@@ -480,6 +481,14 @@ def log_to_sqlite(
 
     try:
         _mirror_payload_to_sqlite(db_path, payload)
+        if database_path in (":memory:", ""):
+            if router_conn is not None:
+                logger.debug(
+                    "Skipping SQLite audit mirror for in-memory database (event=%s)",
+                    payload.event_id,
+                )
+        elif database_path:
+            _write_event_with_retry(database_path, payload)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "Failed to mirror audit event %s to SQLite (%s). Falling back to JSONL only.",
