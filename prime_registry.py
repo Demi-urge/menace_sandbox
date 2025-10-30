@@ -85,7 +85,11 @@ def _iter_bot_modules(root: Path) -> list[Path]:
     }
     modules: list[Path] = []
     for path in root.rglob("*_bot.py"):
-        parts = path.parts
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            parts = path.parts
+
         if any(part in ignore or part.startswith("test") for part in parts):
             continue
         if any(part.startswith(".") for part in parts):
