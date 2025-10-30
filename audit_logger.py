@@ -114,6 +114,7 @@ _SQLITE_RETRY_MESSAGES = (
 )
 _SQLITE_MAX_RETRIES = 5
 _SQLITE_BASE_DELAY = 0.05
+_SQLITE_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -149,8 +150,52 @@ def _coerce_value(value: Any) -> str:
     return str(value)
 
 
-def _write_event(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
-    """Persist *payload* using *conn* within a single transaction."""
+def _write_event(db_path: str, payload: _AuditPayload) -> None:
+    """Persist *payload* into *db_path* within an isolated connection."""
+
+    with sqlite3.connect(
+        db_path,
+        timeout=_SQLITE_TIMEOUT_SECONDS,
+        isolation_level=None,
+    ) as conn:
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA journal_mode=DELETE")
+        _ensure_db(conn)
+        with conn:
+            with closing(conn.cursor()) as cur:
+                cur.execute(
+                    "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+                    (payload.event_id, payload.timestamp, payload.event_type),
+                )
+                for key, value in payload.data.items():
+                    cur.execute(
+                        "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+                        (payload.event_id, key, _coerce_value(value)),
+                    )
+
+
+def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
+    """Persist *payload* retrying transient SQLite failures using fresh connections."""
+
+    last_error: Exception | None = None
+    for attempt in range(_SQLITE_MAX_RETRIES):
+        try:
+            _write_event(db_path, payload)
+            return
+        except sqlite3.OperationalError as exc:
+            last_error = exc
+            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
+                delay = _SQLITE_BASE_DELAY * (2**attempt)
+                time.sleep(delay)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+
+
+def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
+    """Persist *payload* using an existing in-memory connection."""
 
     _ensure_db(conn)
     try:
@@ -168,25 +213,6 @@ def _write_event(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
     except Exception:
         conn.rollback()
         raise
-
-
-def _write_event_with_retry(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
-    """Persist *payload* retrying transient SQLite failures."""
-
-    last_error: Exception | None = None
-    for attempt in range(_SQLITE_MAX_RETRIES):
-        try:
-            _write_event(conn, payload)
-            return
-        except sqlite3.OperationalError as exc:
-            last_error = exc
-            if attempt < _SQLITE_MAX_RETRIES - 1 and _should_retry_sqlite(exc):
-                delay = _SQLITE_BASE_DELAY * (2**attempt)
-                time.sleep(delay)
-                continue
-            raise
-    if last_error is not None:
-        raise last_error
 
 
 class _SQLiteWorker:
@@ -212,34 +238,19 @@ class _SQLiteWorker:
             raise error
 
     def _run(self) -> None:
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        try:
+        while True:
+            payload, result = self._queue.get()
             try:
-                conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.OperationalError:
-                pass
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            try:
-                conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-            except sqlite3.OperationalError:
-                pass
-
-            while True:
-                payload, result = self._queue.get()
-                try:
-                    _write_event_with_retry(conn, payload)
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning(
-                        "Failed to persist audit event %s: %s",
-                        payload.event_id,
-                        exc,
-                    )
-                    result.put(exc)
-                else:
-                    result.put(None)
-        finally:
-            conn.close()
+                _write_event_with_retry(self._db_path, payload)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "Failed to persist audit event %s: %s",
+                    payload.event_id,
+                    exc,
+                )
+                result.put(exc)
+            else:
+                result.put(None)
 
 
 class _SQLiteWriterRegistry:
@@ -279,7 +290,7 @@ def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_P
     override_path = str(db_path) if db_path is not None else ""
     database_path = override_path or _connection_database_path(conn)
     if database_path in (":memory:", ""):
-        _write_event_with_retry(conn, payload)
+        _write_event_in_connection(conn, payload)
     else:
         _SQLITE_WRITERS.write(database_path, payload)
 
@@ -307,15 +318,18 @@ def get_recent_events(
 
     try:
         _ensure_db(target_conn)
-        cur = target_conn.cursor()
-        cur.execute(
-            "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
-        )
         events: List[Dict[str, Any]] = []
-        for event_id, ts, etype in cur.fetchall():
-            cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
-            data = {k: v for k, v in cur.fetchall()}
+        with closing(target_conn.cursor()) as cur:
+            cur.execute(
+                "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            )
+            event_rows = cur.fetchall()
+        for event_id, ts, etype in event_rows:
+            with closing(target_conn.cursor()) as data_cur:
+                data_cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
+                key_values = data_cur.fetchall()
+            data = {k: v for k, v in key_values}
             try:
                 for k, v in data.items():
                     if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
