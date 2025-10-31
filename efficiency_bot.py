@@ -26,7 +26,6 @@ from .code_database import CodeDB
 from .task_handoff_bot import WorkflowDB
 from .unified_event_bus import UnifiedEventBus
 from .contrarian_db import ContrarianDB
-from .chatgpt_enhancement_bot import EnhancementDB
 from .database_manager import DB_PATH
 
 
@@ -39,9 +38,11 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from .capital_management_bot import CapitalManagementBot
     from .prediction_manager_bot import PredictionManager
+    from .chatgpt_enhancement_bot import EnhancementDB
 else:  # pragma: no cover - runtime fallback when optional deps missing
     CapitalManagementBot = Any  # type: ignore[assignment]
     PredictionManager = Any  # type: ignore[assignment]
+    EnhancementDB = Any  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=1)
@@ -58,6 +59,14 @@ def _prediction_manager_cls() -> Type["PredictionManager"]:
 
     module = import_module(".prediction_manager_bot", __package__)
     return module.PredictionManager  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _enhancement_db_cls() -> Type["EnhancementDB"]:
+    """Resolve :class:`EnhancementDB` lazily to avoid circular imports."""
+
+    module = import_module(".chatgpt_enhancement_bot", __package__)
+    return module.EnhancementDB  # type: ignore[attr-defined]
 
 
 @dataclass
@@ -124,7 +133,7 @@ class EfficiencyBot:
         code_db: Optional[CodeDB] = None,
         workflow_db: Optional[WorkflowDB] = None,
         contrarian_db: Optional[ContrarianDB] = None,
-        enhancement_db: Optional[EnhancementDB] = None,
+        enhancement_db: Optional["EnhancementDB"] = None,
         models_db: Path | str = DB_PATH,
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
@@ -143,7 +152,8 @@ class EfficiencyBot:
         self.code_db = code_db or CodeDB()
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         self.contrarian_db = contrarian_db or ContrarianDB()
-        self.enhancement_db = enhancement_db or EnhancementDB()
+        enhancement_db_cls = _enhancement_db_cls()
+        self.enhancement_db = enhancement_db or enhancement_db_cls()
         self.models_db = Path(models_db)
         self.logger = logging.getLogger("EfficiencyBot")
 
