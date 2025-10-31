@@ -89,10 +89,6 @@ print(">>> [trace] Successfully imported asyncio")
 print(">>> [trace] Importing statistics...")
 import statistics
 print(">>> [trace] Successfully imported statistics")
-print(">>> [trace] Importing import_module from importlib...")
-from importlib import import_module
-print(">>> [trace] Successfully imported import_module from importlib")
-
 print(">>> [trace] Importing DBRouter, GLOBAL_ROUTER, init_db_router from db_router...")
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 print(">>> [trace] Successfully imported DBRouter, GLOBAL_ROUTER, init_db_router from db_router")
@@ -169,6 +165,28 @@ if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular depen
     print(">>> [trace] Successfully imported ErrorBot for type checking from menace_sandbox.error_bot")
 
 logger = logging.getLogger(__name__)
+
+
+def _get_pipeline_cls() -> "type[ModelAutomationPipeline] | None":
+    """Load the :class:`ModelAutomationPipeline` implementation lazily."""
+
+    try:
+        from .entry_pipeline_loader import load_pipeline_class
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        logger.warning(
+            "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
+            exc,
+        )
+        return None
+
+    try:
+        return load_pipeline_class()
+    except Exception as exc:  # pragma: no cover - pipeline unavailable
+        logger.warning(
+            "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
+            exc,
+        )
+        return None
 
 
 def _get_router(router: DBRouter | None = None) -> DBRouter:
@@ -1973,19 +1991,8 @@ def _load_pipeline_instance() -> "ModelAutomationPipeline | None":
     global _pipeline_instance
     if _pipeline_instance is not None:
         return _pipeline_instance
-    try:  # pragma: no cover - optional dependency
-        module = import_module(f"{__package__}.model_automation_pipeline")
-        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
-    except Exception as exc:
-        logger.warning(
-            "ModelAutomationPipeline unavailable for CapitalManagementBot: %s",
-            exc,
-        )
-        return None
+    pipeline_cls = _get_pipeline_cls()
     if pipeline_cls is None:
-        logger.warning(
-            "ModelAutomationPipeline module missing ModelAutomationPipeline class",
-        )
         return None
     try:
         _pipeline_instance = pipeline_cls(context_builder=_get_context_builder())
