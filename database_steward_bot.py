@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Iterable
+from typing import TYPE_CHECKING, Any, Dict, List, Iterable
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -41,10 +41,12 @@ try:
 except Exception:  # pragma: no cover - optional
     git = None  # type: ignore
 
-from .error_bot import ErrorBot
 from .conversation_manager_bot import ConversationManagerBot
 from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
+
+if TYPE_CHECKING:
+    from .error_bot import ErrorBot
 
 
 @dataclass
