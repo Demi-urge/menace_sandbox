@@ -56,9 +56,9 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
 
     global _PIPELINE_CLS
     if _PIPELINE_CLS is None:
-        from .shared.model_pipeline_core import ModelAutomationPipeline as _Pipeline
+        from .entry_pipeline_loader import load_pipeline_class
 
-        _PIPELINE_CLS = _Pipeline
+        _PIPELINE_CLS = load_pipeline_class()
         globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
     return _PIPELINE_CLS
 
