@@ -74,10 +74,6 @@ try:  # pragma: no cover - optional dependency
     from .trend_predictor import TrendPredictor
 except Exception:  # pragma: no cover - fallback when unavailable
     TrendPredictor = None  # type: ignore
-try:  # pragma: no cover - optional dependency
-    from .error_bot import ErrorBot
-except Exception:  # pragma: no cover - fallback when unavailable
-    ErrorBot = None  # type: ignore
 from .retry_utils import retry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
@@ -85,6 +81,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular depen
     from .prediction_manager_bot import PredictionManager
     from .model_automation_pipeline import ModelAutomationPipeline
     from .self_coding_thresholds import SelfCodingThresholds
+    from .error_bot import ErrorBot
 
 logger = logging.getLogger(__name__)
 
