@@ -8,20 +8,34 @@ import logging
 import time
 import os
 import subprocess
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Callable
+from typing import Dict, Iterable, List, Optional, Callable, TYPE_CHECKING
 
 from dynamic_path_router import resolve_path
 from .knowledge_graph import KnowledgeGraph
 from .rollback_manager import RollbackManager
 from .error_bot import ErrorDB
-from .error_logger import TelemetryEvent
 from .data_bot import MetricsDB
 from .meta_logging import SecureLog
 from .sentry_client import SentryClient
 from .governance import evaluate_rules
 from .anomaly_detection import _ae_scores, _cluster_scores
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from .error_logger import TelemetryEvent
+
+
+@lru_cache(maxsize=1)
+def _resolve_telemetry_event():
+    """Import :class:`TelemetryEvent` lazily to avoid circular imports."""
+
+    try:
+        from .error_logger import TelemetryEvent as _TelemetryEvent  # type: ignore
+    except Exception as exc:  # pragma: no cover - fallback for partially initialised module
+        raise RuntimeError("TelemetryEvent is unavailable") from exc
+    return _TelemetryEvent
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +164,10 @@ class TelemetryReplicator:
         if self.disk_path:
             if self.disk_path.parent != self.disk_path:
                 self.disk_path.parent.mkdir(parents=True, exist_ok=True)
-        self.queue: List[TelemetryEvent] = []
+        self.queue: List["TelemetryEvent"] = []
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def _send_event(self, event: TelemetryEvent) -> bool:
+    def _send_event(self, event: "TelemetryEvent") -> bool:
         if not event.checksum:
             payload_ck = json.dumps(
                 event.dict(exclude={"checksum"}, sort_keys=True)
@@ -196,14 +210,14 @@ class TelemetryReplicator:
             )
 
     def _send_queued(self) -> None:
-        remaining: List[TelemetryEvent] = []
+        remaining: List["TelemetryEvent"] = []
         for ev in self.queue:
             if not self._send_event(ev):
                 remaining.append(ev)
         self.queue = remaining
         self._write_disk_queue()
 
-    def replicate(self, event: TelemetryEvent) -> None:
+    def replicate(self, event: "TelemetryEvent") -> None:
         self._send_queued()
         if not self._send_event(event):
             self.logger.warning(
@@ -227,7 +241,8 @@ class TelemetryReplicator:
                             continue
                         try:
                             data = json.loads(line)
-                            event = TelemetryEvent(**data)
+                            event_cls = _resolve_telemetry_event()
+                            event = event_cls(**data)
                         except Exception:
                             self.logger.warning("Invalid telemetry line skipped")
                             continue
