@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover - optional dependency
     )
 
 from ..resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
-from ..data_interfaces import DataBotInterface, RawMetrics
+from ..data_interfaces import DataBotInterface
 from ..task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from ..efficiency_bot import EfficiencyBot
 from ..performance_assessment_bot import PerformanceAssessmentBot
@@ -74,17 +74,7 @@ from ..unified_learning_engine import UnifiedLearningEngine
 from ..action_planner import ActionPlanner
 from vector_service.context_builder import ContextBuilder
 
-try:
-    from ..data_bot import DataBot as _RuntimeDataBot
-except Exception as exc:  # pragma: no cover - optional dependency during bootstrap
-    _DATA_BOT_IMPORT_ERROR: Exception | None = exc
-    _RuntimeDataBot: type[DataBotInterface] | None = None
-else:  # pragma: no cover - import succeeded
-    _DATA_BOT_IMPORT_ERROR = None
-    _RuntimeDataBot = cast("type[DataBotInterface]", _RuntimeDataBot)
-
-_data_bot_fallback_logged = False
-_shared_data_bot_instance: DataBotInterface | None = None
+from .lazy_data_bot import create_data_bot, get_data_bot
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -154,99 +144,6 @@ def _pipeline_helpers() -> Dict[str, Any]:
         "make_research_item": _make_research_item,
         "planning_components": _planning_components,
     }
-
-
-def _build_fallback_data_bot() -> DataBotInterface:
-    """Return a minimal :class:`DataBotInterface` implementation."""
-
-    class _FallbackDataBot:
-        """Lightweight stand-in used when the real DataBot cannot load."""
-
-        def __init__(self) -> None:
-            self.db = SimpleNamespace(fetch=lambda *args, **kwargs: [])
-
-        def collect(
-            self,
-            bot: str,
-            response_time: float = 0.0,
-            errors: int = 0,
-            **metrics: float,
-        ) -> RawMetrics:
-            required = {"cpu", "memory", "disk_io", "net_io"}
-            optional_fields = RawMetrics.__dataclass_fields__.keys()
-            filtered_metrics: Dict[str, Any] = {
-                key: metrics[key]
-                for key in optional_fields
-                if key in metrics and key not in required and key not in {"bot", "errors", "response_time"}
-            }
-            return RawMetrics(
-                bot=bot,
-                cpu=float(metrics.get("cpu", 0.0)),
-                memory=float(metrics.get("memory", 0.0)),
-                response_time=response_time,
-                disk_io=float(metrics.get("disk_io", 0.0)),
-                net_io=float(metrics.get("net_io", 0.0)),
-                errors=int(errors),
-                **filtered_metrics,
-            )
-
-        def detect_anomalies(
-            self,
-            data: Any,
-            metric: str,
-            *,
-            threshold: float = 3.0,
-            metrics_db: Any | None = None,
-        ) -> Iterable[int]:
-            return []
-
-        def roi(self, bot: str) -> float:
-            return 0.0
-
-    return cast(DataBotInterface, _FallbackDataBot())
-
-
-def _create_data_bot(logger: logging.Logger) -> DataBotInterface:
-    """Instantiate the runtime data bot with graceful degradation."""
-
-    global _data_bot_fallback_logged
-    if _RuntimeDataBot is not None:
-        try:
-            return cast(DataBotInterface, _RuntimeDataBot())
-        except Exception as exc:  # pragma: no cover - degraded bootstrap
-            logger.warning(
-                "DataBot initialisation failed for ModelAutomationPipeline: %s",
-                exc,
-            )
-            _data_bot_fallback_logged = True
-    else:
-        if not _data_bot_fallback_logged:
-            logger.warning(
-                "DataBot unavailable for ModelAutomationPipeline: %s",
-                _DATA_BOT_IMPORT_ERROR,
-            )
-            _data_bot_fallback_logged = True
-    return _build_fallback_data_bot()
-
-
-def get_data_bot(logger: logging.Logger | None = None) -> DataBotInterface:
-    """Return a cached :class:`DataBotInterface` instance.
-
-    The helper defers instantiation to :func:`_create_data_bot` so the real
-    ``DataBot`` is only imported when needed.  If the import fails the shared
-    fallback implementation is returned instead.  Consumers should always go
-    through this accessor rather than importing :class:`DataBot` directly so
-    bootstrapping remains resilient when optional dependencies are missing.
-    """
-
-    global _shared_data_bot_instance
-
-    if _shared_data_bot_instance is None:
-        logger = logger or logging.getLogger(__name__)
-        _shared_data_bot_instance = _create_data_bot(logger)
-    return _shared_data_bot_instance
-
-
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -355,7 +252,7 @@ class ModelAutomationPipeline:
         self._planning_task_cls = planning_task_cls
         self.planner = planner or planner_cls()
         self.hierarchy = hierarchy or build_default_hierarchy()
-        self.data_bot = data_bot or _create_data_bot(self.logger)
+        self.data_bot = data_bot or create_data_bot(self.logger)
         if capital_manager is None:
             capital_manager_cls = capital_manager_cls_factory()
             capital_manager = cast("CapitalManagementBot", capital_manager_cls())
