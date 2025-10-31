@@ -11,6 +11,10 @@ is preserved.
 
 from __future__ import annotations
 
+print(">>> [trace] Entered pipeline_base.py (BEGIN)")
+import traceback
+print(">>> [trace] Import stack:\n" + "".join(traceback.format_stack()[-10:]))
+
 print(">>> [trace] Entered pipeline_base.py")
 print(">>> [trace] Successfully imported annotations from __future__")
 
