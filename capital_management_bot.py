@@ -13,7 +13,7 @@ from .self_coding_thresholds import get_thresholds
 from .orchestrator_loader import get_orchestrator
 from .threshold_service import ThresholdService
 from .data_interfaces import CapitalMetrics, DataBotInterface
-from .shared.execution_core import get_data_bot as _load_shared_data_bot
+from .shared.lazy_data_bot import get_data_bot as _load_shared_data_bot
 from context_builder_util import create_context_builder
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta

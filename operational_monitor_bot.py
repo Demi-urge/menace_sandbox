@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from .data_interfaces import DataBotInterface
-from .shared.execution_core import get_data_bot as _load_shared_data_bot
+from .shared.lazy_data_bot import get_data_bot as _load_shared_data_bot
 
 registry = BotRegistry()
 logger = logging.getLogger(__name__)
