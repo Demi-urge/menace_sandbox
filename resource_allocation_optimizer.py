@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Tuple, TYPE_CHECKING
 
 from db_router import DBRouter, GLOBAL_ROUTER
 
@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover - optional dependency
     Optimizer = None  # type: ignore
 
 from .failure_learning_system import DiscrepancyDB, FailureRecord, FailureLearningSystem
-from .error_bot import ErrorDB
 from .databases import MenaceDB
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -39,6 +38,9 @@ from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .data_bot import MetricsDB
 from .cross_query import workflow_roi_stats
 from .retry_utils import retry
+
+if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
+    from .error_bot import ErrorDB
 
 
 @dataclass
