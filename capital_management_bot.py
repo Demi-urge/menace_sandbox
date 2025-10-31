@@ -13,6 +13,7 @@ from .self_coding_thresholds import get_thresholds
 from .orchestrator_loader import get_orchestrator
 from .threshold_service import ThresholdService
 from .data_interfaces import CapitalMetrics, DataBotInterface
+from .shared.execution_core import get_data_bot as _load_shared_data_bot
 from context_builder_util import create_context_builder
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -108,9 +109,7 @@ def _get_data_bot() -> DataBotInterface:
 
     global _data_bot_instance
     if _data_bot_instance is None:
-        from .data_bot import DataBot as _DataBot
-
-        _data_bot_instance = cast(DataBotInterface, _DataBot(start_server=False))
+        _data_bot_instance = _load_shared_data_bot(logger)
     return _data_bot_instance
 
 

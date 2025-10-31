@@ -84,6 +84,7 @@ else:  # pragma: no cover - import succeeded
     _RuntimeDataBot = cast("type[DataBotInterface]", _RuntimeDataBot)
 
 _data_bot_fallback_logged = False
+_shared_data_bot_instance: DataBotInterface | None = None
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -226,6 +227,24 @@ def _create_data_bot(logger: logging.Logger) -> DataBotInterface:
             )
             _data_bot_fallback_logged = True
     return _build_fallback_data_bot()
+
+
+def get_data_bot(logger: logging.Logger | None = None) -> DataBotInterface:
+    """Return a cached :class:`DataBotInterface` instance.
+
+    The helper defers instantiation to :func:`_create_data_bot` so the real
+    ``DataBot`` is only imported when needed.  If the import fails the shared
+    fallback implementation is returned instead.  Consumers should always go
+    through this accessor rather than importing :class:`DataBot` directly so
+    bootstrapping remains resilient when optional dependencies are missing.
+    """
+
+    global _shared_data_bot_instance
+
+    if _shared_data_bot_instance is None:
+        logger = logger or logging.getLogger(__name__)
+        _shared_data_bot_instance = _create_data_bot(logger)
+    return _shared_data_bot_instance
 
 
 class ModelAutomationPipeline:
