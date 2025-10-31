@@ -79,7 +79,7 @@ from .retry_utils import retry
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
     from .data_bot import DataBot
     from .prediction_manager_bot import PredictionManager
-    from .model_automation_pipeline import ModelAutomationPipeline
+    from .shared.pipeline_base import ModelAutomationPipeline
     from .self_coding_thresholds import SelfCodingThresholds
     from .error_bot import ErrorBot
 
