@@ -41,19 +41,33 @@ from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
-
-
-def _load_model_automation_pipeline() -> Type["ModelAutomationPipeline"]:
+def _load_model_automation_pipeline() -> "Type[ModelAutomationPipeline] | None":
     """Return the pipeline class without importing it at module load."""
 
-    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
+    try:
+        from .entry_pipeline_loader import load_pipeline_class
+    except Exception as exc:  # pragma: no cover - degraded bootstrap path
+        logger.warning(
+            "ModelAutomationPipeline unavailable for BotCreationBot: %s",
+            exc,
+        )
+        return None
 
-    return cast("Type[ModelAutomationPipeline]", _Pipeline)
+    try:
+        pipeline_cls = load_pipeline_class()
+    except Exception as exc:  # pragma: no cover - degraded bootstrap path
+        logger.warning(
+            "ModelAutomationPipeline unavailable for BotCreationBot: %s",
+            exc,
+        )
+        return None
+
+    return cast("Type[ModelAutomationPipeline]", pipeline_cls)
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
-    from .model_automation_pipeline import ModelAutomationPipeline
+    from .shared.pipeline_base import ModelAutomationPipeline
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
@@ -82,26 +96,45 @@ _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 
 _pipeline_cls: "Type[ModelAutomationPipeline] | None" = None
-try:
-    _pipeline_cls = _load_model_automation_pipeline()
-except Exception as exc:  # pragma: no cover - degraded bootstrap path
-    logger.warning(
-        "ModelAutomationPipeline unavailable for BotCreationBot: %s",
-        exc,
-    )
+_pipeline_instance: "ModelAutomationPipeline | None" = None
 
-pipeline: "ModelAutomationPipeline | None"
-if _pipeline_cls is None:
-    pipeline = None
-else:
+
+def _get_pipeline_cls() -> "Type[ModelAutomationPipeline] | None":
+    """Return the cached pipeline class, loading it lazily when required."""
+
+    global _pipeline_cls
+    if _pipeline_cls is not None:
+        return _pipeline_cls
+
+    pipeline_cls = _load_model_automation_pipeline()
+    if pipeline_cls is None:
+        return None
+
+    _pipeline_cls = pipeline_cls
+    return _pipeline_cls
+
+
+def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
+    """Instantiate :class:`ModelAutomationPipeline` lazily."""
+
+    global _pipeline_instance
+    if _pipeline_instance is not None:
+        return _pipeline_instance
+
+    pipeline_cls = _get_pipeline_cls()
+    if pipeline_cls is None:
+        return None
+
     try:
-        pipeline = _pipeline_cls(context_builder=_context_builder)
+        _pipeline_instance = pipeline_cls(context_builder=_context_builder)
     except Exception as exc:  # pragma: no cover - degraded bootstrap path
         logger.warning(
             "ModelAutomationPipeline initialisation failed for BotCreationBot: %s",
             exc,
         )
-        pipeline = None
+        _pipeline_instance = None
+
+    return _pipeline_instance
 
 evolution_orchestrator = get_orchestrator("BotCreationBot", data_bot, engine)
 _th = get_thresholds("BotCreationBot")
@@ -113,6 +146,7 @@ persist_sc_thresholds(
 )
 
 manager: SelfCodingManager | None = None
+pipeline = _get_pipeline_instance()
 if pipeline is None:
     logger.warning(
         "BotCreationBot self-coding manager unavailable; running without ModelAutomationPipeline",
