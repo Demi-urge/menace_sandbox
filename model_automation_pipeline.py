@@ -33,7 +33,6 @@ from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from .efficiency_bot import EfficiencyBot
 from .performance_assessment_bot import PerformanceAssessmentBot
-from .communication_maintenance_bot import CommunicationMaintenanceBot
 from .operational_monitor_bot import OperationalMonitoringBot
 from .central_database_bot import CentralDatabaseBot, Proposal
 from .sentiment_bot import SentimentBot
