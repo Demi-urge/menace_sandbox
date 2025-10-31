@@ -30,7 +30,6 @@ except Exception:  # pragma: no cover - optional dependency
     )
 
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
-from .data_bot import DataBot
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
 from .efficiency_bot import EfficiencyBot
 from .performance_assessment_bot import PerformanceAssessmentBot
