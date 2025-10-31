@@ -16,7 +16,6 @@ from typing import Dict, Iterable, List, Optional, Callable, TYPE_CHECKING
 from dynamic_path_router import resolve_path
 from .knowledge_graph import KnowledgeGraph
 from .rollback_manager import RollbackManager
-from .error_bot import ErrorDB
 from .data_bot import MetricsDB
 from .meta_logging import SecureLog
 from .sentry_client import SentryClient
@@ -24,6 +23,7 @@ from .governance import evaluate_rules
 from .anomaly_detection import _ae_scores, _cluster_scores
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from .error_bot import ErrorDB
     from .error_logger import TelemetryEvent
 
 
