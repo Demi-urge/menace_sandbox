@@ -48,7 +48,6 @@ from ..query_bot import QueryBot
 from ..memory_bot import MemoryBot
 from ..communication_testing_bot import CommunicationTestingBot
 from ..discrepancy_detection_bot import DiscrepancyDetectionBot
-from ..finance_router_bot import FinanceRouterBot
 from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 from ..offer_testing_bot import OfferTestingBot
 from ..research_fallback_bot import ResearchFallbackBot
@@ -82,6 +81,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..bot_registry import BotRegistry
     from ..bot_creation_bot import BotCreationBot
     from ..capital_management_bot import CapitalManagementBot
+    from ..finance_router_bot import FinanceRouterBot
     from ..research_aggregator_bot import ResearchAggregatorBot, ResearchItem
     from ..information_synthesis_bot import InformationSynthesisBot
     from ..synthesis_models import SynthesisTask
@@ -96,6 +96,7 @@ else:  # pragma: no cover - runtime fallback
     BotRegistry = Any  # type: ignore
     BotCreationBot = Any  # type: ignore
     CapitalManagementBot = Any  # type: ignore
+    FinanceRouterBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
     ResearchItem = Any  # type: ignore
     InformationSynthesisBot = Any  # type: ignore
@@ -157,6 +158,14 @@ def _resource_allocation_components() -> Tuple[type["ResourceAllocationBot"], ty
     )
 
     return _ResourceAllocationBot, _AllocationDB
+
+
+def _finance_router_cls() -> type["FinanceRouterBot"]:
+    """Return the finance router bot via a deferred import."""
+
+    from ..finance_router_bot import FinanceRouterBot as _FinanceRouterBot
+
+    return _FinanceRouterBot
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -309,7 +318,25 @@ class ModelAutomationPipeline:
         self.memory_bot = memory_bot or MemoryBot()
         self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
-        self.finance_bot = finance_bot or FinanceRouterBot()
+        if finance_bot is None:
+            try:
+                finance_cls = _finance_router_cls()
+            except Exception as exc:  # pragma: no cover - degraded bootstrap
+                self.logger.warning(
+                    "FinanceRouterBot unavailable for ModelAutomationPipeline: %s",
+                    exc,
+                )
+                finance_bot = None
+            else:
+                try:
+                    finance_bot = finance_cls()
+                except Exception as exc:  # pragma: no cover - degraded bootstrap
+                    self.logger.warning(
+                        "FinanceRouterBot initialisation failed for ModelAutomationPipeline: %s",
+                        exc,
+                    )
+                    finance_bot = None
+        self.finance_bot = finance_bot
         if creation_bot is None:
             _bot_creation_cls: type["BotCreationBot"] | None
             try:
