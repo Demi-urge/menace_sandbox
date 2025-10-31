@@ -24,7 +24,14 @@ from .model_automation_dependencies import (
     _make_research_item,
     _planning_components,
 )
-from .shared.model_pipeline_core import ModelAutomationPipeline
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .shared.model_pipeline_core import ModelAutomationPipeline as _ModelAutomationPipeline
+else:  # pragma: no cover - runtime alias populated lazily
+    _ModelAutomationPipeline = Any  # type: ignore[misc]
+
+
+_PIPELINE_CLS: "type[_ModelAutomationPipeline] | None" = None
 
 if TYPE_CHECKING:  # pragma: no cover - typing only imports
     from .pre_execution_roi_bot import ROIResult
@@ -42,6 +49,32 @@ class AutomationResult:
     roi: Optional["ROIResult"]
     warnings: Dict[str, List[Dict[str, Any]]] | None = None
     workflow_evolution: List[Dict[str, Any]] | None = None
+
+
+def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
+    """Import and cache the concrete :class:`ModelAutomationPipeline` implementation."""
+
+    global _PIPELINE_CLS
+    if _PIPELINE_CLS is None:
+        from .shared.model_pipeline_core import ModelAutomationPipeline as _Pipeline
+
+        _PIPELINE_CLS = _Pipeline
+        globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
+    return _PIPELINE_CLS
+
+
+def __getattr__(name: str) -> Any:
+    """Provide lazy access to heavy imports to avoid circular import failures."""
+
+    if name == "ModelAutomationPipeline":
+        return _load_pipeline_cls()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> List[str]:
+    """Expose lazily provided attributes to :func:`dir`."""
+
+    return sorted(list(globals().keys()) + ["ModelAutomationPipeline"])
 
 
 __all__ = ["AutomationResult", "ModelAutomationPipeline"]
