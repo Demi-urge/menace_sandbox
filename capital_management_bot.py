@@ -2,22 +2,56 @@
 
 from __future__ import annotations
 
-from .bot_registry import BotRegistry
+print(">>> [trace] Entered capital_management_bot.py")
+print(">>> [trace] Successfully imported annotations from __future__")
 
+print(">>> [trace] Importing BotRegistry from menace_sandbox.bot_registry...")
+from .bot_registry import BotRegistry
+print(">>> [trace] Successfully imported BotRegistry from menace_sandbox.bot_registry")
+
+print(">>> [trace] Importing _DisabledSelfCodingManager, self_coding_managed from menace_sandbox.coding_bot_interface...")
 from .coding_bot_interface import _DisabledSelfCodingManager, self_coding_managed
+print(">>> [trace] Successfully imported _DisabledSelfCodingManager, self_coding_managed from menace_sandbox.coding_bot_interface")
+print(">>> [trace] Importing SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager...")
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+print(">>> [trace] Successfully imported SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager")
+print(">>> [trace] Importing SelfCodingEngine from menace_sandbox.self_coding_engine...")
 from .self_coding_engine import SelfCodingEngine
+print(">>> [trace] Successfully imported SelfCodingEngine from menace_sandbox.self_coding_engine")
+print(">>> [trace] Importing CodeDB from menace_sandbox.code_database...")
 from .code_database import CodeDB
+print(">>> [trace] Successfully imported CodeDB from menace_sandbox.code_database")
+print(">>> [trace] Importing GPTMemoryManager from menace_sandbox.gpt_memory...")
 from .gpt_memory import GPTMemoryManager
+print(">>> [trace] Successfully imported GPTMemoryManager from menace_sandbox.gpt_memory")
+print(">>> [trace] Importing get_thresholds from menace_sandbox.self_coding_thresholds...")
 from .self_coding_thresholds import get_thresholds
+print(">>> [trace] Successfully imported get_thresholds from menace_sandbox.self_coding_thresholds")
+print(">>> [trace] Importing get_orchestrator from menace_sandbox.orchestrator_loader...")
 from .orchestrator_loader import get_orchestrator
+print(">>> [trace] Successfully imported get_orchestrator from menace_sandbox.orchestrator_loader")
+print(">>> [trace] Importing ThresholdService from menace_sandbox.threshold_service...")
 from .threshold_service import ThresholdService
+print(">>> [trace] Successfully imported ThresholdService from menace_sandbox.threshold_service")
+print(">>> [trace] Importing CapitalMetrics, DataBotInterface from menace_sandbox.data_interfaces...")
 from .data_interfaces import CapitalMetrics, DataBotInterface
+print(">>> [trace] Successfully imported CapitalMetrics, DataBotInterface from menace_sandbox.data_interfaces")
+print(">>> [trace] Importing get_data_bot as _load_shared_data_bot from menace_sandbox.shared.lazy_data_bot...")
 from .shared.lazy_data_bot import get_data_bot as _load_shared_data_bot
+print(">>> [trace] Successfully imported get_data_bot as _load_shared_data_bot from menace_sandbox.shared.lazy_data_bot")
+print(">>> [trace] Importing create_context_builder from context_builder_util...")
 from context_builder_util import create_context_builder
+print(">>> [trace] Successfully imported create_context_builder from context_builder_util")
+print(">>> [trace] Importing dataclass, field from dataclasses...")
 from dataclasses import dataclass, field
+print(">>> [trace] Successfully imported dataclass, field from dataclasses")
+print(">>> [trace] Importing datetime, timedelta from datetime...")
 from datetime import datetime, timedelta
+print(">>> [trace] Successfully imported datetime, timedelta from datetime")
+print(">>> [trace] Importing Path from pathlib...")
 from pathlib import Path
+print(">>> [trace] Successfully imported Path from pathlib")
+print(">>> [trace] Importing Dict, Iterable, List, Mapping, Optional, Callable, Tuple, cast, Literal, TYPE_CHECKING from typing...")
 from typing import (
     Dict,
     Iterable,
@@ -30,23 +64,50 @@ from typing import (
     Literal,
     TYPE_CHECKING,
 )
+print(">>> [trace] Successfully imported Dict, Iterable, List, Mapping, Optional, Callable, Tuple, cast, Literal, TYPE_CHECKING from typing")
+print(">>> [trace] Importing Enum from enum...")
 from enum import Enum
+print(">>> [trace] Successfully imported Enum from enum")
+print(">>> [trace] Importing os...")
 import os
+print(">>> [trace] Successfully imported os")
+print(">>> [trace] Importing threading...")
 import threading
+print(">>> [trace] Successfully imported threading")
+print(">>> [trace] Importing time...")
 import time
+print(">>> [trace] Successfully imported time")
+print(">>> [trace] Importing logging...")
 import logging
+print(">>> [trace] Successfully imported logging")
+print(">>> [trace] Importing deque from collections...")
 from collections import deque
+print(">>> [trace] Successfully imported deque from collections")
+print(">>> [trace] Importing asyncio...")
 import asyncio
+print(">>> [trace] Successfully imported asyncio")
+print(">>> [trace] Importing statistics...")
 import statistics
+print(">>> [trace] Successfully imported statistics")
+print(">>> [trace] Importing import_module from importlib...")
 from importlib import import_module
+print(">>> [trace] Successfully imported import_module from importlib")
 
+print(">>> [trace] Importing DBRouter, GLOBAL_ROUTER, init_db_router from db_router...")
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+print(">>> [trace] Successfully imported DBRouter, GLOBAL_ROUTER, init_db_router from db_router")
+print(">>> [trace] Importing Scope, build_scope_clause, apply_scope from scope_utils...")
 from scope_utils import Scope, build_scope_clause, apply_scope
+print(">>> [trace] Successfully imported Scope, build_scope_clause, apply_scope from scope_utils")
 
 try:  # pragma: no cover - optional dependency during bootstrap
+    print(">>> [trace] Importing self_coding_import_depth from menace_sandbox.shared.self_coding_import_guard...")
     from .shared.self_coding_import_guard import self_coding_import_depth
+    print(">>> [trace] Successfully imported self_coding_import_depth from menace_sandbox.shared.self_coding_import_guard")
 except Exception:  # pragma: no cover - support flat execution
+    print(">>> [trace] Failed to import menace_sandbox.shared.self_coding_import_guard, falling back to shared.self_coding_import_guard")
     from shared.self_coding_import_guard import self_coding_import_depth  # type: ignore
+    print(">>> [trace] Successfully imported self_coding_import_depth from shared.self_coding_import_guard")
 
 _registry_instance: BotRegistry | None = None
 _data_bot_instance: DataBotInterface | None = None
@@ -60,28 +121,52 @@ _engine_instance: SelfCodingEngine | None = None
 manager: SelfCodingManager | None = None
 
 try:  # pragma: no cover - optional dependency
+    print(">>> [trace] Importing load_dotenv from dotenv...")
     from dotenv import load_dotenv
+    print(">>> [trace] Successfully imported load_dotenv from dotenv")
 except Exception:  # pragma: no cover - missing optional dependency
+    print(">>> [trace] Failed to import load_dotenv from dotenv")
     load_dotenv = None
 else:  # pragma: no cover - load env if library present
     load_dotenv()
 
+print(">>> [trace] Importing send_discord_alert from menace_sandbox.alert_dispatcher...")
 from .alert_dispatcher import send_discord_alert
+print(">>> [trace] Successfully imported send_discord_alert from menace_sandbox.alert_dispatcher")
 
+print(">>> [trace] Importing DB_PATH from menace_sandbox.database_manager...")
 from .database_manager import DB_PATH
+print(">>> [trace] Successfully imported DB_PATH from menace_sandbox.database_manager")
+print(">>> [trace] Importing PathwayDB from menace_sandbox.neuroplasticity...")
 from .neuroplasticity import PathwayDB
+print(">>> [trace] Successfully imported PathwayDB from menace_sandbox.neuroplasticity")
 try:  # pragma: no cover - optional dependency
+    print(">>> [trace] Importing TrendPredictor from menace_sandbox.trend_predictor...")
     from .trend_predictor import TrendPredictor
+    print(">>> [trace] Successfully imported TrendPredictor from menace_sandbox.trend_predictor")
 except Exception:  # pragma: no cover - fallback when unavailable
+    print(">>> [trace] Failed to import TrendPredictor from menace_sandbox.trend_predictor")
     TrendPredictor = None  # type: ignore
+print(">>> [trace] Importing retry from menace_sandbox.retry_utils...")
 from .retry_utils import retry
+print(">>> [trace] Successfully imported retry from menace_sandbox.retry_utils")
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    print(">>> [trace] Importing DataBot for type checking from menace_sandbox.data_bot...")
     from .data_bot import DataBot
+    print(">>> [trace] Successfully imported DataBot for type checking from menace_sandbox.data_bot")
+    print(">>> [trace] Importing PredictionManager for type checking from menace_sandbox.prediction_manager_bot...")
     from .prediction_manager_bot import PredictionManager
+    print(">>> [trace] Successfully imported PredictionManager for type checking from menace_sandbox.prediction_manager_bot")
+    print(">>> [trace] Importing ModelAutomationPipeline for type checking from menace_sandbox.shared.pipeline_base...")
     from .shared.pipeline_base import ModelAutomationPipeline
+    print(">>> [trace] Successfully imported ModelAutomationPipeline for type checking from menace_sandbox.shared.pipeline_base")
+    print(">>> [trace] Importing SelfCodingThresholds for type checking from menace_sandbox.self_coding_thresholds...")
     from .self_coding_thresholds import SelfCodingThresholds
+    print(">>> [trace] Successfully imported SelfCodingThresholds for type checking from menace_sandbox.self_coding_thresholds")
+    print(">>> [trace] Importing ErrorBot for type checking from menace_sandbox.error_bot...")
     from .error_bot import ErrorBot
+    print(">>> [trace] Successfully imported ErrorBot for type checking from menace_sandbox.error_bot")
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +278,7 @@ METRIC_FALLBACK_PATH = Path(
 )
 try:
     if METRIC_FALLBACK_PATH.exists():
+        print(">>> [trace] Importing json as _json for METRIC_FALLBACKS...")
         import json as _json
 
         METRIC_FALLBACKS = _json.loads(METRIC_FALLBACK_PATH.read_text())
@@ -210,8 +296,11 @@ except Exception as exc:  # pragma: no cover - IO errors
 
 
 try:  # optional dependency
+    print(">>> [trace] Importing pandas as pd...")
     import pandas as pd
+    print(">>> [trace] Successfully imported pandas as pd")
 except Exception:  # pragma: no cover - optional dependency
+    print(">>> [trace] Failed to import pandas as pd")
     pd = None
 
 

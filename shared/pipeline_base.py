@@ -11,10 +11,22 @@ is preserved.
 
 from __future__ import annotations
 
+print(">>> [trace] Entered pipeline_base.py")
+print(">>> [trace] Successfully imported annotations from __future__")
+
+print(">>> [trace] Importing logging...")
 import logging
+print(">>> [trace] Successfully imported logging")
+print(">>> [trace] Importing ThreadPoolExecutor, as_completed from concurrent.futures...")
 from concurrent.futures import ThreadPoolExecutor, as_completed
+print(">>> [trace] Successfully imported ThreadPoolExecutor, as_completed from concurrent.futures")
+print(">>> [trace] Importing SimpleNamespace from types...")
 from types import SimpleNamespace
+print(">>> [trace] Successfully imported SimpleNamespace from types")
+print(">>> [trace] Importing Path from pathlib...")
 from pathlib import Path
+print(">>> [trace] Successfully imported Path from pathlib")
+print(">>> [trace] Importing TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Tuple, Type, cast from typing...")
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -26,62 +38,137 @@ from typing import (
     Type,
     cast,
 )
+print(">>> [trace] Successfully imported TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Tuple, Type, cast from typing")
 
 try:
+    print(">>> [trace] Importing pandas as pd...")
     import pandas as pd  # type: ignore
+    print(">>> [trace] Successfully imported pandas as pd")
 except Exception:  # pragma: no cover - optional dependency
+    print(">>> [trace] Failed to import pandas, defaulting to None")
     pd = None  # type: ignore
 
 try:
+    print(">>> [trace] Importing Schema, fields, ValidationError from marshmallow...")
     from marshmallow import Schema, fields  # type: ignore
     from marshmallow import ValidationError as MMValidationError  # type: ignore
 
     ValidationError = MMValidationError
+    print(">>> [trace] Successfully imported Schema, fields, ValidationError from marshmallow")
 except Exception:  # pragma: no cover - optional dependency
+    print(">>> [trace] Failed to import marshmallow, falling back to simple_validation")
+    print(">>> [trace] Importing SimpleSchema as Schema, fields, ValidationError from menace_sandbox.simple_validation...")
     from ..simple_validation import (  # type: ignore
         SimpleSchema as Schema,
         fields,
         ValidationError,
     )
+    print(">>> [trace] Successfully imported SimpleSchema as Schema, fields, ValidationError from menace_sandbox.simple_validation")
 
+print(">>> [trace] Importing ResourcePredictionBot, ResourceMetrics from menace_sandbox.resource_prediction_bot...")
 from ..resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
+print(">>> [trace] Successfully imported ResourcePredictionBot, ResourceMetrics from menace_sandbox.resource_prediction_bot")
+print(">>> [trace] Importing DataBotInterface from menace_sandbox.data_interfaces...")
 from ..data_interfaces import DataBotInterface
+print(">>> [trace] Successfully imported DataBotInterface from menace_sandbox.data_interfaces")
+print(">>> [trace] Importing TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB from menace_sandbox.task_handoff_bot...")
 from ..task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB
+print(">>> [trace] Successfully imported TaskHandoffBot, TaskInfo, TaskPackage, WorkflowDB from menace_sandbox.task_handoff_bot")
+print(">>> [trace] Importing EfficiencyBot from menace_sandbox.efficiency_bot...")
 from ..efficiency_bot import EfficiencyBot
+print(">>> [trace] Successfully imported EfficiencyBot from menace_sandbox.efficiency_bot")
+print(">>> [trace] Importing PerformanceAssessmentBot from menace_sandbox.performance_assessment_bot...")
 from ..performance_assessment_bot import PerformanceAssessmentBot
+print(">>> [trace] Successfully imported PerformanceAssessmentBot from menace_sandbox.performance_assessment_bot")
+print(">>> [trace] Importing CommunicationMaintenanceBot from menace_sandbox.communication_maintenance_bot...")
 from ..communication_maintenance_bot import CommunicationMaintenanceBot
+print(">>> [trace] Successfully imported CommunicationMaintenanceBot from menace_sandbox.communication_maintenance_bot")
+print(">>> [trace] Importing OperationalMonitoringBot from menace_sandbox.operational_monitor_bot...")
 from ..operational_monitor_bot import OperationalMonitoringBot
+print(">>> [trace] Successfully imported OperationalMonitoringBot from menace_sandbox.operational_monitor_bot")
+print(">>> [trace] Importing CentralDatabaseBot, Proposal from menace_sandbox.central_database_bot...")
 from ..central_database_bot import CentralDatabaseBot, Proposal
+print(">>> [trace] Successfully imported CentralDatabaseBot, Proposal from menace_sandbox.central_database_bot")
+print(">>> [trace] Importing SentimentBot from menace_sandbox.sentiment_bot...")
 from ..sentiment_bot import SentimentBot
+print(">>> [trace] Successfully imported SentimentBot from menace_sandbox.sentiment_bot")
+print(">>> [trace] Importing QueryBot from menace_sandbox.query_bot...")
 from ..query_bot import QueryBot
+print(">>> [trace] Successfully imported QueryBot from menace_sandbox.query_bot")
+print(">>> [trace] Importing MemoryBot from menace_sandbox.memory_bot...")
 from ..memory_bot import MemoryBot
+print(">>> [trace] Successfully imported MemoryBot from menace_sandbox.memory_bot")
+print(">>> [trace] Importing CommunicationTestingBot from menace_sandbox.communication_testing_bot...")
 from ..communication_testing_bot import CommunicationTestingBot
+print(">>> [trace] Successfully imported CommunicationTestingBot from menace_sandbox.communication_testing_bot")
+print(">>> [trace] Importing DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot...")
 from ..discrepancy_detection_bot import DiscrepancyDetectionBot
+print(">>> [trace] Successfully imported DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot")
+print(">>> [trace] Importing MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot...")
 from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
+print(">>> [trace] Successfully imported MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot")
+print(">>> [trace] Importing OfferTestingBot from menace_sandbox.offer_testing_bot...")
 from ..offer_testing_bot import OfferTestingBot
+print(">>> [trace] Successfully imported OfferTestingBot from menace_sandbox.offer_testing_bot")
+print(">>> [trace] Importing ResearchFallbackBot from menace_sandbox.research_fallback_bot...")
 from ..research_fallback_bot import ResearchFallbackBot
+print(">>> [trace] Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
+print(">>> [trace] Importing ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer...")
 from ..resource_allocation_optimizer import ResourceAllocationOptimizer
+print(">>> [trace] Successfully imported ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer")
+print(">>> [trace] Importing update_model from menace_sandbox.database_manager...")
 from ..database_manager import update_model
+print(">>> [trace] Successfully imported update_model from menace_sandbox.database_manager")
+print(">>> [trace] Importing AICounterBot from menace_sandbox.ai_counter_bot...")
 from ..ai_counter_bot import AICounterBot
+print(">>> [trace] Successfully imported AICounterBot from menace_sandbox.ai_counter_bot")
+print(">>> [trace] Importing DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot...")
 from ..dynamic_resource_allocator_bot import DynamicResourceAllocator
+print(">>> [trace] Successfully imported DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot")
+print(">>> [trace] Importing DiagnosticManager from menace_sandbox.diagnostic_manager...")
 from ..diagnostic_manager import DiagnosticManager
+print(">>> [trace] Successfully imported DiagnosticManager from menace_sandbox.diagnostic_manager")
+print(">>> [trace] Importing KeywordBank from menace_sandbox.idea_search_bot...")
 from ..idea_search_bot import KeywordBank
+print(">>> [trace] Successfully imported KeywordBank from menace_sandbox.idea_search_bot")
+print(">>> [trace] Importing NewsDB from menace_sandbox.newsreader_bot...")
 from ..newsreader_bot import NewsDB
+print(">>> [trace] Successfully imported NewsDB from menace_sandbox.newsreader_bot")
+print(">>> [trace] Importing AutoReinvestmentBot from menace_sandbox.investment_engine...")
 from ..investment_engine import AutoReinvestmentBot
+print(">>> [trace] Successfully imported AutoReinvestmentBot from menace_sandbox.investment_engine")
+print(">>> [trace] Importing RevenueSpikeEvaluatorBot, CapitalAllocationBot, RevenueEventsDB from menace_sandbox.revenue_amplifier...")
 from ..revenue_amplifier import (
     RevenueSpikeEvaluatorBot,
     CapitalAllocationBot,
     RevenueEventsDB,
 )
+print(">>> [trace] Successfully imported RevenueSpikeEvaluatorBot, CapitalAllocationBot, RevenueEventsDB from menace_sandbox.revenue_amplifier")
+print(">>> [trace] Importing wrap_bot_methods from menace_sandbox.bot_db_utils...")
 from ..bot_db_utils import wrap_bot_methods
+print(">>> [trace] Successfully imported wrap_bot_methods from menace_sandbox.bot_db_utils")
+print(">>> [trace] Importing DBRouter from menace_sandbox.db_router...")
 from ..db_router import DBRouter
+print(">>> [trace] Successfully imported DBRouter from menace_sandbox.db_router")
+print(">>> [trace] Importing UnifiedEventBus from menace_sandbox.unified_event_bus...")
 from ..unified_event_bus import UnifiedEventBus
+print(">>> [trace] Successfully imported UnifiedEventBus from menace_sandbox.unified_event_bus")
+print(">>> [trace] Importing Outcome, PathwayDB, PathwayRecord from menace_sandbox.neuroplasticity...")
 from ..neuroplasticity import Outcome, PathwayDB, PathwayRecord
+print(">>> [trace] Successfully imported Outcome, PathwayDB, PathwayRecord from menace_sandbox.neuroplasticity")
+print(">>> [trace] Importing UnifiedLearningEngine from menace_sandbox.unified_learning_engine...")
 from ..unified_learning_engine import UnifiedLearningEngine
+print(">>> [trace] Successfully imported UnifiedLearningEngine from menace_sandbox.unified_learning_engine")
+print(">>> [trace] Importing ActionPlanner from menace_sandbox.action_planner...")
 from ..action_planner import ActionPlanner
+print(">>> [trace] Successfully imported ActionPlanner from menace_sandbox.action_planner")
+print(">>> [trace] Importing ContextBuilder from vector_service.context_builder...")
 from vector_service.context_builder import ContextBuilder
+print(">>> [trace] Successfully imported ContextBuilder from vector_service.context_builder")
 
+print(">>> [trace] Importing create_data_bot from menace_sandbox.shared.lazy_data_bot...")
 from .lazy_data_bot import create_data_bot
+print(">>> [trace] Successfully imported create_data_bot from menace_sandbox.shared.lazy_data_bot")
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -123,9 +210,11 @@ else:  # pragma: no cover - runtime fallback
 def _pre_execution_components() -> Tuple[type["PreExecutionROIBot"], type["BuildTask"], type["ROIResult"]]:
     """Return the ROI bot and associated dataclasses via a deferred import."""
 
+    print(">>> [trace] Importing PreExecutionROIBot, BuildTask, ROIResult from menace_sandbox.pre_execution_roi_bot...")
     from ..pre_execution_roi_bot import PreExecutionROIBot as _PreExecutionROIBot
     from ..pre_execution_roi_bot import BuildTask as _BuildTask
     from ..pre_execution_roi_bot import ROIResult as _ROIResult
+    print(">>> [trace] Successfully imported PreExecutionROIBot, BuildTask, ROIResult from menace_sandbox.pre_execution_roi_bot")
 
     return _PreExecutionROIBot, _BuildTask, _ROIResult
 
@@ -133,6 +222,7 @@ def _pre_execution_components() -> Tuple[type["PreExecutionROIBot"], type["Build
 def _pipeline_helpers() -> Dict[str, Any]:
     """Return helper callables lazily imported from ``model_automation_pipeline``."""
 
+    print(">>> [trace] Importing pipeline helpers from menace_sandbox.model_automation_dependencies...")
     from ..model_automation_dependencies import (
         DB_ROUTER,
         _LazyAggregator,
@@ -145,6 +235,7 @@ def _pipeline_helpers() -> Dict[str, Any]:
         _make_research_item,
         _planning_components,
     )
+    print(">>> [trace] Successfully imported pipeline helpers from menace_sandbox.model_automation_dependencies")
 
     return {
         "db_router": DB_ROUTER,
