@@ -57,13 +57,32 @@ import threading
 from jinja2 import Template
 import yaml
 
-from vector_service import EmbeddableDBMixin, EmbeddingBackfill
-from vector_service.text_preprocessor import get_config
+try:  # pragma: no cover - prefer real vector service
+    from vector_service import EmbeddableDBMixin, EmbeddingBackfill
+    from vector_service.text_preprocessor import get_config
+except Exception:  # pragma: no cover - fallback when vector service unavailable
+    class EmbeddableDBMixin:  # type: ignore[override]
+        """Lightweight stub used when ``vector_service`` is unavailable."""
+
+    class EmbeddingBackfill:  # type: ignore[override]
+        """Stub that no-ops the background watcher."""
+
+        def watch_events(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - simple
+            return None
+
+    def get_config(*args: Any, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
+        """Fallback configuration loader returning an empty configuration."""
+
+        return {}
 
 try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
-except Exception:  # pragma: no cover - fallback for flat layout
-    from vector_service.context_builder import ContextBuilder  # type: ignore
+except Exception:  # pragma: no cover - fallback when the dependency is missing
+    class ContextBuilder:  # type: ignore[override]
+        """Minimal stub so ``ErrorDB`` remains importable."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - simple stub
+            pass
 
 logger = logging.getLogger(__name__)
 
