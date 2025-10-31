@@ -92,6 +92,123 @@ _self_coding_import_warning_emitted = False
 _self_coding_disabled_warning_emitted = False
 
 
+@dataclass(slots=True)
+class _DeferredSelfCodingDecoration:
+    """Record pending decorator applications waiting for helpers."""
+
+    cls: type
+    kwargs: dict[str, Any]
+    attempts: int = 0
+
+
+_PENDING_SELF_CODING_DECORATIONS: list[_DeferredSelfCodingDecoration] = []
+_PENDING_SELF_CODING_LOCK = threading.Lock()
+_DEFERRED_DECORATION_TIMER: threading.Timer | None = None
+_MAX_DECORATION_ATTEMPTS = 5
+
+
+def _schedule_deferred_self_coding(delay: float = 0.1) -> None:
+    """Ensure deferred decorator processing runs after imports settle."""
+
+    global _DEFERRED_DECORATION_TIMER
+    timer = _DEFERRED_DECORATION_TIMER
+    if timer is not None and timer.is_alive():
+        return
+    try:
+        timer = threading.Timer(delay, _process_pending_self_coding)
+        timer.daemon = True
+        timer.start()
+    except Exception:  # pragma: no cover - timer setup best effort
+        logger.exception("failed to schedule deferred self-coding decorator")
+    else:
+        _DEFERRED_DECORATION_TIMER = timer
+
+
+def _apply_self_coding_decorator(item: _DeferredSelfCodingDecoration) -> bool:
+    """Attempt to decorate ``item.cls`` once helpers are importable."""
+
+    try:
+        interface_mod = load_internal("coding_bot_interface")
+    except Exception:
+        logger.debug(
+            "retrying deferred self-coding decorator for %s", item.cls.__name__, exc_info=True
+        )
+        return False
+
+    decorator_factory = getattr(interface_mod, "self_coding_managed", None)
+    if not callable(decorator_factory):
+        logger.debug(
+            "coding_bot_interface.self_coding_managed unavailable when decorating %s",
+            item.cls.__name__,
+        )
+        return False
+
+    try:
+        decorated = decorator_factory(**item.kwargs)(item.cls)
+    except Exception:
+        logger.exception(
+            "deferred self-coding decoration failed for %s", item.cls.__name__
+        )
+        return False
+
+    module = sys.modules.get(item.cls.__module__)
+    if module is not None:
+        setattr(module, item.cls.__name__, decorated)
+    globals()[item.cls.__name__] = decorated
+    return True
+
+
+def _process_pending_self_coding() -> None:
+    """Attempt to apply any queued self-coding decorators."""
+
+    global _DEFERRED_DECORATION_TIMER, _self_coding_import_warning_emitted
+    with _PENDING_SELF_CODING_LOCK:
+        pending = list(_PENDING_SELF_CODING_DECORATIONS)
+        _PENDING_SELF_CODING_DECORATIONS.clear()
+        _DEFERRED_DECORATION_TIMER = None
+
+    if not pending:
+        return
+
+    retry: list[_DeferredSelfCodingDecoration] = []
+    for item in pending:
+        if _apply_self_coding_decorator(item):
+            continue
+        item.attempts += 1
+        if item.attempts < _MAX_DECORATION_ATTEMPTS:
+            retry.append(item)
+        else:
+            if not _self_coding_import_warning_emitted:
+                logger.warning(
+                    "Self-coding interface unavailable for %s after %d retries; integration remains disabled.",
+                    item.cls.__name__,
+                    item.attempts,
+                )
+                _self_coding_import_warning_emitted = True
+
+    if retry:
+        with _PENDING_SELF_CODING_LOCK:
+            _PENDING_SELF_CODING_DECORATIONS.extend(retry)
+        next_delay = min(1.0, 0.1 * (retry[0].attempts + 1))
+        _schedule_deferred_self_coding(delay=next_delay)
+
+
+def _queue_self_coding_decorator(kwargs: dict[str, Any]) -> Callable[[type], type]:
+    """Return a decorator that defers application until helpers are ready."""
+
+    copied = dict(kwargs)
+
+    def decorator(cls: type) -> type:
+        with _PENDING_SELF_CODING_LOCK:
+            _PENDING_SELF_CODING_DECORATIONS.append(
+                _DeferredSelfCodingDecoration(cls=cls, kwargs=copied)
+            )
+        _schedule_deferred_self_coding()
+        return cls
+
+    return decorator
+
+
 def _noop_self_coding_decorator(**_kwargs: Any) -> Callable[[type], type]:
     def decorator(cls: type) -> type:
         return cls
@@ -127,6 +244,13 @@ def self_coding_managed(**kwargs: Any) -> Callable[[type], type]:
     try:
         decorator_factory = interface_mod.self_coding_managed  # type: ignore[attr-defined]
     except AttributeError as exc:  # pragma: no cover - compatibility fallback
+        message = str(exc)
+        if "partially initialized" in message.lower():
+            logger.debug(
+                "Deferring TaskHandoffBot self-coding decoration until coding_bot_interface completes import: %s",
+                exc,
+            )
+            return _queue_self_coding_decorator(kwargs)
         if not _self_coding_import_warning_emitted:
             logger.warning(
                 "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
