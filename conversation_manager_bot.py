@@ -11,18 +11,84 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Dict, Optional, List
+from typing import Callable, Dict, Optional, List, Deque
 
 from datetime import datetime, timezone
 
-from neurosales import (
-    add_message as mq_add_message,
-    get_recent_messages,
-    push_chain,
-    peek_chain,
-    MessageEntry,
-    CTAChain,
-)
+try:  # pragma: no cover - neurosales is optional during bootstrap
+    from neurosales import (
+        add_message as mq_add_message,
+        get_recent_messages,
+        push_chain,
+        peek_chain,
+        MessageEntry,
+        CTAChain,
+    )
+except Exception as exc:  # pragma: no cover - provide lightweight fallback
+    fallback_logger = logging.getLogger(__name__)
+    fallback_logger.warning(
+        "neurosales conversation memory unavailable; using in-process fallback: %s",
+        exc,
+    )
+
+    from collections import deque
+    from datetime import datetime, timezone
+
+    @dataclass
+    class MessageEntry:  # type: ignore[override]
+        text: str
+        role: str = "assistant"
+        timestamp: datetime | None = None
+
+        def __post_init__(self) -> None:
+            if self.timestamp is None:
+                self.timestamp = datetime.now(timezone.utc)
+
+    @dataclass
+    class CTAChain:  # type: ignore[override]
+        message_ts: datetime
+        reply_ts: datetime
+        escalation_ts: datetime
+        created_at: datetime
+
+    _FALLBACK_HISTORY_LIMIT = 20
+    _fallback_messages: Deque[MessageEntry] = deque(maxlen=_FALLBACK_HISTORY_LIMIT)
+    _fallback_cta_stack: List[CTAChain] = []
+
+    def mq_add_message(
+        text: str,
+        role: str | None = None,
+        timestamp: datetime | None = None,
+    ) -> None:
+        entry = MessageEntry(text=text, role=role or "assistant", timestamp=timestamp)
+        _fallback_messages.append(entry)
+
+    def get_recent_messages(limit: int = 5) -> List[MessageEntry]:
+        if limit <= 0:
+            return []
+        return list(_fallback_messages)[-limit:]
+
+    def push_chain(
+        message: MessageEntry,
+        reply: MessageEntry,
+        created_at: datetime | None = None,
+    ) -> None:
+        ts = created_at or datetime.now(timezone.utc)
+        message_ts = getattr(message, "timestamp", ts) or ts
+        reply_ts = getattr(reply, "timestamp", ts) or ts
+        _fallback_cta_stack.append(
+            CTAChain(
+                message_ts=message_ts,
+                reply_ts=reply_ts,
+                escalation_ts=ts,
+                created_at=ts,
+            )
+        )
+
+    def peek_chain() -> CTAChain | None:
+        if not _fallback_cta_stack:
+            return None
+        return _fallback_cta_stack[-1]
 
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 
