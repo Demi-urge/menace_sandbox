@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
@@ -33,9 +33,11 @@ except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
 from .data_bot import MetricsDB
-from .error_bot import ErrorBot, ErrorDB
 from .coordination_manager import CoordinationManager
 from .dynamic_resource_allocator_bot import DynamicResourceAllocator, DecisionLedger
+
+if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
+    from .error_bot import ErrorBot
 
 
 @dataclass
@@ -104,8 +106,10 @@ class DiagnosticManager:
         context_builder.refresh_db_weights()
         self.context_builder = context_builder
         if error_bot is None:
-            self.error_bot = ErrorBot(
-                ErrorDB(),
+            from .error_bot import ErrorBot as _ErrorBot, ErrorDB as _ErrorDB
+
+            self.error_bot = _ErrorBot(
+                _ErrorDB(),
                 self.metrics,
                 context_builder=self.context_builder,
             )
