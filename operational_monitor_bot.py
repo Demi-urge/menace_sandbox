@@ -12,8 +12,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
+from .data_interfaces import DataBotInterface
+from .shared.execution_core import get_data_bot as _load_shared_data_bot
+
 registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+logger = logging.getLogger(__name__)
+_data_bot_instance: DataBotInterface | None = None
+
+
+def _get_data_bot() -> DataBotInterface:
+    """Return a shared :class:`DataBotInterface` instance lazily."""
+
+    global _data_bot_instance
+    if _data_bot_instance is None:
+        _data_bot_instance = _load_shared_data_bot(logger)
+    return _data_bot_instance
+
+
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
 
 try:
     import pandas as pd  # type: ignore
@@ -104,7 +120,7 @@ class AnomalyDB:
         return cur.fetchall()
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=_get_data_bot)
 class OperationalMonitoringBot(AdminBotBase):
     """Collect metrics, detect anomalies and log to Elasticsearch or Splunk."""
 
