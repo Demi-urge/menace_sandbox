@@ -92,6 +92,16 @@ _self_coding_import_warning_emitted = False
 _self_coding_disabled_warning_emitted = False
 
 
+def _is_module_initializing(module_name: str) -> bool:
+    """Return ``True`` when *module_name* is still in the import bootstrap."""
+
+    module = sys.modules.get(module_name)
+    if module is None:
+        return False
+    spec = getattr(module, "__spec__", None)
+    return bool(spec and getattr(spec, "_initializing", False))
+
+
 @dataclass(slots=True)
 class _DeferredSelfCodingDecoration:
     """Record pending decorator applications waiting for helpers."""
@@ -222,6 +232,8 @@ def self_coding_managed(**kwargs: Any) -> Callable[[type], type]:
     global _self_coding_import_warning_emitted
     global _self_coding_disabled_warning_emitted
 
+    interface_module_name = f"{_PACKAGE_NAME}.coding_bot_interface"
+
     if _data_bot_fallback:
         if not _self_coding_disabled_warning_emitted:
             logger.warning(
@@ -229,6 +241,12 @@ def self_coding_managed(**kwargs: Any) -> Callable[[type], type]:
             )
             _self_coding_disabled_warning_emitted = True
         return _noop_self_coding_decorator(**kwargs)
+
+    if _is_module_initializing(interface_module_name):
+        logger.debug(
+            "Deferring TaskHandoffBot self-coding decoration until coding_bot_interface completes import (module still initializing)."
+        )
+        return _queue_self_coding_decorator(kwargs)
 
     try:
         interface_mod = load_internal("coding_bot_interface")
@@ -241,16 +259,15 @@ def self_coding_managed(**kwargs: Any) -> Callable[[type], type]:
             _self_coding_import_warning_emitted = True
         return _noop_self_coding_decorator(**kwargs)
 
+    if _is_module_initializing(interface_module_name):
+        logger.debug(
+            "Deferring TaskHandoffBot self-coding decoration until coding_bot_interface completes import (module still initializing)."
+        )
+        return _queue_self_coding_decorator(kwargs)
+
     try:
         decorator_factory = interface_mod.self_coding_managed  # type: ignore[attr-defined]
     except AttributeError as exc:  # pragma: no cover - compatibility fallback
-        message = str(exc)
-        if "partially initialized" in message.lower():
-            logger.debug(
-                "Deferring TaskHandoffBot self-coding decoration until coding_bot_interface completes import: %s",
-                exc,
-            )
-            return _queue_self_coding_decorator(kwargs)
         if not _self_coding_import_warning_emitted:
             logger.warning(
                 "Self-coding interface unavailable for TaskHandoffBot; disabling integration: %s",
