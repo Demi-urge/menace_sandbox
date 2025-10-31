@@ -9,7 +9,22 @@ the class to preserve backwards compatibility with existing import sites.
 
 from __future__ import annotations
 
-from .pipeline_base import ModelAutomationPipeline
+from typing import TYPE_CHECKING, Any, Final
 
-__all__ = ["ModelAutomationPipeline"]
+if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .pipeline_base import ModelAutomationPipeline  # noqa: F401
+
+__all__: Final = ["ModelAutomationPipeline"]
+
+
+def __getattr__(name: str) -> Any:
+    """Dynamically import :class:`ModelAutomationPipeline` on first access."""
+
+    if name != "ModelAutomationPipeline":
+        raise AttributeError(name)
+
+    from .pipeline_base import ModelAutomationPipeline as _Pipeline
+
+    globals()[name] = _Pipeline
+    return _Pipeline
 
