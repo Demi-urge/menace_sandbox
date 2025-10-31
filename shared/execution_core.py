@@ -53,7 +53,6 @@ from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 from ..offer_testing_bot import OfferTestingBot
 from ..research_fallback_bot import ResearchFallbackBot
 from ..resource_allocation_optimizer import ResourceAllocationOptimizer
-from ..resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from ..database_manager import update_model
 from ..ai_counter_bot import AICounterBot
 from ..dynamic_resource_allocator_bot import DynamicResourceAllocator
@@ -87,6 +86,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..information_synthesis_bot import InformationSynthesisBot
     from ..synthesis_models import SynthesisTask
     from ..implementation_optimiser_bot import ImplementationOptimiserBot
+    from ..resource_allocation_bot import ResourceAllocationBot, AllocationDB
     from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 else:  # pragma: no cover - runtime fallback
     HierarchyAssessmentBot = Any  # type: ignore
@@ -101,6 +101,8 @@ else:  # pragma: no cover - runtime fallback
     InformationSynthesisBot = Any  # type: ignore
     SynthesisTask = Any  # type: ignore
     ImplementationOptimiserBot = Any  # type: ignore
+    ResourceAllocationBot = Any  # type: ignore
+    AllocationDB = Any  # type: ignore
     PreExecutionROIBot = Any  # type: ignore
     BuildTask = Any  # type: ignore
     ROIResult = Any  # type: ignore
@@ -144,6 +146,17 @@ def _pipeline_helpers() -> Dict[str, Any]:
         "make_research_item": _make_research_item,
         "planning_components": _planning_components,
     }
+
+
+def _resource_allocation_components() -> Tuple[type["ResourceAllocationBot"], type["AllocationDB"]]:
+    """Return resource allocation helpers via a deferred import."""
+
+    from ..resource_allocation_bot import (
+        ResourceAllocationBot as _ResourceAllocationBot,
+        AllocationDB as _AllocationDB,
+    )
+
+    return _ResourceAllocationBot, _AllocationDB
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -330,12 +343,15 @@ class ModelAutomationPipeline:
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
         self.optimizer = optimizer or ResourceAllocationOptimizer()
         self.ai_counter_bot = ai_counter_bot or AICounterBot()
-        self.allocator = allocator or DynamicResourceAllocator(
-            alloc_bot=ResourceAllocationBot(
-                AllocationDB(), context_builder=self.context_builder
-            ),
-            context_builder=self.context_builder,
-        )
+        if allocator is None:
+            alloc_bot_cls, alloc_db_cls = _resource_allocation_components()
+            allocator = DynamicResourceAllocator(
+                alloc_bot=alloc_bot_cls(
+                    alloc_db_cls(), context_builder=self.context_builder
+                ),
+                context_builder=self.context_builder,
+            )
+        self.allocator = allocator
         self.diagnostic_manager = diagnostic_manager or DiagnosticManager(
             context_builder=self.context_builder
         )
