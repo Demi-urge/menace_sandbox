@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from importlib import import_module
 from typing import TYPE_CHECKING, Any, Callable, Type, cast
 
 from vector_service.context_builder import ContextBuilder
@@ -129,9 +130,14 @@ def _build_default_hierarchy() -> "HierarchyAssessmentBot":
 def _capital_manager_cls() -> Type["CapitalManagementBot"]:
     """Return the capital manager class lazily to avoid circular imports."""
 
-    from .capital_management_bot import CapitalManagementBot as _CapitalManagementBot
+    module = import_module(f"{__package__}.capital_management_bot")
+    capital_cls = getattr(module, "CapitalManagementBot", None)
+    if capital_cls is None:
+        capital_cls = getattr(module, "_CapitalManagementBot", None)
+    if capital_cls is None:
+        raise ImportError("CapitalManagementBot class unavailable")
 
-    return _CapitalManagementBot
+    return cast("Type[CapitalManagementBot]", capital_cls)
 
 
 @lru_cache(maxsize=1)
