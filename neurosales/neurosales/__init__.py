@@ -116,6 +116,15 @@ try:  # optional heavy deps
     from .intent_detection import IntentDetector
     from .intent_classifier import IntentClassifier
     from .sentiment import SentimentAnalyzer, SentimentMemory
+except Exception:  # pragma: no cover - allow partial import
+    TextPreprocessor = PreprocessResult = None  # type: ignore
+    IntentEntityExtractor = IntentProfile = None  # type: ignore
+    EntityDetector = Entity = None  # type: ignore
+    IntentDetector = None  # type: ignore
+    IntentClassifier = None  # type: ignore
+    SentimentAnalyzer = SentimentMemory = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency with richer graph libs
     from .emotion import (
         EmotionLabeler,
         RollingEmotionTensor,
@@ -124,13 +133,13 @@ try:  # optional heavy deps
         GenderStyleAdapter,
         ReinforcementABTest,
     )
-except Exception:  # pragma: no cover - allow partial import
-    TextPreprocessor = PreprocessResult = None  # type: ignore
-    IntentEntityExtractor = IntentProfile = None  # type: ignore
-    EntityDetector = Entity = None  # type: ignore
-    IntentDetector = None  # type: ignore
-    IntentClassifier = None  # type: ignore
-    SentimentAnalyzer = SentimentMemory = None  # type: ignore
+except Exception:  # pragma: no cover - allow partial import when deps missing
+    EmotionLabeler = None  # type: ignore
+    RollingEmotionTensor = None  # type: ignore
+    EmotionMemory = None  # type: ignore
+    DatabaseEmotionMemory = None  # type: ignore
+    GenderStyleAdapter = None  # type: ignore
+    ReinforcementABTest = None  # type: ignore
 from .user_preferences import (
     PreferenceEngine,
     DatabasePreferenceEngine,
