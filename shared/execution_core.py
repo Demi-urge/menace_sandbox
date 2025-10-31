@@ -119,7 +119,7 @@ def _pre_execution_components() -> Tuple[type["PreExecutionROIBot"], type["Build
 def _pipeline_helpers() -> Dict[str, Any]:
     """Return helper callables lazily imported from ``model_automation_pipeline``."""
 
-    from ..model_automation_pipeline import (  # local import to avoid circular deps
+    from ..model_automation_dependencies import (
         DB_ROUTER,
         _LazyAggregator,
         _build_default_hierarchy,
