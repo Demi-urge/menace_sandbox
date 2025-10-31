@@ -39,7 +39,7 @@ except Exception:  # pragma: no cover - optional dependency
     yaml = None  # type: ignore
 from datetime import datetime
 from functools import wraps, lru_cache
-from typing import Any, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, TYPE_CHECKING
 
 try:
     from .db_router import GLOBAL_ROUTER, init_db_router
@@ -59,8 +59,6 @@ else:  # pragma: no cover - runtime stub
     _TelemetryReplicator = None  # type: ignore[misc, assignment]
 
 from pydantic import BaseModel, Field
-
-from typing import TYPE_CHECKING
 
 try:
     from .error_ontology import ErrorCategory, classify_exception
