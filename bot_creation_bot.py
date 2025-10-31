@@ -80,7 +80,29 @@ data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
-pipeline = _load_model_automation_pipeline()(context_builder=_context_builder)
+
+_pipeline_cls: "Type[ModelAutomationPipeline] | None" = None
+try:
+    _pipeline_cls = _load_model_automation_pipeline()
+except Exception as exc:  # pragma: no cover - degraded bootstrap path
+    logger.warning(
+        "ModelAutomationPipeline unavailable for BotCreationBot: %s",
+        exc,
+    )
+
+pipeline: "ModelAutomationPipeline | None"
+if _pipeline_cls is None:
+    pipeline = None
+else:
+    try:
+        pipeline = _pipeline_cls(context_builder=_context_builder)
+    except Exception as exc:  # pragma: no cover - degraded bootstrap path
+        logger.warning(
+            "ModelAutomationPipeline initialisation failed for BotCreationBot: %s",
+            exc,
+        )
+        pipeline = None
+
 evolution_orchestrator = get_orchestrator("BotCreationBot", data_bot, engine)
 _th = get_thresholds("BotCreationBot")
 persist_sc_thresholds(
@@ -89,18 +111,32 @@ persist_sc_thresholds(
     error_increase=_th.error_increase,
     test_failure_increase=_th.test_failure_increase,
 )
-manager = internalize_coding_bot(
-    "BotCreationBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-    threshold_service=ThresholdService(),
-)
+
+manager: SelfCodingManager | None = None
+if pipeline is None:
+    logger.warning(
+        "BotCreationBot self-coding manager unavailable; running without ModelAutomationPipeline",
+    )
+else:
+    try:
+        manager = internalize_coding_bot(
+            "BotCreationBot",
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            roi_threshold=_th.roi_drop,
+            error_threshold=_th.error_increase,
+            test_failure_threshold=_th.test_failure_increase,
+            threshold_service=ThresholdService(),
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap path
+        logger.warning(
+            "BotCreationBot self-coding manager initialisation failed: %s",
+            exc,
+        )
+        manager = None
 
 
 @dataclass

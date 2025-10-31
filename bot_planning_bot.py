@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
@@ -47,12 +49,24 @@ except Exception:  # pragma: no cover - optional dependency
             return [0.0 for _ in X]
 import pulp
 
+logger = logging.getLogger(__name__)
+
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+
+pipeline: "ModelAutomationPipeline | None"
+try:
+    pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+except Exception as exc:  # pragma: no cover - degraded bootstrap path
+    logger.warning(
+        "ModelAutomationPipeline unavailable for BotPlanningBot: %s",
+        exc,
+    )
+    pipeline = None
+
 evolution_orchestrator = get_orchestrator("BotPlanningBot", data_bot, engine)
 _th = get_thresholds("BotPlanningBot")
 persist_sc_thresholds(
@@ -61,19 +75,34 @@ persist_sc_thresholds(
     error_increase=_th.error_increase,
     test_failure_increase=_th.test_failure_increase,
 )
-manager = internalize_coding_bot(
-    "BotPlanningBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
-if not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety check
+
+manager: SelfCodingManager | None = None
+if pipeline is None:
+    logger.warning(
+        "BotPlanningBot self-coding manager unavailable; running without ModelAutomationPipeline",
+    )
+else:
+    try:
+        manager = internalize_coding_bot(
+            "BotPlanningBot",
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=_th.roi_drop,
+            error_threshold=_th.error_increase,
+            test_failure_threshold=_th.test_failure_increase,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap path
+        logger.warning(
+            "BotPlanningBot self-coding manager initialisation failed: %s",
+            exc,
+        )
+        manager = None
+
+if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
     raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
 
 
