@@ -38,8 +38,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     yaml = None  # type: ignore
 from datetime import datetime
-from functools import wraps
-from typing import Any, Callable, Optional
+from functools import wraps, lru_cache
+from typing import Any, Callable, Optional, Type
 
 try:
     from .db_router import GLOBAL_ROUTER, init_db_router
@@ -53,13 +53,10 @@ try:
 except ImportError:  # pragma: no cover - package fallback
     from sentry_client import SentryClient  # type: ignore
 
-try:
-    from .advanced_error_management import TelemetryReplicator  # type: ignore
-except Exception:  # pragma: no cover - optional
-    try:
-        from advanced_error_management import TelemetryReplicator  # type: ignore
-    except Exception:
-        TelemetryReplicator = None  # type: ignore
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .advanced_error_management import TelemetryReplicator as _TelemetryReplicator
+else:  # pragma: no cover - runtime stub
+    _TelemetryReplicator = None  # type: ignore[misc, assignment]
 
 from pydantic import BaseModel, Field
 
@@ -140,6 +137,27 @@ except Exception:  # pragma: no cover - fallback when package layout differs
         inject_prefix = (
             lambda prompt, prefix, conf, role="system": prompt
         )  # type: ignore
+
+
+@lru_cache(maxsize=1)
+def _telemetry_replicator_cls() -> "Type[_TelemetryReplicator] | None":
+    """Return the :class:`TelemetryReplicator` class lazily."""
+
+    try:  # pragma: no cover - optional dependency during bootstrap
+        from .advanced_error_management import (
+            TelemetryReplicator as _TelemetryReplicatorImpl,
+        )
+    except Exception:  # pragma: no cover - support flat execution
+        try:
+            from advanced_error_management import (  # type: ignore
+                TelemetryReplicator as _TelemetryReplicatorImpl,
+            )
+        except Exception:
+            return None
+        else:
+            return _TelemetryReplicatorImpl
+    else:
+        return _TelemetryReplicatorImpl
 
 
 class TelemetryEvent(BaseModel):
@@ -557,12 +575,13 @@ class ErrorLogger:
         self._update_threshold = int(
             os.getenv("ERROR_RULE_UPDATE_THRESHOLD", "10")
         )
-        if TelemetryReplicator:
+        replicator_cls = _telemetry_replicator_cls()
+        if replicator_cls is not None:
             hosts = os.getenv("KAFKA_HOSTS")
             disk = os.getenv("TELEMETRY_LOG", "telemetry.log")
             if hosts:
                 try:
-                    self.replicator = TelemetryReplicator(
+                    self.replicator = replicator_cls(
                         hosts=hosts,
                         sentry=self.sentry,
                         disk_path=disk,
