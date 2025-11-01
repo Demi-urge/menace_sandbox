@@ -21,7 +21,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from types import MethodType
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional, cast
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ load_internal = import_compat.load_internal
 BotRegistry = load_internal("bot_registry").BotRegistry
 _data_bot_fallback = False
 try:
-    DataBot = load_internal("data_bot").DataBot
+    _data_bot_module = load_internal("data_bot")
 except Exception as exc:  # pragma: no cover - optional dependency fallback
     logger.warning(
         "DataBot unavailable for TaskHandoffBot; using inert stub: %s",
@@ -87,6 +87,72 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
             return {}
 
     DataBot = _FallbackDataBot  # type: ignore[assignment]
+else:
+    try:
+        DataBot = _data_bot_module.DataBot
+    except AttributeError as exc:  # pragma: no cover - circular import guard
+        module_name = f"{_PACKAGE_NAME}.data_bot"
+        if _is_module_initializing(module_name):
+            logger.debug(
+                "DataBot import deferred because %s is still initialising; using proxy",
+                module_name,
+            )
+
+            class _DeferredDataBot:
+                """Proxy that resolves :class:`DataBot` once initialisation completes."""
+
+                def __new__(cls, *args: Any, **kwargs: Any):
+                    module = load_internal("data_bot")
+                    try:
+                        real_cls = getattr(module, "DataBot")
+                    except AttributeError as real_exc:  # pragma: no cover - defensive
+                        raise AttributeError(
+                            "menace_sandbox.data_bot does not define DataBot"
+                        ) from real_exc
+                    return real_cls(*args, **kwargs)
+
+            DataBot = cast("type[Any]", _DeferredDataBot)
+        else:
+            logger.warning(
+                "DataBot attribute missing; falling back to inert stub: %s",
+                exc,
+            )
+            _data_bot_fallback = True
+
+            class _FallbackDataBot:
+                """Minimal stand-in when the data bot stack is unavailable."""
+
+                def __init__(
+                    self,
+                    *args: Any,
+                    event_bus: Any | None = None,
+                    **kwargs: Any,
+                ) -> None:
+                    self.args = args
+                    self.kwargs = kwargs
+                    self.event_bus = event_bus
+                    self._degradation_callbacks: list[Callable[[dict[str, Any]], None]] = []
+
+                def start(self) -> None:  # pragma: no cover - compatibility no-op
+                    return None
+
+                def subscribe_degradation(
+                    self, callback: Callable[[dict[str, Any]], None]
+                ) -> None:
+                    self._degradation_callbacks.append(callback)
+
+                def subscribe_threshold_breaches(
+                    self, callback: Callable[[dict[str, Any]], None]
+                ) -> None:
+                    self._degradation_callbacks.append(callback)
+
+                def check_degradation(self, *args: Any, **kwargs: Any) -> bool:
+                    return False
+
+                def reload_thresholds(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                    return {}
+
+            DataBot = cast("type[Any]", _FallbackDataBot)
 
 _self_coding_import_warning_emitted = False
 _self_coding_disabled_warning_emitted = False
