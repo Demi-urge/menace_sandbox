@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +31,9 @@ def safe_write_audit(
     for attempt in range(10):
         try:
             with sqlite3.connect(connect_path, **connect_kwargs) as conn:
+                with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
+                    pragma.fetchall()
+                conn.execute("PRAGMA busy_timeout = 5000;")
                 write_fn(conn)
             return
         except sqlite3.OperationalError as exc:
