@@ -116,6 +116,11 @@ def cooperative_init_call(
                         exc_info=True,
                     )
             if log is not None:
+                log.info(
+                    "[cooperative-init] Retrying %s.__init__ without injected kwargs: %s",
+                    target_cls.__name__,
+                    list(state["dropped"]),
+                )
                 log.debug(
                     "%s: dropping cooperative init kwargs %s before invoking %s.__init__",
                     target_cls.__name__,
@@ -194,6 +199,7 @@ def ensure_cooperative_init(
 
     wrapper.__cooperative_safe__ = True  # type: ignore[attr-defined]
     cls.__init__ = wrapper  # type: ignore[assignment]
+    log.info("[init-guard] %s wrapped with cooperative init guard.", cls.__name__)
     return cls
 
 
