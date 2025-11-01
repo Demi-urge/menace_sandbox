@@ -178,8 +178,14 @@ def ensure_cooperative_init(
 
     init = getattr(cls, "__init__", None)
     if not callable(init):
+        setattr(cls, "__cooperative_guard__", True)
         return cls
+
+    if getattr(cls, "__cooperative_guard__", False):  # type: ignore[attr-defined]
+        return cls
+
     if getattr(init, "__cooperative_safe__", False):  # type: ignore[attr-defined]
+        setattr(cls, "__cooperative_guard__", True)
         return cls
 
     log = logger or logging.getLogger(getattr(cls, "__module__", __name__))
@@ -199,6 +205,7 @@ def ensure_cooperative_init(
 
     wrapper.__cooperative_safe__ = True  # type: ignore[attr-defined]
     cls.__init__ = wrapper  # type: ignore[assignment]
+    setattr(cls, "__cooperative_guard__", True)
     log.info("[init-guard] %s wrapped with cooperative init guard.", cls.__name__)
     return cls
 

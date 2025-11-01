@@ -2214,6 +2214,11 @@ def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
     return manager
 
 
+_CapitalManagementBot = cast(
+    type[_CapitalManagementBot],
+    ensure_cooperative_init(cast(type, _CapitalManagementBot), logger=logger),
+)
+
 _capital_bot_class: type[_CapitalManagementBot] | None = None
 
 
@@ -2229,6 +2234,15 @@ def _get_capital_management_bot_class() -> type[_CapitalManagementBot]:
             manager=decorator_manager,
         )(_CapitalManagementBot)
         cooperative_cls = ensure_cooperative_init(cast(type, decorated_cls))
+        guard_state = getattr(cooperative_cls, "__cooperative_guard__", False)
+        if guard_state:
+            logger.debug(
+                "[init-guard] Cooperative init guard active for %s", cooperative_cls.__name__
+            )
+        else:
+            logger.warning(
+                "[init-guard] Cooperative init guard missing for %s", cooperative_cls.__name__
+            )
         _capital_bot_class = cast(type[_CapitalManagementBot], cooperative_cls)
     return _capital_bot_class
 
