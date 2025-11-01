@@ -434,6 +434,10 @@ class ModelAutomationPipeline:
         self._roi_result_cls: type["ROIResult"] | None = None
 
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.debug(
+            "ModelAutomationPipeline MRO: %s",
+            [cls.__name__ for cls in type(self).__mro__],
+        )
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder

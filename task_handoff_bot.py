@@ -322,7 +322,53 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
     generalise = _generalise_passthrough
 
     def safe_super_init(cls: type, instance: object, *args: Any, **kwargs: Any) -> None:
+        try:
+            mro = type(instance).__mro__
+            next_cls = mro[mro.index(cls) + 1]
+        except (ValueError, IndexError):
+            next_cls = None
+
+        if next_cls is object:
+            if kwargs:
+                logger.debug(
+                    "[task-handoff] Dropping kwargs for object.__init__: cls=%s kwargs=%s",
+                    cls.__name__,
+                    list(kwargs),
+                )
+            if args:
+                logger.debug(
+                    "[task-handoff] Dropping args for object.__init__: cls=%s args=%s",
+                    cls.__name__,
+                    args,
+                )
+            super(cls, instance).__init__()
+            return
+
         super(cls, instance).__init__(*args, **kwargs)
+
+    def safe_super_init_or_warn(
+        cls: type, instance: object, *args: Any, logger: logging.Logger | None = None, **kwargs: Any
+    ) -> None:
+        if logger is None:
+            logger_ref = globals().get("logger")
+        else:
+            logger_ref = logger
+
+        try:
+            mro = type(instance).__mro__
+            next_cls = mro[mro.index(cls) + 1]
+        except (ValueError, IndexError):
+            next_cls = None
+
+        if next_cls is object and (args or kwargs):
+            if logger_ref is not None:
+                logger_ref.debug(
+                    "[task-handoff] Dropping cooperative args for %s -> object.__init__: args=%s kwargs=%s",
+                    cls.__name__,
+                    args,
+                    kwargs,
+                )
+        safe_super_init(cls, instance, *args, **kwargs)
 else:
     EmbeddableDBMixin = _vector_service.EmbeddableDBMixin
     EmbeddingBackfill = _vector_service.EmbeddingBackfill
@@ -338,10 +384,62 @@ else:
             return text
 
     safe_super_init = getattr(_vector_service, "safe_super_init", None)
+    safe_super_init_or_warn = getattr(_vector_service, "safe_super_init_or_warn", None)
+
     if safe_super_init is None:  # pragma: no cover - compatibility guard
 
-        def safe_super_init(cls: type, instance: object, *args: Any, **kwargs: Any) -> None:
+        def safe_super_init(
+            cls: type, instance: object, *args: Any, **kwargs: Any
+        ) -> None:
+            try:
+                mro = type(instance).__mro__
+                next_cls = mro[mro.index(cls) + 1]
+            except (ValueError, IndexError):
+                next_cls = None
+
+            if next_cls is object:
+                if kwargs:
+                    logger.debug(
+                        "[task-handoff] Dropping kwargs for object.__init__: cls=%s kwargs=%s",
+                        cls.__name__,
+                        list(kwargs),
+                    )
+                if args:
+                    logger.debug(
+                        "[task-handoff] Dropping args for object.__init__: cls=%s args=%s",
+                        cls.__name__,
+                        args,
+                    )
+                super(cls, instance).__init__()
+                return
+
             super(cls, instance).__init__(*args, **kwargs)
+
+    if safe_super_init_or_warn is None:  # pragma: no cover - compatibility guard
+
+        def safe_super_init_or_warn(
+            cls: type,
+            instance: object,
+            *args: Any,
+            logger: logging.Logger | None = None,
+            **kwargs: Any,
+        ) -> None:
+            target_logger = logger or globals().get("logger")
+            try:
+                mro = type(instance).__mro__
+                next_cls = mro[mro.index(cls) + 1]
+            except (ValueError, IndexError):
+                next_cls = None
+
+            if next_cls is object and (args or kwargs) and target_logger is not None:
+                target_logger.debug(
+                    "[task-handoff] Dropping cooperative args for %s -> object.__init__: args=%s kwargs=%s",
+                    cls.__name__,
+                    args,
+                    kwargs,
+                )
+
+            safe_super_init(cls, instance, *args, **kwargs)
 
 _db_router = load_internal("db_router")
 DBRouter = _db_router.DBRouter
@@ -689,13 +787,14 @@ class WorkflowDB(EmbeddableDBMixin):
             "idx_workflows_source_menace_id ON workflows(source_menace_id)"
         )
         self.conn.commit()
-        safe_super_init(
+        safe_super_init_or_warn(
             WorkflowDB,
             self,
             index_path=vector_index_path,
             embedding_version=embedding_version,
             backend=vector_backend,
             event_bus=event_bus,
+            logger=logger,
         )
 
     # --------------------------------------------------------------

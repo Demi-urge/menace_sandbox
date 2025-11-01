@@ -177,6 +177,34 @@ def safe_super_init(cls: type, instance: Any, *args: Any, **kwargs: Any) -> None
 
     super(cls, instance).__init__(*args, **kwargs)
 
+
+def safe_super_init_or_warn(
+    cls: type,
+    instance: Any,
+    *args: Any,
+    logger: logging.Logger | None = None,
+    **kwargs: Any,
+) -> None:
+    """Invoke :func:`safe_super_init` while logging cooperative fallbacks."""
+
+    try:
+        mro = type(instance).__mro__
+        next_cls = mro[mro.index(cls) + 1]
+    except (ValueError, IndexError):
+        next_cls = None
+
+    if next_cls is object and (args or kwargs):
+        message = (
+            f"[cooperative-init] Dropping args={args!r} kwargs={kwargs!r} for "
+            f"{cls.__name__} -> object.__init__"
+        )
+        if logger is not None:
+            logger.debug(message)
+        else:
+            print(message)
+
+    safe_super_init(cls, instance, *args, **kwargs)
+
 try:
     _metrics_exporter = load_internal("metrics_exporter")
     _EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
@@ -929,4 +957,4 @@ class EmbeddableDBMixin:
             self.add_embedding(record_id, record, kind, chunk_meta=chunk_meta)
 
 
-__all__ = ["EmbeddableDBMixin", "safe_super_init"]
+__all__ = ["EmbeddableDBMixin", "safe_super_init", "safe_super_init_or_warn"]

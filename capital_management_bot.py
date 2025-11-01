@@ -1277,6 +1277,10 @@ class _CapitalManagementBot:
         config: CapitalManagementConfig | None = None,
         signal_adapters: Optional[Iterable[Callable[[], Dict[str, float]]]] = None,
     ) -> None:
+        logger.debug(
+            "CapitalManagementBot MRO: %s",
+            [cls.__name__ for cls in type(self).__mro__],
+        )
         self.config = config or CapitalManagementConfig()
         self.config.normalize_weights()
         self.config.apply_risk_profile()
