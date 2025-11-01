@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
-
 LOGGER = logging.getLogger(__name__)
+
+
+def _audit_file_mode_enabled() -> bool:
+    value = os.getenv("AUDIT_FILE_MODE")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def safe_write_audit(
@@ -23,6 +30,13 @@ def safe_write_audit(
     """Persist audit data retrying transient SQLite locks with backoff."""
 
     log = logger or LOGGER
+
+    if _audit_file_mode_enabled():
+        log.debug(
+            "AUDIT_FILE_MODE enabled; skipping SQLite audit persistence for %s", db_path
+        )
+        return
+
     connect_path = str(db_path)
     connect_kwargs: dict[str, float] = {}
     if timeout is not None:
@@ -45,4 +59,3 @@ def safe_write_audit(
 
 
 __all__ = ["safe_write_audit"]
-

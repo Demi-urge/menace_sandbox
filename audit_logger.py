@@ -44,7 +44,10 @@ def _env_flag(name: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-_AUDIT_FILE_MODE_ENABLED = _env_flag("AUDIT_FILE_MODE")
+def _audit_file_mode_enabled() -> bool:
+    """Return ``True`` when audit logging should avoid SQLite persistence."""
+
+    return _env_flag("AUDIT_FILE_MODE")
 
 
 GLOBAL_ROUTER: "DBRouter | None" = None
@@ -171,6 +174,10 @@ def export_to_csv(jsonl_path: Path, csv_path: Path) -> None:
 def _ensure_db(conn: sqlite3.Connection) -> None:
     """Create tables if they do not already exist."""
 
+    if _audit_file_mode_enabled():
+        logger.debug("AUDIT_FILE_MODE enabled; skipping SQLite schema initialisation")
+        return
+
     with closing(conn.cursor()) as cur:
         cur.execute(
             """CREATE TABLE IF NOT EXISTS events (
@@ -243,6 +250,10 @@ def _coerce_value(value: Any) -> str:
 def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
     """Apply defensive PRAGMA settings to *conn* and close cursors eagerly."""
 
+    if _audit_file_mode_enabled():
+        logger.debug("AUDIT_FILE_MODE enabled; skipping SQLite configuration")
+        return
+
     # ``sqlite3.Connection.interrupt`` forcefully aborts any in-flight statements
     # associated with the connection.  In normal operation the newly-created
     # connections used by the audit mirror should not have pending work, but in
@@ -287,6 +298,12 @@ def _resolve_sqlite_target(
 
 def _write_event(db_path: str, payload: _AuditPayload) -> None:
     """Persist *payload* into *db_path* within an isolated connection."""
+
+    if _audit_file_mode_enabled():
+        logger.debug(
+            "AUDIT_FILE_MODE enabled; skipping SQLite write for %s", payload.event_id
+        )
+        return
 
     thread_name = threading.current_thread().name
     logger.debug(
@@ -351,6 +368,13 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
 def _write_event_with_retry(db_path: str, payload: _AuditPayload) -> None:
     """Persist *payload* retrying transient SQLite failures using fresh connections."""
 
+    if _audit_file_mode_enabled():
+        logger.debug(
+            "AUDIT_FILE_MODE enabled; skipping SQLite write with retry for %s",
+            payload.event_id,
+        )
+        return
+
     last_error: Exception | None = None
     for attempt in range(_SQLITE_MAX_RETRIES):
         try:
@@ -384,6 +408,13 @@ def _lock_for_connection(conn: sqlite3.Connection) -> threading.RLock:
 
 def _write_event_in_connection(conn: sqlite3.Connection, payload: _AuditPayload) -> None:
     """Persist *payload* using an existing in-memory connection."""
+
+    if _audit_file_mode_enabled():
+        logger.debug(
+            "AUDIT_FILE_MODE enabled; skipping shared-connection write for %s",
+            payload.event_id,
+        )
+        return
 
     lock = _lock_for_connection(conn)
     with lock:
@@ -468,6 +499,13 @@ class _SQLiteWriterRegistry:
         self._lock = threading.Lock()
 
     def write(self, db_path: str, payload: _AuditPayload) -> None:
+        if _audit_file_mode_enabled():
+            logger.debug(
+                "AUDIT_FILE_MODE enabled; not dispatching payload %s to SQLite",
+                payload.event_id,
+            )
+            return
+
         worker = self._get_worker(db_path)
         worker.write(payload)
 
@@ -509,7 +547,7 @@ def _mirror_payload_to_sqlite(
 ) -> None:
     """Mirror *payload* into SQLite according to *db_path_spec*."""
 
-    if _AUDIT_FILE_MODE_ENABLED:
+    if _audit_file_mode_enabled():
         logger.debug(
             "Skipping SQLite mirror for %s because AUDIT_FILE_MODE is enabled",
             payload.event_id,
@@ -555,7 +593,7 @@ def log_to_sqlite(
 
     record, payload = _prepare_payload(event_type, data, jsonl_path)
 
-    if _AUDIT_FILE_MODE_ENABLED:
+    if _audit_file_mode_enabled():
         logger.debug(
             "AUDIT_FILE_MODE enabled; skipping SQLite mirror for %s", payload.event_id
         )
@@ -591,7 +629,7 @@ def queue_event_for_later(
     """
 
     record, payload = _prepare_payload(event_type, data, jsonl_path)
-    if not _AUDIT_FILE_MODE_ENABLED:
+    if not _audit_file_mode_enabled():
         _enqueue_for_later(db_path, payload)
     else:
         logger.debug(
@@ -618,7 +656,7 @@ def flush_queued_events() -> None:
     raised to signal the partial failure.
     """
 
-    if _AUDIT_FILE_MODE_ENABLED:
+    if _audit_file_mode_enabled():
         _set_bootstrap_queueing_enabled(False)
         with _AUDIT_QUEUE_LOCK:
             _AUDIT_QUEUE.clear()
@@ -683,7 +721,7 @@ def get_recent_events(
     if limit <= 0:
         return []
 
-    if _AUDIT_FILE_MODE_ENABLED:
+    if _audit_file_mode_enabled():
         logger.debug("AUDIT_FILE_MODE enabled; returning events from JSONL only")
         return _read_events_from_jsonl(jsonl_path, limit)
 
