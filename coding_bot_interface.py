@@ -81,6 +81,22 @@ from shared.provenance_state import (
 
 logger = logging.getLogger(__name__)
 
+
+class _CooperativeInitTerminator:
+    """Final MRO guard that swallows stray cooperative init arguments."""
+
+    __slots__ = ()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        if args or kwargs:
+            logger.debug(
+                "dropping cooperative init args for %s: args=%s kwargs=%s",
+                type(self).__name__,
+                args,
+                kwargs,
+            )
+        super().__init__()
+
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
@@ -1721,6 +1737,21 @@ def self_coding_managed(
 
     def decorator(cls: type) -> type:
         orig_init = cls.__init__  # type: ignore[attr-defined]
+
+        try:
+            bases = cls.__bases__
+        except AttributeError:
+            bases = ()
+        else:
+            if _CooperativeInitTerminator not in bases:
+                try:
+                    cls.__bases__ = bases + (_CooperativeInitTerminator,)
+                except TypeError:  # pragma: no cover - incompatible layouts
+                    logger.debug(
+                        "unable to append cooperative init terminator to %s",
+                        cls.__name__,
+                        exc_info=True,
+                    )
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
         try:
