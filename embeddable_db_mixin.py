@@ -279,7 +279,8 @@ class EmbeddableDBMixin:
         passthrough = dict(super_kwargs)
         bus = passthrough.pop("event_bus", event_bus)
         super_init = getattr(super(), "__init__", None)
-        if super_init is not None and super_init is not object.__init__:
+        target = getattr(super_init, "__func__", super_init)
+        if super_init is not None and target is not object.__init__:
             super_init(*super_args, **passthrough)
         elif super_args or passthrough:
             logger.debug(
