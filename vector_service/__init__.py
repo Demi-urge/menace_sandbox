@@ -6,6 +6,7 @@ This package provides the canonical vector retrieval service.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -267,10 +268,60 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
 
     EmbeddableDBMixin = _FallbackEmbeddableDBMixin  # type: ignore
 
-    def safe_super_init(cls: type, instance: object, *args: object, **kwargs: object) -> None:
+    _fallback_logger = logging.getLogger(__name__)
+
+    def safe_super_init(
+        cls: type, instance: object, *args: object, **kwargs: object
+    ) -> None:
         """Fallback cooperative init helper when embeddings are disabled."""
 
+        try:
+            mro = type(instance).__mro__
+            next_cls = mro[mro.index(cls) + 1]
+        except (ValueError, IndexError):
+            next_cls = None
+
+        if next_cls is object:
+            if kwargs:
+                _fallback_logger.debug(
+                    "[vector-service] Dropping kwargs for object.__init__: cls=%s kwargs=%s",
+                    cls.__name__,
+                    list(kwargs),
+                )
+            if args:
+                _fallback_logger.debug(
+                    "[vector-service] Dropping args for object.__init__: cls=%s args=%s",
+                    cls.__name__,
+                    args,
+                )
+            super(cls, instance).__init__()
+            return
+
         super(cls, instance).__init__(*args, **kwargs)
+
+    def safe_super_init_or_warn(
+        cls: type,
+        instance: object,
+        *args: object,
+        logger: logging.Logger | None = None,
+        **kwargs: object,
+    ) -> None:
+        target_logger = logger or _fallback_logger
+        try:
+            mro = type(instance).__mro__
+            next_cls = mro[mro.index(cls) + 1]
+        except (ValueError, IndexError):
+            next_cls = None
+
+        if next_cls is object and (args or kwargs):
+            target_logger.debug(
+                "[vector-service] Dropping cooperative args for %s -> object.__init__: args=%s kwargs=%s",
+                cls.__name__,
+                args,
+                kwargs,
+            )
+
+        safe_super_init(cls, instance, *args, **kwargs)
 else:
     if hasattr(_embeddable_db_module, "EmbeddableDBMixin"):
         EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
@@ -283,8 +334,64 @@ else:
         safe_super_init = _embeddable_db_module.safe_super_init  # type: ignore[attr-defined]
     else:  # pragma: no cover - degrade gracefully when helper missing
 
-        def safe_super_init(cls: type, instance: object, *args: object, **kwargs: object) -> None:
+        _fallback_logger = logging.getLogger(__name__)
+
+        def safe_super_init(
+            cls: type, instance: object, *args: object, **kwargs: object
+        ) -> None:
+            try:
+                mro = type(instance).__mro__
+                next_cls = mro[mro.index(cls) + 1]
+            except (ValueError, IndexError):
+                next_cls = None
+
+            if next_cls is object:
+                if kwargs:
+                    _fallback_logger.debug(
+                        "[vector-service] Dropping kwargs for object.__init__: cls=%s kwargs=%s",
+                        cls.__name__,
+                        list(kwargs),
+                    )
+                if args:
+                    _fallback_logger.debug(
+                        "[vector-service] Dropping args for object.__init__: cls=%s args=%s",
+                        cls.__name__,
+                        args,
+                    )
+                super(cls, instance).__init__()
+                return
+
             super(cls, instance).__init__(*args, **kwargs)
+
+    if hasattr(_embeddable_db_module, "safe_super_init_or_warn"):
+        safe_super_init_or_warn = _embeddable_db_module.safe_super_init_or_warn  # type: ignore[attr-defined]
+    else:  # pragma: no cover - degrade gracefully when helper missing
+
+        _fallback_logger = logging.getLogger(__name__)
+
+        def safe_super_init_or_warn(
+            cls: type,
+            instance: object,
+            *args: object,
+            logger: logging.Logger | None = None,
+            **kwargs: object,
+        ) -> None:
+            target_logger = logger or _fallback_logger
+            try:
+                mro = type(instance).__mro__
+                next_cls = mro[mro.index(cls) + 1]
+            except (ValueError, IndexError):
+                next_cls = None
+
+            if next_cls is object and (args or kwargs):
+                target_logger.debug(
+                    "[vector-service] Dropping cooperative args for %s -> object.__init__: args=%s kwargs=%s",
+                    cls.__name__,
+                    args,
+                    kwargs,
+                )
+
+            safe_super_init(cls, instance, *args, **kwargs)
 
     sys.modules.setdefault("embeddable_db_mixin", _embeddable_db_module)
     sys.modules.setdefault(
@@ -310,4 +417,5 @@ __all__ = [
     "MalformedPromptError",
     "ErrorResult",
     "safe_super_init",
+    "safe_super_init_or_warn",
 ]
