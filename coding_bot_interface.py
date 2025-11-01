@@ -82,20 +82,30 @@ from shared.provenance_state import (
 logger = logging.getLogger(__name__)
 
 
-class _CooperativeInitTerminator:
-    """Final MRO guard that swallows stray cooperative init arguments."""
+_COOPERATIVE_INIT_KWARGS: tuple[str, ...] = (
+    "bot_registry",
+    "data_bot",
+    "manager",
+    "evolution_orchestrator",
+)
 
-    __slots__ = ()
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        if args or kwargs:
-            logger.debug(
-                "dropping cooperative init args for %s: args=%s kwargs=%s",
-                type(self).__name__,
-                args,
-                kwargs,
-            )
-        super().__init__()
+def _type_error_is_unexpected_kwarg(exc: TypeError, *, keywords: Iterable[str]) -> bool:
+    """Return ``True`` when *exc* indicates unsupported keyword arguments."""
+
+    message = exc.args[0] if exc.args else ""
+    if "unexpected keyword argument" not in message and "takes no keyword arguments" not in message:
+        return False
+    return any(keyword in message for keyword in keywords)
+
+
+def _type_error_from_object_init(exc: TypeError) -> bool:
+    """Return ``True`` when *exc* originated from ``object.__init__``."""
+
+    message = exc.args[0] if exc.args else ""
+    if "object.__init__" not in message:
+        return False
+    return "argument" in message or "arguments" in message or "parameters" in message
 
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
@@ -1738,37 +1748,6 @@ def self_coding_managed(
     def decorator(cls: type) -> type:
         orig_init = cls.__init__  # type: ignore[attr-defined]
 
-        try:
-            bases = cls.__bases__
-        except AttributeError:
-            bases = ()
-        else:
-            if _CooperativeInitTerminator not in bases:
-                new_bases: list[type] = []
-                replaced_object = False
-                for base in bases:
-                    if base is object:
-                        new_bases.append(_CooperativeInitTerminator)
-                        replaced_object = True
-                    else:
-                        new_bases.append(base)
-                if not replaced_object:
-                    new_bases.append(_CooperativeInitTerminator)
-                try:
-                    cls.__bases__ = tuple(new_bases)
-                except TypeError:  # pragma: no cover - incompatible layouts
-                    logger.debug(
-                        "unable to append cooperative init terminator to %s",
-                        cls.__name__,
-                        exc_info=True,
-                    )
-                else:
-                    logger.debug(
-                        "applied cooperative init terminator to %s; mro=%s",
-                        cls.__name__,
-                        cls.__mro__,
-                    )
-
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
         try:
             module_path = inspect.getfile(cls)
@@ -2039,15 +2018,59 @@ def self_coding_managed(
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-            orchestrator: EvolutionOrchestrator | None = kwargs.pop(
-                "evolution_orchestrator", None
-            )
             registry_obj, data_bot_obj = _bootstrap_helpers()
             manager_default = manager_instance
-            manager_local: SelfCodingManager | None = kwargs.get(
+            init_kwargs = dict(kwargs)
+            orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
+                "evolution_orchestrator"
+            )
+            manager_local: SelfCodingManager | None = init_kwargs.get(
                 "manager", manager_default
             )
-            orig_init(self, *args, **kwargs)
+
+            try:
+                orig_init(self, *args, **init_kwargs)
+            except TypeError as exc:
+                filtered_kwargs = {
+                    key: value
+                    for key, value in init_kwargs.items()
+                    if key not in _COOPERATIVE_INIT_KWARGS
+                }
+                dropped_keys = [
+                    key for key in init_kwargs.keys() if key not in filtered_kwargs
+                ]
+                if dropped_keys and _type_error_is_unexpected_kwarg(
+                    exc, keywords=dropped_keys
+                ):
+                    logger.debug(
+                        "%s: dropping cooperative init kwargs %s before invoking %s.__init__",
+                        cls.__name__,
+                        ", ".join(sorted(dropped_keys)),
+                        getattr(orig_init, "__qualname__", orig_init.__name__),
+                    )
+                    try:
+                        orig_init(self, *args, **filtered_kwargs)
+                    except TypeError as exc_inner:
+                        if _type_error_from_object_init(exc_inner):
+                            logger.debug(
+                                "%s: falling back to object.__init__ after cooperative init drop; args=%s kwargs=%s",
+                                cls.__name__,
+                                args,
+                                filtered_kwargs,
+                            )
+                            object.__init__(self)
+                        else:
+                            raise
+                elif _type_error_from_object_init(exc):
+                    logger.debug(
+                        "%s: falling back to object.__init__ during cooperative init; args=%s kwargs=%s",
+                        cls.__name__,
+                        args,
+                        init_kwargs,
+                    )
+                    object.__init__(self)
+                else:
+                    raise
             try:
                 (
                     registry,
