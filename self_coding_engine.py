@@ -51,15 +51,65 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+
+def _make_missing_class(
+    name: str, module: str, exc: Exception | None = None
+) -> type:
+    """Return a stub class that raises a helpful error when instantiated."""
+
+    class _Missing:
+        __module__ = __name__
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            message = f"{name} is unavailable because '{module}' could not be imported"
+            if exc is None:
+                raise RuntimeError(message)
+            raise RuntimeError(message) from exc
+
+    _Missing.__name__ = name
+    _Missing.__qualname__ = name
+    return _Missing
+
+
 _context_builder = load_internal("context_builder")
 handle_failure = _context_builder.handle_failure
 PromptBuildError = _context_builder.PromptBuildError
+if TYPE_CHECKING:  # pragma: no cover - import for static analysis only
+    from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
+else:  # pragma: no cover - runtime placeholders populated lazily
+    CodeDB = _make_missing_class("CodeDB", "code_database")
+    CodeRecord = _make_missing_class("CodeRecord", "code_database")
+    PatchHistoryDB = _make_missing_class("PatchHistoryDB", "code_database")
+    PatchRecord = _make_missing_class("PatchRecord", "code_database")
 
-_code_database = load_internal("code_database")
-CodeDB = _code_database.CodeDB
-CodeRecord = _code_database.CodeRecord
-PatchHistoryDB = _code_database.PatchHistoryDB
-PatchRecord = _code_database.PatchRecord
+_CODE_DATABASE_IMPORT_ERROR: Exception | None = None
+_CODE_DATABASE_LOADED = False
+
+
+def _ensure_code_database() -> None:
+    """Populate code database classes on first use."""
+
+    global CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
+    global _CODE_DATABASE_IMPORT_ERROR, _CODE_DATABASE_LOADED
+
+    if _CODE_DATABASE_LOADED or _CODE_DATABASE_IMPORT_ERROR is not None:
+        return
+
+    try:
+        module = load_internal("code_database")
+    except Exception as exc:  # pragma: no cover - degrade gracefully
+        _CODE_DATABASE_IMPORT_ERROR = exc
+        CodeDB = _make_missing_class("CodeDB", "code_database", exc)
+        CodeRecord = _make_missing_class("CodeRecord", "code_database", exc)
+        PatchHistoryDB = _make_missing_class("PatchHistoryDB", "code_database", exc)
+        PatchRecord = _make_missing_class("PatchRecord", "code_database", exc)
+        return
+
+    CodeDB = module.CodeDB
+    CodeRecord = module.CodeRecord
+    PatchHistoryDB = module.PatchHistoryDB
+    PatchRecord = module.PatchRecord
+    _CODE_DATABASE_LOADED = True
 
 _unified_event_bus = load_internal("unified_event_bus")
 UnifiedEventBus = _unified_event_bus.UnifiedEventBus
@@ -787,6 +837,12 @@ class SelfCodingEngine:
         stack_assist: Mapping[str, Any] | bool | None = None,
         **kwargs: Any,
     ) -> None:
+        _ensure_code_database()
+        if _CODE_DATABASE_IMPORT_ERROR is not None:
+            raise RuntimeError(
+                "SelfCodingEngine cannot be initialised because 'code_database' "
+                "failed to import"
+            ) from _CODE_DATABASE_IMPORT_ERROR
         self.code_db = code_db
         self.memory_mgr = memory_mgr
         self.gpt_memory = gpt_memory or GPT_MEMORY_MANAGER
