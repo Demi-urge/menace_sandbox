@@ -20,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from functools import wraps
 import logging
+import sys
+from types import ModuleType
 from typing import Any, Callable, TypeVar
 
 Logger = logging.Logger
@@ -210,10 +212,42 @@ def ensure_cooperative_init(
     return cls
 
 
+def monkeypatch_class_references(
+    original: type,
+    replacement: type,
+    *,
+    modules: Iterable[ModuleType] | None = None,
+) -> None:
+    """Rewrite module-level bindings pointing at *original* to *replacement*.
+
+    ``ensure_cooperative_init`` mutates classes in-place, however some modules
+    capture references to the pre-wrapped class before the mutation occurs.  A
+    few execution paths – notably within the model automation pipelines – cache
+    those stale references which bypass the cooperative constructor guard.  By
+    eagerly scanning ``sys.modules`` and swapping the references we guarantee
+    that subsequent attribute lookups observe the wrapped variant.
+    """
+
+    if original is replacement:
+        return
+
+    module_iterable = modules if modules is not None else tuple(sys.modules.values())
+    for module in module_iterable:
+        if module is None:
+            continue
+        namespace = getattr(module, "__dict__", None)
+        if not namespace:
+            continue
+        for attr, value in list(namespace.items()):
+            if value is original:
+                namespace[attr] = replacement
+
+
 __all__ = [
     "COOPERATIVE_INIT_KWARGS",
     "cooperative_init_call",
     "ensure_cooperative_init",
+    "monkeypatch_class_references",
     "type_error_from_object_init",
     "type_error_is_unexpected_kwarg",
 ]

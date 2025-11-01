@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Type, cast
 
 from vector_service.context_builder import ContextBuilder
 
-from .shared.cooperative_init import ensure_cooperative_init
+from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
 
 from .db_router import GLOBAL_ROUTER, init_db_router
 
@@ -139,7 +139,9 @@ def _capital_manager_cls() -> Type["CapitalManagementBot"]:
     if capital_cls is None:
         raise ImportError("CapitalManagementBot class unavailable")
 
+    original_cls = cast(type, capital_cls)
     cooperative_cls = ensure_cooperative_init(cast(type, capital_cls))
+    monkeypatch_class_references(original_cls, cooperative_cls)
     return cast("Type[CapitalManagementBot]", cooperative_cls)
 
 
@@ -155,7 +157,9 @@ def _planning_components() -> tuple[
     from .bot_planning_bot import BotPlan as _BotPlan
     from .bot_planning_bot import PlanningTask as _PlanningTask
 
+    original_cls = cast(type, _BotPlanningBot)
     cooperative_cls = ensure_cooperative_init(cast(type, _BotPlanningBot))
+    monkeypatch_class_references(original_cls, cooperative_cls)
     return cast(type["BotPlanningBot"], cooperative_cls), _PlanningTask, _BotPlan
 
 
