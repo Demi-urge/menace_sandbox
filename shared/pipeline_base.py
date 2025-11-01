@@ -102,9 +102,7 @@ print(">>> [trace] Successfully imported QueryBot from menace_sandbox.query_bot"
 print(">>> [trace] Importing MemoryBot from menace_sandbox.memory_bot...")
 from ..memory_bot import MemoryBot
 print(">>> [trace] Successfully imported MemoryBot from menace_sandbox.memory_bot")
-print(">>> [trace] Importing DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot...")
-from ..discrepancy_detection_bot import DiscrepancyDetectionBot
-print(">>> [trace] Successfully imported DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot")
+print(">>> [trace] Skipping eager import of DiscrepancyDetectionBot to avoid circular dependency...")
 print(">>> [trace] Importing MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot...")
 from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 print(">>> [trace] Successfully imported MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot")
@@ -178,6 +176,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..bot_registry import BotRegistry
     from ..bot_creation_bot import BotCreationBot
     from ..communication_testing_bot import CommunicationTestingBot
+    from ..discrepancy_detection_bot import DiscrepancyDetectionBot
     from .capital_management_bot import CapitalManagementBot
     from ..finance_router_bot import FinanceRouterBot
     from ..research_aggregator_bot import ResearchAggregatorBot, ResearchItem
@@ -195,6 +194,7 @@ else:  # pragma: no cover - runtime fallback
     BotRegistry = Any  # type: ignore
     BotCreationBot = Any  # type: ignore
     CommunicationTestingBot = Any  # type: ignore
+    DiscrepancyDetectionBot = Any  # type: ignore
     CapitalManagementBot = Any  # type: ignore
     FinanceRouterBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
@@ -281,6 +281,18 @@ def _communication_testing_bot_cls() -> type["CommunicationTestingBot"]:
     )
 
     return _CommunicationTestingBot
+
+
+def _discrepancy_detection_bot_cls() -> type["DiscrepancyDetectionBot"]:
+    """Return the discrepancy detection bot via a deferred import."""
+
+    print(">>> [trace] Lazily importing DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot...")
+    from ..discrepancy_detection_bot import (
+        DiscrepancyDetectionBot as _DiscrepancyDetectionBot,
+    )
+
+    print(">>> [trace] Successfully imported DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot")
+    return _DiscrepancyDetectionBot
 
 
 class ModelAutomationPipeline:
@@ -437,7 +449,10 @@ class ModelAutomationPipeline:
             comms_test_bot_cls = _communication_testing_bot_cls()
             comms_test_bot = comms_test_bot_cls()
         self.comms_test_bot = comms_test_bot
-        self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
+        if discrepancy_bot is None:
+            discrepancy_cls = _discrepancy_detection_bot_cls()
+            discrepancy_bot = discrepancy_cls()
+        self.discrepancy_bot = discrepancy_bot
         if finance_bot is None:
             try:
                 finance_cls = _finance_router_cls()
