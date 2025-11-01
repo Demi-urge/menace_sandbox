@@ -102,9 +102,6 @@ print(">>> [trace] Successfully imported QueryBot from menace_sandbox.query_bot"
 print(">>> [trace] Importing MemoryBot from menace_sandbox.memory_bot...")
 from ..memory_bot import MemoryBot
 print(">>> [trace] Successfully imported MemoryBot from menace_sandbox.memory_bot")
-print(">>> [trace] Importing CommunicationTestingBot from menace_sandbox.communication_testing_bot...")
-from ..communication_testing_bot import CommunicationTestingBot
-print(">>> [trace] Successfully imported CommunicationTestingBot from menace_sandbox.communication_testing_bot")
 print(">>> [trace] Importing DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot...")
 from ..discrepancy_detection_bot import DiscrepancyDetectionBot
 print(">>> [trace] Successfully imported DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot")
@@ -180,6 +177,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from ..bot_registry import BotRegistry
     from ..bot_creation_bot import BotCreationBot
+    from ..communication_testing_bot import CommunicationTestingBot
     from .capital_management_bot import CapitalManagementBot
     from ..finance_router_bot import FinanceRouterBot
     from ..research_aggregator_bot import ResearchAggregatorBot, ResearchItem
@@ -196,6 +194,7 @@ else:  # pragma: no cover - runtime fallback
     BotPlan = Any  # type: ignore
     BotRegistry = Any  # type: ignore
     BotCreationBot = Any  # type: ignore
+    CommunicationTestingBot = Any  # type: ignore
     CapitalManagementBot = Any  # type: ignore
     FinanceRouterBot = Any  # type: ignore
     ResearchAggregatorBot = Any  # type: ignore
@@ -272,6 +271,16 @@ def _finance_router_cls() -> type["FinanceRouterBot"]:
     from ..finance_router_bot import FinanceRouterBot as _FinanceRouterBot
 
     return _FinanceRouterBot
+
+
+def _communication_testing_bot_cls() -> type["CommunicationTestingBot"]:
+    """Return the communication testing bot via a deferred import."""
+
+    from ..communication_testing_bot import (
+        CommunicationTestingBot as _CommunicationTestingBot,
+    )
+
+    return _CommunicationTestingBot
 
 
 class ModelAutomationPipeline:
@@ -424,7 +433,10 @@ class ModelAutomationPipeline:
         self.sentiment_bot = sentiment_bot or SentimentBot()
         self.query_bot = query_bot or QueryBot(context_builder=self.context_builder)
         self.memory_bot = memory_bot or MemoryBot()
-        self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
+        if comms_test_bot is None:
+            comms_test_bot_cls = _communication_testing_bot_cls()
+            comms_test_bot = comms_test_bot_cls()
+        self.comms_test_bot = comms_test_bot
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
         if finance_bot is None:
             try:
