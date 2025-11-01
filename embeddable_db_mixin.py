@@ -255,13 +255,42 @@ class EmbeddableDBMixin:
 
     def __init__(
         self,
-        *,
+        *super_args: Any,
         index_path: str | Path = "embeddings.ann",
         metadata_path: str | Path = "embeddings.json",
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         embedding_version: int = 1,
         backend: str = "annoy",
+        event_bus: Any | None = None,
+        **super_kwargs: Any,
     ) -> None:
+        """Initialise the mixin while tolerating cooperative super-calls.
+
+        ``ModelAutomationPipeline`` bootstraps a large hierarchy of database
+        helpers where some subclasses were updated to forward ``event_bus`` to
+        ``super().__init__`` for consistency.  When those subclasses ultimately
+        inherit directly from :class:`object` via :class:`EmbeddableDBMixin`,
+        forwarding keyword arguments raises ``TypeError`` because ``object``
+        does not accept them.  Allowing positional/keyword passthrough here keeps
+        the mixin compatible with cooperative multiple inheritance patterns
+        without requiring every subclass to special-case the call chain.
+        """
+
+        passthrough = dict(super_kwargs)
+        bus = passthrough.pop("event_bus", event_bus)
+        super_init = getattr(super(), "__init__", None)
+        if super_init is not None and super_init is not object.__init__:
+            super_init(*super_args, **passthrough)
+        elif super_args or passthrough:
+            logger.debug(
+                "EmbeddableDBMixin dropping init args destined for object: args=%s kwargs=%s",
+                super_args,
+                passthrough,
+            )
+
+        if bus is not None:
+            setattr(self, "event_bus", bus)
+
         index_path = Path(index_path)
         metadata_path = Path(metadata_path)
         if metadata_path.name == "embeddings.json" and index_path.name != "embeddings.ann":
