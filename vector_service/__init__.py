@@ -250,7 +250,22 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
         "menace_sandbox.embeddable_db_mixin",
     }:
         raise
-    EmbeddableDBMixin = object  # type: ignore
+
+    class _FallbackEmbeddableDBMixin:
+        """Stub mixin used when the vector service cannot load the real one."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._embeddings_enabled = False
+
+        def backfill_embeddings(self) -> list[object]:  # pragma: no cover - simple stub
+            return []
+
+        def search_by_vector(
+            self, *args: object, **kwargs: object
+        ) -> list[object]:  # pragma: no cover - simple stub
+            return []
+
+    EmbeddableDBMixin = _FallbackEmbeddableDBMixin  # type: ignore
 else:
     if hasattr(_embeddable_db_module, "EmbeddableDBMixin"):
         EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
