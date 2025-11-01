@@ -130,6 +130,7 @@ def get_resource_allocation_optimizer_cls() -> "type[ResourceAllocationOptimizer
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
     from menace_sandbox.resource_allocation_optimizer import ResourceAllocationOptimizer
     from menace_sandbox.dynamic_resource_allocator_bot import DynamicResourceAllocator
+    from menace_sandbox.diagnostic_manager import DiagnosticManager
 print(">>> [trace] Importing update_model from menace_sandbox.database_manager...")
 from ..database_manager import update_model
 print(">>> [trace] Successfully imported update_model from menace_sandbox.database_manager")
@@ -151,9 +152,21 @@ def get_dynamic_resource_allocator_cls() -> "type[DynamicResourceAllocator]":
         ">>> [trace] Successfully lazy-imported DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot"
     )
     return _DynamicResourceAllocator
-print(">>> [trace] Importing DiagnosticManager from menace_sandbox.diagnostic_manager...")
-from ..diagnostic_manager import DiagnosticManager
-print(">>> [trace] Successfully imported DiagnosticManager from menace_sandbox.diagnostic_manager")
+print(">>> [trace] Preparing lazy import for DiagnosticManager...")
+
+
+def get_diagnostic_manager_cls() -> "type[DiagnosticManager]":
+    print(
+        ">>> [trace] Lazily importing DiagnosticManager from menace_sandbox.diagnostic_manager..."
+    )
+    from menace_sandbox.diagnostic_manager import (
+        DiagnosticManager as _DiagnosticManager,
+    )
+
+    print(
+        ">>> [trace] Successfully lazy-imported DiagnosticManager from menace_sandbox.diagnostic_manager"
+    )
+    return _DiagnosticManager
 print(">>> [trace] Importing KeywordBank from menace_sandbox.idea_search_bot...")
 from ..idea_search_bot import KeywordBank
 print(">>> [trace] Successfully imported KeywordBank from menace_sandbox.idea_search_bot")
@@ -545,9 +558,12 @@ class ModelAutomationPipeline:
                 context_builder=self.context_builder,
             )
         self.allocator = allocator
-        self.diagnostic_manager = diagnostic_manager or DiagnosticManager(
-            context_builder=self.context_builder
-        )
+        if diagnostic_manager is None:
+            DiagnosticManagerCls = get_diagnostic_manager_cls()
+            diagnostic_manager = DiagnosticManagerCls(
+                context_builder=self.context_builder
+            )
+        self.diagnostic_manager = diagnostic_manager
         self.idea_bank = idea_bank or KeywordBank()
         self.news_db = news_db or NewsDB()
         self.reinvestment_bot = reinvestment_bot or AutoReinvestmentBot()
