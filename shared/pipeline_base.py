@@ -129,15 +129,28 @@ def get_resource_allocation_optimizer_cls() -> "type[ResourceAllocationOptimizer
 
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
     from menace_sandbox.resource_allocation_optimizer import ResourceAllocationOptimizer
+    from menace_sandbox.dynamic_resource_allocator_bot import DynamicResourceAllocator
 print(">>> [trace] Importing update_model from menace_sandbox.database_manager...")
 from ..database_manager import update_model
 print(">>> [trace] Successfully imported update_model from menace_sandbox.database_manager")
 print(">>> [trace] Importing AICounterBot from menace_sandbox.ai_counter_bot...")
 from ..ai_counter_bot import AICounterBot
 print(">>> [trace] Successfully imported AICounterBot from menace_sandbox.ai_counter_bot")
-print(">>> [trace] Importing DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot...")
-from ..dynamic_resource_allocator_bot import DynamicResourceAllocator
-print(">>> [trace] Successfully imported DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot")
+print(">>> [trace] Preparing lazy import for DynamicResourceAllocator...")
+
+
+def get_dynamic_resource_allocator_cls() -> "type[DynamicResourceAllocator]":
+    print(
+        ">>> [trace] Lazily importing DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot..."
+    )
+    from menace_sandbox.dynamic_resource_allocator_bot import (
+        DynamicResourceAllocator as _DynamicResourceAllocator,
+    )
+
+    print(
+        ">>> [trace] Successfully lazy-imported DynamicResourceAllocator from menace_sandbox.dynamic_resource_allocator_bot"
+    )
+    return _DynamicResourceAllocator
 print(">>> [trace] Importing DiagnosticManager from menace_sandbox.diagnostic_manager...")
 from ..diagnostic_manager import DiagnosticManager
 print(">>> [trace] Successfully imported DiagnosticManager from menace_sandbox.diagnostic_manager")
@@ -345,7 +358,7 @@ class ModelAutomationPipeline:
         fallback_bot: ResearchFallbackBot | None = None,
         optimizer: ResourceAllocationOptimizer | None = None,
         ai_counter_bot: AICounterBot | None = None,
-        allocator: DynamicResourceAllocator | None = None,
+        allocator: "DynamicResourceAllocator" | None = None,
         diagnostic_manager: DiagnosticManager | None = None,
         idea_bank: KeywordBank | None = None,
         news_db: NewsDB | None = None,
@@ -524,7 +537,8 @@ class ModelAutomationPipeline:
         self.ai_counter_bot = ai_counter_bot or AICounterBot()
         if allocator is None:
             alloc_bot_cls, alloc_db_cls = _resource_allocation_components()
-            allocator = DynamicResourceAllocator(
+            DynamicResourceAllocatorCls = get_dynamic_resource_allocator_cls()
+            allocator = DynamicResourceAllocatorCls(
                 alloc_bot=alloc_bot_cls(
                     alloc_db_cls(), context_builder=self.context_builder
                 ),
