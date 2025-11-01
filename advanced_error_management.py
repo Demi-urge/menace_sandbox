@@ -82,23 +82,45 @@ class FormalVerifier:
             # only append if symbolic executor available
             self.tools.append("symbolic")
 
-    def _symbolic_verify(self, path: Path) -> bool:
-        """Run a simplified symbolic analysis using angr if available."""
-        if not self.symbolic:
-            return True
-        try:
-            # Instantiate a project just to ensure angr can parse the file
-            self.symbolic.Project(str(path), auto_load_libs=False)
-            import ast
+    def _python_symbolic_scan(self, path: Path) -> bool:
+        """Best-effort check for exceptional control flow in Python sources."""
 
+        import ast
+
+        try:
             tree = ast.parse(Path(path).read_text())
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.Raise, ast.Assert)):
-                    # treat explicit raises or failed assertions as failing paths
-                    return False
         except Exception:
             return False
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Raise, ast.Assert)):
+                return False
         return True
+
+    def _symbolic_verify(self, path: Path) -> bool:
+        """Run a simplified symbolic analysis using angr if available."""
+
+        if not self.symbolic:
+            return True
+
+        # ``angr`` and its Claripy backend operate on binaries/bitvectors. Attempting
+        # to load textual Python modules forces Claripy to treat source strings as
+        # bitvectors, which triggers ``StringV not in op_module`` errors. We therefore
+        # bypass the binary loader for Python files and fall back to a lightweight
+        # AST inspection instead.
+        if path.suffix in {".py", ".pyi"}:
+            return self._python_symbolic_scan(path)
+
+        try:
+            # Instantiate a project just to ensure angr can parse the file. For
+            # non-Python artefacts this acts as a smoke test and mirrors the
+            # previous behaviour while avoiding the Claripy StringV failure.
+            self.symbolic.Project(str(path), auto_load_libs=False)
+        except Exception:
+            return False
+
+        # When no specific heuristics apply, fall back to the Python scanner.
+        return self._python_symbolic_scan(path)
 
     def verify(self, path: Path) -> bool:
         """Execute static checkers and Hypothesis based tests."""
