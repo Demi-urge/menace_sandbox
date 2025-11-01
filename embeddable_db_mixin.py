@@ -278,16 +278,41 @@ class EmbeddableDBMixin:
 
         passthrough = dict(super_kwargs)
         bus = passthrough.pop("event_bus", event_bus)
-        super_init = getattr(super(), "__init__", None)
-        target = getattr(super_init, "__func__", super_init)
-        if super_init is not None and target is not object.__init__:
-            super_init(*super_args, **passthrough)
-        elif super_args or passthrough:
-            logger.debug(
-                "EmbeddableDBMixin dropping init args destined for object: args=%s kwargs=%s",
-                super_args,
-                passthrough,
-            )
+        super_obj = super()
+        super_init = getattr(super_obj, "__init__", None)
+        next_class: type | None = None
+        try:
+            mro = type(self).__mro__
+            next_class = mro[mro.index(EmbeddableDBMixin) + 1]
+        except (ValueError, IndexError):
+            next_class = None
+
+        if super_init is None:
+            if super_args or passthrough:
+                logger.debug(
+                    "EmbeddableDBMixin dropping init args; no super __init__: args=%s kwargs=%s",
+                    super_args,
+                    passthrough,
+                )
+        else:
+            target = getattr(super_init, "__func__", super_init)
+            if next_class is object or target is object.__init__:
+                if super_args or passthrough:
+                    logger.debug(
+                        "EmbeddableDBMixin dropping init args destined for %s: args=%s kwargs=%s",
+                        getattr(next_class, "__name__", "object"),
+                        super_args,
+                        passthrough,
+                    )
+                    if next_class is not None:
+                        logger.debug(
+                            "EmbeddableDBMixin MRO for %s: %s",
+                            type(self).__name__,
+                            [cls.__name__ for cls in type(self).__mro__],
+                        )
+                super_init()
+            else:
+                super_init(*super_args, **passthrough)
 
         if bus is not None:
             setattr(self, "event_bus", bus)
