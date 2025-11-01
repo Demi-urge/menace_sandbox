@@ -1744,13 +1744,29 @@ def self_coding_managed(
             bases = ()
         else:
             if _CooperativeInitTerminator not in bases:
+                new_bases: list[type] = []
+                replaced_object = False
+                for base in bases:
+                    if base is object:
+                        new_bases.append(_CooperativeInitTerminator)
+                        replaced_object = True
+                    else:
+                        new_bases.append(base)
+                if not replaced_object:
+                    new_bases.append(_CooperativeInitTerminator)
                 try:
-                    cls.__bases__ = bases + (_CooperativeInitTerminator,)
+                    cls.__bases__ = tuple(new_bases)
                 except TypeError:  # pragma: no cover - incompatible layouts
                     logger.debug(
                         "unable to append cooperative init terminator to %s",
                         cls.__name__,
                         exc_info=True,
+                    )
+                else:
+                    logger.debug(
+                        "applied cooperative init terminator to %s; mro=%s",
+                        cls.__name__,
+                        cls.__mro__,
                     )
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
