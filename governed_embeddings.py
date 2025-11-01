@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import contextlib
+import glob
 import inspect
 import logging
 import os
@@ -136,10 +137,23 @@ if TYPE_CHECKING:  # pragma: no cover - typing helper
 else:  # pragma: no cover - at runtime we either have the real class or ``Any``
     SandboxLockType = Any
 
+model: "SentenceTransformer | None"
+
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - simplify in environments without the package
     SentenceTransformer = None  # type: ignore
+    model = None
+else:  # pragma: no cover - loading a cached snapshot avoids hub lookups
+    _SNAPSHOT_SEARCH = os.path.expanduser(
+        "~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2/snapshots/*"
+    )
+    _SNAPSHOT_CANDIDATES = glob.glob(_SNAPSHOT_SEARCH)
+    if _SNAPSHOT_CANDIDATES:
+        _SNAPSHOT_PATH = _SNAPSHOT_CANDIDATES[0]
+        model = SentenceTransformer(_SNAPSHOT_PATH)
+    else:
+        model = None
 
 try:  # pragma: no cover - lightweight fallback dependencies
     import torch
@@ -1304,6 +1318,21 @@ def _load_embedder() -> SentenceTransformer | None:
         if fallback is not None:
             return cast("SentenceTransformer", fallback)
         return None
+
+    if model is not None:
+        snapshot = globals().get("_SNAPSHOT_PATH")
+        logger.info(
+            "using preloaded sentence transformer snapshot",
+            extra={
+                "model": _MODEL_NAME,
+                "snapshot": snapshot,
+            },
+        )
+        _trace(
+            "load.snapshot.preloaded",
+            snapshot=snapshot,
+        )
+        return model
 
     cache_dir = _cache_base()
     local_kwargs: dict[str, object] = {}
