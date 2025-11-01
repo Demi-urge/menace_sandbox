@@ -583,6 +583,7 @@ def load_previous_synergy(
         return [], []
     history: list[dict[str, float]] = []
     try:
+        logger.warning("🔥 SQLite audit still active despite AUDIT_FILE_MODE")
         with connect_locked(path) as conn:
             rows = conn.execute(
                 "SELECT entry FROM synergy_history ORDER BY id"
@@ -1404,6 +1405,7 @@ def main(argv: List[str] | None = None) -> None:
     db_file = data_dir / "synergy_history.db"
     if not db_file.exists() and legacy_json.exists():
         logger.info("migrating %s to SQLite", legacy_json)
+        logger.warning("🔥 SQLite audit still active despite AUDIT_FILE_MODE")
         migrate_json_to_db(legacy_json, db_file)
 
     if args.check_settings:
@@ -1425,6 +1427,7 @@ def main(argv: List[str] | None = None) -> None:
     if args.save_synergy_history or args.recover:
         _console("loading previous synergy history from disk")
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
+        logger.warning("🔥 SQLite audit still active despite AUDIT_FILE_MODE")
         history_conn = shd.connect_locked(data_dir / "synergy_history.db")
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
