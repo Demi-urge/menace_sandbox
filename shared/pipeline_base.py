@@ -112,9 +112,23 @@ print(">>> [trace] Successfully imported OfferTestingBot from menace_sandbox.off
 print(">>> [trace] Importing ResearchFallbackBot from menace_sandbox.research_fallback_bot...")
 from ..research_fallback_bot import ResearchFallbackBot
 print(">>> [trace] Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
-print(">>> [trace] Importing ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer...")
-from ..resource_allocation_optimizer import ResourceAllocationOptimizer
-print(">>> [trace] Successfully imported ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer")
+print(">>> [trace] Preparing lazy import for ResourceAllocationOptimizer...")
+
+
+def get_resource_allocation_optimizer_cls() -> "type[ResourceAllocationOptimizer]":
+    print(
+        ">>> [trace] Lazily importing ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer..."
+    )
+    from menace_sandbox.resource_allocation_optimizer import ResourceAllocationOptimizer
+
+    print(
+        ">>> [trace] Successfully lazy-imported ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer"
+    )
+    return ResourceAllocationOptimizer
+
+
+if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
+    from menace_sandbox.resource_allocation_optimizer import ResourceAllocationOptimizer
 print(">>> [trace] Importing update_model from menace_sandbox.database_manager...")
 from ..database_manager import update_model
 print(">>> [trace] Successfully imported update_model from menace_sandbox.database_manager")
@@ -503,7 +517,10 @@ class ModelAutomationPipeline:
         self.meta_ga_bot = meta_ga_bot or MetaGeneticAlgorithmBot()
         self.offer_bot = offer_bot or OfferTestingBot()
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
-        self.optimizer = optimizer or ResourceAllocationOptimizer()
+        if optimizer is None:
+            ResourceAllocationOptimizerCls = get_resource_allocation_optimizer_cls()
+            optimizer = ResourceAllocationOptimizerCls()
+        self.optimizer = optimizer
         self.ai_counter_bot = ai_counter_bot or AICounterBot()
         if allocator is None:
             alloc_bot_cls, alloc_db_cls = _resource_allocation_components()
