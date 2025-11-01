@@ -75,6 +75,10 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+# Payment integrations must import the centralized Stripe router so that
+# bootstrap checks can validate billing configuration and keys.
+from menace_sandbox import stripe_billing_router  # noqa: F401
+
 # flake8: noqa
 import sqlite3
 import os
