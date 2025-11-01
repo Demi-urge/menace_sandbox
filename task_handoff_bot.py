@@ -320,6 +320,9 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
     EmbeddableDBMixin = _FallbackEmbeddableDBMixin
     EmbeddingBackfill = _FallbackEmbeddingBackfill
     generalise = _generalise_passthrough
+
+    def safe_super_init(cls: type, instance: object, *args: Any, **kwargs: Any) -> None:
+        super(cls, instance).__init__(*args, **kwargs)
 else:
     EmbeddableDBMixin = _vector_service.EmbeddableDBMixin
     EmbeddingBackfill = _vector_service.EmbeddingBackfill
@@ -333,6 +336,12 @@ else:
 
         def generalise(text: str) -> str:
             return text
+
+    safe_super_init = getattr(_vector_service, "safe_super_init", None)
+    if safe_super_init is None:  # pragma: no cover - compatibility guard
+
+        def safe_super_init(cls: type, instance: object, *args: Any, **kwargs: Any) -> None:
+            super(cls, instance).__init__(*args, **kwargs)
 
 _db_router = load_internal("db_router")
 DBRouter = _db_router.DBRouter
@@ -607,6 +616,10 @@ class WorkflowDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         router: DBRouter | None = None,
     ) -> None:
+        print(
+            f"[trace] MRO chain: {[cls.__name__ for cls in type(self).__mro__]}"
+        )
+
         if path is None:
             try:
                 resolved = resolve_path(self.DB_FILE)
@@ -676,11 +689,13 @@ class WorkflowDB(EmbeddableDBMixin):
             "idx_workflows_source_menace_id ON workflows(source_menace_id)"
         )
         self.conn.commit()
-        EmbeddableDBMixin.__init__(
+        safe_super_init(
+            WorkflowDB,
             self,
             index_path=vector_index_path,
             embedding_version=embedding_version,
             backend=vector_backend,
+            event_bus=event_bus,
         )
 
     # --------------------------------------------------------------

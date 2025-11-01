@@ -266,6 +266,11 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
             return []
 
     EmbeddableDBMixin = _FallbackEmbeddableDBMixin  # type: ignore
+
+    def safe_super_init(cls: type, instance: object, *args: object, **kwargs: object) -> None:
+        """Fallback cooperative init helper when embeddings are disabled."""
+
+        super(cls, instance).__init__(*args, **kwargs)
 else:
     if hasattr(_embeddable_db_module, "EmbeddableDBMixin"):
         EmbeddableDBMixin = _embeddable_db_module.EmbeddableDBMixin  # type: ignore[attr-defined]
@@ -273,6 +278,13 @@ else:
 
         class EmbeddableDBMixin:  # type: ignore
             pass
+
+    if hasattr(_embeddable_db_module, "safe_super_init"):
+        safe_super_init = _embeddable_db_module.safe_super_init  # type: ignore[attr-defined]
+    else:  # pragma: no cover - degrade gracefully when helper missing
+
+        def safe_super_init(cls: type, instance: object, *args: object, **kwargs: object) -> None:
+            super(cls, instance).__init__(*args, **kwargs)
 
     sys.modules.setdefault("embeddable_db_mixin", _embeddable_db_module)
     sys.modules.setdefault(
@@ -297,4 +309,5 @@ __all__ = [
     "RateLimitError",
     "MalformedPromptError",
     "ErrorResult",
+    "safe_super_init",
 ]
