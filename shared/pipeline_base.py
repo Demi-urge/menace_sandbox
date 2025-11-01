@@ -103,9 +103,6 @@ print(">>> [trace] Importing MemoryBot from menace_sandbox.memory_bot...")
 from ..memory_bot import MemoryBot
 print(">>> [trace] Successfully imported MemoryBot from menace_sandbox.memory_bot")
 print(">>> [trace] Skipping eager import of DiscrepancyDetectionBot to avoid circular dependency...")
-print(">>> [trace] Importing MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot...")
-from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
-print(">>> [trace] Successfully imported MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot")
 print(">>> [trace] Importing OfferTestingBot from menace_sandbox.offer_testing_bot...")
 from ..offer_testing_bot import OfferTestingBot
 print(">>> [trace] Successfully imported OfferTestingBot from menace_sandbox.offer_testing_bot")
@@ -125,6 +122,19 @@ def get_resource_allocation_optimizer_cls() -> "type[ResourceAllocationOptimizer
         ">>> [trace] Successfully lazy-imported ResourceAllocationOptimizer from menace_sandbox.resource_allocation_optimizer"
     )
     return ResourceAllocationOptimizer
+
+
+print(">>> [trace] Preparing lazy import for MetaGeneticAlgorithmBot...")
+
+
+def get_meta_genetic_algorithm_bot_cls() -> "type[MetaGeneticAlgorithmBot]":
+    print(">>> [trace] Lazily importing MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot...")
+    from ..meta_genetic_algorithm_bot import (
+        MetaGeneticAlgorithmBot as _MetaGeneticAlgorithmBot,
+    )
+
+    print(">>> [trace] Successfully lazy-imported MetaGeneticAlgorithmBot from menace_sandbox.meta_genetic_algorithm_bot")
+    return _MetaGeneticAlgorithmBot
 
 
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
@@ -226,6 +236,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..resource_allocation_bot import ResourceAllocationBot, AllocationDB
     from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
     from ..task_validation_bot import TaskValidationBot
+    from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 else:  # pragma: no cover - runtime fallback
     HierarchyAssessmentBot = Any  # type: ignore
     BotPlanningBot = Any  # type: ignore
@@ -248,6 +259,7 @@ else:  # pragma: no cover - runtime fallback
     BuildTask = Any  # type: ignore
     ROIResult = Any  # type: ignore
     TaskValidationBot = Any  # type: ignore
+    MetaGeneticAlgorithmBot = Any  # type: ignore
 
 
 def _pre_execution_components() -> Tuple[type["PreExecutionROIBot"], type["BuildTask"], type["ROIResult"]]:
@@ -540,7 +552,7 @@ class ModelAutomationPipeline:
                     creation_bot = None
 
         self.creation_bot = creation_bot
-        self.meta_ga_bot = meta_ga_bot or MetaGeneticAlgorithmBot()
+        self.meta_ga_bot = meta_ga_bot or get_meta_genetic_algorithm_bot_cls()()
         self.offer_bot = offer_bot or OfferTestingBot()
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
         if optimizer is None:
