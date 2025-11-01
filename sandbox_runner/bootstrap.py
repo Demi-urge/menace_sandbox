@@ -974,6 +974,7 @@ def sandbox_health() -> dict[str, bool | dict[str, str]]:
     for name in settings.sandbox_required_db_files:
         db_path = data_dir / name
         try:
+            logger.warning("🔥 SQLite audit still active despite AUDIT_FILE_MODE")
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)  # noqa: SQL001
             conn.execute("PRAGMA schema_version")
             conn.close()
