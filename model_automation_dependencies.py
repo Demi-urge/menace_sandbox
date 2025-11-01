@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Callable, Type, cast
 
 from vector_service.context_builder import ContextBuilder
 
+from .shared.cooperative_init import ensure_cooperative_init
+
 from .db_router import GLOBAL_ROUTER, init_db_router
 
 if TYPE_CHECKING:  # pragma: no cover - typing only imports
@@ -137,7 +139,8 @@ def _capital_manager_cls() -> Type["CapitalManagementBot"]:
     if capital_cls is None:
         raise ImportError("CapitalManagementBot class unavailable")
 
-    return cast("Type[CapitalManagementBot]", capital_cls)
+    cooperative_cls = ensure_cooperative_init(cast(type, capital_cls))
+    return cast("Type[CapitalManagementBot]", cooperative_cls)
 
 
 @lru_cache(maxsize=1)
