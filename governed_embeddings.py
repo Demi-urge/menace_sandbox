@@ -1309,6 +1309,8 @@ def _initialise_embedder_with_timeout(
 def _load_embedder() -> SentenceTransformer | None:
     """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
 
+    global model
+
     if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
         fallback = _load_bundled_embedder()
         if fallback is not None:
