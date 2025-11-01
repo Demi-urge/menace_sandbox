@@ -8,13 +8,16 @@ functions for bots to fetch feedback, error fixes and other insights.
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from menace_sandbox.gpt_memory import GPTMemoryManager
+from typing import TYPE_CHECKING
 from governed_retrieval import govern_retrieval
 from secret_redactor import redact_secrets, redact_secrets_dict
 try:  # pragma: no cover - allow flat imports
     from .gpt_knowledge_service import GPTKnowledgeService
 except Exception:  # pragma: no cover - fallback for flat layout
     from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - used for static analysis only
+    from menace_sandbox.gpt_memory import GPTMemoryManager
 
 try:  # pragma: no cover - allow flat imports
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
@@ -51,7 +54,7 @@ def _govern(entries):
     return governed
 
 def get_feedback(
-    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+    manager: "GPTMemoryManager", key: str, *, limit: int = 5, use_embeddings: bool = True
 ):
     """Return past feedback entries related to ``key``.
 
@@ -66,7 +69,7 @@ def get_feedback(
 
 
 def get_error_fixes(
-    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+    manager: "GPTMemoryManager", key: str, *, limit: int = 5, use_embeddings: bool = True
 ):
     """Return past error fix suggestions related to ``key``."""
 
@@ -77,7 +80,7 @@ def get_error_fixes(
 
 
 def get_improvement_paths(
-    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+    manager: "GPTMemoryManager", key: str, *, limit: int = 5, use_embeddings: bool = True
 ):
     """Return previous improvement path suggestions for ``key``."""
 
