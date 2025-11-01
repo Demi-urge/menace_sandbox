@@ -205,9 +205,19 @@ print(">>> [trace] Successfully imported UnifiedEventBus from menace_sandbox.uni
 print(">>> [trace] Importing Outcome, PathwayDB, PathwayRecord from menace_sandbox.neuroplasticity...")
 from ..neuroplasticity import Outcome, PathwayDB, PathwayRecord
 print(">>> [trace] Successfully imported Outcome, PathwayDB, PathwayRecord from menace_sandbox.neuroplasticity")
-print(">>> [trace] Importing UnifiedLearningEngine from menace_sandbox.unified_learning_engine...")
-from ..unified_learning_engine import UnifiedLearningEngine
-print(">>> [trace] Successfully imported UnifiedLearningEngine from menace_sandbox.unified_learning_engine")
+print(">>> [trace] Preparing lazy import for UnifiedLearningEngine...")
+
+
+def get_unified_learning_engine_cls() -> "type[UnifiedLearningEngine]":
+    print(
+        ">>> [trace] Lazily importing UnifiedLearningEngine from menace_sandbox.unified_learning_engine..."
+    )
+    from ..unified_learning_engine import UnifiedLearningEngine as _UnifiedLearningEngine
+
+    print(
+        ">>> [trace] Successfully lazy-imported UnifiedLearningEngine from menace_sandbox.unified_learning_engine"
+    )
+    return _UnifiedLearningEngine
 print(">>> [trace] Importing ActionPlanner from menace_sandbox.action_planner...")
 from ..action_planner import ActionPlanner
 print(">>> [trace] Successfully imported ActionPlanner from menace_sandbox.action_planner")
@@ -237,6 +247,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
     from ..task_validation_bot import TaskValidationBot
     from ..meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
+    from ..unified_learning_engine import UnifiedLearningEngine
 else:  # pragma: no cover - runtime fallback
     HierarchyAssessmentBot = Any  # type: ignore
     BotPlanningBot = Any  # type: ignore
@@ -260,6 +271,7 @@ else:  # pragma: no cover - runtime fallback
     ROIResult = Any  # type: ignore
     TaskValidationBot = Any  # type: ignore
     MetaGeneticAlgorithmBot = Any  # type: ignore
+    UnifiedLearningEngine = Any  # type: ignore
 
 
 def _pre_execution_components() -> Tuple[type["PreExecutionROIBot"], type["BuildTask"], type["ROIResult"]]:
