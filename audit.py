@@ -21,6 +21,13 @@ from audit_utils import safe_write_audit
 DEFAULT_LOG_PATH: Path | None = None
 
 
+def _audit_file_mode_enabled() -> bool:
+    value = os.getenv("AUDIT_FILE_MODE")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -162,6 +169,12 @@ def log_db_access(
         pass
 
     db_path: str | None = None
+    if _audit_file_mode_enabled():
+        _module_logger.debug(
+            "AUDIT_FILE_MODE enabled; skipping shared_db_audit SQLite persistence"
+        )
+        return
+
     if db_conn is not None:
         if getattr(db_conn, "_closed", False):
             return
