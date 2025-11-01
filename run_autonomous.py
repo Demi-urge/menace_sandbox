@@ -14,15 +14,38 @@ import os
 # sandbox now ships ``local_knowledge_module`` directly within this repository.
 # Import from the local module first and gracefully degrade when the legacy
 # package is unavailable to keep the script usable in both layouts.
-try:  # pragma: no cover - exercised when legacy package is present
-    from knowledge.local_knowledge import init_local_knowledge
-except ModuleNotFoundError:  # pragma: no cover - default in the sandbox
-    from local_knowledge_module import init_local_knowledge as _init_local_knowledge
+_LOCAL_KNOWLEDGE_LOADER = None
 
-    def init_local_knowledge(mem_db: str | os.PathLike[str] | None = None):
-        if mem_db is None:
-            mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-        return _init_local_knowledge(mem_db)
+
+def _resolve_local_knowledge_loader():
+    global _LOCAL_KNOWLEDGE_LOADER
+    if _LOCAL_KNOWLEDGE_LOADER is not None:
+        return _LOCAL_KNOWLEDGE_LOADER
+    loaders = (
+        "local_knowledge_module",
+        "menace_sandbox.local_knowledge_module",
+        "knowledge.local_knowledge",
+    )
+    for module_name in loaders:
+        try:  # pragma: no cover - exercised in integration environments
+            module = __import__(module_name, fromlist=["init_local_knowledge"])
+        except ModuleNotFoundError:
+            continue
+        init_func = getattr(module, "init_local_knowledge", None)
+        if callable(init_func):
+            _LOCAL_KNOWLEDGE_LOADER = init_func
+            return init_func
+    raise ModuleNotFoundError(
+        "Unable to locate a local knowledge module. Checked: "
+        + ", ".join(loaders)
+    )
+
+
+def init_local_knowledge(mem_db: str | os.PathLike[str] | None = None):
+    loader = _resolve_local_knowledge_loader()
+    if mem_db is None:
+        mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+    return loader(mem_db)
 
 import argparse
 import atexit
