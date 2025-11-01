@@ -155,7 +155,8 @@ def _planning_components() -> tuple[
     from .bot_planning_bot import BotPlan as _BotPlan
     from .bot_planning_bot import PlanningTask as _PlanningTask
 
-    return _BotPlanningBot, _PlanningTask, _BotPlan
+    cooperative_cls = ensure_cooperative_init(cast(type, _BotPlanningBot))
+    return cast(type["BotPlanningBot"], cooperative_cls), _PlanningTask, _BotPlan
 
 
 __all__ = [
