@@ -6,6 +6,7 @@ import csv
 import importlib
 import json
 import logging
+import os
 import queue
 import random
 import sqlite3
@@ -32,6 +33,18 @@ SQLITE_PATH = AUDIT_SQLITE_DIR / "audit_log.db"
 
 
 logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str) -> bool:
+    """Return ``True`` when environment variable *name* is truthy."""
+
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+_AUDIT_FILE_MODE_ENABLED = _env_flag("AUDIT_FILE_MODE")
 
 
 GLOBAL_ROUTER: "DBRouter | None" = None
@@ -496,6 +509,13 @@ def _mirror_payload_to_sqlite(
 ) -> None:
     """Mirror *payload* into SQLite according to *db_path_spec*."""
 
+    if _AUDIT_FILE_MODE_ENABLED:
+        logger.debug(
+            "Skipping SQLite mirror for %s because AUDIT_FILE_MODE is enabled",
+            payload.event_id,
+        )
+        return
+
     database_path, router_conn = _resolve_sqlite_target(db_path_spec, "write")
     if database_path in (":memory:", "") and router_conn is not None:
         _write_event_in_connection(router_conn, payload)
@@ -535,6 +555,12 @@ def log_to_sqlite(
 
     record, payload = _prepare_payload(event_type, data, jsonl_path)
 
+    if _AUDIT_FILE_MODE_ENABLED:
+        logger.debug(
+            "AUDIT_FILE_MODE enabled; skipping SQLite mirror for %s", payload.event_id
+        )
+        return record["event_id"]
+
     if _is_bootstrap_queueing_enabled():
         _enqueue_for_later(db_path, payload)
     else:
@@ -565,7 +591,12 @@ def queue_event_for_later(
     """
 
     record, payload = _prepare_payload(event_type, data, jsonl_path)
-    _enqueue_for_later(db_path, payload)
+    if not _AUDIT_FILE_MODE_ENABLED:
+        _enqueue_for_later(db_path, payload)
+    else:
+        logger.debug(
+            "AUDIT_FILE_MODE enabled; not queueing %s for SQLite mirror", payload.event_id
+        )
     return record["event_id"]
 
 
@@ -586,6 +617,13 @@ def flush_queued_events() -> None:
     Events that fail to persist remain queued and a :class:`RuntimeError` is
     raised to signal the partial failure.
     """
+
+    if _AUDIT_FILE_MODE_ENABLED:
+        _set_bootstrap_queueing_enabled(False)
+        with _AUDIT_QUEUE_LOCK:
+            _AUDIT_QUEUE.clear()
+        logger.debug("AUDIT_FILE_MODE enabled; no queued events will be flushed")
+        return
 
     with _AUDIT_QUEUE_LOCK:
         if not _AUDIT_QUEUE:
@@ -644,6 +682,10 @@ def get_recent_events(
 
     if limit <= 0:
         return []
+
+    if _AUDIT_FILE_MODE_ENABLED:
+        logger.debug("AUDIT_FILE_MODE enabled; returning events from JSONL only")
+        return _read_events_from_jsonl(jsonl_path, limit)
 
     events: List[Dict[str, Any]] = []
     try:
