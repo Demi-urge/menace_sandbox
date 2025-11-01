@@ -15,9 +15,9 @@ print(">>> [trace] Successfully imported _DisabledSelfCodingManager, self_coding
 print(">>> [trace] Importing SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager...")
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 print(">>> [trace] Successfully imported SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager")
-print(">>> [trace] Importing ensure_cooperative_init from menace_sandbox.shared.cooperative_init...")
-from .shared.cooperative_init import ensure_cooperative_init
-print(">>> [trace] Successfully imported ensure_cooperative_init from menace_sandbox.shared.cooperative_init")
+print(">>> [trace] Importing ensure_cooperative_init, monkeypatch_class_references from menace_sandbox.shared.cooperative_init...")
+from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
+print(">>> [trace] Successfully imported ensure_cooperative_init, monkeypatch_class_references from menace_sandbox.shared.cooperative_init")
 print(">>> [trace] Importing SelfCodingEngine from menace_sandbox.self_coding_engine...")
 from .self_coding_engine import SelfCodingEngine
 print(">>> [trace] Successfully imported SelfCodingEngine from menace_sandbox.self_coding_engine")
@@ -2214,10 +2214,12 @@ def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
     return manager
 
 
+_UnwrappedCapitalManagementBot = cast(type[_CapitalManagementBot], _CapitalManagementBot)
 _CapitalManagementBot = cast(
     type[_CapitalManagementBot],
     ensure_cooperative_init(cast(type, _CapitalManagementBot), logger=logger),
 )
+monkeypatch_class_references(_UnwrappedCapitalManagementBot, _CapitalManagementBot)
 
 _capital_bot_class: type[_CapitalManagementBot] | None = None
 
@@ -2233,6 +2235,7 @@ def _get_capital_management_bot_class() -> type[_CapitalManagementBot]:
             data_bot=_get_data_bot(),
             manager=decorator_manager,
         )(_CapitalManagementBot)
+        unwrapped_cls = cast(type[_CapitalManagementBot], decorated_cls)
         cooperative_cls = ensure_cooperative_init(cast(type, decorated_cls))
         guard_state = getattr(cooperative_cls, "__cooperative_guard__", False)
         if guard_state:
@@ -2243,6 +2246,7 @@ def _get_capital_management_bot_class() -> type[_CapitalManagementBot]:
             logger.warning(
                 "[init-guard] Cooperative init guard missing for %s", cooperative_cls.__name__
             )
+        monkeypatch_class_references(unwrapped_cls, cooperative_cls)
         _capital_bot_class = cast(type[_CapitalManagementBot], cooperative_cls)
     return _capital_bot_class
 

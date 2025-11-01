@@ -33,9 +33,10 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from dataclasses import dataclass, field
-from typing import Iterable, List, Dict, Optional
+from typing import Dict, Iterable, List, Optional, cast
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
+from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
 
 import networkx as nx
 try:
@@ -239,6 +240,14 @@ class BotPlanningBot:
         if complexity < 9:
             return "M1"
         return "M2"
+
+
+_UnwrappedBotPlanningBot = BotPlanningBot
+BotPlanningBot = cast(
+    "type[BotPlanningBot]",
+    ensure_cooperative_init(cast(type, BotPlanningBot), logger=logger),
+)
+monkeypatch_class_references(_UnwrappedBotPlanningBot, BotPlanningBot)
 
 
 __all__ = [
