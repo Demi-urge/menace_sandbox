@@ -218,9 +218,6 @@ def get_unified_learning_engine_cls() -> "type[UnifiedLearningEngine]":
         ">>> [trace] Successfully lazy-imported UnifiedLearningEngine from menace_sandbox.unified_learning_engine"
     )
     return _UnifiedLearningEngine
-print(">>> [trace] Importing ActionPlanner from menace_sandbox.action_planner...")
-from ..action_planner import ActionPlanner
-print(">>> [trace] Successfully imported ActionPlanner from menace_sandbox.action_planner")
 print(">>> [trace] Importing ContextBuilder from vector_service.context_builder...")
 from vector_service.context_builder import ContextBuilder
 print(">>> [trace] Successfully imported ContextBuilder from vector_service.context_builder")
@@ -231,6 +228,7 @@ print(">>> [trace] Successfully imported create_data_bot from menace_sandbox.sha
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..action_planner import ActionPlanner
     from ..hierarchy_assessment_bot import HierarchyAssessmentBot
     from ..bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from ..bot_registry import BotRegistry
