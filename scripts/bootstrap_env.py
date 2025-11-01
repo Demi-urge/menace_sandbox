@@ -48,8 +48,6 @@ from typing import (
     Literal,
 )
 
-from menace_sandbox import stripe_billing_router
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -91,6 +89,9 @@ def _ensure_repo_root_on_path(repo_root: Path) -> None:
 
 
 _ensure_repo_root_on_path(_REPO_ROOT)
+_ensure_repo_root_on_path(_REPO_ROOT.parent)
+
+from menace_sandbox import stripe_billing_router  # noqa: F401
 
 
 LOGGER = logging.getLogger(__name__)
