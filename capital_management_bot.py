@@ -15,6 +15,9 @@ print(">>> [trace] Successfully imported _DisabledSelfCodingManager, self_coding
 print(">>> [trace] Importing SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager...")
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 print(">>> [trace] Successfully imported SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager")
+print(">>> [trace] Importing ensure_cooperative_init from menace_sandbox.shared.cooperative_init...")
+from .shared.cooperative_init import ensure_cooperative_init
+print(">>> [trace] Successfully imported ensure_cooperative_init from menace_sandbox.shared.cooperative_init")
 print(">>> [trace] Importing SelfCodingEngine from menace_sandbox.self_coding_engine...")
 from .self_coding_engine import SelfCodingEngine
 print(">>> [trace] Successfully imported SelfCodingEngine from menace_sandbox.self_coding_engine")
@@ -2220,11 +2223,13 @@ def _get_capital_management_bot_class() -> type[_CapitalManagementBot]:
     global _capital_bot_class
     if _capital_bot_class is None:
         decorator_manager = _resolve_decorator_manager()
-        _capital_bot_class = self_coding_managed(
+        decorated_cls = self_coding_managed(
             bot_registry=_get_registry(),
             data_bot=_get_data_bot(),
             manager=decorator_manager,
         )(_CapitalManagementBot)
+        cooperative_cls = ensure_cooperative_init(cast(type, decorated_cls))
+        _capital_bot_class = cast(type[_CapitalManagementBot], cooperative_cls)
     return _capital_bot_class
 
 
