@@ -5,7 +5,7 @@ optimization using the optional :class:`MetaWorkflowPlanner` component.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from importlib import import_module
 
@@ -74,13 +74,35 @@ except (ImportError, ValueError):  # pragma: no cover - fallback for manual_boot
 
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 
-try:  # pragma: no cover - allow flat package layout
-    from menace_sandbox.error_logger import TelemetryEvent
-except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
-    from error_logger import TelemetryEvent  # type: ignore
+if TYPE_CHECKING:  # pragma: no cover - used for static analysis only
+    try:
+        from menace_sandbox.error_logger import TelemetryEvent  # type: ignore
+    except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
+        from error_logger import TelemetryEvent  # type: ignore
+else:
+    TelemetryEvent = Any  # type: ignore[assignment]
 
 from .sandbox_score import get_latest_sandbox_score
 from context_builder_util import create_context_builder
+
+
+_TelemetryEventCls: Any | None = None
+
+
+def get_telemetry_event():
+    """Return the :class:`TelemetryEvent` class via a lazy import."""
+
+    global _TelemetryEventCls
+
+    if _TelemetryEventCls is None:
+        try:  # pragma: no cover - allow flat package layout
+            from menace_sandbox.error_logger import TelemetryEvent as _ResolvedTelemetryEvent
+        except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
+            from error_logger import TelemetryEvent as _ResolvedTelemetryEvent  # type: ignore
+
+        _TelemetryEventCls = _ResolvedTelemetryEvent
+
+    return _TelemetryEventCls
 
 
 _cycle_thread: Any | None = None
