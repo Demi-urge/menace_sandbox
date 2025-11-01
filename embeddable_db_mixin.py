@@ -246,16 +246,53 @@ except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dep
         def log(self, *args, **kwargs):
             return None
 
-try:
-    _data_bot = load_internal("data_bot")
-    MetricsDB = _data_bot.MetricsDB
-except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
-
-    class MetricsDB:  # type: ignore
-        def __init__(self, *_args, **_kwargs):
-            pass
-
 logger = logging.getLogger(__name__)
+
+
+class _MetricsDBStub:
+    """Fallback implementation when :mod:`data_bot` is unavailable."""
+
+    def __init__(self, *_args, **_kwargs) -> None:  # pragma: no cover - trivial
+        return None
+
+    def log_embedding_staleness(self, *_args, **_kwargs) -> None:  # pragma: no cover
+        return None
+
+
+_METRICS_DB_CLS: type[Any] | None = None
+# Allow tests to inject a custom MetricsDB implementation.
+MetricsDB: type[Any] | None = None
+
+
+def _resolve_metrics_db() -> type[Any]:
+    """Return :class:`data_bot.MetricsDB` without triggering circular imports."""
+
+    global _METRICS_DB_CLS
+    if _METRICS_DB_CLS is not None:
+        return _METRICS_DB_CLS
+    if MetricsDB is not None:
+        _METRICS_DB_CLS = MetricsDB
+        return _METRICS_DB_CLS
+
+    try:
+        module = load_internal("data_bot")
+    except ModuleNotFoundError:
+        logger.debug("data_bot module unavailable; using stub MetricsDB")
+        cls: type[Any] | None = None
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("failed to load data_bot module for MetricsDB")
+        cls = None
+    else:
+        cls = getattr(module, "MetricsDB", None)
+        if cls is None:
+            logger.debug("data_bot.MetricsDB missing; using stub implementation")
+
+    if cls is None:
+        cls = _MetricsDBStub
+
+    _METRICS_DB_CLS = cls
+    globals()["MetricsDB"] = cls
+    return cls
 
 
 _VEC_METRICS = VectorMetricsDB()
@@ -850,7 +887,7 @@ class EmbeddableDBMixin:
             except ValueError:  # pragma: no cover - labels not configured
                 _EMBED_STALE.set(age)
         try:
-            MetricsDB().log_embedding_staleness(origin, rid, age)
+            _resolve_metrics_db()().log_embedding_staleness(origin, rid, age)
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to persist embedding staleness")
 
