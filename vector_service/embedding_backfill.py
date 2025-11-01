@@ -88,9 +88,12 @@ _RUNTIME_ERRORS = _me.Gauge(
 )
 
 try:  # pragma: no cover - optional dependency
-    from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
-except Exception:  # pragma: no cover
-    EmbeddableDBMixin = object  # type: ignore
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
+except Exception:  # pragma: no cover - legacy flat import support
+    try:
+        from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
+    except Exception:  # pragma: no cover
+        EmbeddableDBMixin = object  # type: ignore
 
 # Registry describing databases capable of embedding backfills. The file
 # ``embedding_registry.json`` lives alongside this module and maps a short name

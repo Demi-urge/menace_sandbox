@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
 
-from embeddable_db_mixin import EmbeddableDBMixin
+try:
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - legacy flat import support
+    from embeddable_db_mixin import EmbeddableDBMixin
 from code_database import PatchHistoryDB
 from dynamic_path_router import resolve_path
 

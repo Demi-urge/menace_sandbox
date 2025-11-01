@@ -64,13 +64,18 @@ except Exception:  # pragma: no cover - fallback when imported as top-level
 from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - support both package and flat imports
-    from embeddable_db_mixin import log_embedding_metrics  # type: ignore
-except Exception:  # pragma: no cover - fallback for package context
+    from menace_sandbox.embeddable_db_mixin import (  # type: ignore
+        log_embedding_metrics,
+    )
+except Exception:  # pragma: no cover - fallback for legacy contexts
     try:
-        from .embeddable_db_mixin import log_embedding_metrics  # type: ignore
+        from embeddable_db_mixin import log_embedding_metrics  # type: ignore
     except Exception:  # pragma: no cover - ultimate fallback
-        def log_embedding_metrics(*_a, **_k):  # type: ignore
-            return None
+        try:
+            from .embeddable_db_mixin import log_embedding_metrics  # type: ignore
+        except Exception:  # pragma: no cover - final safeguard
+            def log_embedding_metrics(*_a, **_k):  # type: ignore
+                return None
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore

@@ -2,7 +2,7 @@ import logging
 import pytest
 
 from compliance.license_fingerprint import check as license_check
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 
 
 GPL_TEXT = """\

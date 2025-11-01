@@ -1,4 +1,4 @@
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 from security.redaction import redact_secrets
 
 

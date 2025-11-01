@@ -27,7 +27,10 @@ import asyncio
 import threading
 
 from governed_embeddings import governed_embed
-from embeddable_db_mixin import EmbeddableDBMixin
+try:
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - legacy flat import support
+    from embeddable_db_mixin import EmbeddableDBMixin
 from math import sqrt
 from vector_utils import persist_embedding
 from db_router import init_db_router, LOCAL_TABLES
