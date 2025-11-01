@@ -31,7 +31,7 @@ import hashlib
 import re
 import subprocess
 import threading
-from typing import Iterable
+from typing import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
@@ -46,6 +46,17 @@ except ModuleNotFoundError:  # pragma: no cover - support flat execution
     from shared.self_coding_import_guard import (  # type: ignore
         self_coding_import_guard,
         self_coding_import_depth,
+    )
+
+try:  # pragma: no cover - prefer package-relative import
+    from menace_sandbox.shared.cooperative_init import (
+        COOPERATIVE_INIT_KWARGS,
+        cooperative_init_call,
+    )
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from shared.cooperative_init import (  # type: ignore
+        COOPERATIVE_INIT_KWARGS,
+        cooperative_init_call,
     )
 
 _HELPER_NAME = "import_compat"
@@ -82,30 +93,37 @@ from shared.provenance_state import (
 logger = logging.getLogger(__name__)
 
 
-_COOPERATIVE_INIT_KWARGS: tuple[str, ...] = (
-    "bot_registry",
-    "data_bot",
-    "manager",
-    "evolution_orchestrator",
-)
+def _record_cooperative_init_trace(
+    instance: object,
+    cls: type,
+    dropped: tuple[str, ...],
+    original_kwargs: Mapping[str, Any],
+) -> None:
+    """Persist and log cooperative ``__init__`` keyword drops."""
 
+    if not dropped:
+        return
+    dropped_map = {key: original_kwargs.get(key) for key in dropped}
+    trace = getattr(instance, "_cooperative_init_trace", None)
+    if not isinstance(trace, list):
+        trace = []
+    trace.append(
+        {
+            "class": cls.__qualname__,
+            "dropped": tuple(dropped),
+            "values": dropped_map,
+        }
+    )
+    if len(trace) > 8:
+        del trace[:-8]
+    setattr(instance, "_cooperative_init_trace", trace)
+    logger.debug(
+        "[init-trace] %s received %s unconsumed kwargs: %s",
+        cls.__name__,
+        len(dropped),
+        ", ".join(sorted(dropped)),
+    )
 
-def _type_error_is_unexpected_kwarg(exc: TypeError, *, keywords: Iterable[str]) -> bool:
-    """Return ``True`` when *exc* indicates unsupported keyword arguments."""
-
-    message = exc.args[0] if exc.args else ""
-    if "unexpected keyword argument" not in message and "takes no keyword arguments" not in message:
-        return False
-    return any(keyword in message for keyword in keywords)
-
-
-def _type_error_from_object_init(exc: TypeError) -> bool:
-    """Return ``True`` when *exc* originated from ``object.__init__``."""
-
-    message = exc.args[0] if exc.args else ""
-    if "object.__init__" not in message:
-        return False
-    return "argument" in message or "arguments" in message or "parameters" in message
 
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
@@ -2028,49 +2046,16 @@ def self_coding_managed(
                 "manager", manager_default
             )
 
-            try:
-                orig_init(self, *args, **init_kwargs)
-            except TypeError as exc:
-                filtered_kwargs = {
-                    key: value
-                    for key, value in init_kwargs.items()
-                    if key not in _COOPERATIVE_INIT_KWARGS
-                }
-                dropped_keys = [
-                    key for key in init_kwargs.keys() if key not in filtered_kwargs
-                ]
-                if dropped_keys and _type_error_is_unexpected_kwarg(
-                    exc, keywords=dropped_keys
-                ):
-                    logger.debug(
-                        "%s: dropping cooperative init kwargs %s before invoking %s.__init__",
-                        cls.__name__,
-                        ", ".join(sorted(dropped_keys)),
-                        getattr(orig_init, "__qualname__", orig_init.__name__),
-                    )
-                    try:
-                        orig_init(self, *args, **filtered_kwargs)
-                    except TypeError as exc_inner:
-                        if _type_error_from_object_init(exc_inner):
-                            logger.debug(
-                                "%s: falling back to object.__init__ after cooperative init drop; args=%s kwargs=%s",
-                                cls.__name__,
-                                args,
-                                filtered_kwargs,
-                            )
-                            object.__init__(self)
-                        else:
-                            raise
-                elif _type_error_from_object_init(exc):
-                    logger.debug(
-                        "%s: falling back to object.__init__ during cooperative init; args=%s kwargs=%s",
-                        cls.__name__,
-                        args,
-                        init_kwargs,
-                    )
-                    object.__init__(self)
-                else:
-                    raise
+            cooperative_init_call(
+                orig_init,
+                self,
+                *args,
+                injected_keywords=COOPERATIVE_INIT_KWARGS,
+                logger=logger,
+                cls=cls,
+                kwarg_trace=_record_cooperative_init_trace,
+                **init_kwargs,
+            )
             try:
                 (
                     registry,
@@ -2307,6 +2292,7 @@ def self_coding_managed(
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed logging errors for %s", name_local)
 
+        wrapped_init.__cooperative_safe__ = True  # type: ignore[attr-defined]
         cls.__init__ = wrapped_init  # type: ignore[assignment]
 
         for method_name in ("run", "execute"):
