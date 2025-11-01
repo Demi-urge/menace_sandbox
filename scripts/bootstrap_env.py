@@ -48,6 +48,8 @@ from typing import (
     Literal,
 )
 
+from menace_sandbox import stripe_billing_router
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
