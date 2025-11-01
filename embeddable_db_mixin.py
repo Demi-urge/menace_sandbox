@@ -157,6 +157,26 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
+
+def safe_super_init(cls: type, instance: Any, *args: Any, **kwargs: Any) -> None:
+    """Cooperatively call ``super().__init__`` while guarding ``object``."""
+
+    try:
+        mro = type(instance).__mro__
+        next_cls = mro[mro.index(cls) + 1]
+    except (ValueError, IndexError):
+        next_cls = None
+
+    if next_cls is object:
+        if kwargs:
+            print(f"[trace] Dropping kwargs at end of MRO: {kwargs}")
+        if args:
+            print(f"[trace] Dropping args at end of MRO: {args}")
+        super(cls, instance).__init__()
+        return
+
+    super(cls, instance).__init__(*args, **kwargs)
+
 try:
     _metrics_exporter = load_internal("metrics_exporter")
     _EMBED_STORE_LAST = _metrics_exporter.embedding_store_latency_seconds
@@ -264,58 +284,21 @@ class EmbeddableDBMixin:
         event_bus: Any | None = None,
         **super_kwargs: Any,
     ) -> None:
-        """Initialise the mixin while tolerating cooperative super-calls.
+        """Initialise the mixin while tolerating cooperative super-calls."""
 
-        ``ModelAutomationPipeline`` bootstraps a large hierarchy of database
-        helpers where some subclasses were updated to forward ``event_bus`` to
-        ``super().__init__`` for consistency.  When those subclasses ultimately
-        inherit directly from :class:`object` via :class:`EmbeddableDBMixin`,
-        forwarding keyword arguments raises ``TypeError`` because ``object``
-        does not accept them.  Allowing positional/keyword passthrough here keeps
-        the mixin compatible with cooperative multiple inheritance patterns
-        without requiring every subclass to special-case the call chain.
-        """
+        print(
+            f"[trace] MRO chain: {[cls.__name__ for cls in type(self).__mro__]}"
+        )
 
         passthrough = dict(super_kwargs)
-        bus = passthrough.pop("event_bus", event_bus)
-        super_obj = super()
-        super_init = getattr(super_obj, "__init__", None)
-        next_class: type | None = None
-        try:
-            mro = type(self).__mro__
-            next_class = mro[mro.index(EmbeddableDBMixin) + 1]
-        except (ValueError, IndexError):
-            next_class = None
+        if event_bus is not None:
+            passthrough.setdefault("event_bus", event_bus)
 
-        if super_init is None:
-            if super_args or passthrough:
-                logger.debug(
-                    "EmbeddableDBMixin dropping init args; no super __init__: args=%s kwargs=%s",
-                    super_args,
-                    passthrough,
-                )
-        else:
-            target = getattr(super_init, "__func__", super_init)
-            if next_class is object or target is object.__init__:
-                if super_args or passthrough:
-                    logger.debug(
-                        "EmbeddableDBMixin dropping init args destined for %s: args=%s kwargs=%s",
-                        getattr(next_class, "__name__", "object"),
-                        super_args,
-                        passthrough,
-                    )
-                    if next_class is not None:
-                        logger.debug(
-                            "EmbeddableDBMixin MRO for %s: %s",
-                            type(self).__name__,
-                            [cls.__name__ for cls in type(self).__mro__],
-                        )
-                super_init()
-            else:
-                super_init(*super_args, **passthrough)
-
+        bus = passthrough.get("event_bus")
         if bus is not None:
             setattr(self, "event_bus", bus)
+
+        safe_super_init(EmbeddableDBMixin, self, *super_args, **passthrough)
 
         index_path = Path(index_path)
         metadata_path = Path(metadata_path)
@@ -944,3 +927,6 @@ class EmbeddableDBMixin:
                 record = self._split_and_summarise(record)
                 chunk_meta = getattr(self, "_last_chunk_meta", {})
             self.add_embedding(record_id, record, kind, chunk_meta=chunk_meta)
+
+
+__all__ = ["EmbeddableDBMixin", "safe_super_init"]
