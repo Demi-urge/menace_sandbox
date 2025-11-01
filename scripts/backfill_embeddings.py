@@ -12,7 +12,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 import importlib
 from typing import Dict, List, Tuple, Type
 
-from embeddable_db_mixin import EmbeddableDBMixin
+try:
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - legacy flat import support
+    from embeddable_db_mixin import EmbeddableDBMixin
 from embedding_stats_db import EmbeddingStatsDB
 from vector_service import VectorServiceError
 

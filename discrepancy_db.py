@@ -14,9 +14,16 @@ from typing import Any, Dict, Iterator, List, Literal
 logger = logging.getLogger(__name__)
 
 try:
-    from embeddable_db_mixin import EmbeddableDBMixin as _DirectEmbeddableDBMixin
+    from menace_sandbox.embeddable_db_mixin import (
+        EmbeddableDBMixin as _DirectEmbeddableDBMixin,
+    )
 except ModuleNotFoundError:  # pragma: no cover - optional dependency path
-    _DirectEmbeddableDBMixin = None
+    try:
+        from embeddable_db_mixin import (
+            EmbeddableDBMixin as _DirectEmbeddableDBMixin,
+        )
+    except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+        _DirectEmbeddableDBMixin = None
 
 try:  # pragma: no cover - prefer vector_service when fully available
     from vector_service import EmbeddableDBMixin as _VectorEmbeddableDBMixin

@@ -10,7 +10,7 @@ Override `vector` to convert records into embeddings and `iter_records` to strea
 existing rows for backfilling.
 
 ```python
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 from experiment_history_db import ExperimentHistoryDB
 
 class ExperimentDB(ExperimentHistoryDB, EmbeddableDBMixin):

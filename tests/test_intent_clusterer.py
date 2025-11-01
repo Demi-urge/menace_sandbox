@@ -20,7 +20,7 @@ st_stub = types.ModuleType("sentence_transformers")
 st_stub.SentenceTransformer = None
 sys.modules.setdefault("sentence_transformers", st_stub)
 
-import embeddable_db_mixin as edm  # noqa: E402
+import menace_sandbox.embeddable_db_mixin as edm  # noqa: E402
 import intent_clusterer as ic  # noqa: E402
 import intent_db  # noqa: E402
 import intent_vectorizer as iv  # noqa: E402

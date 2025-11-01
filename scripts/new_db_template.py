@@ -3,7 +3,7 @@ from __future__ import annotations
 """Scaffolding helper for embeddable database modules.
 
 This script copies a template module that mixes in
-:class:`embeddable_db_mixin.EmbeddableDBMixin`, installs basic
+:class:`menace_sandbox.embeddable_db_mixin.EmbeddableDBMixin`, installs basic
 full-text-search schema, and wires up simple safety hooks for license
 checking and secret redaction.  The generated module also exposes a
 ``build_context`` helper used by :class:`vector_service.ContextBuilder`.
@@ -34,7 +34,7 @@ from pathlib import Path
 import sqlite3
 import logging
 
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 from license_detector import detect as detect_license
 from security.secret_redactor import redact_dict
 from dynamic_path_router import resolve_path

@@ -31,7 +31,7 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
-import embeddable_db_mixin  # noqa: E402
+import menace_sandbox.embeddable_db_mixin as embeddable_db_mixin  # noqa: E402
 
 embeddable_db_mixin.MetricsDB = mods["metrics_db"]["MetricsDB"]
 

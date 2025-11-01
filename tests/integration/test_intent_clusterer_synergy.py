@@ -9,7 +9,7 @@ st_stub = types.ModuleType("sentence_transformers")
 st_stub.SentenceTransformer = None
 sys.modules.setdefault("sentence_transformers", st_stub)
 
-import embeddable_db_mixin as edm
+import menace_sandbox.embeddable_db_mixin as edm
 import intent_db
 import intent_clusterer as ic
 from db_router import init_db_router, LOCAL_TABLES

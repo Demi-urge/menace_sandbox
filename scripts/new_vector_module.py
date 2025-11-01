@@ -3,7 +3,7 @@ from __future__ import annotations
 """Scaffold helper for vector_service database modules.
 
 This utility creates a module under ``vector_service/`` (or a specified
-location) that subclasses :class:`embeddable_db_mixin.EmbeddableDBMixin` and
+location) that subclasses :class:`menace_sandbox.embeddable_db_mixin.EmbeddableDBMixin` and
 includes context extraction, indexing setup, license checks, and basic
 governance hooks.  It can also (optionally) register the module with
 ``db_router`` and create an initial Alembic migration.
@@ -36,7 +36,7 @@ from typing import Any, Iterator, List
 import sqlite3
 import logging
 
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 from license_detector import detect as detect_license
 from security.secret_redactor import redact_dict
 from dynamic_path_router import resolve_path

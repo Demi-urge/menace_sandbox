@@ -3,7 +3,7 @@ from __future__ import annotations
 """Scaffold helper for embeddable databases.
 
 This script creates a new SQLite-backed module that mixes in
-:class:`embeddable_db_mixin.EmbeddableDBMixin`, wires up a basic
+:class:`menace_sandbox.embeddable_db_mixin.EmbeddableDBMixin`, wires up a basic
 full-text-search schema based on ``sql_templates/create_fts.sql``,
 and installs simple license and safety hooks.
 """
@@ -33,7 +33,7 @@ from pathlib import Path
 import sqlite3
 import logging
 
-from embeddable_db_mixin import EmbeddableDBMixin
+from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
 from license_detector import detect as detect_license
 from unsafe_patterns import find_matches as find_unsafe
 from dynamic_path_router import resolve_path
