@@ -27,7 +27,7 @@ _PACKAGE_NAME = "menace_sandbox"
 
 try:  # pragma: no cover - prefer package import when installed
     from menace_sandbox import import_compat  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - support flat execution
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - support flat execution
     _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
     _spec = importlib.util.spec_from_file_location(
         f"{_PACKAGE_NAME}.{_HELPER_NAME}",
