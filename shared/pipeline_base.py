@@ -21,6 +21,15 @@ print(">>> [trace] Successfully imported annotations from __future__")
 print(">>> [trace] Importing logging...")
 import logging
 print(">>> [trace] Successfully imported logging")
+print(">>> [trace] Importing dependency health helpers...")
+from dependency_health import (
+    dependency_registry,
+    DependencyCategory,
+    DependencySeverity,
+)
+print(">>> [trace] Successfully imported dependency health helpers")
+
+_LOGGER = logging.getLogger(__name__)
 print(">>> [trace] Importing ThreadPoolExecutor, as_completed from concurrent.futures...")
 from concurrent.futures import ThreadPoolExecutor, as_completed
 print(">>> [trace] Successfully imported ThreadPoolExecutor, as_completed from concurrent.futures")
@@ -48,9 +57,30 @@ try:
     print(">>> [trace] Importing pandas as pd...")
     import pandas as pd  # type: ignore
     print(">>> [trace] Successfully imported pandas as pd")
-except Exception:  # pragma: no cover - optional dependency
-    print(">>> [trace] Failed to import pandas, defaulting to None")
+    dependency_registry.mark_available(
+        name="pandas",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        description="Data analysis helper for pipeline automation",
+        logger=_LOGGER,
+    )
+except Exception as exc:  # pragma: no cover - optional dependency
+    message = f">>> [trace] Failed to import pandas, defaulting to None ({exc!r})"
+    print(message)
     pd = None  # type: ignore
+    dependency_registry.mark_missing(
+        name="pandas",
+        category=DependencyCategory.PYTHON,
+        optional=True,
+        severity=DependencySeverity.INFO,
+        description="Data analysis helper for pipeline automation",
+        reason=str(exc),
+        remedy="pip install pandas",
+        logger=_LOGGER,
+    )
+    _LOGGER.warning(
+        "Pandas import failed; falling back to _TaskTableFallback", exc_info=True
+    )
 
 
 class _TaskTableFallback:
