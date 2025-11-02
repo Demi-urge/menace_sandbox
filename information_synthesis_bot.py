@@ -37,8 +37,19 @@ except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 try:
     from sqlalchemy import create_engine, MetaData, Table, select  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+    _SQLALCHEMY_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - optional dependency
     create_engine = MetaData = Table = select = None  # type: ignore
+    _SQLALCHEMY_IMPORT_ERROR = exc
+
+_sqlalchemy_available = _SQLALCHEMY_IMPORT_ERROR is None
+if _SQLALCHEMY_IMPORT_ERROR is None:
+    _sqlalchemy_unavailable_message = None
+else:
+    _sqlalchemy_unavailable_message = (
+        "SQLAlchemy helpers are unavailable: "
+        f"{type(_SQLALCHEMY_IMPORT_ERROR).__name__}: {_SQLALCHEMY_IMPORT_ERROR}"
+    )
 try:
     from celery import Celery
 except Exception:  # pragma: no cover - optional
@@ -100,9 +111,16 @@ class InformationSynthesisBot:
         event_bus: UnifiedEventBus | None = None,
         context_builder: ContextBuilder,
     ) -> None:
-        self.engine = create_engine(db_url)
-        self.meta = MetaData()
-        self.meta.reflect(bind=self.engine)
+        self._sqlalchemy_available = _sqlalchemy_available
+        self._sqlalchemy_error_message = _sqlalchemy_unavailable_message
+
+        if _sqlalchemy_available:
+            self.engine = create_engine(db_url)
+            self.meta = MetaData()
+            self.meta.reflect(bind=self.engine)
+        else:  # pragma: no cover - dependency missing
+            self.engine = None
+            self.meta = None
         try:
             context_builder.refresh_db_weights()
         except Exception:
@@ -120,6 +138,12 @@ class InformationSynthesisBot:
             self.app = InMemoryQueue()
 
     def load_data(self, table: str) -> pd.DataFrame:
+        if not self._sqlalchemy_available or not self.engine or not self.meta:
+            message = self._sqlalchemy_error_message or (
+                "SQLAlchemy helpers are unavailable; cannot load data."
+            )
+            raise RuntimeError(message)
+
         tbl = Table(table, self.meta, autoload_with=self.engine)
         with self.engine.connect() as conn:
             df = pd.read_sql(select(tbl), conn)
