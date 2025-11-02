@@ -1,0 +1,110 @@
+"""Utility script to unblock self-coding bootstrap loops.
+
+Running this script performs two actions:
+
+1. Purge stale state and lock files that can leave the autonomous sandbox in a
+   perpetual retry loop after a crashed or aborted bootstrap attempt.
+2. Invoke :func:`internalize_coding_bot` for the requested bot so the
+   :class:`~menace_sandbox.self_coding_manager.SelfCodingManager` is registered
+   immediately instead of waiting for the registry back-off cycle.
+
+It is intentionally lightweight so that it can be run from PowerShell or bash
+without requiring any additional dependencies beyond the project itself.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from pathlib import Path
+from typing import Iterable
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+STALE_STATE_FILES: tuple[Path, ...] = (
+    REPO_ROOT / "sandbox_data" / "self_coding_engine_state.json",
+    REPO_ROOT / "vector_service" / "failed_tags.json",
+)
+
+JOURNAL_FILES: tuple[Path, ...] = (
+    REPO_ROOT / "logs" / "audit" / "audit_log.db-journal",
+    REPO_ROOT / "logs" / "audit_log.db-shm",
+    REPO_ROOT / "audit" / "audit.db-journal",
+)
+
+
+def _iter_cleanup_targets() -> Iterable[Path]:
+    for path in STALE_STATE_FILES:
+        yield path
+        yield Path(f"{path}.lock")
+    yield from JOURNAL_FILES
+
+
+def _purge_path(path: Path) -> None:
+    try:
+        if path.exists():
+            path.unlink()
+            LOGGER.info("Removed stale file: %s", path)
+    except IsADirectoryError:
+        return
+    except OSError:
+        LOGGER.warning("Failed to remove stale file: %s", path, exc_info=True)
+
+
+def purge_stale_files() -> None:
+    """Delete well-known stale lock and journal files if they exist."""
+
+    for candidate in _iter_cleanup_targets():
+        _purge_path(candidate)
+
+
+def bootstrap_self_coding(bot_name: str) -> None:
+    """Trigger :func:`internalize_coding_bot` for *bot_name*."""
+
+    from menace_sandbox.self_coding_manager import internalize_coding_bot
+
+    LOGGER.info("Bootstrapping self-coding manager for bot %s", bot_name)
+    manager = internalize_coding_bot(bot_name=bot_name)
+    if manager is None:
+        raise RuntimeError(
+            "internalize_coding_bot returned None; self-coding manager registration failed"
+        )
+    LOGGER.info("Self-coding manager registered: \"%s\"", type(manager).__name__)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--bot-name",
+        default="InformationSynthesisBot",
+        help="Name of the bot to internalize (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--skip-cleanup",
+        action="store_true",
+        help="Skip removal of stale state and lock files",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
+    if not args.skip_cleanup:
+        purge_stale_files()
+    else:
+        LOGGER.info("Skipping stale file cleanup as requested")
+
+    bootstrap_self_coding(args.bot_name)
+
+
+if __name__ == "__main__":
+    main()
+
