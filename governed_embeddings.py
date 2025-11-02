@@ -145,11 +145,12 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - simplify in environments without the package
     SentenceTransformer = None  # type: ignore
     model = None
-else:  # pragma: no cover - prefer cached local copy if available
-    try:
-        model = SentenceTransformer(_MODEL_ID)
-    except Exception:
-        model = None
+else:
+    # ``SentenceTransformer`` can trigger network downloads when instantiated.
+    # Avoid constructing it at import time so tests or simple imports do not
+    # block waiting for external resources.  The instance will be created lazily
+    # by ``_load_embedder`` when embeddings are actually required.
+    model = None
 
 try:  # pragma: no cover - lightweight fallback dependencies
     import torch
