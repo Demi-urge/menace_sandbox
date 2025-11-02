@@ -13,7 +13,7 @@ from threading import Lock
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 from dynamic_path_router import resolve_dir
 import hashlib
-from audit_utils import safe_write_audit
+from audit_utils import configure_audit_sqlite_connection, safe_write_audit
 
 
 # Default log file within the repository.  Resolved lazily to avoid running
@@ -188,8 +188,7 @@ def log_db_access(
             pass
         try:
             def _persist(conn: sqlite3.Connection) -> None:
-                with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
-                    pragma.fetchall()
+                configure_audit_sqlite_connection(conn)
                 try:
                     with closing(conn.cursor()) as cur:
                         cur.execute(

@@ -13,6 +13,23 @@ from typing import Callable
 LOGGER = logging.getLogger(__name__)
 
 
+def configure_audit_sqlite_connection(conn: sqlite3.Connection) -> None:
+    """Configure *conn* for concurrent audit access.
+
+    Enabling WAL mode ensures readers are not blocked by writers, while the
+    busy timeout and synchronous level keep contention manageable for the
+    high-frequency audit workload.
+    """
+
+    try:
+        with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
+            pragma.fetchall()
+    except sqlite3.OperationalError:
+        LOGGER.debug("Failed to enable WAL mode for audit DB", exc_info=True)
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+
+
 def _audit_file_mode_enabled() -> bool:
     value = os.getenv("AUDIT_FILE_MODE")
     if value is None:
@@ -45,9 +62,7 @@ def safe_write_audit(
     for attempt in range(10):
         try:
             with sqlite3.connect(connect_path, **connect_kwargs) as conn:
-                with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
-                    pragma.fetchall()
-                conn.execute("PRAGMA busy_timeout = 5000;")
+                configure_audit_sqlite_connection(conn)
                 write_fn(conn)
             return
         except sqlite3.OperationalError as exc:
@@ -58,4 +73,4 @@ def safe_write_audit(
     log.warning("audit write dropped: DB locked too long")
 
 
-__all__ = ["safe_write_audit"]
+__all__ = ["configure_audit_sqlite_connection", "safe_write_audit"]
