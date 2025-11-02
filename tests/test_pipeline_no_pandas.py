@@ -1,7 +1,10 @@
+import builtins
 import importlib
 import logging
 import sys
 import types
+
+import dependency_health
 
 
 def _load_pipeline_base(monkeypatch):
@@ -107,3 +110,41 @@ def test_pipeline_handles_missing_pandas(monkeypatch):
     )
     assert len(dict_validated) == 1
     assert getattr(dict_validated[0], "description", None) == "beta"
+
+
+def test_pipeline_reports_pandas_import_errors(monkeypatch, caplog):
+    new_registry = dependency_health.DependencyHealthRegistry()
+    monkeypatch.setattr(
+        dependency_health, "dependency_registry", new_registry, raising=False
+    )
+    monkeypatch.delitem(sys.modules, "menace.shared.pipeline_base", raising=False)
+    monkeypatch.delitem(
+        sys.modules, "menace_sandbox.shared.pipeline_base", raising=False
+    )
+    monkeypatch.delitem(sys.modules, "pandas", raising=False)
+
+    error_message = "simulated pandas import failure"
+
+    original_import = builtins.__import__
+
+    def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pandas":
+            sys.modules[name] = types.ModuleType("pandas_poison")
+            raise RuntimeError(error_message)
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+
+    caplog.set_level(logging.WARNING)
+    pipeline_base = _load_pipeline_base(monkeypatch)
+
+    assert pipeline_base.pd is None
+
+    summary = dependency_health.dependency_registry.summary()
+    pandas_entries = [
+        entry for entry in summary.get("missing", []) if entry.get("name") == "pandas"
+    ]
+    assert pandas_entries
+    assert error_message in pandas_entries[0].get("reason", "")
+    assert error_message in caplog.text
+    monkeypatch.delitem(sys.modules, "pandas", raising=False)
