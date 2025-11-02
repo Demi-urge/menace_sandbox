@@ -404,6 +404,11 @@ Enable detailed auditing of every table access by following these steps:
 3. **Review or rotate logs as needed.** Unset the environment variable to
    disable auditing.
 
+To persist the same entries into the `shared_db_audit` table set the
+`DB_ROUTER_AUDIT_TO_DB` environment variable to `1` (or `true`) **before** the
+application imports `db_router`. The SQLite mirror is disabled by default so
+regular write traffic is not blocked when the audit database is locked.
+
 #### Deployment examples
 
 ```bash

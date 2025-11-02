@@ -18,6 +18,7 @@ def test_log_db_access_inserts_into_db(tmp_path):
         "beta",
         log_path=log_file,
         db_conn=conn,
+        log_to_db=True,
     )
 
     entries = [json.loads(line) for line in log_file.read_text().splitlines()]

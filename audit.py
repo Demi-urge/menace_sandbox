@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import logging
-from contextlib import closing, suppress
+from contextlib import closing
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +13,7 @@ from threading import Lock
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 from dynamic_path_router import resolve_dir
 import hashlib
-from audit_utils import configure_audit_sqlite_connection, safe_write_audit
+from audit_utils import configure_audit_sqlite_connection
 
 
 # Default log file within the repository.  Resolved lazily to avoid running
@@ -110,6 +110,7 @@ def log_db_access(
     *,
     log_path: Path | None = None,
     db_conn: sqlite3.Connection | None = None,
+    log_to_db: bool = False,
 ) -> None:
     """Record a database access event to a JSONL file and optional SQLite table.
 
@@ -128,7 +129,11 @@ def log_db_access(
         within the repository.
     db_conn:
         Optional sqlite3 connection used to persist the record into the
-        ``shared_db_audit`` table.
+        ``shared_db_audit`` table when ``log_to_db`` is ``True``.
+    log_to_db:
+        When ``True`` the entry is also written to the SQLite audit mirror
+        referenced by ``db_conn``.  Defaults to ``False`` to avoid blocking
+        active writers when the audit database is locked.
     """
 
     record = {
@@ -168,53 +173,41 @@ def log_db_access(
         # Logging failures are non-fatal
         pass
 
-    db_path: str | None = None
     if _audit_file_mode_enabled():
         return
 
-    if db_conn is not None:
-        if getattr(db_conn, "_closed", False):
-            return
-        try:
-            db_path = _connection_database_path(db_conn)
-        except sqlite3.Error as exc:
-            _module_logger.debug("failed to resolve audit database path: %s", exc)
-            db_path = None
+    if not log_to_db or db_conn is None:
+        return
 
-    if db_path and db_path not in (":memory:", ""):
-        try:
-            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
-        try:
-            def _persist(conn: sqlite3.Connection) -> None:
-                configure_audit_sqlite_connection(conn)
-                try:
-                    with closing(conn.cursor()) as cur:
-                        cur.execute(
-                            """
-                            CREATE TABLE IF NOT EXISTS shared_db_audit (
-                                action TEXT,
-                                "table" TEXT,
-                                rows INTEGER,
-                                menace_id TEXT,
-                                timestamp TEXT
-                            )
-                            """
-                        )
-                        cur.execute(
-                            'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
-                            ' VALUES (?, ?, ?, ?, ?)',
-                            (action, table_name, row_count, menace_id, record["timestamp"]),
-                        )
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
-                    raise
+    if getattr(db_conn, "_closed", False):
+        return
 
-            safe_write_audit(db_path, _persist, logger=_module_logger)
-        except (sqlite3.Error, SystemError) as exc:
-            _module_logger.debug("failed to persist shared_db_audit entry: %s", exc)
+    initial_tx = db_conn.in_transaction
+    try:
+        if not initial_tx:
+            configure_audit_sqlite_connection(db_conn)
+        base_cursor = sqlite3.Connection.cursor(db_conn, factory=sqlite3.Cursor)
+        with closing(base_cursor) as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shared_db_audit (
+                    action TEXT,
+                    "table" TEXT,
+                    rows INTEGER,
+                    menace_id TEXT,
+                    timestamp TEXT
+                )
+                """
+            )
+            cur.execute(
+                'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
+                ' VALUES (?, ?, ?, ?, ?)',
+                (action, table_name, row_count, menace_id, record["timestamp"]),
+            )
+        if not initial_tx:
+            db_conn.commit()
+    except sqlite3.Error as exc:
+        _module_logger.debug("failed to persist shared_db_audit entry: %s", exc)
 
 
 __all__ = ["log_db_access"]
