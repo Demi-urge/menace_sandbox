@@ -59,6 +59,14 @@ except ModuleNotFoundError:  # pragma: no cover - support flat execution
         cooperative_init_call,
     )
 
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox.self_coding_dependency_probe import ensure_self_coding_ready
+except Exception:  # pragma: no cover - fallback when executed from flat layout
+    try:
+        from self_coding_dependency_probe import ensure_self_coding_ready  # type: ignore
+    except Exception:  # pragma: no cover - dependency probe unavailable
+        ensure_self_coding_ready = None  # type: ignore[assignment]
+
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
@@ -1816,7 +1824,43 @@ def self_coding_managed(
                         logger.exception("threshold reload failed for %s", name)
 
                 manager_local = manager_instance
-                if manager_local is None and not _self_coding_runtime_available():
+                runtime_available = _self_coding_runtime_available()
+                if manager_local is None and runtime_available:
+                    ready = True
+                    missing: Iterable[str] = ()
+                    if callable(ensure_self_coding_ready):
+                        try:
+                            ready, missing = ensure_self_coding_ready()
+                        except Exception:  # pragma: no cover - best effort diagnostics
+                            ready = False
+                            missing = ()
+                            logger.debug(
+                                "self-coding dependency probe failed during manager bootstrap for %s",
+                                name,
+                                exc_info=True,
+                            )
+                    if ready:
+                        try:
+                            manager_local = _bootstrap_manager(
+                                name, registry_obj, data_bot_obj
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "SelfCodingManager bootstrap failed for %s: %s",
+                                name,
+                                exc,
+                            )
+                            manager_local = _DisabledSelfCodingManager(
+                                bot_registry=registry_obj,
+                                data_bot=data_bot_obj,
+                            )
+                    else:
+                        logger.debug(
+                            "deferring SelfCodingManager bootstrap for %s; dependencies missing: %s",
+                            name,
+                            ", ".join(sorted(missing)) if missing else "unknown",
+                        )
+                if manager_local is None and not runtime_available:
                     manager_local = _DisabledSelfCodingManager(
                         bot_registry=registry_obj,
                         data_bot=data_bot_obj,
@@ -1825,7 +1869,6 @@ def self_coding_managed(
                         "self-coding runtime unavailable; %s will run without autonomous patching",
                         name,
                     )
-
                 register_kwargs = dict(
                     name=name,
                     roi_threshold=roi_t,
