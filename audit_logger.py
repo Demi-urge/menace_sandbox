@@ -35,6 +35,19 @@ SQLITE_PATH = AUDIT_SQLITE_DIR / "audit_log.db"
 logger = logging.getLogger(__name__)
 
 
+_JSONL_LOCKS: Dict[Path, threading.Lock] = {}
+_JSONL_LOCKS_LOCK = threading.Lock()
+
+
+def _lock_for_jsonl(path: Path) -> threading.Lock:
+    with _JSONL_LOCKS_LOCK:
+        lock = _JSONL_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _JSONL_LOCKS[path] = lock
+        return lock
+
+
 def _env_flag(name: str) -> bool:
     """Return ``True`` when environment variable *name* is truthy."""
 
@@ -116,8 +129,9 @@ def _append_record_to_jsonl(record: Dict[str, Any], jsonl_path: Path | str = JSO
     _ensure_log_dir()
     path = _normalise_jsonl_path(jsonl_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    with _lock_for_jsonl(path):
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
 
 
 def _build_record(event_type: str, data: Dict[str, Any], event_id: str | None = None) -> Dict[str, Any]:
