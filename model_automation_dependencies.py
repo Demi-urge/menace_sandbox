@@ -6,13 +6,12 @@ from functools import lru_cache
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Callable, Type, cast
 
-from vector_service.context_builder import ContextBuilder
-
 from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
 
 from .db_router import GLOBAL_ROUTER, init_db_router
 
 if TYPE_CHECKING:  # pragma: no cover - typing only imports
+    from vector_service.context_builder import ContextBuilder
     from .hierarchy_assessment_bot import HierarchyAssessmentBot
     from .bot_planning_bot import BotPlanningBot, PlanningTask, BotPlan
     from .bot_registry import BotRegistry
@@ -25,6 +24,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only imports
     from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
     from .task_validation_bot import TaskValidationBot
 else:  # pragma: no cover - runtime fallback avoids circular imports
+    ContextBuilder = Any  # type: ignore
     HierarchyAssessmentBot = Any  # type: ignore
     BotPlanningBot = Any  # type: ignore
     PlanningTask = Any  # type: ignore
