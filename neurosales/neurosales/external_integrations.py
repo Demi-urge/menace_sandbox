@@ -7,7 +7,6 @@ import os
 import logging
 import requests
 from billing.openai_wrapper import chat_completion_create
-from self_coding_engine import SelfCodingEngine
 
 try:  # optional dependency
     import pinecone  # type: ignore
@@ -22,10 +21,16 @@ except Exception:  # pragma: no cover - optional dep
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
+    from self_coding_engine import SelfCodingEngine
     from vector_service.context_builder import ContextBuilder
 
 
-def _make_prompt_engine() -> SelfCodingEngine:
+def _make_prompt_engine() -> "SelfCodingEngine":
+    try:
+        from self_coding_engine import SelfCodingEngine
+    except ImportError:  # pragma: no cover - namespace fallback
+        from menace_sandbox.self_coding_engine import SelfCodingEngine
+
     engine = SelfCodingEngine.__new__(SelfCodingEngine)
     engine.logger = logger
     engine._last_retry_trace = None
