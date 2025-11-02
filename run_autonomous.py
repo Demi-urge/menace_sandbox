@@ -1286,6 +1286,19 @@ def main(argv: List[str] | None = None) -> None:
     _console("arguments parsed; configuring logging")
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    class _SuppressAuditPersistenceFilter(logging.Filter):
+        _TARGET = (
+            "AUDIT_FILE_MODE enabled; "
+            "skipping shared_db_audit SQLite persistence"
+        )
+
+        def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+            if record.name.startswith("audit") and record.getMessage() == self._TARGET:
+                return False
+            return True
+
+    logging.getLogger().addFilter(_SuppressAuditPersistenceFilter())
     _console(
         "logging configured at %s level"
         % ("DEBUG" if args.verbose else args.log_level)
