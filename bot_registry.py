@@ -1682,6 +1682,22 @@ class BotRegistry:
             if existing is not None and getattr(existing, "is_alive", lambda: False)():
                 return
             attempts = self._internalization_retry_attempts.setdefault(name, 0)
+            if attempts >= self._max_internalization_retries:
+                node = self.graph.nodes.get(name)
+                if node is not None:
+                    node.pop("pending_internalization", None)
+                    node["self_coding_disabled"] = {
+                        "reason": "self-coding bootstrap aborted after maximum retries",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "retry_attempts": attempts,
+                    }
+                self._internalization_retry_attempts.pop(name, None)
+                logger.warning(
+                    "Skipping further internalization retries for %s after %s attempt(s)",
+                    name,
+                    attempts,
+                )
+                return
             retry_delay = delay if delay is not None else min(5.0, 0.5 * (attempts + 1))
             timer = threading.Timer(retry_delay, self._retry_internalization, args=(name,))
             timer.daemon = True

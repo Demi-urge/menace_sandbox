@@ -192,6 +192,12 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
         logger.debug("AUDIT_FILE_MODE enabled; skipping SQLite schema initialisation")
         return
 
+    try:
+        with closing(conn.execute("PRAGMA journal_mode=WAL")) as pragma:
+            pragma.fetchall()
+    except sqlite3.Error:  # pragma: no cover - defensive best effort
+        logger.debug("failed to enable WAL mode for audit log", exc_info=True)
+
     with closing(conn.cursor()) as cur:
         cur.execute(
             """CREATE TABLE IF NOT EXISTS events (
