@@ -652,6 +652,7 @@ class ModelAutomationPipeline:
             wrap_bot_methods(bot, self.db_router, self.bot_registry)
         if self._validator is not None and not self._validator_wrapped:
             self._register_validator(self._validator)
+        self._attach_information_synthesis_manager()
 
     # ------------------------------------------------------------------
 
@@ -677,6 +678,71 @@ class ModelAutomationPipeline:
         return self._roi_result_cls
 
     # ------------------------------------------------------------------
+
+    def _attach_information_synthesis_manager(self) -> None:
+        """Register the self-coding manager for ``InformationSynthesisBot`` if available."""
+
+        registry = self.bot_registry
+        if registry is None:
+            return
+
+        try:
+            node = registry.graph.nodes.get("InformationSynthesisBot", {})
+        except Exception:  # pragma: no cover - defensive lookup
+            self.logger.debug(
+                "unable to inspect registry nodes while attaching InformationSynthesisBot manager",
+                exc_info=True,
+            )
+            return
+
+        existing = node.get("selfcoding_manager") or node.get("manager")
+        if existing is not None:
+            # Manager already registered – nothing to do.
+            return
+
+        manager = getattr(self.synthesis_bot, "manager", None)
+        if manager is None:
+            self.logger.debug(
+                "InformationSynthesisBot manager unavailable during pipeline bootstrap",
+            )
+            return
+
+        try:  # pragma: no cover - optional dependency guard
+            from ..self_coding_manager import SelfCodingManager as _RealSelfCodingManager
+        except Exception:  # pragma: no cover - runtime environments without self-coding
+            _RealSelfCodingManager = None  # type: ignore[assignment]
+
+        if _RealSelfCodingManager is None or not isinstance(manager, _RealSelfCodingManager):
+            self.logger.debug(
+                "InformationSynthesisBot manager is not an active SelfCodingManager instance",
+            )
+            return
+
+        data_bot = getattr(self.synthesis_bot, "data_bot", None) or getattr(self, "data_bot", None)
+        if data_bot is None:
+            self.logger.debug(
+                "InformationSynthesisBot data bot helper missing; skipping manager attachment",
+            )
+            return
+
+        try:
+            registry.register_bot(
+                "InformationSynthesisBot",
+                manager=manager,
+                data_bot=data_bot,
+                is_coding_bot=True,
+            )
+        except Exception:  # pragma: no cover - registry failures are logged for diagnosis
+            self.logger.exception(
+                "failed to attach SelfCodingManager for InformationSynthesisBot",
+            )
+        else:
+            # Ensure downstream helpers can discover the relationship immediately.
+            setattr(self.synthesis_bot, "bot_registry", registry)
+            setattr(self.synthesis_bot, "data_bot", data_bot)
+            self.logger.info(
+                "SelfCodingManager attached to InformationSynthesisBot",
+            )
 
     @property
     def validator(self) -> "TaskValidationBot":
