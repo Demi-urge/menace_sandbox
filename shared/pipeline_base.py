@@ -52,6 +52,24 @@ except Exception:  # pragma: no cover - optional dependency
     print(">>> [trace] Failed to import pandas, defaulting to None")
     pd = None  # type: ignore
 
+
+class _TaskTableFallback:
+    """Light-weight stand-in for :class:`pandas.DataFrame` used in tests."""
+
+    __slots__ = ("_rows",)
+
+    def __init__(self, rows: Iterable[Dict[str, Any]]) -> None:
+        self._rows = list(rows)
+
+    def iterrows(self):
+        """Yield ``(index, row)`` tuples compatible with ``DataFrame.iterrows``."""
+
+        for idx, row in enumerate(self._rows):
+            yield idx, row
+
+    def __len__(self) -> int:  # pragma: no cover - convenience only
+        return len(self._rows)
+
 try:
     print(">>> [trace] Importing Schema, fields, ValidationError from marshmallow...")
     from marshmallow import Schema, fields  # type: ignore
@@ -860,10 +878,57 @@ class ModelAutomationPipeline:
                 self.logger.exception("task creation failed: %s", exc)
         return tasks
 
+    def _build_task_table(self, tasks: Iterable["SynthesisTask"]):
+        """Return a tabular structure accepted by ``synthesis_bot.create_tasks``."""
+
+        task_list = list(tasks)
+        rows = [
+            {
+                "id": idx,
+                "name": getattr(task, "description", ""),
+                "content": getattr(task, "description", ""),
+            }
+            for idx, task in enumerate(task_list)
+        ]
+        if pd is not None:
+            try:
+                return pd.DataFrame(rows)
+            except Exception as exc:  # pragma: no cover - pandas runtime failure
+                self.logger.exception("DataFrame creation failed: %s", exc)
+        return _TaskTableFallback(rows)
+
     def _validate_tasks(self, tasks: Iterable["SynthesisTask"]):
         validator = self._ensure_validator()
         validated = []
         for task in tasks:
+            if not hasattr(task, "description"):
+                if isinstance(task, dict):
+                    desc = (
+                        task.get("description")
+                        or task.get("content")
+                        or task.get("name")
+                        or ""
+                    )
+                    try:
+                        urgency = int(task.get("urgency", 1))
+                    except Exception:
+                        urgency = 1
+                    try:
+                        complexity = int(task.get("complexity", 1))
+                    except Exception:
+                        complexity = 1
+                    category = str(task.get("category", "general"))
+                    task = self._create_synthesis_task(
+                        description=str(desc),
+                        urgency=urgency,
+                        complexity=complexity,
+                        category=category,
+                    )
+                else:
+                    self.logger.debug(
+                        "Skipping task without description attribute: %r", task
+                    )
+                    continue
             try:
                 if validator.validate(task):
                     validated.append(task)
@@ -1074,12 +1139,8 @@ class ModelAutomationPipeline:
 
         validated = list(tasks) if high else self._validate_tasks(tasks)
         if not validated:
-            df = pd.DataFrame({
-                "id": range(len(tasks)),
-                "name": [t.description for t in tasks],
-                "content": [t.description for t in tasks],
-            })
-            refined = self.synthesis_bot.create_tasks(df)
+            table = self._build_task_table(tasks)
+            refined = self.synthesis_bot.create_tasks(table)
             validated = self._validate_tasks(refined)
             if not validated:
                 items = self._gather_research(model, energy + 1)
@@ -1089,12 +1150,8 @@ class ModelAutomationPipeline:
         if not plans:
             validated = list(validated) if high else self._validate_tasks(validated)
             if not validated:
-                df = pd.DataFrame({
-                    "id": range(len(tasks)),
-                    "name": [t.description for t in tasks],
-                    "content": [t.description for t in tasks],
-                })
-                refined = self.synthesis_bot.create_tasks(df)
+                table = self._build_task_table(tasks)
+                refined = self.synthesis_bot.create_tasks(table)
                 validated = list(refined) if high else self._validate_tasks(refined)
                 if not validated:
                     items = self._gather_research(model, energy + 1)
