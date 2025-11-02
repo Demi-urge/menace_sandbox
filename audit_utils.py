@@ -22,12 +22,12 @@ def configure_audit_sqlite_connection(conn: sqlite3.Connection) -> None:
     """
 
     try:
-        with closing(conn.execute("PRAGMA journal_mode=WAL;")) as pragma:
+        with closing(sqlite3.Connection.execute(conn, "PRAGMA journal_mode=WAL;")) as pragma:
             pragma.fetchall()
     except sqlite3.OperationalError:
         LOGGER.debug("Failed to enable WAL mode for audit DB", exc_info=True)
-    conn.execute("PRAGMA busy_timeout=5000;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    sqlite3.Connection.execute(conn, "PRAGMA busy_timeout=5000;")
+    sqlite3.Connection.execute(conn, "PRAGMA synchronous=NORMAL;")
 
 
 def _audit_file_mode_enabled() -> bool:
