@@ -170,9 +170,6 @@ def log_db_access(
 
     db_path: str | None = None
     if _audit_file_mode_enabled():
-        _module_logger.debug(
-            "AUDIT_FILE_MODE enabled; skipping shared_db_audit SQLite persistence"
-        )
         return
 
     if db_conn is not None:
