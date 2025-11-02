@@ -99,40 +99,98 @@ class ResourceMetrics:
     time: float
 
 
+class _InMemoryTemplateDB:
+    """Simple CSV-backed fallback when pandas is unavailable."""
+
+    __slots__ = ("path", "records")
+
+    def __init__(self, path: Path) -> None:
+        import csv
+
+        self.path = path
+        self.records: list[dict[str, float | str]] = []
+        if self.path.exists():
+            try:
+                with self.path.open(newline="") as fh:
+                    reader = csv.DictReader(fh)
+                    for row in reader:
+                        if not row:
+                            continue
+                        self.records.append(
+                            {
+                                "task": row.get("task", ""),
+                                "cpu": float(row.get("cpu", 0.0) or 0.0),
+                                "memory": float(row.get("memory", 0.0) or 0.0),
+                                "disk": float(row.get("disk", 0.0) or 0.0),
+                                "time": float(row.get("time", 0.0) or 0.0),
+                            }
+                        )
+            except Exception:
+                logger.debug("failed to load fallback TemplateDB", exc_info=True)
+
+    def query(self, task: str) -> list[dict[str, float | str]]:
+        return [row for row in self.records if row.get("task") == task]
+
+    def add(self, row: dict[str, float | str]) -> None:
+        self.records.append(row)
+
+    def save(self) -> None:
+        import csv
+
+        fieldnames = ["task", "cpu", "memory", "disk", "time"]
+        with self.path.open("w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in self.records:
+                writer.writerow(row)
+
+
 class TemplateDB:
     """Load and store historical resource usage."""
 
-    def __init__(self, path: Path = Path("template_data.csv")) -> None:
-        if pd is None:
-            raise ImportError(
-                "pandas is required for TemplateDB; please install the pandas package"
-            )
-        self.path = path
-        if self.path.exists():
-            try:
-                self.df = pd.read_csv(self.path)
-            except Exception:
-                self.df = pd.DataFrame(
-                    columns=["task", "cpu", "memory", "disk", "time"]
-                )
-        else:
-            self.df = pd.DataFrame(columns=["task", "cpu", "memory", "disk", "time"])
+    _columns = ["task", "cpu", "memory", "disk", "time"]
 
-    def query(self, task: str) -> pd.DataFrame:
-        return self.df[self.df["task"] == task]
+    def __init__(self, path: Path = Path("template_data.csv")) -> None:
+        self.path = path
+        self._use_pandas = pd is not None
+        self._fallback: _InMemoryTemplateDB | None = None
+        if self._use_pandas:
+            if self.path.exists():
+                try:
+                    self.df = pd.read_csv(self.path)
+                except Exception:
+                    self.df = pd.DataFrame(columns=self._columns)
+            else:
+                self.df = pd.DataFrame(columns=self._columns)
+        else:
+            self._fallback = _InMemoryTemplateDB(self.path)
+
+    def query(self, task: str):
+        if self._use_pandas:
+            return self.df[self.df["task"] == task]
+        assert self._fallback is not None
+        return self._fallback.query(task)
 
     def add(self, task: str, metrics: ResourceMetrics) -> None:
         row = {
             "task": task,
-            "cpu": metrics.cpu,
-            "memory": metrics.memory,
-            "disk": metrics.disk,
-            "time": metrics.time,
+            "cpu": float(metrics.cpu),
+            "memory": float(metrics.memory),
+            "disk": float(metrics.disk),
+            "time": float(metrics.time),
         }
-        self.df = pd.concat([self.df, pd.DataFrame([row])], ignore_index=True)
+        if self._use_pandas:
+            self.df = pd.concat([self.df, pd.DataFrame([row])], ignore_index=True)
+        else:
+            assert self._fallback is not None
+            self._fallback.add(row)
 
     def save(self) -> None:
-        self.df.to_csv(self.path, index=False)
+        if self._use_pandas:
+            self.df.to_csv(self.path, index=False)
+        else:
+            assert self._fallback is not None
+            self._fallback.save()
 
 
 class ResourcePredictionBot:
@@ -166,35 +224,95 @@ class ResourcePredictionBot:
             },
         )
 
-    def predict(self, task: str) -> ResourceMetrics:
-        df = self.db.query(task)
-        if df.empty:
-            metrics = ResourceMetrics(cpu=1.0, memory=1.0, disk=10.0, time=1.0)
-        else:
-            metrics = ResourceMetrics(
-                cpu=float(df["cpu"].mean()),
-                memory=float(df["memory"].mean()),
-                disk=float(df["disk"].mean()),
-                time=float(df["time"].mean()),
+    @staticmethod
+    def _aggregate_metrics(records: Any) -> ResourceMetrics:
+        def _default() -> ResourceMetrics:
+            return ResourceMetrics(cpu=1.0, memory=1.0, disk=10.0, time=1.0)
+
+        if pd is not None and isinstance(records, pd.DataFrame):
+            if records.empty:
+                return _default()
+            return ResourceMetrics(
+                cpu=float(records["cpu"].mean()),
+                memory=float(records["memory"].mean()),
+                disk=float(records["disk"].mean()),
+                time=float(records["time"].mean()),
             )
 
+        try:
+            iterable = list(records or [])
+        except TypeError:
+            return _default()
+
+        if not iterable:
+            return _default()
+
+        def _mean(key: str) -> tuple[float, bool]:
+            values = [float(row.get(key, 0.0)) for row in iterable if isinstance(row, dict)]
+            if not values:
+                return 0.0, False
+            return sum(values) / len(values), True
+
+        cpu_mean, has_cpu = _mean("cpu")
+        mem_mean, has_mem = _mean("memory")
+        disk_mean, has_disk = _mean("disk")
+        time_mean, has_time = _mean("time")
+
+        return ResourceMetrics(
+            cpu=cpu_mean if has_cpu else 1.0,
+            memory=mem_mean if has_mem else 1.0,
+            disk=disk_mean if has_disk else 10.0,
+            time=time_mean if has_time else 1.0,
+        )
+
+    def predict(self, task: str) -> ResourceMetrics:
+        records = self.db.query(task)
+        metrics = self._aggregate_metrics(records)
+
         if self.data_bot:
-            data = self.data_bot.db.fetch(20)
-            data = data[data["bot"] == task]
-            if not data.empty:
-                metrics = ResourceMetrics(
-                    cpu=float(data["cpu"].mean()),
-                    memory=float(data["memory"].mean()),
-                    disk=float(data["disk_io"].mean()),
-                    time=float(data["response_time"].mean()),
-                )
-            else:
-                comp = self.data_bot.complexity_score(data)
-                metrics = ResourceMetrics(
-                    cpu=metrics.cpu * (1.0 + comp / 200.0),
-                    memory=metrics.memory * (1.0 + comp / 200.0),
-                    disk=metrics.disk,
-                    time=metrics.time,
+            try:
+                data = self.data_bot.db.fetch(20)
+                if hasattr(data, "__getitem__") and hasattr(data, "__class__"):
+                    try:
+                        data = data[data["bot"] == task]
+                    except Exception:
+                        logger.debug(
+                            "data bot filtering failed; falling back to base metrics",
+                            exc_info=True,
+                        )
+                        data = None
+                if data is not None and hasattr(data, "empty") and not data.empty:
+                    try:
+                        metrics = ResourceMetrics(
+                            cpu=float(data["cpu"].mean()),
+                            memory=float(data["memory"].mean()),
+                            disk=float(data["disk_io"].mean()),
+                            time=float(data["response_time"].mean()),
+                        )
+                    except Exception:
+                        logger.debug(
+                            "data bot aggregation failed; retaining fallback metrics",
+                            exc_info=True,
+                        )
+                elif data is not None:
+                    try:
+                        comp = self.data_bot.complexity_score(data)
+                    except Exception:
+                        logger.debug(
+                            "complexity score unavailable; using existing metrics",
+                            exc_info=True,
+                        )
+                    else:
+                        metrics = ResourceMetrics(
+                            cpu=metrics.cpu * (1.0 + comp / 200.0),
+                            memory=metrics.memory * (1.0 + comp / 200.0),
+                            disk=metrics.disk,
+                            time=metrics.time,
+                        )
+            except Exception:
+                logger.debug(
+                    "data bot interaction failed; returning aggregated metrics",
+                    exc_info=True,
                 )
 
         if self.capital_bot:
