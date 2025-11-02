@@ -59,18 +59,18 @@ def safe_write_audit(
     if timeout is not None:
         connect_kwargs["timeout"] = timeout
 
-    for attempt in range(10):
+    for attempt in range(3):
         try:
             with sqlite3.connect(connect_path, **connect_kwargs) as conn:
                 configure_audit_sqlite_connection(conn)
                 write_fn(conn)
             return
         except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc).lower():
-                time.sleep(0.05 * (attempt + 1))
+            if "database is locked" in str(exc):
+                time.sleep(0.2 * (attempt + 1))
                 continue
             raise
-    log.warning("audit write dropped: DB locked too long")
+    log.warning("audit write dropped after 3 retries: DB locked")
 
 
 __all__ = ["configure_audit_sqlite_connection", "safe_write_audit"]
