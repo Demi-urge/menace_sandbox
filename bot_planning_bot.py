@@ -58,15 +58,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 
-pipeline: "ModelAutomationPipeline | None"
-try:
-    pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-except Exception as exc:  # pragma: no cover - degraded bootstrap path
-    logger.warning(
-        "ModelAutomationPipeline unavailable for BotPlanningBot: %s",
-        exc,
-    )
-    pipeline = None
+pipeline: "ModelAutomationPipeline | None" = None
 
 evolution_orchestrator = get_orchestrator("BotPlanningBot", data_bot, engine)
 _th = get_thresholds("BotPlanningBot")
@@ -78,33 +70,51 @@ persist_sc_thresholds(
 )
 
 manager: SelfCodingManager | None = None
-if pipeline is None:
-    logger.warning(
-        "BotPlanningBot self-coding manager unavailable; running without ModelAutomationPipeline",
-    )
-else:
-    try:
-        manager = internalize_coding_bot(
-            "BotPlanningBot",
-            engine,
-            pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            evolution_orchestrator=evolution_orchestrator,
-            threshold_service=ThresholdService(),
-            roi_threshold=_th.roi_drop,
-            error_threshold=_th.error_increase,
-            test_failure_threshold=_th.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - degraded bootstrap path
-        logger.warning(
-            "BotPlanningBot self-coding manager initialisation failed: %s",
-            exc,
-        )
-        manager = None
 
-if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
-    raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
+
+def _initialise_self_coding() -> None:
+    """Initialise the ModelAutomationPipeline and self-coding manager lazily."""
+
+    global pipeline, manager
+    if pipeline is None:
+        try:
+            pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+        except Exception as exc:  # pragma: no cover - degraded bootstrap path
+            logger.warning(
+                "ModelAutomationPipeline unavailable for BotPlanningBot: %s",
+                exc,
+            )
+            pipeline = None
+
+    if pipeline is None:
+        logger.warning(
+            "BotPlanningBot self-coding manager unavailable; running without ModelAutomationPipeline",
+        )
+        return
+
+    if manager is None:
+        try:
+            manager = internalize_coding_bot(
+                "BotPlanningBot",
+                engine,
+                pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                evolution_orchestrator=evolution_orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=_th.roi_drop,
+                error_threshold=_th.error_increase,
+                test_failure_threshold=_th.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - degraded bootstrap path
+            logger.warning(
+                "BotPlanningBot self-coding manager initialisation failed: %s",
+                exc,
+            )
+            manager = None
+
+    if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
+        raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
 
 
 class TemplateManager:
@@ -149,7 +159,6 @@ class BotPlan:
     level: str
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class BotPlanningBot:
     """Analyse tasks and plan bots with hierarchy mapping."""
 
@@ -241,6 +250,14 @@ class BotPlanningBot:
             return "M1"
         return "M2"
 
+
+_initialise_self_coding()
+
+_decorator_kwargs = {"bot_registry": registry, "data_bot": data_bot}
+if manager is not None:
+    _decorator_kwargs["manager"] = manager
+
+BotPlanningBot = self_coding_managed(**_decorator_kwargs)(BotPlanningBot)
 
 _UnwrappedBotPlanningBot = BotPlanningBot
 BotPlanningBot = cast(
