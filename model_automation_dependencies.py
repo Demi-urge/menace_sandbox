@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import import_module
-from typing import TYPE_CHECKING, Any, Callable, Type, cast
+import logging
+from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Type, cast
 
 from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
 
@@ -153,9 +155,59 @@ def _planning_components() -> tuple[
 ]:
     """Load planning helpers lazily to avoid circular imports."""
 
-    from .bot_planning_bot import BotPlanningBot as _BotPlanningBot
-    from .bot_planning_bot import BotPlan as _BotPlan
-    from .bot_planning_bot import PlanningTask as _PlanningTask
+    try:
+        from .bot_planning_bot import BotPlanningBot as _BotPlanningBot
+        from .bot_planning_bot import BotPlan as _BotPlan
+        from .bot_planning_bot import PlanningTask as _PlanningTask
+    except Exception as exc:  # pragma: no cover - circular import fallback
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "BotPlanningBot unavailable during model automation bootstrap; "
+            "using inert planning stubs: %s",
+            exc,
+        )
+
+        @dataclass
+        class _StubPlanningTask:  # type: ignore[local-name-defined]
+            description: str = ""
+            complexity: int = 0
+            frequency: int = 0
+            expected_time: float = 0
+            actions: List[str] = field(default_factory=list)
+            env: List[str] = field(default_factory=list)
+            constraints: dict[str, int] = field(default_factory=dict)
+            resources: dict[str, int] = field(default_factory=dict)
+
+        @dataclass
+        class _StubBotPlan:  # type: ignore[local-name-defined]
+            name: str = ""
+            template: str = ""
+            scalability: float = 0.0
+            level: str = ""
+
+        class _StubPlanner:  # type: ignore[local-name-defined]
+            """No-op planner used when real planning dependencies are unavailable."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.logger = logging.getLogger(f"{__name__}.StubPlanner")
+
+            def evaluate_tasks(self, tasks: Iterable[_StubPlanningTask]) -> List[float]:
+                return [0.0 for _ in tasks]
+
+            def optimise_resources(
+                self, tasks: Iterable[_StubPlanningTask], *, cpu_limit: float = 0.0
+            ) -> List[float]:
+                return [0.0 for _ in tasks]
+
+            def plan_bots(
+                self,
+                tasks: Iterable[_StubPlanningTask],
+                *,
+                trust_weight: float = 1.0,
+            ) -> List[_StubBotPlan]:
+                return []
+
+        return _StubPlanner, _StubPlanningTask, _StubBotPlan
 
     original_cls = cast(type, _BotPlanningBot)
     cooperative_cls = ensure_cooperative_init(cast(type, _BotPlanningBot))

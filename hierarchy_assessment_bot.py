@@ -8,13 +8,74 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 import json
 import logging
+import os
+import sys
 from dataclasses import dataclass
-from typing import List, Dict
-
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+from functools import lru_cache
+from typing import Callable, Dict, List
 
 logger = logging.getLogger(__name__)
+
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _noop_self_coding_managed(**_kwargs: object) -> Callable[[type], type]:
+    def decorator(cls: type) -> type:
+        return cls
+
+    return decorator
+
+
+def _self_coding_disabled() -> bool:
+    if _truthy_env("SANDBOX_DISABLE_SELF_CODING"):
+        return True
+    if _truthy_env("SANDBOX_DISABLE_HIERARCHY_SELF_CODING"):
+        return True
+    if _truthy_env("SANDBOX_ENABLE_HIERARCHY_SELF_CODING"):
+        return False
+    if sys.platform.startswith("win") and not _truthy_env(
+        "SANDBOX_ENABLE_WINDOWS_SELF_CODING"
+    ):
+        return True
+    return True
+
+
+if _self_coding_disabled():
+    _self_coding_decorator = _noop_self_coding_managed
+    logger.info(
+        "HierarchyAssessmentBot self-coding disabled; using passive decorator"
+    )
+else:
+    _self_coding_decorator = self_coding_managed
+
+
+@lru_cache(maxsize=1)
+def _registry_singleton() -> BotRegistry:
+    return BotRegistry()
+
+
+def _get_registry() -> BotRegistry:
+    return _registry_singleton()
+
+
+_get_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _data_bot_singleton() -> DataBot:
+    return DataBot(start_server=False)
+
+
+def _get_data_bot() -> DataBot:
+    return _data_bot_singleton()
+
+
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
 
 try:
     import requests  # type: ignore
@@ -45,7 +106,7 @@ class BotTaskRecord:
     completed: bool = False
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@(_self_coding_decorator(bot_registry=_get_registry, data_bot=_get_data_bot))
 class HierarchyAssessmentBot:
     """Coordinate bots, monitor redundancy and system health."""
 

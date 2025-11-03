@@ -12,11 +12,82 @@ from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 from dataclasses import asdict
-from typing import List, Iterable
+from functools import lru_cache
+from typing import Callable, Iterable, List
 import os
+import sys
 import logging
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+
+
+def _truthy_env(name: str) -> bool:
+    """Return ``True`` when environment variable *name* is truthy."""
+
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _noop_self_coding_managed(**_kwargs: object) -> Callable[[type], type]:
+    """Fallback decorator used when self-coding must be disabled."""
+
+    def decorator(cls: type) -> type:
+        return cls
+
+    return decorator
+
+
+def _self_coding_disabled() -> bool:
+    """Return ``True`` when InformationSynthesisBot should skip self-coding."""
+
+    if _truthy_env("SANDBOX_DISABLE_SELF_CODING"):
+        return True
+    if _truthy_env("SANDBOX_DISABLE_INFORMATION_SYNTHESIS_SELF_CODING"):
+        return True
+    if _truthy_env("SANDBOX_ENABLE_INFORMATION_SYNTHESIS_SELF_CODING"):
+        return False
+    # Windows historically struggles with the heavy dependency footprint.
+    if sys.platform.startswith("win") and not _truthy_env(
+        "SANDBOX_ENABLE_WINDOWS_SELF_CODING"
+    ):
+        return True
+    # Default to a passive decorator to avoid recursive bootstrap loops when
+    # the self-coding runtime is unavailable during sandbox start-up.  Explicit
+    # opt-in is required to enable the heavy dependency chain.
+    return True
+
+
+if _self_coding_disabled():
+    _self_coding_decorator = _noop_self_coding_managed
+    logging.getLogger(__name__).info(
+        "InformationSynthesisBot self-coding disabled; using passive decorator"
+    )
+else:
+    _self_coding_decorator = self_coding_managed
+
+
+@lru_cache(maxsize=1)
+def _registry_singleton() -> BotRegistry:
+    return BotRegistry()
+
+
+def _get_registry() -> BotRegistry:
+    return _registry_singleton()
+
+
+_get_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=1)
+def _data_bot_singleton() -> DataBot:
+    return DataBot(start_server=False)
+
+
+def _get_data_bot() -> DataBot:
+    return _data_bot_singleton()
+
+
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
 
 try:
     import requests  # type: ignore
@@ -125,7 +196,7 @@ def send_to_task_manager(task: SynthesisTask) -> None:
         logging.getLogger(__name__).warning("Failed to send task to manager")
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@_self_coding_decorator(bot_registry=_get_registry, data_bot=_get_data_bot)
 class InformationSynthesisBot:
     """Retrieve, analyse and synthesise data into tasks."""
 
