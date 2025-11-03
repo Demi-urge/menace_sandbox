@@ -567,7 +567,17 @@ class ModelAutomationPipeline:
         self.performance_bot = performance_bot or PerformanceAssessmentBot()
         if comms_bot is None:
             comms_bot_cls = get_communication_maintenance_bot_cls()
-            comms_bot = comms_bot_cls()
+            try:
+                comms_bot = comms_bot_cls(context_builder=self.context_builder)
+            except TypeError as exc:
+                if "context_builder" not in str(exc):
+                    raise
+                _LOGGER.debug(
+                    "CommunicationMaintenanceBot rejected context_builder argument; "
+                    "falling back to default constructor",
+                    exc_info=True,
+                )
+                comms_bot = comms_bot_cls()
         self.comms_bot = comms_bot
         self.monitor_bot = monitor_bot or OperationalMonitoringBot()
         self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
