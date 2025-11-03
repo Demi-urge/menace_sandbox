@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Collection
 
 from dependency_health import (
     DependencyMode,
@@ -28,6 +28,36 @@ except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _remove_items(target: list[str], forbidden: Collection[str]) -> list[str]:
+    """Remove ``forbidden`` entries from ``target`` and return those removed."""
+
+    removed = [item for item in target if item in forbidden]
+    if removed:
+        target[:] = [item for item in target if item not in forbidden]
+    return removed
+
+
+def _platform_dependency_overrides(
+    required_python: list[str], required_system: list[str]
+) -> dict[str, list[str]]:
+    """Apply platform specific dependency suppressions.
+
+    Currently Windows environments cannot install ``pyroute2`` (it relies on
+    Linux-only netlink interfaces) and the ``qemu-system-x86_64`` executable is
+    frequently unavailable.  Treat these as optional to avoid hard failures when
+    running the sandbox on Windows hosts.
+    """
+
+    suppressed: dict[str, list[str]] = {"python": [], "system": []}
+    if os.name == "nt":
+        suppressed["python"].extend(_remove_items(required_python, {"pyroute2"}))
+        suppressed["system"].extend(
+            _remove_items(required_system, {"qemu-system-x86_64"})
+        )
+
+    return {key: values for key, values in suppressed.items() if values}
 
 try:  # pragma: no cover - optional import only available on pydantic>=2
     from pydantic.errors import PydanticImportError as _PydanticImportError
@@ -3465,6 +3495,20 @@ class SandboxSettings(BaseSettings):
             "optional_python": [],
             "system": [],
         }
+        platform_suppressed = _platform_dependency_overrides(
+            self.required_python_packages,
+            self.required_system_tools,
+        )
+        if platform_suppressed:
+            for category, values in platform_suppressed.items():
+                self._suppressed_dependencies.setdefault(category, []).extend(values)
+            parts = [
+                f"{cat}={', '.join(vals)}" for cat, vals in platform_suppressed.items()
+            ]
+            logger.info(
+                "Applied platform dependency overrides; suppressed %s",
+                "; ".join(parts),
+            )
         self._apply_dependency_mode()
         self.roi = ROISettings(
             threshold=self.roi_threshold,
@@ -3556,9 +3600,11 @@ class SandboxSettings(BaseSettings):
         mode = resolve_dependency_mode(self.dependency_mode)
         self.dependency_mode = mode.value
         suppressed: dict[str, list[str]] = {
-            "python": [],
-            "optional_python": [],
-            "system": [],
+            "python": list(self._suppressed_dependencies.get("python", [])),
+            "optional_python": list(
+                self._suppressed_dependencies.get("optional_python", [])
+            ),
+            "system": list(self._suppressed_dependencies.get("system", [])),
         }
         req_python = list(self.required_python_packages)
         opt_python = list(self.optional_python_packages)
@@ -3571,7 +3617,7 @@ class SandboxSettings(BaseSettings):
         if mode is DependencyMode.RELAXED:
             available_opt, missing_opt = partition_python_packages(opt_python)
             self.optional_python_packages = available_opt
-            suppressed["optional_python"] = missing_opt
+            suppressed["optional_python"].extend(missing_opt)
             self._suppressed_dependencies = suppressed
             if missing_opt:
                 logger.debug(
@@ -3583,9 +3629,9 @@ class SandboxSettings(BaseSettings):
 
         available_py, missing_py = partition_python_packages(req_python)
         available_sys, missing_sys = partition_system_tools(req_system)
-        suppressed["python"] = missing_py
-        suppressed["system"] = missing_sys
-        suppressed["optional_python"] = opt_python
+        suppressed["python"].extend(missing_py)
+        suppressed["system"].extend(missing_sys)
+        suppressed["optional_python"].extend(opt_python)
         self.required_python_packages = available_py
         self.required_system_tools = available_sys
         self.optional_python_packages = []
