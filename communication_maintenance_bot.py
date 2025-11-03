@@ -10,7 +10,30 @@ from .coding_bot_interface import self_coding_managed
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-from loguru import logger as loguru_logger
+# ``loguru`` is optional. Some environments (including the execution sandbox
+# we use for tests and Windows developer machines) do not have it installed by
+# default. Import it lazily and fall back to a no-op shim that surfaces a clear
+# warning the first time it's used. This keeps logging functional without
+# forcing an extra dependency.
+try:  # pragma: no cover - optional dependency
+    from loguru import logger as loguru_logger
+except Exception:  # pragma: no cover - fallback when loguru is missing
+    loguru_logger = None  # type: ignore[assignment]
+
+    class _LoguruShim:
+        """Minimal shim used when :mod:`loguru` is unavailable."""
+
+        _warned = False
+
+        def add(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if not self._warned:
+                logging.getLogger(__name__).warning(
+                    "loguru not installed; communication file logging disabled"
+                )
+                self._warned = True
+            return None
+
+    loguru_logger = _LoguruShim()  # type: ignore[assignment]
 import os
 import atexit
 import tempfile

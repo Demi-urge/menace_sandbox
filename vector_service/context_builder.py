@@ -703,9 +703,11 @@ class ContextBuilder:
             tok = getattr(getattr(self.retriever, "embedder", None), "tokenizer", None)
         self._tokenizer = tok
         if self.precise_token_count and self._tokenizer is None and _FALLBACK_ENCODER is None:
-            raise RuntimeError(
-                "precise token counting requires the 'tiktoken' package"
+            logger.warning(
+                "precise token counting requested but tiktoken is unavailable; "
+                "falling back to approximate counts"
             )
+            self.precise_token_count = False
         self._fallback_tokenizer = (
             _FALLBACK_ENCODER if self.precise_token_count else None
         )

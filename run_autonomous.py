@@ -293,10 +293,17 @@ if "menace" not in sys.modules:
 REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
 
 
-spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
+# Load the local package so absolute imports like ``menace_sandbox.shared`` work
+# even when this script is invoked directly (``python run_autonomous.py``). We
+# register the module under both the modern ``menace_sandbox`` name and the
+# legacy ``menace`` alias used by older tooling.
+spec = importlib.util.spec_from_file_location(
+    "menace_sandbox", resolve_path("__init__.py")
+)
 menace_pkg = importlib.util.module_from_spec(spec)
-sys.modules["menace"] = menace_pkg
+sys.modules["menace_sandbox"] = menace_pkg
 spec.loader.exec_module(menace_pkg)
+sys.modules.setdefault("menace", menace_pkg)
 
 import menace.environment_generator as environment_generator
 import sandbox_runner
