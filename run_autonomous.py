@@ -1778,6 +1778,8 @@ def main(argv: List[str] | None = None) -> None:
     _console("starting local knowledge refresh thread")
     _start_local_knowledge_refresh(cleanup_funcs)
 
+    shutdown_requested = threading.Event()
+
     def _cleanup() -> None:
         _console("running registered cleanup handlers")
         for func in cleanup_funcs:
@@ -1787,12 +1789,28 @@ def main(argv: List[str] | None = None) -> None:
                 logger.exception("cleanup failed")
 
     atexit.register(_cleanup)
-    cleanup_signals = [getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)]
+
+    def _handle_shutdown_signal(sig: int | None, _frame: object) -> None:
+        """Request cooperative shutdown when external signals are received."""
+
+        shutdown_requested.set()
+        if sig is not None:
+            logger.info("received signal %s; requesting shutdown", sig)
+            _console(f"shutdown signal {sig} received; interrupting main loop")
+        try:
+            _thread.interrupt_main()
+        except RuntimeError:  # pragma: no cover - defensive when no main thread
+            logger.debug("interrupt_main unavailable; relying on signal propagation")
+
+    cleanup_signals = [
+        getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGBREAK", None) if os.name == "nt" else None,
+    ]
     for sig in cleanup_signals:
         if sig is None:
             continue
         try:
-            signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
+            signal.signal(sig, _handle_shutdown_signal)
         except (AttributeError, ValueError):  # pragma: no cover - platform specific
             logger.debug("signal %s unavailable; skipping handler", sig)
 
@@ -2106,209 +2124,223 @@ def main(argv: List[str] | None = None) -> None:
         _console("no recovery requested; starting fresh tracker state")
 
     run_idx = 0
-    while args.runs is None or run_idx < args.runs:
-        run_idx += 1
-        set_correlation_id(f"run-{run_idx}")
-        logger.info(
-            "Starting autonomous run %d/%s",
-            run_idx,
-            args.runs if args.runs is not None else "?",
-        )
-        _console(
-            "starting autonomous run %d of %s"
-            % (run_idx, args.runs if args.runs is not None else "∞")
-        )
-        presets, preset_source = prepare_presets(run_idx, args, settings, preset_log)
-        logger.info(
-            "using presets from %s",
-            preset_source,
-            extra=log_record(run=run_idx, preset_source=preset_source),
-        )
-        _console(f"presets ready for run {run_idx} from {preset_source}")
-        logger.debug(
-            "loaded presets from %s: %s",
-            preset_source,
-            presets,
-            extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
-        )
-
-        tracker, foresight_tracker = execute_iteration(
-            args,
-            settings,
-            presets,
-            synergy_history,
-            synergy_ma_history,
-        )
-        _console(f"iteration execution returned tracker={tracker is not None}")
-        _console(f"run {run_idx} iteration complete")
-        if tracker is None:
-            logger.info("completed autonomous run %d", run_idx)
-            set_correlation_id(None)
-            _console(f"run {run_idx} completed with no tracker state")
-            continue
-        last_tracker = tracker
-
-        if args.save_synergy_history and history_conn is not None:
-            try:
-                rows = history_conn.execute(
-                    "SELECT entry FROM synergy_history ORDER BY id"
-                ).fetchall()
-                _console("reloaded persisted synergy history from database")
-                synergy_history = [
-                    {str(k): float(v) for k, v in json.loads(text).items()}
-                    for (text,) in rows
-                    if isinstance(json.loads(text), dict)
-                ]
-            except Exception as exc:  # pragma: no cover - unexpected errors
-                logger.warning(
-                    "failed to load synergy history %s: %s",
-                    data_dir / "synergy_history.db",
-                    exc,
-                )
-                synergy_history = []
-                _console("failed to reload synergy history; continuing with empty list")
-
-        _console("updating metrics with latest tracker data")
-        converged, ema_val, roi_threshold = update_metrics(
-            tracker,
-            args,
-            run_idx,
-            module_history,
-            entropy_history,
-            flagged,
-            synergy_history,
-            synergy_ma_history,
-            roi_ma_history,
-            history_conn,
-            roi_threshold,
-            roi_confidence,
-            entropy_threshold,
-            entropy_consecutive,
-            synergy_threshold_window,
-            synergy_threshold_weight,
-            synergy_confidence,
-            threshold_log,
-            forecast_log,
-        )
-        _console(
-            "metrics updated for run %d (ema=%.3f threshold=%.3f converged=%s)"
-            % (run_idx, ema_val, roi_threshold, converged)
-        )
-
-        if foresight_tracker is not None:
-            try:
-                slope, second_derivative, avg_stability = (
-                    foresight_tracker.get_trend_curve("_global")
-                )
-                logger.info(
-                    "foresight trend: slope=%.3f curve=%.3f avg_stability=%.3f",
-                    slope,
-                    second_derivative,
-                    avg_stability,
-                    extra=log_record(
-                        run=run_idx,
-                        foresight_slope=slope,
-                        foresight_curve=second_derivative,
-                        foresight_avg_stability=avg_stability,
-                    ),
-                )
-            except Exception:
-                logger.exception("failed to compute foresight trend")
-
-        logger.info(
-            "run %d summary: roi_threshold=%.3f ema=%.3f converged=%s flagged_modules=%d",
-            run_idx,
-            roi_threshold,
-            ema_val,
-            converged,
-            len(flagged),
-            extra=log_record(
-                run=run_idx,
-                roi_threshold=roi_threshold,
-                ema_value=ema_val,
-                converged=converged,
-                flagged_count=len(flagged),
-            ),
-        )
-
-        logger.info("completed autonomous run %d", run_idx)
-        set_correlation_id(None)
-        _console(f"run {run_idx} fully complete")
-
-        all_mods = set(module_history) | set(entropy_history)
-        if all_mods and all_mods <= flagged and converged:
+    interrupted = False
+    try:
+        while (args.runs is None or run_idx < args.runs) and not shutdown_requested.is_set():
+            run_idx += 1
+            set_correlation_id(f"run-{run_idx}")
             logger.info(
-                "convergence reached",
-                extra=log_record(
-                    run=run_idx,
-                    ema_value=ema_val,
-                    flagged_modules=sorted(flagged),
-                ),
+                "Starting autonomous run %d/%s",
+                run_idx,
+                args.runs if args.runs is not None else "?",
             )
             _console(
-                "all modules converged; stopping after run %d" % run_idx
+                "starting autonomous run %d of %s"
+                % (run_idx, args.runs if args.runs is not None else "∞")
             )
-            break
+            presets, preset_source = prepare_presets(run_idx, args, settings, preset_log)
+            logger.info(
+                "using presets from %s",
+                preset_source,
+                extra=log_record(run=run_idx, preset_source=preset_source),
+            )
+            _console(f"presets ready for run {run_idx} from {preset_source}")
+            logger.debug(
+                "loaded presets from %s: %s",
+                preset_source,
+                presets,
+                extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
+            )
 
-    _cleanup()
-    try:
-        atexit.unregister(_cleanup)
-    except Exception:
-        pass
-    cleanup_funcs.clear()
-    _console("cleanup complete; finalising run_autonomous")
+            tracker, foresight_tracker = execute_iteration(
+                args,
+                settings,
+                presets,
+                synergy_history,
+                synergy_ma_history,
+            )
+            _console(f"iteration execution returned tracker={tracker is not None}")
+            _console(f"run {run_idx} iteration complete")
+            if tracker is None:
+                logger.info("completed autonomous run %d", run_idx)
+                set_correlation_id(None)
+                _console(f"run {run_idx} completed with no tracker state")
+                continue
+            last_tracker = tracker
 
-    if LOCAL_KNOWLEDGE_MODULE is not None:
+            if args.save_synergy_history and history_conn is not None:
+                try:
+                    rows = history_conn.execute(
+                        "SELECT entry FROM synergy_history ORDER BY id"
+                    ).fetchall()
+                    _console("reloaded persisted synergy history from database")
+                    synergy_history = [
+                        {str(k): float(v) for k, v in json.loads(text).items()}
+                        for (text,) in rows
+                        if isinstance(json.loads(text), dict)
+                    ]
+                except Exception as exc:  # pragma: no cover - unexpected errors
+                    logger.warning(
+                        "failed to load synergy history %s: %s",
+                        data_dir / "synergy_history.db",
+                        exc,
+                    )
+                    synergy_history = []
+                    _console("failed to reload synergy history; continuing with empty list")
+
+            _console("updating metrics with latest tracker data")
+            converged, ema_val, roi_threshold = update_metrics(
+                tracker,
+                args,
+                run_idx,
+                module_history,
+                entropy_history,
+                flagged,
+                synergy_history,
+                synergy_ma_history,
+                roi_ma_history,
+                history_conn,
+                roi_threshold,
+                roi_confidence,
+                entropy_threshold,
+                entropy_consecutive,
+                synergy_threshold_window,
+                synergy_threshold_weight,
+                synergy_confidence,
+                threshold_log,
+                forecast_log,
+            )
+            _console(
+                "metrics updated for run %d (ema=%.3f threshold=%.3f converged=%s)"
+                % (run_idx, ema_val, roi_threshold, converged)
+            )
+
+            if foresight_tracker is not None:
+                try:
+                    slope, second_derivative, avg_stability = (
+                        foresight_tracker.get_trend_curve("_global")
+                    )
+                    logger.info(
+                        "foresight trend: slope=%.3f curve=%.3f avg_stability=%.3f",
+                        slope,
+                        second_derivative,
+                        avg_stability,
+                        extra=log_record(
+                            run=run_idx,
+                            foresight_slope=slope,
+                            foresight_curve=second_derivative,
+                            foresight_avg_stability=avg_stability,
+                        ),
+                    )
+                except Exception:
+                    logger.exception("failed to compute foresight trend")
+
+            logger.info(
+                "run %d summary: roi_threshold=%.3f ema=%.3f converged=%s flagged_modules=%d",
+                run_idx,
+                roi_threshold,
+                ema_val,
+                converged,
+                len(flagged),
+                extra=log_record(
+                    run=run_idx,
+                    roi_threshold=roi_threshold,
+                    ema_value=ema_val,
+                    converged=converged,
+                    flagged_count=len(flagged),
+                ),
+            )
+
+            logger.info("completed autonomous run %d", run_idx)
+            set_correlation_id(None)
+            _console(f"run {run_idx} fully complete")
+
+            all_mods = set(module_history) | set(entropy_history)
+            if all_mods and all_mods <= flagged and converged:
+                logger.info(
+                    "convergence reached",
+                    extra=log_record(
+                        run=run_idx,
+                        ema_value=ema_val,
+                        flagged_modules=sorted(flagged),
+                    ),
+                )
+                _console(
+                    "all modules converged; stopping after run %d" % run_idx
+                )
+                break
+    except KeyboardInterrupt:
+        interrupted = True
+        shutdown_requested.set()
+        logger.info("keyboard interrupt received; aborting remaining runs")
+        _console("keyboard interrupt received; beginning shutdown sequence")
+    finally:
+        shutdown_requested.set()
         try:
-            LOCAL_KNOWLEDGE_MODULE.refresh()
-            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+            atexit.unregister(_cleanup)
         except Exception:
-            logger.exception("failed to refresh local knowledge module")
+            pass
+        _cleanup()
+        cleanup_funcs.clear()
+        if interrupted:
+            _console("cleanup complete after keyboard interrupt; finalising run_autonomous")
         else:
-            _console("local knowledge module refreshed")
+            _console("cleanup complete; finalising run_autonomous")
 
-    if exporter_monitor is not None:
-        try:
-            logger.info(
-                "synergy exporter stopped after %d restarts",
-                exporter_monitor.restart_count,
-            )
-            exporter_log.record(
-                {
-                    "timestamp": int(time.time()),
-                    "event": "exporter_stopped",
-                    "restart_count": exporter_monitor.restart_count,
-                }
-            )
-        except Exception:
-            logger.exception("failed to stop synergy exporter")
+        if LOCAL_KNOWLEDGE_MODULE is not None:
+            try:
+                LOCAL_KNOWLEDGE_MODULE.refresh()
+                LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+            except Exception:
+                logger.exception("failed to refresh local knowledge module")
+            else:
+                _console("local knowledge module refreshed")
 
-    if trainer_monitor is not None:
-        try:
-            logger.info(
-                "synergy auto trainer stopped after %d restarts",
-                trainer_monitor.restart_count,
-            )
-            exporter_log.record(
-                {
-                    "timestamp": int(time.time()),
-                    "event": "auto_trainer_stopped",
-                    "restart_count": trainer_monitor.restart_count,
-                }
-            )
-        except Exception:
-            logger.exception("failed to stop synergy auto trainer")
+        if exporter_monitor is not None:
+            try:
+                logger.info(
+                    "synergy exporter stopped after %d restarts",
+                    exporter_monitor.restart_count,
+                )
+                exporter_log.record(
+                    {
+                        "timestamp": int(time.time()),
+                        "event": "exporter_stopped",
+                        "restart_count": exporter_monitor.restart_count,
+                    }
+                )
+            except Exception:
+                logger.exception("failed to stop synergy exporter")
 
-    if history_conn is not None:
-        history_conn.close()
+        if trainer_monitor is not None:
+            try:
+                logger.info(
+                    "synergy auto trainer stopped after %d restarts",
+                    trainer_monitor.restart_count,
+                )
+                exporter_log.record(
+                    {
+                        "timestamp": int(time.time()),
+                        "event": "auto_trainer_stopped",
+                        "restart_count": trainer_monitor.restart_count,
+                    }
+                )
+            except Exception:
+                logger.exception("failed to stop synergy auto trainer")
 
-    if GPT_MEMORY_MANAGER is not None:
-        try:
-            GPT_MEMORY_MANAGER.close()
-        except Exception:
-            logger.exception("failed to close GPT memory")
+        if history_conn is not None:
+            history_conn.close()
 
-    logger.info("run_autonomous exiting")
+        if GPT_MEMORY_MANAGER is not None:
+            try:
+                GPT_MEMORY_MANAGER.close()
+            except Exception:
+                logger.exception("failed to close GPT memory")
+
+        if interrupted:
+            logger.info("run_autonomous exiting after interrupt")
+        else:
+            logger.info("run_autonomous exiting")
 
 
 def bootstrap(
