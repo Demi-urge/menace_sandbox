@@ -163,12 +163,17 @@ def resolve_path(name: str | Path, root: Optional[Path | str] = None) -> Path:
     norm_name = _normalize(name_str)
     path = Path(name_str)
     if path.is_absolute():
-        if path.exists():
-            resolved = path.resolve()
-            with _CACHE_LOCK:
-                _PATH_CACHE[path.as_posix()] = resolved
-            return resolved
-        raise FileNotFoundError(f"{name!r} does not exist")
+        # ``Path.resolve()`` defaults to ``strict=False`` so it will happily
+        # normalise non-existent absolute paths.  Allowing this keeps callers
+        # such as ``run_autonomous`` portable on Windows where sandbox
+        # directories are frequently supplied as new absolute paths (for
+        # example ``C:\\Users\\alice\\AppData\\Local\\Temp``).  The
+        # previous behaviour raised ``FileNotFoundError`` which prevented
+        # bootstrap from creating those directories on the fly.
+        resolved = path.resolve()
+        with _CACHE_LOCK:
+            _PATH_CACHE[path.as_posix()] = resolved
+        return resolved
 
     roots = [get_project_root(repo_hint=root, start=root)] if root else get_project_roots()
 
