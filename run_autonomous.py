@@ -214,8 +214,51 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
     return False
 
 
+_ORIGINAL_LOGGER_ERROR = logging.Logger.error
+_ORIGINAL_LOGGER_WARNING = logging.Logger.warning
+
+
+def _dependency_aware_logger_error(
+    self: logging.Logger, message: object, *args, **kwargs
+) -> None:  # pragma: no cover - logging glue
+    """Treat dependency failures as warnings when we intend to relax them."""
+
+    try:
+        text = str(message)
+    except Exception:
+        text = ""
+
+    lowered = text.lower()
+    if (
+        not _STRICT_DEPENDENCIES
+        and (
+            "missing system packages" in lowered
+            or "missing python packages" in lowered
+        )
+    ):
+        _ORIGINAL_LOGGER_WARNING(self, message, *args, **kwargs)
+        return
+
+    _ORIGINAL_LOGGER_ERROR(self, message, *args, **kwargs)
+
+
 _INITIAL_ARGV = sys.argv[1:]
+_STRICT_DEPENDENCIES = "--strict-dependencies" in _INITIAL_ARGV
 _DEFER_BOOTSTRAP = _should_defer_bootstrap(_INITIAL_ARGV)
+
+if not _STRICT_DEPENDENCIES:
+    logging.Logger.error = _dependency_aware_logger_error  # type: ignore[assignment]
+
+if _STRICT_DEPENDENCIES:
+    # Explicit strict mode should honour an existing environment toggle but
+    # default to enforcing dependency checks.  ``pop`` avoids inadvertently
+    # leaving a previous relaxed flag in place when the user opts-in to strict
+    # enforcement.
+    os.environ.pop("SANDBOX_SKIP_DEPENDENCY_CHECKS", None)
+elif not os.environ.get("SANDBOX_SKIP_DEPENDENCY_CHECKS"):
+    # Relax dependency checks by default so partially provisioned environments
+    # (including Windows developer machines) can still execute the runner.
+    os.environ["SANDBOX_SKIP_DEPENDENCY_CHECKS"] = "1"
 
 if not _DEFER_BOOTSTRAP:
     _prepare_sandbox_data_dir_environment(_INITIAL_ARGV)
@@ -351,6 +394,10 @@ def _initialise_settings() -> SandboxSettings:
             )
             _console("dependency enforcement failed; retrying without strict checks")
 
+        if _STRICT_DEPENDENCIES:
+            _emit_dependency_summary()
+            raise
+
         # Allow downstream imports to continue even when optional dependencies
         # are unavailable.  ``sandbox_runner`` exits eagerly during import when
         # required tools are missing which makes it difficult to execute the
@@ -416,6 +463,11 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         type=int,
         default=1,
         help="maximum number of full sandbox runs to execute",
+    )
+    parser.add_argument(
+        "--strict-dependencies",
+        action="store_true",
+        help="fail fast instead of relaxing dependency checks",
     )
     parser.add_argument(
         "--dashboard-port",
