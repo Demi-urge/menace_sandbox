@@ -1215,12 +1215,25 @@ class CommunicationMaintenanceBot(AdminBotBase):
         self.webhook_urls = self._parse_webhook_urls(
             webhook_urls if webhook_urls is not None else DIAGNOSTICS_WEBHOOKS
         )
+        self.fallback_webhook_urls = self._parse_webhook_urls(FALLBACK_WEBHOOKS)
+        self.notifications_enabled = bool(self.webhook_urls)
+        self.has_any_webhook = self.notifications_enabled or bool(
+            self.fallback_webhook_urls
+        )
         if not self.webhook_urls:
-            raise ValueError("Valid MAINTENANCE_DISCORD_WEBHOOK(S) must be configured")
+            self.logger.warning(
+                "No primary maintenance webhook URLs configured;"
+                " notifications will be logged locally"
+                " and queued for later delivery."
+            )
+        if not self.has_any_webhook:
+            self.logger.warning(
+                "No maintenance webhook URLs (primary or fallback) configured;"
+                " Discord notifications are disabled."
+            )
         self.webhook_stats: Dict[str, Dict[str, int]] = {
             url: {"success": 0, "failure": 0} for url in self.webhook_urls
         }
-        self.fallback_webhook_urls = self._parse_webhook_urls(FALLBACK_WEBHOOKS)
         self.kill_switch_path = KILL_SWITCH_PATH
         self.ping_max_duration = PING_MAX_DURATION
         self.message_max_duration = MESSAGE_MAX_DURATION
@@ -1888,8 +1901,9 @@ class CommunicationMaintenanceBot(AdminBotBase):
         return False
 
     def _send_discord(self, content: str) -> bool:
-        if not self.webhook_urls:
-            return False
+        if not self.notifications_enabled:
+            # Nothing to send - treat as success so callers don't queue forever.
+            return False if self.fallback_webhook_urls else True
         segments = self._split_message(content)
         success = True
         for segment in segments:
@@ -1953,9 +1967,13 @@ class CommunicationMaintenanceBot(AdminBotBase):
     def notify(self, content: str) -> None:
         content = _validate_message(content)
         with self.notify_lock:
-            self.flush_queue()
-            if not self._send_discord(content):
-                self._queue_message(content)
+            if self.has_any_webhook:
+                self.flush_queue()
+                sent = self._send_discord(content)
+                if not sent:
+                    self._queue_message(content)
+            else:
+                sent = True
             self.comm_store.append(content)
         self.logger.info(
             "notify: %s",
@@ -1966,15 +1984,18 @@ class CommunicationMaintenanceBot(AdminBotBase):
     def notify_critical(self, content: str) -> None:
         content = _validate_message(content)
         with self.notify_lock:
-            self.flush_queue()
-            sent = self._send_discord(content)
-            if not sent and self.fallback_webhook_urls:
-                for url in self.fallback_webhook_urls:
-                    if self._send_message(url, content):
-                        sent = True
-                        break
-            if not sent:
-                self._queue_message(content)
+            if self.has_any_webhook:
+                self.flush_queue()
+                sent = self._send_discord(content)
+                if not sent and self.fallback_webhook_urls:
+                    for url in self.fallback_webhook_urls:
+                        if self._send_message(url, content):
+                            sent = True
+                            break
+                if not sent and self.notifications_enabled:
+                    self._queue_message(content)
+            else:
+                sent = True
             self.comm_store.append(content)
         self.logger.info(
             "critical_notify: %s",
