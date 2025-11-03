@@ -204,6 +204,13 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
     for token in argv:
         if token in {"-h", "--help", "--version"}:
             return True
+    runs_val = _extract_flag_value(argv, "--runs")
+    if runs_val is not None:
+        try:
+            if int(runs_val) <= 0:
+                return True
+        except ValueError:
+            pass
     return False
 
 
@@ -1470,6 +1477,17 @@ def main(argv: List[str] | None = None) -> None:
     _console("arguments parsed; configuring logging")
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    if (
+        args.runs == 0
+        and not args.check_settings
+        and not args.foresight_trend
+        and not args.foresight_stable
+        and not getattr(args, "recover", False)
+    ):
+        logger.info("no sandbox runs requested; exiting before bootstrap")
+        _console("no sandbox runs requested; skipping autonomous bootstrap")
+        return
 
     class _SuppressAuditPersistenceFilter(logging.Filter):
         _TARGET = (
