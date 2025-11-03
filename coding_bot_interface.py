@@ -101,6 +101,58 @@ from shared.provenance_state import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(eq=False)
+class _BootstrapContext:
+    """Thread-scoped context shared during nested helper bootstrap."""
+
+    registry: Any = None
+    data_bot: Any = None
+    manager: Any = None
+
+
+_BOOTSTRAP_THREAD_STATE = threading.local()
+
+
+def _push_bootstrap_context(
+    *, registry: Any, data_bot: Any, manager: Any
+) -> _BootstrapContext:
+    """Push a helper context onto the current thread's stack."""
+
+    stack = getattr(_BOOTSTRAP_THREAD_STATE, "stack", None)
+    if stack is None:
+        stack = []
+        _BOOTSTRAP_THREAD_STATE.stack = stack
+    context = _BootstrapContext(registry=registry, data_bot=data_bot, manager=manager)
+    stack.append(context)
+    return context
+
+
+def _pop_bootstrap_context(context: _BootstrapContext) -> None:
+    """Remove ``context`` from the current thread's stack if present."""
+
+    stack = getattr(_BOOTSTRAP_THREAD_STATE, "stack", None)
+    if not stack:
+        return
+    for index in range(len(stack) - 1, -1, -1):
+        if stack[index] is context:
+            stack.pop(index)
+            break
+    if not stack:
+        try:
+            delattr(_BOOTSTRAP_THREAD_STATE, "stack")
+        except AttributeError:  # pragma: no cover - race safe cleanup
+            pass
+
+
+def _current_bootstrap_context() -> _BootstrapContext | None:
+    """Return the innermost helper context for this thread, if any."""
+
+    stack = getattr(_BOOTSTRAP_THREAD_STATE, "stack", None)
+    if not stack:
+        return None
+    return stack[-1]
+
+
 def _record_cooperative_init_trace(
     instance: object,
     cls: type,
@@ -1895,9 +1947,15 @@ def self_coding_managed(
                     raise RuntimeError("Bot helper bootstrap did not complete successfully")
                 return resolved_registry, resolved_data_bot
 
+            context: _BootstrapContext | None = None
             try:
                 registry_obj = _resolve_candidate(bot_registry)
                 data_bot_obj = _resolve_candidate(data_bot)
+                context = _push_bootstrap_context(
+                    registry=registry_obj,
+                    data_bot=data_bot_obj,
+                    manager=manager_instance,
+                )
                 if registry_obj is None or data_bot_obj is None:
                     raise RuntimeError("BotRegistry and DataBot instances are required")
 
@@ -1913,6 +1971,8 @@ def self_coding_managed(
 
                 manager_local = manager_instance
                 runtime_available = _self_coding_runtime_available()
+                if context is not None:
+                    context.manager = manager_local
                 if manager_local is None and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
@@ -1946,6 +2006,8 @@ def self_coding_managed(
                             )
                         else:
                             register_as_coding_local = True
+                            if context is not None:
+                                context.manager = manager_local
                     else:
                         register_as_coding_local = False
                     if missing:
@@ -1995,6 +2057,8 @@ def self_coding_managed(
                     register_as_coding_local = decision_local.register_as_coding
                     manager_local = decision_local.manager
                     hot_swap_active = decision_local.hot_swap_active
+                    if context is not None:
+                        context.manager = manager_local
 
                 if register_as_coding_local and manager_local is not None:
                     try:
@@ -2039,6 +2103,9 @@ def self_coding_managed(
                         except Exception:  # pragma: no cover - best effort
                             logger.exception("bot update failed for %s", name)
 
+                if context is not None:
+                    context.manager = manager_local
+
                 with bootstrap_lock:
                     cls.bot_registry = registry_obj  # type: ignore[attr-defined]
                     cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
@@ -2063,6 +2130,9 @@ def self_coding_managed(
                     bootstrap_in_progress = False
                     bootstrap_event.set()
                 raise
+            finally:
+                if context is not None:
+                    _pop_bootstrap_context(context)
 
         cls.bot_registry = None  # type: ignore[attr-defined]
         cls.data_bot = None  # type: ignore[attr-defined]
@@ -2071,8 +2141,18 @@ def self_coding_managed(
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-            registry_obj, data_bot_obj = _bootstrap_helpers()
-            manager_default = manager_instance
+            context = _current_bootstrap_context()
+            if (
+                context is not None
+                and context.registry is not None
+                and context.data_bot is not None
+            ):
+                registry_obj = context.registry
+                data_bot_obj = context.data_bot
+                manager_default = context.manager or manager_instance
+            else:
+                registry_obj, data_bot_obj = _bootstrap_helpers()
+                manager_default = manager_instance
             init_kwargs = dict(kwargs)
             orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
                 "evolution_orchestrator"
