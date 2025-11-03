@@ -16,11 +16,16 @@ if STUB_DIR.exists() and str(STUB_DIR) not in sys.path:
     sys.path.insert(0, str(STUB_DIR))
 
 
-def _install_stub_module(name: str, attributes: dict[str, object]) -> None:
+def _install_stub_module(
+    name: str, attributes: dict[str, object], *, aliases: tuple[str, ...] = ()
+) -> types.ModuleType:
     module = types.ModuleType(name)
     for attr, value in attributes.items():
         setattr(module, attr, value)
     sys.modules[name] = module
+    for alias in aliases:
+        sys.modules[alias] = module
+    return module
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -32,26 +37,30 @@ if menace_pkg is None:
 menace_pkg.__path__ = [str(ROOT)]
 
 _install_stub_module(
-    "menace.bot_registry",
+    "menace_sandbox.bot_registry",
     {"BotRegistry": type("BotRegistry", (), {"__init__": lambda self, *a, **k: None})},
+    aliases=("menace.bot_registry",),
 )
 _install_stub_module(
-    "menace.data_bot",
+    "menace_sandbox.data_bot",
     {"DataBot": type("DataBot", (), {"__init__": lambda self, *a, **k: None})},
+    aliases=("menace.data_bot",),
 )
 _install_stub_module(
-    "menace.coding_bot_interface",
+    "menace_sandbox.coding_bot_interface",
     {"self_coding_managed": lambda *_a, **_k: (lambda cls: cls)},
+    aliases=("menace.coding_bot_interface",),
 )
 _install_stub_module(
-    "menace.research_aggregator_bot",
+    "menace_sandbox.research_aggregator_bot",
     {
         "ResearchAggregatorBot": type("ResearchAggregatorBot", (), {"__init__": lambda self, *a, **k: None}),
         "ResearchItem": type("ResearchItem", (), {}),
     },
+    aliases=("menace.research_aggregator_bot",),
 )
 _install_stub_module(
-    "menace.task_handoff_bot",
+    "menace_sandbox.task_handoff_bot",
     {
         "WorkflowDB": type(
             "WorkflowDB",
@@ -62,9 +71,21 @@ _install_stub_module(
             },
         )
     },
+    aliases=("menace.task_handoff_bot",),
 )
 _install_stub_module(
-    "menace.unified_event_bus", {"UnifiedEventBus": type("UnifiedEventBus", (), {})}
+    "menace_sandbox.unified_event_bus",
+    {"UnifiedEventBus": type("UnifiedEventBus", (), {})},
+    aliases=("menace.unified_event_bus",),
+)
+_install_stub_module(
+    "menace_sandbox.relevancy_radar",
+    {
+        "tracked_import": lambda name, globals=None, locals=None, fromlist=(), level=0: __import__(
+            name, globals, locals, fromlist, level
+        )
+    },
+    aliases=("menace.relevancy_radar",),
 )
 
 vector_context_module = types.ModuleType("vector_service.context_builder")
@@ -91,15 +112,7 @@ if "sqlalchemy" not in sys.modules:
     sys.modules["sqlalchemy"] = sqlalchemy_mod
     sys.modules["sqlalchemy.engine"] = engine_mod
 
-spec = importlib.util.spec_from_file_location(
-    "menace.information_synthesis_bot",
-    ROOT / "information_synthesis_bot.py",
-    submodule_search_locations=[str(ROOT)],
-)
-assert spec and spec.loader
-isb = importlib.util.module_from_spec(spec)
-sys.modules["menace.information_synthesis_bot"] = isb
-spec.loader.exec_module(isb)
+import menace_sandbox.information_synthesis_bot as isb
 
 try:
     from marshmallow import Schema, fields  # type: ignore
@@ -109,7 +122,7 @@ except Exception:  # pragma: no cover - marshmallow not available
     fields = isb.fields
     HAS_MM = False
 
-import menace.task_handoff_bot as thb
+import menace_sandbox.task_handoff_bot as thb
 
 
 class DummyAggregator:
@@ -182,8 +195,8 @@ def test_synthesise_creates_tasks(monkeypatch, tmp_path):
 
 def test_simple_schema_validation(tmp_path):
     class SimpleRecord(isb.SimpleSchema):
-        id = isb.fields.Int(required=True)
-        name = isb.fields.Str(required=True)
+        id = isb.simple_fields.Int(required=True)
+        name = isb.simple_fields.Str(required=True)
 
     df = pd.DataFrame({"id": [1, "a"], "name": [None, None]})
     agg = DummyAggregator()
@@ -224,23 +237,14 @@ def test_queue_fallback(tmp_path, monkeypatch):
     )
     bot.app.send_task("stage2.fetch", kwargs={"b": 2})
     bot.app.queue.join()
-    assert bot.app.sent == [("stage2.fetch", {"b": 2})]
-    assert bot.app.executed == [("stage2.fetch", {"b": 2})]
+    sent_payloads = [(task.name, task.kwargs) for task in bot.app.sent]
+    executed_payloads = [(task.name, task.kwargs) for task in bot.app.executed]
+    assert sent_payloads == [("stage2.fetch", {"b": 2})]
+    assert executed_payloads == [("stage2.fetch", {"b": 2})]
 
 
 def test_sqlalchemy_missing_fallback(monkeypatch, tmp_path):
-    monkeypatch.setattr(isb, "_sqlalchemy_available", False, raising=False)
-    monkeypatch.setattr(
-        isb,
-        "_sqlalchemy_unavailable_message",
-        "SQLAlchemy helpers are unavailable: ImportError: boom",
-        raising=False,
-    )
-
-    def _fail(*_args, **_kwargs):  # pragma: no cover - defensive
-        raise AssertionError("create_engine should not be called when unavailable")
-
-    monkeypatch.setattr(isb, "create_engine", _fail, raising=False)
+    monkeypatch.setattr(isb, "create_engine", None, raising=False)
 
     class AggregatorStub:
         def process(self, topic: str, energy: int = 1):  # pragma: no cover - stub
@@ -255,6 +259,12 @@ def test_sqlalchemy_missing_fallback(monkeypatch, tmp_path):
     )
 
     assert bot.engine is None
+    assert not bot._sqlalchemy_available
+    assert (
+        bot._sqlalchemy_error_message
+        == "SQLAlchemy helpers are unavailable: missing helper(s): create_engine"
+    )
+
     with pytest.raises(RuntimeError) as excinfo:
         bot.load_data("records")
-    assert "ImportError: boom" in str(excinfo.value)
+    assert "missing helper(s): create_engine" in str(excinfo.value)
