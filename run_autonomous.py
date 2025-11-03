@@ -52,6 +52,7 @@ import atexit
 import contextlib
 import importlib
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -288,6 +289,7 @@ else:  # pragma: no cover - convenience path used during CLI discovery
     os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
 
 _BOOTSTRAP_HELPERS: tuple[Callable[..., object], Callable[..., object]] | None = None
+_BOOTSTRAP_SUPPORTS_ENFORCE: bool | None = None
 
 
 def _get_bootstrap_helpers() -> tuple[Callable[..., object], Callable[..., object]]:
@@ -302,6 +304,46 @@ def _get_bootstrap_helpers() -> tuple[Callable[..., object], Callable[..., objec
 
         _BOOTSTRAP_HELPERS = (_bootstrap_environment, _verify_deps)
     return _BOOTSTRAP_HELPERS
+
+
+def _call_bootstrap_environment(
+    bootstrap_func: Callable[..., object],
+    settings_obj: SandboxSettings,
+    verifier: Callable[..., object],
+    *,
+    enforce_dependencies: bool,
+) -> object:
+    """Invoke ``bootstrap_func`` with ``enforce_dependencies`` when supported.
+
+    Earlier sandbox builds exposed :func:`sandbox_runner.bootstrap.bootstrap_environment`
+    without the ``enforce_dependencies`` keyword.  Test suites (and Windows
+    developer machines with locally patched shims) still rely on that legacy
+    signature.  Inspect the callable once and only include the keyword argument
+    when the target advertises support or accepts arbitrary keyword arguments.
+    """
+
+    global _BOOTSTRAP_SUPPORTS_ENFORCE
+
+    if _BOOTSTRAP_SUPPORTS_ENFORCE is None:
+        try:
+            signature = inspect.signature(bootstrap_func)
+        except (TypeError, ValueError):  # pragma: no cover - builtin / C callables
+            supports = True
+        else:
+            supports = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                or parameter.name == "enforce_dependencies"
+                for parameter in signature.parameters.values()
+            )
+        _BOOTSTRAP_SUPPORTS_ENFORCE = supports
+
+    if _BOOTSTRAP_SUPPORTS_ENFORCE:
+        return bootstrap_func(
+            settings_obj,
+            verifier,
+            enforce_dependencies=enforce_dependencies,
+        )
+    return bootstrap_func(settings_obj, verifier)
 
 
 def _ensure_local_package() -> None:
@@ -436,7 +478,8 @@ def _initialise_settings() -> SandboxSettings:
                     _console(f"dependency remediation hint: {hint}")
             return errors
 
-        relaxed = bootstrap_environment(
+        relaxed = _call_bootstrap_environment(
+            bootstrap_environment,
             base_settings,
             _relaxed_verifier,
             enforce_dependencies=False,
@@ -447,7 +490,12 @@ def _initialise_settings() -> SandboxSettings:
         return relaxed
 
     try:
-        return bootstrap_environment(base_settings, _verify_required_dependencies)
+        return _call_bootstrap_environment(
+            bootstrap_environment,
+            base_settings,
+            _verify_required_dependencies,
+            enforce_dependencies=True,
+        )
     except SystemExit as exc:
         message = str(exc).strip()
         if message:
@@ -479,7 +527,8 @@ def _initialise_settings() -> SandboxSettings:
         # Opt-in to the relaxed behaviour for the remainder of the process.
         os.environ["SANDBOX_SKIP_DEPENDENCY_CHECKS"] = "1"
 
-        relaxed_settings = bootstrap_environment(
+        relaxed_settings = _call_bootstrap_environment(
+            bootstrap_environment,
             SandboxSettings(),
             _verify_required_dependencies,
             enforce_dependencies=False,
@@ -1611,6 +1660,7 @@ def update_metrics(
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
 
+    global settings
     _console("main() reached - preparing sandbox environment")
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
