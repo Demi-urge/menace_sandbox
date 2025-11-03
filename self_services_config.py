@@ -10,13 +10,11 @@ try:  # pragma: no cover - allow running as script
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
-try:  # pragma: no cover - compatibility with pydantic v1/v2
-    from pydantic_settings import BaseSettings, SettingsConfigDict
-    PYDANTIC_V2 = True
-except Exception:  # pragma: no cover - fallback for pydantic<2
-    from pydantic import BaseSettings  # type: ignore
-    PYDANTIC_V2 = False
-    SettingsConfigDict = dict  # type: ignore[misc]
+from pydantic_settings_compat import (
+    BaseSettings,
+    PYDANTIC_V2,
+    SettingsConfigDict,
+)
 from pydantic import Field
 try:  # pragma: no cover - compatibility shim
     from pydantic import field_validator

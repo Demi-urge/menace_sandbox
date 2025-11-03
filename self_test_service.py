@@ -45,10 +45,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 from context_builder_util import create_context_builder, ensure_fresh_weights
 MENACE_ID = uuid.uuid4().hex
 
-try:  # pragma: no cover - compatibility with pydantic v1/v2
-    from pydantic_settings import BaseSettings
-except Exception:  # pragma: no cover
-    from pydantic import BaseSettings  # type: ignore
+from pydantic_settings_compat import BaseSettings
 from pydantic import Field
 from sandbox_settings import SandboxSettings
 
