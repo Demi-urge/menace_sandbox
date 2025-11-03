@@ -54,7 +54,7 @@ from pydantic import BaseModel, ValidationError, Field
 from enum import Enum
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar, TYPE_CHECKING
 import concurrent.futures
 from urllib.parse import urlparse
 
@@ -331,8 +331,8 @@ if os.getenv("MENACE_LIGHT_IMPORTS") and MENACE_MODE.lower() == "production":
         "MENACE_LIGHT_IMPORTS cannot be enabled when MENACE_MODE=production"
     )
 
-if os.getenv("MENACE_LIGHT_IMPORTS"):
-    class ErrorDB:
+def _build_stub_error_components() -> tuple[type["ErrorBot"], type["ErrorDB"]]:
+    class _StubErrorDB:
         def __init__(self, path: Path | str = ERROR_DB_PATH, *_, **__):
             self.records: List[str] = []
 
@@ -345,10 +345,9 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
 
             return _Dummy()
 
-
     @self_coding_managed(bot_registry=registry, data_bot=data_bot)
-    class ErrorBot:
-        def __init__(self, db: ErrorDB, context_builder: ContextBuilder) -> None:
+    class _StubErrorBot:
+        def __init__(self, db: _StubErrorDB, context_builder: ContextBuilder) -> None:
             if not isinstance(context_builder, ContextBuilder):
                 raise TypeError("context_builder must be an instance of ContextBuilder")
             self.db = db
@@ -368,8 +367,44 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             enriched = f"{message} | {context}" if context else message
             self.logger.error("noop ErrorBot handling error: %s", enriched)
             self.db.log_discrepancy(enriched)
+
+    return _StubErrorBot, _StubErrorDB
+
+
+if os.getenv("MENACE_LIGHT_IMPORTS"):
+    ErrorBot, ErrorDB = _build_stub_error_components()
+
+    def _construct_error_bot(
+        context_builder: "ContextBuilder", error_db_path: Path | str
+    ) -> "ErrorBot":
+        return ErrorBot(ErrorDB(error_db_path), context_builder=context_builder)
 else:
-    from .error_bot import ErrorBot, ErrorDB
+    if TYPE_CHECKING:  # pragma: no cover - typing only
+        from .error_bot import ErrorBot as _ErrorBotType, ErrorDB as _ErrorDBType
+    else:  # pragma: no cover - runtime fallback for type aliases
+        _ErrorBotType = Any  # type: ignore[assignment]
+        _ErrorDBType = Any  # type: ignore[assignment]
+
+    def _load_error_bot_components() -> tuple[type[_ErrorBotType], type[_ErrorDBType]]:
+        """Import ``ErrorBot`` and ``ErrorDB`` lazily to avoid circular imports."""
+
+        try:
+            from .error_bot import ErrorBot as _RuntimeErrorBot, ErrorDB as _RuntimeErrorDB
+        except ImportError as exc:
+            logger.warning(
+                "ErrorBot unavailable during import (%s); using stub implementation",
+                exc,
+            )
+            return _build_stub_error_components()
+
+        return _RuntimeErrorBot, _RuntimeErrorDB
+
+    def _construct_error_bot(
+        context_builder: "ContextBuilder", error_db_path: Path | str
+    ) -> _ErrorBotType:
+        error_bot_cls, error_db_cls = _load_error_bot_components()
+        error_db = error_db_cls(error_db_path)
+        return error_bot_cls(error_db, context_builder=context_builder)
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     ResourceAllocationBot = None  # type: ignore
     AllocationDB = None  # type: ignore
@@ -1155,9 +1190,13 @@ class CommunicationMaintenanceBot(AdminBotBase):
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
-        self.error_bot = error_bot or ErrorBot(
-            ErrorDB(self.config.error_db_path), context_builder=self.context_builder
-        )
+        if error_bot is not None:
+            self.error_bot = error_bot
+        else:
+            self.error_bot = _construct_error_bot(
+                context_builder=self.context_builder,
+                error_db_path=self.config.error_db_path,
+            )
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
         if Celery and not broker and MENACE_MODE.lower() == "production":
