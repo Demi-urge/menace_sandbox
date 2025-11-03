@@ -292,18 +292,20 @@ def _format_dependency_warnings(line: str) -> list[str]:
     return messages
 
 
-def _record_dependency_warning(line: str) -> tuple[str, list[str]]:
-    """Store ``line`` and return the primary message and any hints."""
+def _record_dependency_warning(line: str) -> tuple[str, list[str], bool]:
+    """Store ``line`` and return the primary message, hints and freshness."""
 
     global _DEPENDENCY_SUMMARY_EMITTED
     messages = _format_dependency_warnings(line)
+    is_new = False
     for message in messages:
         if message not in _DEPENDENCY_WARNINGS:
             _DEPENDENCY_WARNINGS.append(message)
             _DEPENDENCY_SUMMARY_EMITTED = False
+            is_new = True
     primary = messages[0] if messages else line
     hints = messages[1:] if len(messages) > 1 else []
-    return primary, hints
+    return primary, hints, is_new
 
 
 def _emit_dependency_summary() -> None:
@@ -336,12 +338,13 @@ def _initialise_settings() -> SandboxSettings:
                 line = line.strip()
                 if not line:
                     continue
-                primary, hints = _record_dependency_warning(line)
-                logger.warning("dependency enforcement failed: %s", primary)
-                _console(f"dependency enforcement failed: {primary}")
-                for hint in hints:
-                    logger.info("dependency remediation hint: %s", hint)
-                    _console(f"dependency remediation hint: {hint}")
+                primary, hints, is_new = _record_dependency_warning(line)
+                if is_new:
+                    logger.warning("dependency enforcement failed: %s", primary)
+                    _console(f"dependency enforcement failed: {primary}")
+                    for hint in hints:
+                        logger.info("dependency remediation hint: %s", hint)
+                        _console(f"dependency remediation hint: {hint}")
         else:
             logger.warning(
                 "dependency enforcement failed; retrying without strict checks",
@@ -353,7 +356,7 @@ def _initialise_settings() -> SandboxSettings:
         # required tools are missing which makes it difficult to execute the
         # runner in partially provisioned environments (common on Windows).
         # Opt-in to the relaxed behaviour for the remainder of the process.
-        os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
+        os.environ["SANDBOX_SKIP_DEPENDENCY_CHECKS"] = "1"
 
         relaxed_settings = bootstrap_environment(
             SandboxSettings(),
@@ -362,6 +365,7 @@ def _initialise_settings() -> SandboxSettings:
         )
         if message:
             _console("continuing with relaxed dependency checks")
+        _emit_dependency_summary()
         return relaxed_settings
 
 
