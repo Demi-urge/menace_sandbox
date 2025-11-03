@@ -6,6 +6,7 @@ import json
 import logging
 import logging.config
 import os
+import sys
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict
@@ -220,11 +221,34 @@ _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
             "class": "logging.StreamHandler",
             "formatter": "default",
             "filters": ["correlation"],
+            "stream": "ext://sys.__stderr__",
         }
     },
     "root": {"level": "INFO", "handlers": ["console"]},
     "filters": {"correlation": {"()": "logging_utils.CorrelationIDFilter"}},
 }
+
+
+def _ensure_stable_streams() -> None:
+    """Point stream handlers at the original standard streams."""
+
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        if not isinstance(handler, logging.StreamHandler):
+            continue
+        stream = getattr(handler, "stream", None)
+        target = None
+        if stream is None:
+            target = sys.__stderr__
+        elif stream is sys.stderr:
+            target = sys.__stderr__
+        elif stream is sys.stdout:
+            target = sys.__stdout__
+        if target is not None:
+            try:
+                handler.setStream(target)
+            except Exception:  # pragma: no cover - defensive guard
+                continue
 
 
 def setup_logging(config_path: str | None = None, level: str | int | None = None) -> None:
@@ -254,6 +278,7 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
                 handler["formatter"] = "json"
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
+    _ensure_stable_streams()
     cfg_mod = _config_mod()
     cfg = _get_config_or_fallback(cfg_mod)
     if level is None:
