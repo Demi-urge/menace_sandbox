@@ -351,8 +351,9 @@ class EmbeddableDBMixin:
     ) -> None:
         """Initialise the mixin while tolerating cooperative super-calls."""
 
-        print(
-            f"[trace] MRO chain: {[cls.__name__ for cls in type(self).__mro__]}"
+        logger.debug(
+            "[trace] MRO chain: %s",
+            [cls.__name__ for cls in type(self).__mro__],
         )
 
         passthrough = dict(super_kwargs)

@@ -780,8 +780,9 @@ class WorkflowDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         router: DBRouter | None = None,
     ) -> None:
-        print(
-            f"[trace] MRO chain: {[cls.__name__ for cls in type(self).__mro__]}"
+        logger.debug(
+            "[trace] MRO chain: %s",
+            [cls.__name__ for cls in type(self).__mro__],
         )
 
         if path is None:
