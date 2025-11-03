@@ -26,7 +26,6 @@ except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
 from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage
-from .implementation_optimiser_bot import ImplementationOptimiserBot
 from .chatgpt_enhancement_bot import EnhancementDB
 from .task_handoff_bot import WorkflowDB
 from .database_manager import DB_PATH, update_model, init_db
@@ -39,8 +38,10 @@ except Exception:  # pragma: no cover - predictor missing
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .prediction_manager_bot import PredictionManager
+    from .implementation_optimiser_bot import ImplementationOptimiserBot
 else:  # pragma: no cover - runtime fallback when dependency missing
     PredictionManager = Any  # type: ignore[assignment]
+    ImplementationOptimiserBot = Any  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=1)
