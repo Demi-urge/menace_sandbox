@@ -3,13 +3,11 @@ from __future__ import annotations
 """Configuration helpers for :mod:`bot_testing_bot`."""
 
 import os
-try:
-    from pydantic_settings import BaseSettings, SettingsConfigDict
-    PYDANTIC_V2 = True
-except Exception:  # pragma: no cover - fallback for pydantic<2
-    from pydantic import BaseSettings  # type: ignore
-    PYDANTIC_V2 = False
-    SettingsConfigDict = dict  # type: ignore[misc]
+from pydantic_settings_compat import (
+    BaseSettings,
+    PYDANTIC_V2,
+    SettingsConfigDict,
+)
 from pydantic import Field
 
 

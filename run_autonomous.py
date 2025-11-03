@@ -231,6 +231,13 @@ def _initialise_settings() -> SandboxSettings:
             )
             _console("dependency enforcement failed; retrying without strict checks")
 
+        # Allow downstream imports to continue even when optional dependencies
+        # are unavailable.  ``sandbox_runner`` exits eagerly during import when
+        # required tools are missing which makes it difficult to execute the
+        # runner in partially provisioned environments (common on Windows).
+        # Opt-in to the relaxed behaviour for the remainder of the process.
+        os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
+
         relaxed_settings = bootstrap_environment(
             SandboxSettings(),
             _verify_required_dependencies,

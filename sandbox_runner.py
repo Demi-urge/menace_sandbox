@@ -180,7 +180,14 @@ def _verify_required_dependencies(settings: "SandboxSettings | None" = None) -> 
         logging.warning("Missing optional Python packages: %s", ", ".join(missing_opt))
 
 
-_verify_required_dependencies()
+_SKIP_DEP_CHECKS = os.getenv("SANDBOX_SKIP_DEPENDENCY_CHECKS", "").strip().lower()
+if _SKIP_DEP_CHECKS in {"1", "true", "yes", "on"}:
+    try:
+        _verify_required_dependencies()
+    except SystemExit as exc:  # pragma: no cover - defensive logging path
+        logging.warning("dependency verification skipped: %s", exc)
+else:
+    _verify_required_dependencies()
 
 import json
 import os

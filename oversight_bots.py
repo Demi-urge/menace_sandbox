@@ -16,8 +16,8 @@ from .bot_registry import BotRegistry
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-@dataclass
 @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@dataclass
 class OversightBot:
     """Monitor subordinate bots using collected metrics."""
 
