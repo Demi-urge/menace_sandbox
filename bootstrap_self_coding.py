@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -24,6 +25,18 @@ LOGGER = logging.getLogger(__name__)
 
 
 REPO_ROOT = Path(__file__).resolve().parent
+
+
+# ``bootstrap_self_coding.py`` is often executed directly via ``python`` or
+# ``py`` from the repository root on Windows.  In that scenario the process
+# working directory is ``menace_sandbox`` itself, so ``sys.path`` only contains
+# the package directory rather than its parent.  Absolute imports such as
+# ``menace_sandbox.self_coding_manager`` therefore fail because Python expects
+# ``sys.path`` entries to point to the *parent* of the package.  Insert the
+# parent directory explicitly so that the package-style import works regardless
+# of how the script is invoked.
+if str(REPO_ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT.parent))
 
 
 STALE_STATE_FILES: tuple[Path, ...] = (
