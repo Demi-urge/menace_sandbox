@@ -742,6 +742,7 @@ class PredictionManager:
         self.matcher = PredictionModelMatcher()
         self.data_bot = data_bot
         self.capital_bot = capital_bot
+        self._auto_evolution_available = True
         self._load_registry()
         if default_metric_bots and self.data_bot:
             synergy_map = {
@@ -966,8 +967,18 @@ class PredictionManager:
     def trigger_evolution(
         self, profile_space: Dict[str, Iterable[str]]
     ) -> List[PredictionBotEntry]:
-        from .genetic_algorithm_bot import GeneticAlgorithmBot
-        from .ga_prediction_bot import GAPredictionBot
+        if not getattr(self, "_auto_evolution_available", True):
+            return []
+
+        try:
+            from .genetic_algorithm_bot import GeneticAlgorithmBot
+            from .ga_prediction_bot import GAPredictionBot
+        except ImportError as exc:
+            logging.getLogger(__name__).warning(
+                "auto evolution unavailable: %s", exc
+            )
+            self._auto_evolution_available = False
+            return []
 
         ga = GeneticAlgorithmBot(
             pop_size=4, data_bot=self.data_bot, capital_bot=self.capital_bot

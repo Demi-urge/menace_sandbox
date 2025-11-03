@@ -1644,6 +1644,9 @@ class _DisabledSelfCodingManager:
         return getattr(self.engine, "context_builder", None)
 
 
+_BOOTSTRAP_STATE = threading.local()
+
+
 def _bootstrap_manager(
     name: str,
     bot_registry: BotRegistry,
@@ -1651,19 +1654,42 @@ def _bootstrap_manager(
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
-    manager_cls = _resolve_self_coding_manager_cls()
-    if manager_cls is None:
-        raise RuntimeError("self-coding runtime is unavailable")
-
-    try:
-        return manager_cls(  # type: ignore[call-arg]
+    active = set(getattr(_BOOTSTRAP_STATE, "names", set()))
+    if name in active:
+        logger.warning(
+            "Detected recursive SelfCodingManager bootstrap for %s; "
+            "falling back to disabled manager",
+            name,
+        )
+        return _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-    except TypeError:
-        pass
+
+    active.add(name)
+    _BOOTSTRAP_STATE.names = active
+
+    def _release_guard() -> None:
+        current = set(getattr(_BOOTSTRAP_STATE, "names", set()))
+        current.discard(name)
+        if current:
+            _BOOTSTRAP_STATE.names = current
+        elif hasattr(_BOOTSTRAP_STATE, "names"):
+            delattr(_BOOTSTRAP_STATE, "names")
 
     try:
+        manager_cls = _resolve_self_coding_manager_cls()
+        if manager_cls is None:
+            raise RuntimeError("self-coding runtime is unavailable")
+
+        try:
+            return manager_cls(  # type: ignore[call-arg]
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+        except TypeError:
+            pass
+
         code_db_cls = _load_optional_module("code_database").CodeDB
         memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
         engine_mod = _load_optional_module(
@@ -1692,8 +1718,12 @@ def _bootstrap_manager(
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
+    except RuntimeError:
+        raise
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
         raise RuntimeError(f"manager bootstrap failed: {exc}") from exc
+    finally:
+        _release_guard()
 
 
 def _load_optional_module(name: str, *, fallback: str | None = None) -> Any:
