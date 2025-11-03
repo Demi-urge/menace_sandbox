@@ -206,8 +206,42 @@ from sandbox_runner.bootstrap import (
 logger = logging.getLogger(__name__)
 
 
-settings = SandboxSettings()
-settings = bootstrap_environment(settings, _verify_required_dependencies)
+_DEPENDENCY_WARNINGS: list[str] = []
+
+
+def _initialise_settings() -> SandboxSettings:
+    """Initialise :class:`SandboxSettings` with graceful dependency handling."""
+
+    base_settings = SandboxSettings()
+    try:
+        return bootstrap_environment(base_settings, _verify_required_dependencies)
+    except SystemExit as exc:
+        message = str(exc).strip()
+        if message:
+            for line in message.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                _DEPENDENCY_WARNINGS.append(line)
+                logger.warning("dependency enforcement failed: %s", line)
+                _console(f"dependency enforcement failed: {line}")
+        else:
+            logger.warning(
+                "dependency enforcement failed; retrying without strict checks",
+            )
+            _console("dependency enforcement failed; retrying without strict checks")
+
+        relaxed_settings = bootstrap_environment(
+            SandboxSettings(),
+            _verify_required_dependencies,
+            enforce_dependencies=False,
+        )
+        if message:
+            _console("continuing with relaxed dependency checks")
+        return relaxed_settings
+
+
+settings = _initialise_settings()
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
