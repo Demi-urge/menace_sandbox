@@ -259,6 +259,7 @@ logger = logging.getLogger(__name__)
 
 
 _DEPENDENCY_WARNINGS: list[str] = []
+_DEPENDENCY_SUMMARY_EMITTED = False
 
 
 def _format_dependency_warnings(line: str) -> list[str]:
@@ -294,10 +295,12 @@ def _format_dependency_warnings(line: str) -> list[str]:
 def _record_dependency_warning(line: str) -> tuple[str, list[str]]:
     """Store ``line`` and return the primary message and any hints."""
 
+    global _DEPENDENCY_SUMMARY_EMITTED
     messages = _format_dependency_warnings(line)
     for message in messages:
         if message not in _DEPENDENCY_WARNINGS:
             _DEPENDENCY_WARNINGS.append(message)
+            _DEPENDENCY_SUMMARY_EMITTED = False
     primary = messages[0] if messages else line
     hints = messages[1:] if len(messages) > 1 else []
     return primary, hints
@@ -306,9 +309,11 @@ def _record_dependency_warning(line: str) -> tuple[str, list[str]]:
 def _emit_dependency_summary() -> None:
     """Emit a consolidated summary of dependency warnings collected so far."""
 
-    if not _DEPENDENCY_WARNINGS:
+    global _DEPENDENCY_SUMMARY_EMITTED
+    if not _DEPENDENCY_WARNINGS or _DEPENDENCY_SUMMARY_EMITTED:
         return
 
+    _DEPENDENCY_SUMMARY_EMITTED = True
     _console("dependency requirements detected during startup:")
     for message in dict.fromkeys(_DEPENDENCY_WARNINGS):
         _console(f"  {message}")
@@ -1782,8 +1787,14 @@ def main(argv: List[str] | None = None) -> None:
                 logger.exception("cleanup failed")
 
     atexit.register(_cleanup)
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
+    cleanup_signals = [getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)]
+    for sig in cleanup_signals:
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
+        except (AttributeError, ValueError):  # pragma: no cover - platform specific
+            logger.debug("signal %s unavailable; skipping handler", sig)
 
     mem_maint = None
     if GPT_MEMORY_MANAGER is not None:
