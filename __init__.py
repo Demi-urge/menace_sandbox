@@ -97,6 +97,16 @@ def _make_missing_class(name: str, message: str, exc: Exception, error_type: typ
 def _optional_attrs(module: str, *names: str):
     """Return attributes from ``module`` substituting stubs if import fails."""
 
+    if os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "False", None}:
+        message = (
+            f"{module} is unavailable because MENACE_LIGHT_IMPORTS is enabled; "
+            "unset MENACE_LIGHT_IMPORTS to load heavy modules"
+        )
+        exc = RuntimeError(message)
+        return tuple(
+            _make_missing_class(name, message, exc, RuntimeError) for name in names
+        )
+
     try:
         mod = importlib.import_module(f".{module}", __name__)
     except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
