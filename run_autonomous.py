@@ -55,6 +55,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
@@ -156,6 +157,20 @@ def _console(message: str) -> None:
     print(f"[RUN_AUTONOMOUS] {message}", flush=True)
 
 
+def _expand_path(value: str | os.PathLike[str]) -> Path:
+    """Return ``value`` as a :class:`Path` with user and env vars expanded."""
+
+    raw = os.fspath(value)
+    expanded = os.path.expandvars(os.path.expanduser(raw))
+    if "%" in expanded and os.name != "nt":
+        expanded = re.sub(
+            r"%([^%]+)%",
+            lambda match: os.environ.get(match.group(1), match.group(0)),
+            expanded,
+        )
+    return Path(expanded)
+
+
 def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
     """Populate sandbox data directory environment variables early."""
 
@@ -165,7 +180,7 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
         _console("no argv provided; defaulting to sys.argv slice")
 
     override_raw = _extract_flag_value(argv, "--sandbox-data-dir")
-    override_path = Path(override_raw).expanduser() if override_raw else None
+    override_path = _expand_path(override_raw) if override_raw else None
     if override_path is not None:
         _console(f"sandbox data dir override detected: {override_path}")
         os.environ["SANDBOX_DATA_DIR"] = str(override_path)
@@ -175,7 +190,7 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
         _console("no sandbox data dir specified; using defaults")
         return
 
-    base_path = Path(data_dir_value).expanduser()
+    base_path = _expand_path(data_dir_value)
     os.environ["SANDBOX_DATA_DIR"] = str(base_path)
     _console(f"sandbox data dir resolved to {base_path}")
 
@@ -1927,6 +1942,7 @@ def main(argv: List[str] | None = None) -> None:
 
     cleanup_signals = [
         getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGINT", None),
         getattr(signal, "SIGBREAK", None) if os.name == "nt" else None,
     ]
     for sig in cleanup_signals:
