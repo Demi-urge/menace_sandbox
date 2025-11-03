@@ -193,9 +193,47 @@ class GAPredictionBot:
         if extra:
             extra_arr = np.tile(extra, (len(X), 1))
             X = np.hstack([X, extra_arr])
-        X_train, X_test, y_train, y_test = train_test_split(X, self.y, test_size=0.3, random_state=42)
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, self.y, test_size=0.3, random_state=42
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Skipping GA prediction evaluation for %s due to split failure: %s",
+                self.name,
+                exc,
+            )
+            self.eval_counter.inc()
+            return (0.0,)
+
+        unique_train = np.unique(y_train)
+        if unique_train.size < 2:
+            logger.warning(
+                "Skipping GA prediction evaluation for %s due to insufficient class diversity (classes=%s)",
+                self.name,
+                unique_train.tolist(),
+            )
+            self.eval_counter.inc()
+            return (0.0,)
+
+        try:
+            model.fit(X_train, y_train)
+            preds = model.predict(X_test)
+        except ValueError as exc:
+            logger.warning(
+                "Model training failed for %s; returning neutral score: %s",
+                self.name,
+                exc,
+            )
+            self.eval_counter.inc()
+            return (0.0,)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception(
+                "Unexpected model failure for %s; returning neutral score", self.name
+            )
+            self.eval_counter.inc()
+            return (0.0,)
+
         score = accuracy_score(y_test, preds)
         self.eval_counter.inc()
         if self.data_bot:

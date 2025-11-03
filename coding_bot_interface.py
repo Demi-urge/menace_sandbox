@@ -1654,20 +1654,28 @@ def _bootstrap_manager(
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
-    active = set(getattr(_BOOTSTRAP_STATE, "names", set()))
-    if name in active:
-        logger.warning(
-            "Detected recursive SelfCodingManager bootstrap for %s; "
-            "falling back to disabled manager",
+    def _disabled_manager(reason: str) -> Any:
+        logger.debug(
+            "SelfCodingManager bootstrap skipped for %s: %s",
             name,
+            reason,
         )
         return _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
 
+    depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    if depth > 0:
+        return _disabled_manager(f"re-entrant initialisation depth={depth}")
+
+    active = set(getattr(_BOOTSTRAP_STATE, "names", set()))
+    if name in active:
+        return _disabled_manager("bootstrap already in progress")
+
     active.add(name)
     _BOOTSTRAP_STATE.names = active
+    _BOOTSTRAP_STATE.depth = depth + 1
 
     def _release_guard() -> None:
         current = set(getattr(_BOOTSTRAP_STATE, "names", set()))
@@ -1724,6 +1732,11 @@ def _bootstrap_manager(
         raise RuntimeError(f"manager bootstrap failed: {exc}") from exc
     finally:
         _release_guard()
+        current_depth = getattr(_BOOTSTRAP_STATE, "depth", 1) - 1
+        if current_depth > 0:
+            _BOOTSTRAP_STATE.depth = current_depth
+        elif hasattr(_BOOTSTRAP_STATE, "depth"):
+            delattr(_BOOTSTRAP_STATE, "depth")
 
 
 def _load_optional_module(name: str, *, fallback: str | None = None) -> Any:
