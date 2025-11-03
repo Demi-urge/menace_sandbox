@@ -254,6 +254,62 @@ logger = logging.getLogger(__name__)
 _DEPENDENCY_WARNINGS: list[str] = []
 
 
+def _format_dependency_warnings(line: str) -> list[str]:
+    """Return ``line`` plus any platform specific remediation hints."""
+
+    messages = [line]
+    if os.name != "nt":
+        return messages
+
+    prefix = line.split(":", 1)[0].lower()
+    if ":" in line:
+        package_segment = line.split(":", 1)[1].split(".", 1)[0]
+        packages = [pkg.strip() for pkg in package_segment.split(",") if pkg.strip()]
+    else:  # pragma: no cover - defensive guard for unexpected formats
+        packages = []
+
+    if packages and prefix.startswith("missing system packages"):
+        joined = " ".join(packages)
+        messages.append(
+            "Windows hint: install the system packages via Chocolatey "
+            f"(e.g. 'choco install {joined}') or download the official installers."
+        )
+    elif packages and prefix.startswith("missing python packages"):
+        joined = " ".join(packages)
+        messages.append(
+            "Windows hint: install the Python packages with 'python -m pip install "
+            f"{joined}'."
+        )
+
+    return messages
+
+
+def _record_dependency_warning(line: str) -> tuple[str, list[str]]:
+    """Store ``line`` and return the primary message and any hints."""
+
+    messages = _format_dependency_warnings(line)
+    for message in messages:
+        if message not in _DEPENDENCY_WARNINGS:
+            _DEPENDENCY_WARNINGS.append(message)
+    primary = messages[0] if messages else line
+    hints = messages[1:] if len(messages) > 1 else []
+    return primary, hints
+
+
+def _emit_dependency_summary() -> None:
+    """Emit a consolidated summary of dependency warnings collected so far."""
+
+    if not _DEPENDENCY_WARNINGS:
+        return
+
+    _console("dependency requirements detected during startup:")
+    for message in dict.fromkeys(_DEPENDENCY_WARNINGS):
+        _console(f"  {message}")
+
+
+atexit.register(_emit_dependency_summary)
+
+
 def _initialise_settings() -> SandboxSettings:
     """Initialise :class:`SandboxSettings` with graceful dependency handling."""
 
@@ -268,9 +324,12 @@ def _initialise_settings() -> SandboxSettings:
                 line = line.strip()
                 if not line:
                     continue
-                _DEPENDENCY_WARNINGS.append(line)
-                logger.warning("dependency enforcement failed: %s", line)
-                _console(f"dependency enforcement failed: {line}")
+                primary, hints = _record_dependency_warning(line)
+                logger.warning("dependency enforcement failed: %s", primary)
+                _console(f"dependency enforcement failed: {primary}")
+                for hint in hints:
+                    logger.info("dependency remediation hint: %s", hint)
+                    _console(f"dependency remediation hint: {hint}")
         else:
             logger.warning(
                 "dependency enforcement failed; retrying without strict checks",
