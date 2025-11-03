@@ -2058,6 +2058,22 @@ def _load_thresholds() -> "SelfCodingThresholds | None":
     return thresholds
 
 
+def _quick_fix_bootstrap_failed(exc: Exception) -> bool:
+    """Return ``True`` when ``exc`` signals an irrecoverable QuickFixEngine failure."""
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        if "QuickFixEngine" in message:
+            lowered = message.lower()
+            if "failed" in lowered or "unavailable" in lowered or "required" in lowered:
+                return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _initialise_self_coding_manager(*, retry: bool = True) -> None:
     """Bootstrap the self-coding manager once dependencies are available."""
 
@@ -2098,13 +2114,31 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
                 test_failure_threshold=thresholds.test_failure_increase,
             )
         except Exception as exc:  # pragma: no cover - degraded bootstrap
-            logger.warning(
-                "failed to initialise self-coding manager for CapitalManagementBot: %s",
-                exc,
-            )
-            if retry:
-                _schedule_manager_retry()
-            return
+            if _quick_fix_bootstrap_failed(exc):
+                logger.warning(
+                    "QuickFixEngine unavailable for CapitalManagementBot; disabling self-coding: %s",
+                    exc,
+                )
+                try:
+                    manager_local = _DisabledSelfCodingManager(
+                        bot_registry=registry_obj, data_bot=data_bot_obj
+                    )
+                except Exception:  # pragma: no cover - best effort fallback
+                    logger.warning(
+                        "failed to instantiate disabled self-coding manager for CapitalManagementBot",
+                        exc_info=True,
+                    )
+                    if retry:
+                        _schedule_manager_retry()
+                    return
+            else:
+                logger.warning(
+                    "failed to initialise self-coding manager for CapitalManagementBot: %s",
+                    exc,
+                )
+                if retry:
+                    _schedule_manager_retry()
+                return
         manager = manager_local
         if _manager_retry_timer is not None:
             try:
