@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
-from typing import List, Dict, Iterable, Any, TYPE_CHECKING, Callable
 from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, TYPE_CHECKING
 from context_builder import handle_failure, PromptBuildError
 from billing.prompt_notice import prepend_payment_notice
 from prompt_types import Prompt
@@ -70,16 +71,34 @@ except Exception:  # pragma: no cover - fallback for flat layout
         get_improvement_paths,
         get_error_fixes,
     )
-try:
-    from .run_autonomous import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
-except Exception:
-    try:
-        from .sandbox_runner import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
-    except Exception:  # pragma: no cover - fallback
-        _LOCAL_KNOWLEDGE = None
-if _LOCAL_KNOWLEDGE is None:
-    _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
-LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
+def _resolve_local_knowledge_module() -> LocalKnowledgeModule:
+    """Return the ``LocalKnowledgeModule`` without triggering circular imports."""
+
+    module_candidates = (
+        sys.modules.get("menace_sandbox.run_autonomous"),
+        sys.modules.get("run_autonomous"),
+        sys.modules.get("__main__"),
+        sys.modules.get("menace_sandbox.sandbox_runner"),
+        sys.modules.get("sandbox_runner"),
+    )
+    for module in module_candidates:
+        if module is None:
+            continue
+        existing = getattr(module, "LOCAL_KNOWLEDGE_MODULE", None)
+        if existing is not None:
+            return existing
+
+    try:  # pragma: no cover - prefer lightweight import if available
+        from .sandbox_runner import LOCAL_KNOWLEDGE_MODULE as sandbox_lkm
+    except Exception:
+        sandbox_lkm = None
+    if sandbox_lkm is not None:
+        return sandbox_lkm
+
+    return LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
+
+
+LOCAL_KNOWLEDGE_MODULE = _resolve_local_knowledge_module()
 
 from governed_retrieval import govern_retrieval, redact  # noqa: E402
 
