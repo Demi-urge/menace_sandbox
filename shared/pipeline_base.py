@@ -398,9 +398,66 @@ def _finance_router_cls() -> type["FinanceRouterBot"]:
 def _communication_testing_bot_cls() -> type["CommunicationTestingBot"]:
     """Return the communication testing bot via a deferred import."""
 
-    from ..communication_testing_bot import (
-        CommunicationTestingBot as _CommunicationTestingBot,
-    )
+    try:
+        from ..communication_testing_bot import (
+            CommunicationTestingBot as _CommunicationTestingBot,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        _LOGGER.warning(
+            "CommunicationTestingBot unavailable for ModelAutomationPipeline: %s",
+            exc,
+        )
+
+        class _CommunicationTestingBotStub:
+            """Minimal stub used when communication testing dependencies fail."""
+
+            def __init__(self, *args, **kwargs) -> None:
+                self.logger = logging.getLogger("CommTestingStub")
+
+            def _result(self, name: str, passed: bool, details: str) -> SimpleNamespace:
+                return SimpleNamespace(name=name, passed=passed, details=details)
+
+            def functional_tests(self, modules: Iterable[str]) -> List[SimpleNamespace]:
+                mods = list(modules)
+                if mods:
+                    self.logger.info(
+                        "communication testing unavailable; skipping functional tests",
+                        extra={"modules": mods},
+                    )
+                else:
+                    self.logger.info(
+                        "communication testing unavailable; no modules supplied",
+                    )
+                return []
+
+            def integration_test(self, *args, **kwargs) -> SimpleNamespace:
+                self.logger.info(
+                    "communication testing unavailable; integration test skipped"
+                )
+                return self._result(
+                    "integration", False, "communication testing unavailable"
+                )
+
+            def benchmark_mirror(self, *args, **kwargs):
+                self.logger.info(
+                    "communication testing unavailable; benchmark mirror skipped"
+                )
+                if pd is not None:
+                    return pd.DataFrame()
+                return _TaskTableFallback([])
+
+            async def functional_tests_async(
+                self, modules: Iterable[str]
+            ) -> List[SimpleNamespace]:
+                return []
+
+            async def integration_test_async(self, *args, **kwargs) -> SimpleNamespace:
+                return self.integration_test(*args, **kwargs)
+
+            async def benchmark_mirror_async(self, *args, **kwargs):
+                return self.benchmark_mirror(*args, **kwargs)
+
+        return _CommunicationTestingBotStub
 
     return _CommunicationTestingBot
 
@@ -409,9 +466,29 @@ def _discrepancy_detection_bot_cls() -> type["DiscrepancyDetectionBot"]:
     """Return the discrepancy detection bot via a deferred import."""
 
     _trace("Lazily importing DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot...")
-    from ..discrepancy_detection_bot import (
-        DiscrepancyDetectionBot as _DiscrepancyDetectionBot,
-    )
+    try:
+        from ..discrepancy_detection_bot import (
+            DiscrepancyDetectionBot as _DiscrepancyDetectionBot,
+        )
+    except Exception as exc:  # pragma: no cover - degraded bootstrap
+        _LOGGER.warning(
+            "DiscrepancyDetectionBot unavailable for ModelAutomationPipeline: %s",
+            exc,
+        )
+
+        class _DiscrepancyDetectionBotStub:
+            """Fallback bot when discrepancy detection dependencies are missing."""
+
+            def __init__(self, *args, **kwargs) -> None:
+                self.logger = logging.getLogger("DiscrepancyDetectionStub")
+
+            def scan(self) -> List[SimpleNamespace]:
+                self.logger.info(
+                    "discrepancy detection unavailable; returning empty findings"
+                )
+                return []
+
+        return _DiscrepancyDetectionBotStub
 
     _trace("Successfully imported DiscrepancyDetectionBot from menace_sandbox.discrepancy_detection_bot")
     return _DiscrepancyDetectionBot
