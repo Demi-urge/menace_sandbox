@@ -66,7 +66,7 @@ import _thread
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List
+from typing import TYPE_CHECKING, Callable, List
 import math
 import uuid
 from scipy.stats import t
@@ -196,12 +196,57 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
     _console("sandbox environment paths synchronised")
 
 
-_prepare_sandbox_data_dir_environment()
+def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
+    """Return ``True`` when the current invocation should skip heavy bootstrap."""
 
-from sandbox_runner.bootstrap import (
-    bootstrap_environment,
-    _verify_required_dependencies,
-)
+    if argv is None:
+        argv = sys.argv[1:]
+    for token in argv:
+        if token in {"-h", "--help", "--version"}:
+            return True
+    return False
+
+
+_INITIAL_ARGV = sys.argv[1:]
+_DEFER_BOOTSTRAP = _should_defer_bootstrap(_INITIAL_ARGV)
+
+if not _DEFER_BOOTSTRAP:
+    _prepare_sandbox_data_dir_environment(_INITIAL_ARGV)
+else:  # pragma: no cover - convenience path used during CLI discovery
+    os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
+
+_BOOTSTRAP_HELPERS: tuple[Callable[..., object], Callable[..., object]] | None = None
+
+
+def _get_bootstrap_helpers() -> tuple[Callable[..., object], Callable[..., object]]:
+    """Lazily import heavy bootstrap helpers only when required."""
+
+    global _BOOTSTRAP_HELPERS
+    if _BOOTSTRAP_HELPERS is None:
+        from sandbox_runner.bootstrap import (  # pragma: no cover - import side effect
+            bootstrap_environment as _bootstrap_environment,
+            _verify_required_dependencies as _verify_deps,
+        )
+
+        _BOOTSTRAP_HELPERS = (_bootstrap_environment, _verify_deps)
+    return _BOOTSTRAP_HELPERS
+
+
+def _ensure_local_package() -> None:
+    """Register the local ``menace_sandbox`` package for absolute imports."""
+
+    if "menace_sandbox" in sys.modules:
+        return
+
+    spec = importlib.util.spec_from_file_location(
+        "menace_sandbox", resolve_path("__init__.py")
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive guard
+        raise ImportError("Unable to load menace_sandbox package from local path")
+    menace_pkg = importlib.util.module_from_spec(spec)
+    sys.modules["menace_sandbox"] = menace_pkg
+    spec.loader.exec_module(menace_pkg)
+    sys.modules.setdefault("menace", menace_pkg)
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +257,7 @@ _DEPENDENCY_WARNINGS: list[str] = []
 def _initialise_settings() -> SandboxSettings:
     """Initialise :class:`SandboxSettings` with graceful dependency handling."""
 
+    bootstrap_environment, _verify_required_dependencies = _get_bootstrap_helpers()
     base_settings = SandboxSettings()
     try:
         return bootstrap_environment(base_settings, _verify_required_dependencies)
@@ -248,27 +294,339 @@ def _initialise_settings() -> SandboxSettings:
         return relaxed_settings
 
 
-settings = _initialise_settings()
+if _DEFER_BOOTSTRAP:
+    settings = SandboxSettings()
+else:
+    settings = _initialise_settings()
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
 
 
+def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run full autonomous sandbox with environment presets",
+    )
+    parser.add_argument(
+        "--preset-count",
+        type=int,
+        default=3,
+        help="number of presets per iteration",
+    )
+    parser.add_argument("--max-iterations", type=int, help="maximum iterations")
+    parser.add_argument("--sandbox-data-dir", help="override sandbox data directory")
+    parser.add_argument(
+        "--memory-db",
+        dest="memory_db",
+        help="path to GPT memory database (overrides GPT_MEMORY_DB)",
+    )
+    parser.add_argument(
+        "--memory-compact-interval",
+        type=float,
+        help=(
+            "seconds between GPT memory compaction cycles "
+            "(overrides GPT_MEMORY_COMPACT_INTERVAL)"
+        ),
+    )
+    parser.add_argument(
+        "--memory-retention",
+        help=(
+            "comma separated tag=limit pairs controlling memory retention "
+            "(overrides GPT_MEMORY_RETENTION)"
+        ),
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="maximum number of full sandbox runs to execute",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        help=(
+            "start MetricsDashboard on this port for each run"
+            " (overrides AUTO_DASHBOARD_PORT)"
+        ),
+    )
+    parser.add_argument(
+        "--metrics-port",
+        type=int,
+        help="start Prometheus metrics server on this port",
+    )
+    parser.add_argument(
+        "--roi-cycles",
+        type=int,
+        default=3,
+        help="cycles below threshold before module convergence",
+    )
+    parser.add_argument(
+        "--roi-threshold",
+        type=float,
+        help="override ROI delta threshold",
+    )
+    parser.add_argument(
+        "--roi-confidence",
+        type=float,
+        help="confidence level for ROI convergence",
+    )
+    parser.add_argument(
+        "--entropy-plateau-threshold",
+        type=float,
+        help="threshold for entropy delta plateau detection",
+    )
+    parser.add_argument(
+        "--entropy-plateau-consecutive",
+        type=int,
+        help="entropy delta samples below threshold before module convergence",
+    )
+    parser.add_argument(
+        "--synergy-cycles",
+        type=int,
+        help="cycles below threshold before synergy convergence",
+    )
+    parser.add_argument(
+        "--synergy-threshold",
+        type=float,
+        help="override synergy threshold",
+    )
+    parser.add_argument(
+        "--synergy-threshold-window",
+        type=int,
+        help="window size for adaptive synergy threshold",
+    )
+    parser.add_argument(
+        "--synergy-threshold-weight",
+        type=float,
+        help="exponential weight for adaptive synergy threshold",
+    )
+    parser.add_argument(
+        "--synergy-confidence",
+        type=float,
+        help="confidence level for synergy convergence",
+    )
+    parser.add_argument(
+        "--synergy-ma-window",
+        type=int,
+        help="window size for synergy moving average",
+    )
+    parser.add_argument(
+        "--synergy-stationarity-confidence",
+        type=float,
+        help="confidence level for synergy stationarity test",
+    )
+    parser.add_argument(
+        "--synergy-std-threshold",
+        type=float,
+        help="standard deviation threshold for synergy convergence",
+    )
+    parser.add_argument(
+        "--synergy-variance-confidence",
+        type=float,
+        help="confidence level for variance change test",
+    )
+    parser.add_argument(
+        "--auto-thresholds",
+        action="store_true",
+        help="compute convergence thresholds adaptively",
+    )
+    parser.add_argument(
+        "--preset-file",
+        action="append",
+        dest="preset_files",
+        help="JSON file defining environment presets; can be repeated",
+    )
+    parser.add_argument(
+        "--no-preset-evolution",
+        action="store_true",
+        dest="disable_preset_evolution",
+        help="disable adapting presets from previous run history",
+    )
+    parser.add_argument(
+        "--preset-debug",
+        action="store_true",
+        help="enable verbose preset adaptation logs",
+    )
+    parser.add_argument(
+        "--debug-log-file",
+        help="write verbose logs to this file when --preset-debug is enabled",
+    )
+    parser.add_argument(
+        "--forecast-log",
+        help="write ROI forecast and threshold details to this file",
+    )
+    parser.add_argument(
+        "--preset-log-file",
+        help="write preset source and actions to this JSONL file",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="enable debug logging (overrides --log-level)",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=settings.sandbox_log_level or settings.log_level,
+        help="logging level for console output",
+    )
+    parser.add_argument(
+        "--save-synergy-history",
+        dest="save_synergy_history",
+        action="store_true",
+        default=None,
+        help="persist synergy metrics across runs",
+    )
+    parser.add_argument(
+        "--no-save-synergy-history",
+        dest="save_synergy_history",
+        action="store_false",
+        default=None,
+        help="do not persist synergy metrics",
+    )
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help="reload last ROI and synergy histories before running",
+    )
+    parser.add_argument(
+        "--recursive-orphans",
+        "--recursive-include",
+        action="store_true",
+        dest="recursive_orphans",
+        default=None,
+        help=(
+            "recursively integrate orphan dependency chains (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-include)"
+        ),
+    )
+    parser.add_argument(
+        "--no-recursive-orphans",
+        "--no-recursive-include",
+        action="store_false",
+        dest="recursive_orphans",
+        help=(
+            "disable recursive integration of orphan dependency chains (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=0)"
+        ),
+    )
+    parser.add_argument(
+        "--include-orphans",
+        action="store_false",
+        dest="include_orphans",
+        default=None,
+        help="disable running orphan modules during sandbox runs",
+    )
+    parser.add_argument(
+        "--discover-orphans",
+        action="store_false",
+        dest="discover_orphans",
+        default=None,
+        help="disable automatic orphan discovery",
+    )
+    parser.add_argument(
+        "--discover-isolated",
+        action="store_true",
+        dest="discover_isolated",
+        default=None,
+        help="automatically run discover_isolated_modules before the orphan scan",
+    )
+    parser.add_argument(
+        "--no-discover-isolated",
+        action="store_false",
+        dest="discover_isolated",
+        help="disable discover_isolated_modules during the orphan scan",
+    )
+    parser.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        dest="recursive_isolated",
+        default=None,
+        help="recurse through dependencies of isolated modules (default)",
+    )
+    parser.add_argument(
+        "--no-recursive-isolated",
+        action="store_false",
+        dest="recursive_isolated",
+        help="disable recursively processing modules from discover_isolated_modules",
+    )
+    parser.add_argument(
+        "--auto-include-isolated",
+        action="store_true",
+        help=(
+            "automatically include isolated modules recursively (sets "
+            "SANDBOX_AUTO_INCLUDE_ISOLATED=1 and SANDBOX_RECURSIVE_ISOLATED=1)"
+        ),
+    )
+    parser.add_argument(
+        "--foresight-trend",
+        nargs=2,
+        metavar=("FILE", "WORKFLOW_ID"),
+        help="show ROI trend metrics from foresight history file",
+    )
+    parser.add_argument(
+        "--foresight-stable",
+        nargs=2,
+        metavar=("FILE", "WORKFLOW_ID"),
+        help="check workflow stability from foresight history file",
+    )
+    parser.add_argument(
+        "--check-settings",
+        action="store_true",
+        help="validate environment settings and exit",
+    )
+    return parser
+
+
+if __name__ == "__main__" and _DEFER_BOOTSTRAP:
+    _build_argument_parser(settings).parse_args(sys.argv[1:])
+    sys.exit(0)
+
+
 # Initialise database router with a unique menace_id. All DB access must go
 # through the router.  Import modules requiring database access afterwards so
-# they can rely on ``GLOBAL_ROUTER``.
-MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = settings.menace_local_db_path or str(
-    resolve_path(f"menace_{MENACE_ID}_local.db")
-)
-SHARED_DB_PATH = settings.menace_shared_db_path or str(resolve_path("shared/global.db"))
-GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+# they can rely on ``GLOBAL_ROUTER``.  When running in help/metadata mode we
+# skip the connection setup entirely to avoid touching the filesystem.
+if not _DEFER_BOOTSTRAP:
+    MENACE_ID = uuid.uuid4().hex
+    LOCAL_DB_PATH = settings.menace_local_db_path or str(
+        resolve_path(f"menace_{MENACE_ID}_local.db")
+    )
+    SHARED_DB_PATH = settings.menace_shared_db_path or str(
+        resolve_path("shared/global.db")
+    )
+    GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+else:  # pragma: no cover - help/metadata path
+    MENACE_ID = "bootstrap-preview"
+    LOCAL_DB_PATH = ""
+    SHARED_DB_PATH = ""
+    GLOBAL_ROUTER = None
 
-from menace_sandbox.gpt_memory import GPTMemoryManager
-from memory_maintenance import MemoryMaintenance, _load_retention_rules
-from gpt_knowledge_service import GPTKnowledgeService
-from local_knowledge_module import LocalKnowledgeModule, init_local_knowledge
+if not _DEFER_BOOTSTRAP:
+    _ensure_local_package()
+    from menace_sandbox.gpt_memory import GPTMemoryManager as _GPTMemoryManager
+    from memory_maintenance import (
+        MemoryMaintenance as _MemoryMaintenance,
+        _load_retention_rules,
+    )
+    from gpt_knowledge_service import GPTKnowledgeService as _GPTKnowledgeService
+    from local_knowledge_module import LocalKnowledgeModule as _LocalKnowledgeModule
+
+    GPTMemoryManager = _GPTMemoryManager
+    MemoryMaintenance = _MemoryMaintenance
+    GPTKnowledgeService = _GPTKnowledgeService
+else:  # pragma: no cover - help/metadata path
+    if TYPE_CHECKING:  # pragma: no cover - typing aid
+        from local_knowledge_module import LocalKnowledgeModule as _LocalKnowledgeModule
+    else:
+        _LocalKnowledgeModule = None  # type: ignore[assignment]
+    GPTMemoryManager = None  # type: ignore[assignment]
+    MemoryMaintenance = None  # type: ignore[assignment]
+    _load_retention_rules = lambda *_args, **_kwargs: []  # type: ignore[assignment]
+    GPTKnowledgeService = None  # type: ignore[assignment]
+
+LocalKnowledgeModule = _LocalKnowledgeModule
+
 from filelock import FileLock
 from pydantic import BaseModel, RootModel, ValidationError, validator
 
@@ -292,18 +650,6 @@ if "menace" not in sys.modules:
 # environments but this fallback keeps unit tests and ad-hoc scripts working.
 REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
 
-
-# Load the local package so absolute imports like ``menace_sandbox.shared`` work
-# even when this script is invoked directly (``python run_autonomous.py``). We
-# register the module under both the modern ``menace_sandbox`` name and the
-# legacy ``menace`` alias used by older tooling.
-spec = importlib.util.spec_from_file_location(
-    "menace_sandbox", resolve_path("__init__.py")
-)
-menace_pkg = importlib.util.module_from_spec(spec)
-sys.modules["menace_sandbox"] = menace_pkg
-spec.loader.exec_module(menace_pkg)
-sys.modules.setdefault("menace", menace_pkg)
 
 import menace.environment_generator as environment_generator
 import sandbox_runner
@@ -1060,276 +1406,7 @@ def main(argv: List[str] | None = None) -> None:
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
     _console("correlation id initialised; configuring argument parser")
-    parser = argparse.ArgumentParser(
-        description="Run full autonomous sandbox with environment presets",
-    )
-    parser.add_argument(
-        "--preset-count",
-        type=int,
-        default=3,
-        help="number of presets per iteration",
-    )
-    parser.add_argument("--max-iterations", type=int, help="maximum iterations")
-    parser.add_argument("--sandbox-data-dir", help="override sandbox data directory")
-    parser.add_argument(
-        "--memory-db",
-        dest="memory_db",
-        help="path to GPT memory database (overrides GPT_MEMORY_DB)",
-    )
-    parser.add_argument(
-        "--memory-compact-interval",
-        type=float,
-        help=(
-            "seconds between GPT memory compaction cycles "
-            "(overrides GPT_MEMORY_COMPACT_INTERVAL)"
-        ),
-    )
-    parser.add_argument(
-        "--memory-retention",
-        help=(
-            "comma separated tag=limit pairs controlling memory retention "
-            "(overrides GPT_MEMORY_RETENTION)"
-        ),
-    )
-    parser.add_argument(
-        "--runs",
-        type=int,
-        default=1,
-        help="maximum number of full sandbox runs to execute",
-    )
-    parser.add_argument(
-        "--dashboard-port",
-        type=int,
-        help=(
-            "start MetricsDashboard on this port for each run"
-            " (overrides AUTO_DASHBOARD_PORT)"
-        ),
-    )
-    parser.add_argument(
-        "--metrics-port",
-        type=int,
-        help="start Prometheus metrics server on this port",
-    )
-    parser.add_argument(
-        "--roi-cycles",
-        type=int,
-        default=3,
-        help="cycles below threshold before module convergence",
-    )
-    parser.add_argument(
-        "--roi-threshold",
-        type=float,
-        help="override ROI delta threshold",
-    )
-    parser.add_argument(
-        "--roi-confidence",
-        type=float,
-        help="confidence level for ROI convergence",
-    )
-    parser.add_argument(
-        "--entropy-plateau-threshold",
-        type=float,
-        help="threshold for entropy delta plateau detection",
-    )
-    parser.add_argument(
-        "--entropy-plateau-consecutive",
-        type=int,
-        help="entropy delta samples below threshold before module convergence",
-    )
-    parser.add_argument(
-        "--synergy-cycles",
-        type=int,
-        help="cycles below threshold before synergy convergence",
-    )
-    parser.add_argument(
-        "--synergy-threshold",
-        type=float,
-        help="override synergy threshold",
-    )
-    parser.add_argument(
-        "--synergy-threshold-window",
-        type=int,
-        help="window size for adaptive synergy threshold",
-    )
-    parser.add_argument(
-        "--synergy-threshold-weight",
-        type=float,
-        help="exponential weight for adaptive synergy threshold",
-    )
-    parser.add_argument(
-        "--synergy-confidence",
-        type=float,
-        help="confidence level for synergy convergence",
-    )
-    parser.add_argument(
-        "--synergy-ma-window",
-        type=int,
-        help="window size for synergy moving average",
-    )
-    parser.add_argument(
-        "--synergy-stationarity-confidence",
-        type=float,
-        help="confidence level for synergy stationarity test",
-    )
-    parser.add_argument(
-        "--synergy-std-threshold",
-        type=float,
-        help="standard deviation threshold for synergy convergence",
-    )
-    parser.add_argument(
-        "--synergy-variance-confidence",
-        type=float,
-        help="confidence level for variance change test",
-    )
-    parser.add_argument(
-        "--auto-thresholds",
-        action="store_true",
-        help="compute convergence thresholds adaptively",
-    )
-    parser.add_argument(
-        "--preset-file",
-        action="append",
-        dest="preset_files",
-        help="JSON file defining environment presets; can be repeated",
-    )
-    parser.add_argument(
-        "--no-preset-evolution",
-        action="store_true",
-        dest="disable_preset_evolution",
-        help="disable adapting presets from previous run history",
-    )
-    parser.add_argument(
-        "--preset-debug",
-        action="store_true",
-        help="enable verbose preset adaptation logs",
-    )
-    parser.add_argument(
-        "--debug-log-file",
-        help="write verbose logs to this file when --preset-debug is enabled",
-    )
-    parser.add_argument(
-        "--forecast-log",
-        help="write ROI forecast and threshold details to this file",
-    )
-    parser.add_argument(
-        "--preset-log-file",
-        help="write preset source and actions to this JSONL file",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="enable debug logging (overrides --log-level)",
-    )
-    parser.add_argument(
-        "--log-level",
-        default=settings.sandbox_log_level or settings.log_level,
-        help="logging level for console output",
-    )
-    parser.add_argument(
-        "--save-synergy-history",
-        dest="save_synergy_history",
-        action="store_true",
-        default=None,
-        help="persist synergy metrics across runs",
-    )
-    parser.add_argument(
-        "--no-save-synergy-history",
-        dest="save_synergy_history",
-        action="store_false",
-        default=None,
-        help="do not persist synergy metrics",
-    )
-    parser.add_argument(
-        "--recover",
-        action="store_true",
-        help="reload last ROI and synergy histories before running",
-    )
-    parser.add_argument(
-        "--recursive-orphans",
-        "--recursive-include",
-        action="store_true",
-        dest="recursive_orphans",
-        default=None,
-        help=(
-            "recursively integrate orphan dependency chains (sets "
-            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-include)"
-        ),
-    )
-    parser.add_argument(
-        "--no-recursive-orphans",
-        "--no-recursive-include",
-        action="store_false",
-        dest="recursive_orphans",
-        help=(
-            "disable recursive integration of orphan dependency chains (sets "
-            "SANDBOX_RECURSIVE_ORPHANS=0)"
-        ),
-    )
-    parser.add_argument(
-        "--include-orphans",
-        action="store_false",
-        dest="include_orphans",
-        default=None,
-        help="disable running orphan modules during sandbox runs",
-    )
-    parser.add_argument(
-        "--discover-orphans",
-        action="store_false",
-        dest="discover_orphans",
-        default=None,
-        help="disable automatic orphan discovery",
-    )
-    parser.add_argument(
-        "--discover-isolated",
-        action="store_true",
-        dest="discover_isolated",
-        default=None,
-        help="automatically run discover_isolated_modules before the orphan scan",
-    )
-    parser.add_argument(
-        "--no-discover-isolated",
-        action="store_false",
-        dest="discover_isolated",
-        help="disable discover_isolated_modules during the orphan scan",
-    )
-    parser.add_argument(
-        "--recursive-isolated",
-        action="store_true",
-        dest="recursive_isolated",
-        default=None,
-        help="recurse through dependencies of isolated modules (default)",
-    )
-    parser.add_argument(
-        "--no-recursive-isolated",
-        action="store_false",
-        dest="recursive_isolated",
-        help="disable recursively processing modules from discover_isolated_modules",
-    )
-    parser.add_argument(
-        "--auto-include-isolated",
-        action="store_true",
-        help=(
-            "automatically include isolated modules recursively (sets "
-            "SANDBOX_AUTO_INCLUDE_ISOLATED=1 and SANDBOX_RECURSIVE_ISOLATED=1)"
-        ),
-    )
-    parser.add_argument(
-        "--foresight-trend",
-        nargs=2,
-        metavar=("FILE", "WORKFLOW_ID"),
-        help="show ROI trend metrics from foresight history file",
-    )
-    parser.add_argument(
-        "--foresight-stable",
-        nargs=2,
-        metavar=("FILE", "WORKFLOW_ID"),
-        help="check workflow stability from foresight history file",
-    )
-    parser.add_argument(
-        "--check-settings",
-        action="store_true",
-        help="validate environment settings and exit",
-    )
+    parser = _build_argument_parser(settings)
     args = parser.parse_args(argv)
     _console("arguments parsed; configuring logging")
 
@@ -2166,7 +2243,6 @@ def bootstrap(
     from roi_results_db import ROIResultsDB
     from workflow_stability_db import WorkflowStabilityDB
     from sandbox_runner import launch_sandbox
-    from sandbox_runner.bootstrap import bootstrap_environment
     from self_learning_service import run_background as run_learning_background
     from self_test_service import SelfTestService
     import asyncio
@@ -2177,6 +2253,7 @@ def bootstrap(
     except ValidationError as exc:
         raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
 
+    bootstrap_environment, _verify_required_dependencies = _get_bootstrap_helpers()
     bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
     os.environ.setdefault("SANDBOX_DATA_DIR", resolve_path(settings.sandbox_data_dir))
