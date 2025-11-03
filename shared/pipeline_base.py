@@ -144,9 +144,10 @@ _trace("Successfully imported EfficiencyBot from menace_sandbox.efficiency_bot")
 _trace("Importing PerformanceAssessmentBot from menace_sandbox.performance_assessment_bot...")
 from ..performance_assessment_bot import PerformanceAssessmentBot
 _trace("Successfully imported PerformanceAssessmentBot from menace_sandbox.performance_assessment_bot")
-_trace("Importing CommunicationMaintenanceBot from menace_sandbox.communication_maintenance_bot...")
-from ..communication_maintenance_bot import CommunicationMaintenanceBot
-_trace("Successfully imported CommunicationMaintenanceBot from menace_sandbox.communication_maintenance_bot")
+_trace(
+    "Preparing lazy import for CommunicationMaintenanceBot from "
+    "menace_sandbox.communication_maintenance_bot..."
+)
 _trace("Importing OperationalMonitoringBot from menace_sandbox.operational_monitor_bot...")
 from ..operational_monitor_bot import OperationalMonitoringBot
 _trace("Successfully imported OperationalMonitoringBot from menace_sandbox.operational_monitor_bot")
@@ -180,6 +181,20 @@ def get_resource_allocation_optimizer_cls() -> "type[ResourceAllocationOptimizer
     return ResourceAllocationOptimizer
 
 
+def get_communication_maintenance_bot_cls() -> "type[CommunicationMaintenanceBot]":
+    _trace(
+        "Lazily importing CommunicationMaintenanceBot from "
+        "menace_sandbox.communication_maintenance_bot..."
+    )
+    from ..communication_maintenance_bot import CommunicationMaintenanceBot
+
+    _trace(
+        "Successfully lazy-imported CommunicationMaintenanceBot from "
+        "menace_sandbox.communication_maintenance_bot"
+    )
+    return CommunicationMaintenanceBot
+
+
 _trace("Preparing lazy import for MetaGeneticAlgorithmBot...")
 
 
@@ -194,6 +209,7 @@ def get_meta_genetic_algorithm_bot_cls() -> "type[MetaGeneticAlgorithmBot]":
 
 
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
+    from menace_sandbox.communication_maintenance_bot import CommunicationMaintenanceBot
     from menace_sandbox.resource_allocation_optimizer import ResourceAllocationOptimizer
     from menace_sandbox.dynamic_resource_allocator_bot import DynamicResourceAllocator
     from menace_sandbox.diagnostic_manager import DiagnosticManager
@@ -422,7 +438,7 @@ class ModelAutomationPipeline:
         roi_threshold: float = 0.0,
         efficiency_bot: EfficiencyBot | None = None,
         performance_bot: PerformanceAssessmentBot | None = None,
-        comms_bot: CommunicationMaintenanceBot | None = None,
+        comms_bot: "CommunicationMaintenanceBot | None" = None,
         monitor_bot: OperationalMonitoringBot | None = None,
         db_bot: CentralDatabaseBot | None = None,
         sentiment_bot: SentimentBot | None = None,
@@ -549,7 +565,10 @@ class ModelAutomationPipeline:
 
         self.efficiency_bot = efficiency_bot or EfficiencyBot()
         self.performance_bot = performance_bot or PerformanceAssessmentBot()
-        self.comms_bot = comms_bot or CommunicationMaintenanceBot()
+        if comms_bot is None:
+            comms_bot_cls = get_communication_maintenance_bot_cls()
+            comms_bot = comms_bot_cls()
+        self.comms_bot = comms_bot
         self.monitor_bot = monitor_bot or OperationalMonitoringBot()
         self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
         self.sentiment_bot = sentiment_bot or SentimentBot()
