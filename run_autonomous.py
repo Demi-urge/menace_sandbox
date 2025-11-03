@@ -211,6 +211,13 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
                 return True
         except ValueError:
             pass
+    max_iters_val = _extract_flag_value(argv, "--max-iterations")
+    if max_iters_val is not None:
+        try:
+            if int(max_iters_val) <= 0:
+                return True
+        except ValueError:
+            pass
     return False
 
 
@@ -436,7 +443,15 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         default=3,
         help="number of presets per iteration",
     )
-    parser.add_argument("--max-iterations", type=int, help="maximum iterations")
+    default_max_iterations = getattr(settings, "max_iterations", None)
+    if default_max_iterations is None:
+        default_max_iterations = 1
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=default_max_iterations,
+        help="maximum iterations (defaults to 1 when unspecified)",
+    )
     parser.add_argument("--sandbox-data-dir", help="override sandbox data directory")
     parser.add_argument(
         "--memory-db",
