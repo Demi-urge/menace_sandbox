@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provide a shared :class:`EvolutionOrchestrator` instance.
 
 This helper lazily constructs an :class:`EvolutionOrchestrator` with minimal
@@ -12,6 +10,11 @@ To avoid circular import errors the heavy dependencies are imported only inside
 being evaluated.
 """
 
+from __future__ import annotations
+
+import logging
+import threading
+from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator, TYPE_CHECKING, Any
 
@@ -20,6 +23,75 @@ if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .self_coding_engine import SelfCodingEngine
     from .evolution_orchestrator import EvolutionOrchestrator
     from .capital_management_bot import CapitalManagementBot
+
+logger = logging.getLogger(__name__)
+
+
+class _LazyEvolutionManager:
+    """Lazily construct :class:`SystemEvolutionManager` on first use.
+
+    Importing ``system_evolution_manager`` performs significant work including
+    instantiating several bots.  During bootstrap many of those bots import
+    :mod:`orchestrator_loader`, so eagerly importing the manager introduces a
+    circular dependency.  The lazy wrapper defers the import and instantiation
+    until an attribute is actually accessed, breaking the cycle while keeping
+    runtime behaviour unchanged.
+
+    The wrapper is thread-safe and degrades gracefully by falling back to a
+    no-op manager when the real manager cannot be created (for example when
+    optional dependencies are unavailable on Windows).
+    """
+
+    def __init__(self, bot_name: str) -> None:
+        self._bot_name = bot_name
+        self._delegate: Any | None = None
+        self._lock = threading.RLock()
+
+    def _ensure_delegate(self) -> Any:
+        with self._lock:
+            if self._delegate is None:
+                try:
+                    from .system_evolution_manager import SystemEvolutionManager
+
+                    self._delegate = SystemEvolutionManager(bots=[self._bot_name])
+                except Exception as exc:  # pragma: no cover - degraded path
+                    logger.warning(
+                        "SystemEvolutionManager unavailable; using inert fallback: %s",
+                        exc,
+                    )
+                    self._delegate = _NullEvolutionManager()
+            return self._delegate
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._ensure_delegate(), item)
+
+
+@dataclass(slots=True)
+class _NullEvolutionResult:
+    """Placeholder result mimicking :class:`EvolutionCycleResult`."""
+
+    ga_results: dict[str, float]
+    predictions: list[Any]
+    trending_topic: str | None = None
+
+
+class _NullEvolutionManager:
+    """Minimal stand-in used when the real manager cannot be constructed."""
+
+    bots: list[str]
+
+    def __init__(self) -> None:
+        self.bots = []
+
+    def run_if_signals(self, **_kwargs: Any) -> None:
+        return None
+
+    def run_cycle(self) -> _NullEvolutionResult:  # pragma: no cover - stub
+        return _NullEvolutionResult(ga_results={}, predictions=[])
+
+    def radar_refactors(self) -> list[Any]:  # pragma: no cover - stub
+        return []
+
 
 _shared_orchestrator: "EvolutionOrchestrator" | None = None
 
@@ -58,12 +130,11 @@ def get_orchestrator(
     global _shared_orchestrator
     if _shared_orchestrator is None:
         from .evolution_orchestrator import EvolutionOrchestrator
-        from .system_evolution_manager import SystemEvolutionManager
         from .capital_management_bot import CapitalManagementBot
 
         with _capital_bot_manual_mode(CapitalManagementBot):
             capital_bot = CapitalManagementBot()
-        evolution_manager = SystemEvolutionManager(bots=[bot_name])
+        evolution_manager = _LazyEvolutionManager(bot_name)
         _shared_orchestrator = EvolutionOrchestrator(
             data_bot, capital_bot, engine, evolution_manager
         )
