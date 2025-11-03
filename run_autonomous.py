@@ -379,6 +379,58 @@ def _initialise_settings() -> SandboxSettings:
 
     bootstrap_environment, _verify_required_dependencies = _get_bootstrap_helpers()
     base_settings = SandboxSettings()
+
+    skip_strict = (
+        not _STRICT_DEPENDENCIES
+        and os.environ.get("SANDBOX_SKIP_DEPENDENCY_CHECKS") in {"1", "true", "True"}
+    )
+
+    if skip_strict:
+        def _format_lines(errors: dict[str, list[str]]) -> list[str]:
+            messages: list[str] = []
+            if errors.get("system"):
+                messages.append(
+                    "Missing system packages: "
+                    + ", ".join(errors["system"])
+                    + ". Install them using your package manager."
+                )
+            if errors.get("python"):
+                messages.append(
+                    "Missing Python packages: "
+                    + ", ".join(errors["python"])
+                    + ". Install them with 'pip install <package>'."
+                )
+            if errors.get("optional"):
+                messages.append(
+                    "Missing optional Python packages: "
+                    + ", ".join(errors["optional"])
+                    + ". Install them with 'pip install <package>'."
+                )
+            return messages
+
+        def _relaxed_verifier(settings_obj: SandboxSettings, *_: object) -> dict[str, list[str]]:
+            errors = _verify_required_dependencies(settings_obj, strict=False)  # type: ignore[misc]
+            for line in _format_lines(errors):
+                primary, hints, is_new = _record_dependency_warning(line)
+                if not is_new:
+                    continue
+                logger.warning("dependency check (relaxed) flagged: %s", primary)
+                _console(f"dependency check (relaxed) flagged: {primary}")
+                for hint in hints:
+                    logger.info("dependency remediation hint: %s", hint)
+                    _console(f"dependency remediation hint: {hint}")
+            return errors
+
+        relaxed = bootstrap_environment(
+            base_settings,
+            _relaxed_verifier,
+            enforce_dependencies=False,
+        )
+        if _DEPENDENCY_WARNINGS:
+            _console("continuing with relaxed dependency checks")
+        _emit_dependency_summary()
+        return relaxed
+
     try:
         return bootstrap_environment(base_settings, _verify_required_dependencies)
     except SystemExit as exc:
