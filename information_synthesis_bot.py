@@ -42,14 +42,42 @@ except Exception as exc:  # pragma: no cover - optional dependency
     create_engine = MetaData = Table = select = None  # type: ignore
     _SQLALCHEMY_IMPORT_ERROR = exc
 
-_sqlalchemy_available = _SQLALCHEMY_IMPORT_ERROR is None
-if _SQLALCHEMY_IMPORT_ERROR is None:
-    _sqlalchemy_unavailable_message = None
-else:
-    _sqlalchemy_unavailable_message = (
+
+def _format_sqlalchemy_import_error(exc: Exception) -> str:
+    return (
         "SQLAlchemy helpers are unavailable: "
-        f"{type(_SQLALCHEMY_IMPORT_ERROR).__name__}: {_SQLALCHEMY_IMPORT_ERROR}"
+        f"{type(exc).__name__}: {exc}"
     )
+
+
+def _current_sqlalchemy_status() -> tuple[bool, str | None]:
+    """Return availability of SQLAlchemy helpers and any diagnostic message."""
+
+    if _SQLALCHEMY_IMPORT_ERROR is not None:
+        return False, _format_sqlalchemy_import_error(_SQLALCHEMY_IMPORT_ERROR)
+
+    helper_map = {
+        "create_engine": create_engine,
+        "MetaData": MetaData,
+        "Table": Table,
+        "select": select,
+    }
+    missing = []
+    for name, helper in helper_map.items():
+        if helper is None:
+            missing.append(name)
+            continue
+        if name in {"create_engine", "MetaData", "Table", "select"} and not callable(helper):
+            missing.append(name)
+
+    if missing:
+        helper_list = ", ".join(sorted(missing))
+        return False, f"SQLAlchemy helpers are unavailable: missing helper(s): {helper_list}"
+
+    return True, None
+
+
+_sqlalchemy_available, _sqlalchemy_unavailable_message = _current_sqlalchemy_status()
 try:
     from celery import Celery
 except Exception:  # pragma: no cover - optional
@@ -111,10 +139,16 @@ class InformationSynthesisBot:
         event_bus: UnifiedEventBus | None = None,
         context_builder: ContextBuilder,
     ) -> None:
-        self._sqlalchemy_available = _sqlalchemy_available
-        self._sqlalchemy_error_message = _sqlalchemy_unavailable_message
+        available, diagnostic = _current_sqlalchemy_status()
+        # update module-level flags so other consumers observe the latest status
+        global _sqlalchemy_available, _sqlalchemy_unavailable_message
+        _sqlalchemy_available = available
+        _sqlalchemy_unavailable_message = diagnostic
 
-        if _sqlalchemy_available:
+        self._sqlalchemy_available = available
+        self._sqlalchemy_error_message = diagnostic
+
+        if available:
             self.engine = create_engine(db_url)
             self.meta = MetaData()
             self.meta.reflect(bind=self.engine)
@@ -154,8 +188,9 @@ class InformationSynthesisBot:
         for _, row in df.iterrows():
             try:
                 schema.load(row.to_dict())
-            except ValidationError as e:  # missing or invalid fields
-                for field in e.messages:
+            except (ValidationError, SimpleValidationError) as e:  # missing or invalid fields
+                messages = getattr(e, "messages", {})
+                for field in messages:
                     requests.append(DataRequest(table=table, field=field, reason="invalid"))
         # detect duplicates via fuzzy name matching
         if fuzz and "name" in df.columns:
