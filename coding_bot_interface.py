@@ -175,6 +175,66 @@ class _ProvenanceDecision:
         return self.mode != "missing"
 
 
+@dataclass(slots=True)
+class _BootstrapDecision:
+    """Capture bootstrap decisions derived from provenance metadata."""
+
+    provenance: _ProvenanceDecision | None = None
+    manager: Any = None
+    _update_kwargs: Mapping[str, Any] | None = None
+    should_update: bool = True
+    register_as_coding: bool = True
+    hot_swap_active: bool = False
+
+    def __post_init__(self) -> None:  # pragma: no cover - trivial normalisation
+        self._update_kwargs = dict(self._update_kwargs or {})
+
+    @property
+    def update_kwargs(self) -> dict[str, Any]:
+        """Return a copy of the keyword arguments for registry updates."""
+
+        return dict(self._update_kwargs or {})
+
+    def apply(self, *, target: type | None = None) -> None:
+        """Materialise provenance details on *target* for diagnostics."""
+
+        if target is None:
+            return
+
+        decision = self.provenance
+        mode = decision.mode if decision else "missing"
+        setattr(target, "_self_coding_provenance", decision)
+        setattr(target, "_self_coding_provenance_mode", mode)
+        setattr(target, "_self_coding_provenance_source", getattr(decision, "source", None))
+        setattr(target, "_self_coding_provenance_reason", getattr(decision, "reason", None))
+        setattr(target, "_self_coding_patch_id", getattr(decision, "patch_id", None))
+        setattr(target, "_self_coding_commit_hash", getattr(decision, "commit", None))
+        setattr(target, "_self_coding_provenance_available", bool(decision and decision.available))
+        setattr(target, "_self_coding_provenance_unsigned", bool(decision and decision.mode == "unsigned"))
+        if decision and decision.commit:
+            _emit_patch_hash_once(decision.commit)
+
+
+def _registry_hot_swap_active(registry: Any) -> bool:
+    """Best-effort helper to query ``registry`` hot swap state."""
+
+    if registry is None:
+        return False
+    try:
+        candidate = getattr(registry, "hot_swap_active", None)
+    except Exception:  # pragma: no cover - defensive guard
+        return False
+    try:
+        if callable(candidate):
+            return bool(candidate())
+        if candidate is not None:
+            return bool(candidate)
+    except Exception:  # pragma: no cover - defensive guard
+        logger.debug("failed to evaluate hot_swap_active on %s", registry, exc_info=True)
+        return False
+    return False
+
+
 @dataclass(frozen=True)
 class _SignedProvenanceEntry:
     """Structured representation of signed provenance metadata."""
@@ -1786,7 +1846,8 @@ def self_coding_managed(
         update_kwargs: dict[str, Any] = {}
         should_update = True
         register_as_coding = True
-        decision: _ProvenanceDecision | None = None
+        register_as_coding_local = register_as_coding
+        decision: _BootstrapDecision | None = None
         resolved_registry: BotRegistry | None = None
         resolved_data_bot: DataBot | None = None
         # ``ModelAutomationPipeline`` and other decorated bots lazily resolve
@@ -1866,41 +1927,69 @@ def self_coding_managed(
                                 name,
                                 exc_info=True,
                             )
-                    if ready and isinstance(SelfCodingManager, type):
-                        manager_local = manager_local or SelfCodingManager(registry_obj)
-                        register_as_coding_local = True
+                    if ready:
+                        try:
+                            manager_local = manager_local or _bootstrap_manager(
+                                name,
+                                registry_obj,
+                                data_bot_obj,
+                            )
+                        except RuntimeError as exc:
+                            register_as_coding_local = False
+                            logger.warning(
+                                "self-coding manager unavailable for %s; %s",
+                                name,
+                                exc,
+                            )
+                            logger.debug(
+                                "self-coding manager bootstrap failed for %s", name, exc_info=exc
+                            )
+                        else:
+                            register_as_coding_local = True
                     else:
                         register_as_coding_local = False
-                        if ready and not isinstance(SelfCodingManager, type):
-                            logger.warning(
-                                "self-coding manager unavailable for %s; dependency stub active",
-                                name,
-                            )
-                        if missing:
-                            logger.warning(
-                                "self-coding runtime unavailable for %s; missing %s",
-                                name,
-                                ", ".join(sorted(missing)),
-                            )
+                    if missing:
+                        logger.warning(
+                            "self-coding runtime unavailable for %s; missing %s",
+                            name,
+                            ", ".join(sorted(missing)),
+                        )
                 else:
                     register_as_coding_local = register_as_coding
 
                 decision_local = decision
+                update_kwargs_local = dict(update_kwargs)
+                should_update_local = should_update
                 if decision_local is None:
-                    decision_local = _resolve_provenance_decision(
+                    manager_sources: list[Any] = []
+                    for candidate in (
+                        manager_local,
+                        getattr(manager_local, "bot_registry", None),
+                        getattr(manager_local, "data_bot", None),
                         registry_obj,
                         data_bot_obj,
+                    ):
+                        if candidate is not None:
+                            manager_sources.append(candidate)
+
+                    provenance_decision = _resolve_provenance_decision(
                         name,
                         module_path,
+                        manager_sources,
+                        module_provenance,
+                    )
+                    decision_local = _BootstrapDecision(
+                        provenance=provenance_decision,
                         manager=manager_local,
-                        provenance=module_provenance,
+                        _update_kwargs=update_kwargs_local,
+                        should_update=should_update_local,
+                        register_as_coding=register_as_coding_local,
+                        hot_swap_active=_registry_hot_swap_active(registry_obj),
                     )
 
                 hot_swap_active = False
-                should_update_local = should_update
-                update_kwargs_local = dict(update_kwargs)
                 if decision_local:
-                    decision_local.apply(self=cls)
+                    decision_local.apply(target=cls)
                     update_kwargs_local = decision_local.update_kwargs
                     should_update_local = decision_local.should_update
                     register_as_coding_local = decision_local.register_as_coding
