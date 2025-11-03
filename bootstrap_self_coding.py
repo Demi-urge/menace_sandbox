@@ -79,10 +79,56 @@ def purge_stale_files() -> None:
 def bootstrap_self_coding(bot_name: str) -> None:
     """Trigger :func:`internalize_coding_bot` for *bot_name*."""
 
+    from menace_sandbox.bot_registry import BotRegistry
+    from menace_sandbox.code_database import CodeDB
+    from menace_sandbox.context_builder_util import create_context_builder
+    from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
+    from menace_sandbox.menace_memory_manager import MenaceMemoryManager
+    from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+    from menace_sandbox.self_coding_engine import SelfCodingEngine
     from menace_sandbox.self_coding_manager import internalize_coding_bot
+    from menace_sandbox.self_coding_thresholds import get_thresholds
 
     LOGGER.info("Bootstrapping self-coding manager for bot %s", bot_name)
-    manager = internalize_coding_bot(bot_name=bot_name)
+    builder = create_context_builder()
+    registry = BotRegistry()
+    data_bot = DataBot(start_server=False)
+    engine = SelfCodingEngine(
+        CodeDB(),
+        MenaceMemoryManager(),
+        context_builder=builder,
+    )
+    pipeline = ModelAutomationPipeline(context_builder=builder)
+
+    roi_threshold = error_threshold = test_failure_threshold = None
+    try:
+        thresholds = get_thresholds(bot_name)
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        LOGGER.warning("Failed to load thresholds for %s: %s", bot_name, exc)
+    else:
+        roi_threshold = thresholds.roi_drop
+        error_threshold = thresholds.error_increase
+        test_failure_threshold = thresholds.test_failure_increase
+        try:
+            persist_sc_thresholds(
+                bot_name,
+                roi_drop=roi_threshold,
+                error_increase=error_threshold,
+                test_failure_increase=test_failure_threshold,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            LOGGER.exception("Failed to persist thresholds for %s", bot_name)
+
+    manager = internalize_coding_bot(
+        bot_name=bot_name,
+        engine=engine,
+        pipeline=pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        roi_threshold=roi_threshold,
+        error_threshold=error_threshold,
+        test_failure_threshold=test_failure_threshold,
+    )
     if manager is None:
         raise RuntimeError(
             "internalize_coding_bot returned None; self-coding manager registration failed"
