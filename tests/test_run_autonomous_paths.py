@@ -78,3 +78,14 @@ def test_expand_path_expands_windows_home_with_backslash(
     assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
         r"C:\\Users\\Alice\\Desktop\\Menace"
     )
+
+
+def test_expand_path_normalises_posix_backslash_home(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    r"""Ensure ``~\`` inputs collapse to a clean path on POSIX hosts."""
+
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    result = expand_path(r"~\\Documents")
+    assert result == Path("/home/tester/Documents")
