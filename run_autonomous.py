@@ -336,6 +336,16 @@ _LIGHTWEIGHT_IMPORT = os.getenv("RUN_AUTONOMOUS_LIGHTWEIGHT_IMPORT", "").lower()
     "yes",
 }
 
+# Importing ``run_autonomous`` inside a test or utility module should not trigger
+# the expensive sandbox bootstrap.  Historically the file assumed it was always
+# executed as ``__main__`` which caused helpers such as ``_expand_path`` to
+# eagerly import the entire sandbox stack when accessed from ``python -c`` or
+# unit tests.  Treat regular imports as lightweight invocations unless the
+# caller explicitly opts into the full bootstrap via ``RUN_AUTONOMOUS_LIGHTWEIGHT_IMPORT``.
+if __name__ != "__main__" and not _LIGHTWEIGHT_IMPORT:
+    _LIGHTWEIGHT_IMPORT = True
+
+
 if not _STRICT_DEPENDENCIES:
     logging.Logger.error = _dependency_aware_logger_error  # type: ignore[assignment]
 
@@ -996,24 +1006,27 @@ if "menace" not in sys.modules:
 REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
 
 
-import menace.environment_generator as environment_generator
-import sandbox_runner
-import sandbox_runner.cli as cli
-from logging_utils import (
-    get_logger,
-    setup_logging,
-    log_record,
-    set_correlation_id,
-)
-from menace.audit_trail import AuditTrail
-from menace.environment_generator import generate_presets
-from menace.roi_tracker import ROITracker
-from foresight_tracker import ForesightTracker
-from menace.synergy_exporter import SynergyExporter
-from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
-import menace.synergy_history_db as shd
-
-try:  # pragma: no cover - executed when run as a script
+if TYPE_CHECKING:  # pragma: no cover - static typing helpers
+    import menace.environment_generator as environment_generator
+    import sandbox_runner
+    import sandbox_runner.cli as cli
+    from logging_utils import (
+        get_logger,
+        setup_logging,
+        log_record,
+        set_correlation_id,
+    )
+    from menace.audit_trail import AuditTrail
+    from menace.environment_generator import generate_presets
+    from menace.roi_tracker import ROITracker
+    from foresight_tracker import ForesightTracker
+    from menace.synergy_exporter import SynergyExporter
+    from menace.synergy_history_db import (
+        migrate_json_to_db,
+        insert_entry,
+        connect_locked,
+    )
+    import menace.synergy_history_db as shd
     from metrics_exporter import (
         start_metrics_server,
         roi_threshold_gauge,
@@ -1023,58 +1036,182 @@ try:  # pragma: no cover - executed when run as a script
         synergy_adaptation_actions_total,
     )
     import metrics_exporter
-except ImportError:  # pragma: no cover - executed when run as a module
-    from .metrics_exporter import (
-        start_metrics_server,
-        roi_threshold_gauge,
-        synergy_threshold_gauge,
-        roi_forecast_gauge,
-        synergy_forecast_gauge,
-        synergy_adaptation_actions_total,
-    )
-    from . import metrics_exporter
-
-# ``synergy_monitor`` is normally imported as a top-level module so tests can
-# replace it via ``sys.modules['synergy_monitor']``.  When executing
-# ``run_autonomous`` as a package (e.g. with ``python -m menace_sandbox.run_autonomous``)
-# that import may fail because the package directory isn't on ``sys.path``.
-# Fallback to a relative import in that case.
-try:  # pragma: no cover - exercised implicitly in integration tests
-    synergy_monitor = importlib.import_module("synergy_monitor")
-except ModuleNotFoundError:  # pragma: no cover - executed when not installed
-    from . import synergy_monitor
-
-ExporterMonitor = synergy_monitor.ExporterMonitor
-AutoTrainerMonitor = synergy_monitor.AutoTrainerMonitor
-try:  # pragma: no cover - exercised implicitly in integration tests
+    from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
     from sandbox_recovery_manager import SandboxRecoveryManager
-except ImportError:  # pragma: no cover - executed when not installed or run directly
-    from .sandbox_recovery_manager import SandboxRecoveryManager
-from sandbox_runner.cli import full_autonomous_run
-from sandbox_settings import SandboxSettings
-from threshold_logger import ThresholdLogger
-from forecast_logger import ForecastLogger
-from preset_logger import PresetLogger
-
-# ``relevancy_radar_service`` relies on package-relative imports.  When running
-# this module as a script the package may not be installed, so fall back to a
-# relative import to keep tests and direct execution working.
-try:  # pragma: no cover - simple import shim
+    from sandbox_runner.cli import full_autonomous_run
+    from threshold_logger import ThresholdLogger
+    from forecast_logger import ForecastLogger
+    from preset_logger import PresetLogger
     from relevancy_radar_service import RelevancyRadarService
-except Exception:  # pragma: no cover - executed when run via package
-    from .relevancy_radar_service import RelevancyRadarService
+else:
+    environment_generator = None  # type: ignore[assignment]
+    sandbox_runner = None  # type: ignore[assignment]
+    cli = None  # type: ignore[assignment]
+    get_logger = logging.getLogger  # type: ignore[assignment]
+    setup_logging = None  # type: ignore[assignment]
+    log_record = None  # type: ignore[assignment]
+    set_correlation_id = lambda *_a, **_k: None  # type: ignore[assignment]
+    AuditTrail = None  # type: ignore[assignment]
+    generate_presets = None  # type: ignore[assignment]
+    ROITracker = None  # type: ignore[assignment]
+    ForesightTracker = None  # type: ignore[assignment]
+    SynergyExporter = None  # type: ignore[assignment]
+    migrate_json_to_db = None  # type: ignore[assignment]
+    insert_entry = None  # type: ignore[assignment]
+    connect_locked = None  # type: ignore[assignment]
+    shd = None  # type: ignore[assignment]
+    start_metrics_server = None  # type: ignore[assignment]
+    roi_threshold_gauge = None  # type: ignore[assignment]
+    synergy_threshold_gauge = None  # type: ignore[assignment]
+    roi_forecast_gauge = None  # type: ignore[assignment]
+    synergy_forecast_gauge = None  # type: ignore[assignment]
+    synergy_adaptation_actions_total = None  # type: ignore[assignment]
+    metrics_exporter = None  # type: ignore[assignment]
+    ExporterMonitor = None  # type: ignore[assignment]
+    AutoTrainerMonitor = None  # type: ignore[assignment]
+    SandboxRecoveryManager = None  # type: ignore[assignment]
+    full_autonomous_run = None  # type: ignore[assignment]
+    ThresholdLogger = None  # type: ignore[assignment]
+    ForecastLogger = None  # type: ignore[assignment]
+    PresetLogger = None  # type: ignore[assignment]
+    RelevancyRadarService = None  # type: ignore[assignment]
 
-if not hasattr(sandbox_runner, "_sandbox_main"):
-    import importlib.util
+_RUNTIME_IMPORTS_LOADED = False
 
-    spec = importlib.util.spec_from_file_location(
-        "sandbox_runner", path_for_prompt("sandbox_runner.py")
+
+def _ensure_runtime_imports() -> None:
+    """Load heavyweight modules when running the sandbox."""
+
+    global _RUNTIME_IMPORTS_LOADED
+    if _RUNTIME_IMPORTS_LOADED:
+        return
+
+    global environment_generator, sandbox_runner, cli
+    global get_logger, setup_logging, log_record, set_correlation_id
+    global AuditTrail, generate_presets, ROITracker, ForesightTracker
+    global SynergyExporter, migrate_json_to_db, insert_entry, connect_locked, shd
+    global start_metrics_server, roi_threshold_gauge, synergy_threshold_gauge
+    global roi_forecast_gauge, synergy_forecast_gauge, synergy_adaptation_actions_total
+    global metrics_exporter, ExporterMonitor, AutoTrainerMonitor
+    global SandboxRecoveryManager, full_autonomous_run
+    global ThresholdLogger, ForecastLogger, PresetLogger, RelevancyRadarService
+    global logger
+
+    import menace.environment_generator as environment_generator_module
+    import sandbox_runner as sandbox_runner_module
+    import sandbox_runner.cli as cli_module
+    from logging_utils import (
+        get_logger as _get_logger,
+        setup_logging as _setup_logging,
+        log_record as _log_record,
+        set_correlation_id as _set_correlation_id,
     )
-    sr_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(sr_mod)
-    sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
+    from menace.audit_trail import AuditTrail as _AuditTrail
+    from menace.environment_generator import generate_presets as _generate_presets
+    from menace.roi_tracker import ROITracker as _ROITracker
+    from foresight_tracker import ForesightTracker as _ForesightTracker
+    from menace.synergy_exporter import SynergyExporter as _SynergyExporter
+    from menace.synergy_history_db import (
+        migrate_json_to_db as _migrate_json_to_db,
+        insert_entry as _insert_entry,
+        connect_locked as _connect_locked,
+    )
+    import menace.synergy_history_db as _shd
 
-logger = get_logger(__name__)
+    try:  # pragma: no cover - executed when run as a script
+        from metrics_exporter import (
+            start_metrics_server as _start_metrics_server,
+            roi_threshold_gauge as _roi_threshold_gauge,
+            synergy_threshold_gauge as _synergy_threshold_gauge,
+            roi_forecast_gauge as _roi_forecast_gauge,
+            synergy_forecast_gauge as _synergy_forecast_gauge,
+            synergy_adaptation_actions_total as _synergy_adaptation_actions_total,
+        )
+        import metrics_exporter as _metrics_exporter
+    except ImportError:  # pragma: no cover - executed when run as a module
+        from .metrics_exporter import (
+            start_metrics_server as _start_metrics_server,
+            roi_threshold_gauge as _roi_threshold_gauge,
+            synergy_threshold_gauge as _synergy_threshold_gauge,
+            roi_forecast_gauge as _roi_forecast_gauge,
+            synergy_forecast_gauge as _synergy_forecast_gauge,
+            synergy_adaptation_actions_total as _synergy_adaptation_actions_total,
+        )
+        from . import metrics_exporter as _metrics_exporter
+
+    try:  # pragma: no cover - exercised implicitly in integration tests
+        synergy_monitor_module = importlib.import_module("synergy_monitor")
+    except ModuleNotFoundError:  # pragma: no cover - executed when not installed
+        from . import synergy_monitor as synergy_monitor_module
+
+    try:  # pragma: no cover - exercised implicitly in integration tests
+        from sandbox_recovery_manager import SandboxRecoveryManager as _SandboxRecoveryManager
+    except ImportError:  # pragma: no cover - executed when not installed or run directly
+        from .sandbox_recovery_manager import (
+            SandboxRecoveryManager as _SandboxRecoveryManager,
+        )
+
+    from sandbox_runner.cli import full_autonomous_run as _full_autonomous_run
+    from threshold_logger import ThresholdLogger as _ThresholdLogger
+    from forecast_logger import ForecastLogger as _ForecastLogger
+    from preset_logger import PresetLogger as _PresetLogger
+
+    try:  # pragma: no cover - simple import shim
+        from relevancy_radar_service import (
+            RelevancyRadarService as _RelevancyRadarService,
+        )
+    except Exception:  # pragma: no cover - executed when run via package
+        from .relevancy_radar_service import (
+            RelevancyRadarService as _RelevancyRadarService,
+        )
+
+    environment_generator = environment_generator_module
+    sandbox_runner = sandbox_runner_module
+    cli = cli_module
+    get_logger = _get_logger  # type: ignore[assignment]
+    setup_logging = _setup_logging  # type: ignore[assignment]
+    log_record = _log_record  # type: ignore[assignment]
+    set_correlation_id = _set_correlation_id  # type: ignore[assignment]
+    AuditTrail = _AuditTrail  # type: ignore[assignment]
+    generate_presets = _generate_presets  # type: ignore[assignment]
+    ROITracker = _ROITracker  # type: ignore[assignment]
+    ForesightTracker = _ForesightTracker  # type: ignore[assignment]
+    SynergyExporter = _SynergyExporter  # type: ignore[assignment]
+    migrate_json_to_db = _migrate_json_to_db  # type: ignore[assignment]
+    insert_entry = _insert_entry  # type: ignore[assignment]
+    connect_locked = _connect_locked  # type: ignore[assignment]
+    shd = _shd  # type: ignore[assignment]
+    start_metrics_server = _start_metrics_server  # type: ignore[assignment]
+    roi_threshold_gauge = _roi_threshold_gauge  # type: ignore[assignment]
+    synergy_threshold_gauge = _synergy_threshold_gauge  # type: ignore[assignment]
+    roi_forecast_gauge = _roi_forecast_gauge  # type: ignore[assignment]
+    synergy_forecast_gauge = _synergy_forecast_gauge  # type: ignore[assignment]
+    synergy_adaptation_actions_total = _synergy_adaptation_actions_total  # type: ignore[assignment]
+    metrics_exporter = _metrics_exporter  # type: ignore[assignment]
+    ExporterMonitor = synergy_monitor_module.ExporterMonitor  # type: ignore[assignment]
+    AutoTrainerMonitor = synergy_monitor_module.AutoTrainerMonitor  # type: ignore[assignment]
+    SandboxRecoveryManager = _SandboxRecoveryManager  # type: ignore[assignment]
+    full_autonomous_run = _full_autonomous_run  # type: ignore[assignment]
+    ThresholdLogger = _ThresholdLogger  # type: ignore[assignment]
+    ForecastLogger = _ForecastLogger  # type: ignore[assignment]
+    PresetLogger = _PresetLogger  # type: ignore[assignment]
+    RelevancyRadarService = _RelevancyRadarService  # type: ignore[assignment]
+
+    if not hasattr(sandbox_runner, "_sandbox_main"):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "sandbox_runner", path_for_prompt("sandbox_runner.py")
+        )
+        sr_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sr_mod)
+        sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
+
+    logger = get_logger(__name__)
+    _RUNTIME_IMPORTS_LOADED = True
+
+
+logger = logging.getLogger(__name__)
 
 GPT_MEMORY_MANAGER: GPTMemoryManager | None = None
 GPT_KNOWLEDGE_SERVICE: GPTKnowledgeService | None = None
@@ -1748,6 +1885,7 @@ def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
 
     global settings, LOCAL_KNOWLEDGE_REFRESH_INTERVAL
+    _ensure_runtime_imports()
     _console("main() reached - preparing sandbox environment")
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
