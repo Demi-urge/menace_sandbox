@@ -1198,8 +1198,6 @@ def _ensure_runtime_imports() -> None:
     RelevancyRadarService = _RelevancyRadarService  # type: ignore[assignment]
 
     if not hasattr(sandbox_runner, "_sandbox_main"):
-        import importlib.util
-
         spec = importlib.util.spec_from_file_location(
             "sandbox_runner", path_for_prompt("sandbox_runner.py")
         )
