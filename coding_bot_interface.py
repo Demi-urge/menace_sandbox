@@ -2072,6 +2072,7 @@ def self_coding_managed(
 
                 decision_local = decision
                 update_kwargs_local = dict(update_kwargs)
+                orchestrator_factory: Callable[..., Any] | None = None
                 should_update_local = should_update
                 if decision_local is None:
                     manager_sources: list[Any] = []
@@ -2111,6 +2112,10 @@ def self_coding_managed(
                     if context is not None:
                         context.manager = manager_local
 
+                orchestrator_factory = update_kwargs_local.pop(
+                    "orchestrator_factory", None
+                )
+
                 if register_as_coding_local and manager_local is not None:
                     try:
                         manager_local.register(name, cls)
@@ -2120,14 +2125,44 @@ def self_coding_managed(
                 if registry_obj is not None:
                     if register_as_coding_local:
                         try:
+                            register_kwargs = dict(update_kwargs_local)
+                            if orchestrator_factory is None and manager_local is not None:
+                                orchestrator_factory = getattr(
+                                    manager_local,
+                                    "orchestrator_factory",
+                                    None,
+                                )
+                            if orchestrator_factory is not None:
+                                try:
+                                    register_sig = inspect.signature(
+                                        registry_obj.register_bot
+                                    )
+                                except (TypeError, ValueError):  # pragma: no cover - best effort
+                                    register_sig = None
+                                include_factory = False
+                                if register_sig is None:
+                                    include_factory = True
+                                else:
+                                    params = register_sig.parameters
+                                    if "orchestrator_factory" in params:
+                                        include_factory = True
+                                    else:
+                                        include_factory = any(
+                                            param.kind
+                                            == inspect.Parameter.VAR_KEYWORD
+                                            for param in params.values()
+                                        )
+                                if include_factory:
+                                    register_kwargs["orchestrator_factory"] = (
+                                        orchestrator_factory
+                                    )
                             registry_obj.register_bot(
                                 name,
                                 module_path,
-                                orchestrator_factory=orchestrator_factory,
                                 manager=manager_local,
                                 roi_threshold=roi_t,
                                 error_threshold=err_t,
-                                **update_kwargs_local,
+                                **register_kwargs,
                             )
                         except Exception:  # pragma: no cover - best effort
                             logger.exception("bot registration failed for %s", name)
