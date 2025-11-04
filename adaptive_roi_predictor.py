@@ -97,15 +97,40 @@ else:  # pragma: no cover - fallback when executed outside package
     _parent = _pkg_root.parent
     if str(_parent) not in sys.path:
         sys.path.append(str(_parent))
+    if str(_pkg_root) not in sys.path:
+        sys.path.append(str(_pkg_root))
 
-    get_logger = import_module(f"{_pkg_name}.logging_utils").get_logger  # type: ignore[attr-defined]
-    dataset_mod = import_module(f"{_pkg_name}.adaptive_roi_dataset")
-    build_dataset = dataset_mod.build_dataset  # type: ignore[attr-defined]
-    _label_growth = dataset_mod._label_growth  # type: ignore[attr-defined]
-    ROITracker = import_module(f"{_pkg_name}.roi_tracker").ROITracker  # type: ignore[attr-defined]
-    EvaluationHistoryDB = import_module(f"{_pkg_name}.evaluation_history_db").EvaluationHistoryDB  # type: ignore[attr-defined]
-    EvolutionHistoryDB = import_module(f"{_pkg_name}.evolution_history_db").EvolutionHistoryDB  # type: ignore[attr-defined]
-    TruthAdapter = import_module(f"{_pkg_name}.truth_adapter").TruthAdapter  # type: ignore[attr-defined]
+    def _load_helper(module: str, attr: str | None = None):
+        last_exc: ModuleNotFoundError | None = None
+        for candidate in (f"{_pkg_name}.{module}", module):
+            try:
+                mod = import_module(candidate)
+                break
+            except ModuleNotFoundError as exc:  # pragma: no cover - defensive
+                last_exc = exc
+        else:  # pragma: no cover - only hit when helper genuinely missing
+            raise ModuleNotFoundError(
+                f"Required helper module '{module}' could not be imported. "
+                "Ensure the helper resides alongside adaptive_roi_predictor."
+            ) from last_exc
+
+        if attr is None:
+            return mod
+        try:
+            return getattr(mod, attr)
+        except AttributeError as exc:  # pragma: no cover - defensive
+            raise AttributeError(
+                f"Helper module '{module}' does not define required attribute '{attr}'."
+            ) from exc
+
+    get_logger = _load_helper("logging_utils", "get_logger")  # type: ignore[assignment]
+    dataset_mod = _load_helper("adaptive_roi_dataset")
+    build_dataset = getattr(dataset_mod, "build_dataset")  # type: ignore[assignment]
+    _label_growth = getattr(dataset_mod, "_label_growth")  # type: ignore[assignment]
+    ROITracker = _load_helper("roi_tracker", "ROITracker")  # type: ignore[assignment]
+    EvaluationHistoryDB = _load_helper("evaluation_history_db", "EvaluationHistoryDB")  # type: ignore[assignment]
+    EvolutionHistoryDB = _load_helper("evolution_history_db", "EvolutionHistoryDB")  # type: ignore[assignment]
+    TruthAdapter = _load_helper("truth_adapter", "TruthAdapter")  # type: ignore[assignment]
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 MENACE_ID = "adaptive_roi_predictor"
