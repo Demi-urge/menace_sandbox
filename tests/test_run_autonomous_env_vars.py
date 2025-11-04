@@ -216,6 +216,24 @@ def test_dependency_warning_includes_optional_windows_hint(monkeypatch):
     ]
 
 
+def test_init_local_knowledge_expands_windows_paths(monkeypatch):
+    mod = _load_module(monkeypatch)
+    monkeypatch.setenv("USERPROFILE", r"C:\\Users\\Alice")
+    captured: dict[str, object] = {}
+
+    def _fake_loader(db_path):
+        captured["db_path"] = db_path
+        return "ok"
+
+    monkeypatch.setattr(mod, "_resolve_local_knowledge_loader", lambda: _fake_loader)
+
+    raw = r"~\\%USERPROFILE%\\AppData\\Local\\Menace\\memory.db"
+    result = mod.init_local_knowledge(raw)
+
+    assert result == "ok"
+    assert os.fspath(captured["db_path"]) == r"C:\\Users\\Alice\\AppData\\Local\\Menace\\memory.db"
+
+
 def test_invalid_roi_cycles_warns(monkeypatch, caplog):
     stub_env = types.ModuleType("sandbox_runner.environment")
     stub_env.SANDBOX_ENV_PRESETS = [{}]

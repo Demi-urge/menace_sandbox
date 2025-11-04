@@ -45,7 +45,8 @@ def init_local_knowledge(mem_db: str | os.PathLike[str] | None = None):
     loader = _resolve_local_knowledge_loader()
     if mem_db is None:
         mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-    return loader(mem_db)
+    resolved_path = _expand_path(mem_db)
+    return loader(resolved_path)
 
 import argparse
 import atexit
