@@ -1712,7 +1712,40 @@ def _ensure_repo_path_environment() -> None:
 
     current = os.environ.get("SANDBOX_REPO_PATH")
     if not current or not str(current).strip():
-        logger.debug("SANDBOX_REPO_PATH missing; validation will report the error")
+        candidate = settings.sandbox_repo_path or REPO_ROOT
+        logger.debug(
+            "SANDBOX_REPO_PATH missing; defaulting to configured repository path %r",
+            candidate,
+        )
+        if isinstance(candidate, Path):
+            resolved_candidate = candidate
+        else:
+            try:
+                resolved_candidate = _expand_path(candidate)
+            except Exception:
+                logger.debug(
+                    "failed to expand default repo path %r; using resolve_path fallback",
+                    candidate,
+                    exc_info=True,
+                )
+                try:
+                    resolved_candidate = resolve_path(str(candidate))
+                except Exception:
+                    resolved_candidate = Path(str(candidate)).expanduser()
+        if not isinstance(resolved_candidate, Path):
+            resolved_candidate = Path(os.fspath(resolved_candidate))
+        if not resolved_candidate.is_absolute():
+            try:
+                resolved_candidate = (REPO_ROOT / resolved_candidate).resolve()
+            except Exception:
+                resolved_candidate = (REPO_ROOT / resolved_candidate).absolute()
+        repo_path = (
+            resolved_candidate.as_posix()
+            if os.name != "nt"
+            else str(resolved_candidate)
+        )
+        os.environ["SANDBOX_REPO_PATH"] = repo_path
+        logger.debug("normalised SANDBOX_REPO_PATH default to %s", repo_path)
         return
 
     candidate = current
