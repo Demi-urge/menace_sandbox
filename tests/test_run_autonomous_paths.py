@@ -26,7 +26,7 @@ def _load_expand_path() -> Callable[[str], Path]:
         raise AssertionError("Failed to locate _expand_path source")
 
     namespace: dict[str, object] = {}
-    exec("import os\nimport re\nfrom pathlib import Path", namespace)
+    exec("import os\nimport re\nfrom pathlib import Path, PureWindowsPath", namespace)
     exec(func_source, namespace)
     expand_path = namespace.get("_expand_path")
     assert callable(expand_path)
@@ -41,13 +41,17 @@ def expand_path() -> Callable[[str], Path]:
 def test_expand_path_expands_percent_tokens(monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]) -> None:
     monkeypatch.setenv("USERPROFILE", r"C:\\Users\\Tester")
     result = expand_path(r"%USERPROFILE%\\Sandbox")
-    assert str(result) == r"C:\\Users\\Tester\\Sandbox"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Users\\Tester\\Sandbox"
+    )
 
 
 def test_expand_path_preserves_escaped_tokens(monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]) -> None:
     monkeypatch.setenv("FOO", "Value")
     result = expand_path(r"C:\\%%FOO%%\\%foo%")
-    assert str(result) == r"C:\\%FOO%\\Value"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\%FOO%\\Value"
+    )
 
 
 def test_expand_path_expands_backslash_prefixed_token(
@@ -57,7 +61,9 @@ def test_expand_path_expands_backslash_prefixed_token(
 
     monkeypatch.setenv("TOOLROOT", "Tools")
     result = expand_path(r"C:\\%TOOLROOT%\\bin")
-    assert str(result) == r"C:\\Tools\\bin"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Tools\\bin"
+    )
 
 
 def test_expand_path_expands_nested_tokens(
@@ -66,7 +72,9 @@ def test_expand_path_expands_nested_tokens(
     monkeypatch.setenv("INNER", r"C:\\Lib")
     monkeypatch.setenv("OUTER", r"%INNER%\\site-packages")
     result = expand_path(r"%OUTER%\\menace")
-    assert str(result) == r"C:\\Lib\\site-packages\\menace"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Lib\\site-packages\\menace"
+    )
 
 
 def test_expand_path_expands_windows_home_with_backslash(
@@ -99,7 +107,9 @@ def test_expand_path_prefers_embedded_windows_drive(
     monkeypatch.setenv("HOME", "/home/tester")
     monkeypatch.setenv("USERPROFILE", r"C:\\Users\\Example")
     result = expand_path(r"~\\%USERPROFILE%\\data")
-    assert str(result) == r"C:\\Users\\Example\\data"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Users\\Example\\data"
+    )
 
 
 def test_expand_path_handles_unc_paths(
@@ -109,4 +119,30 @@ def test_expand_path_handles_unc_paths(
 
     monkeypatch.delenv("USERPROFILE", raising=False)
     result = expand_path(r"\\\\server\\share\\folder")
-    assert str(result) == r"\\\\server\\share\\folder"
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"\\\\server\\share\\folder"
+    )
+
+
+def test_expand_path_handles_forward_slash_drive(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    """Windows drives expressed with forward slashes should be normalised."""
+
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.setenv("USERPROFILE", "C:/Users/Example")
+    result = expand_path(r"~\\%USERPROFILE%\\data")
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Users\\Example\\data"
+    )
+
+
+def test_expand_path_handles_unc_with_forward_slashes(
+    expand_path: Callable[[str], Path]
+) -> None:
+    """UNC paths using ``//`` should down-convert to Windows separators."""
+
+    result = expand_path(r"~//server/share/logs")
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"//server/share/logs"
+    )

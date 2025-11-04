@@ -68,7 +68,7 @@ import threading
 import _thread
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Callable, List, Mapping
 import math
 import uuid
@@ -239,7 +239,8 @@ def _basic_setup_logging(*, level: str | int | None = None) -> None:
 def _expand_path(value: str | os.PathLike[str]) -> Path:
     """Return ``value`` as a :class:`Path` with user and env vars expanded."""
 
-    raw = os.fspath(value)
+    original_value = os.fspath(value)
+    raw = original_value
     if raw.startswith("~\\"):
         # Windows shells commonly emit ``~\`` when expanding home shortcuts.
         # Convert the leading separator to a forward slash so ``expanduser``
@@ -270,7 +271,7 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     protected = re.sub(escaped_pattern, _protect, raw)
     expanded = os.path.expandvars(os.path.expanduser(protected))
 
-    def _extract_windows_path(candidate: str) -> str:
+    def _extract_windows_path(candidate: str, *, original: str) -> str:
         """Return a canonical Windows path when ``candidate`` embeds one.
 
         Windows callers frequently combine ``~`` expansion with environment
@@ -283,22 +284,48 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
         intended path once this logic runs there.
         """
 
-        # Normal drive letter (``C:\``) handling.
-        drive_match = re.search(r"(?i)[A-Z]:\\", candidate)
+        # Normal drive letter (``C:\``) handling.  ``expanduser`` running on
+        # POSIX platforms sometimes normalises the separator after the drive to
+        # a forward slash (``C:/``) which previously slipped past the regex and
+        # left spurious ``/home`` prefixes in place.  Accept either slash style
+        # so mixed-separator paths coming from Windows config files are
+        # recognised and trimmed correctly.
+        drive_match = re.search(r"(?i)[A-Z]:(?:\\|/)", candidate)
         if drive_match:
-            return candidate[drive_match.start() :]
+            segment = candidate[drive_match.start() :]
+            return str(PureWindowsPath(segment))
 
         # UNC paths begin with two backslashes.  ``expanduser`` on POSIX hosts
         # converts ``~\\\\server\\share`` into ``/home/user/\\\\server\\share``;
-        # trim the home prefix in that scenario.
-        unc_match = re.search(r"\\\\[^\\/]+\\[^\\/]+", candidate)
-        if unc_match:
-            start = unc_match.start()
-            # Guard against accidental matches of escaped sequences within a
-            # normal POSIX path by requiring the UNC prefix to be preceded by a
-            # path separator when it is not at the beginning of the string.
-            if start == 0 or candidate[start - 1] in "\\/":
-                return candidate[start:]
+        # trim the home prefix in that scenario.  Handle both backslash and
+        # forward slash separators to support callers that pass ``//server``
+        # style UNC paths in configuration files.
+        orig_stripped = original.lstrip()
+        is_unc_source = bool(re.match(r"^~?[/\\]{2}", orig_stripped))
+        unc_match = re.search(r"(?:\\\\|//)[^\\/]+[\\/][^\\/]+.*", candidate)
+        if is_unc_source and unc_match:
+            segment = unc_match.group(0)
+            segment = segment.lstrip("/\\")
+            if segment:
+                return "\\\\" + segment.replace("/", "\\")
+
+        if is_unc_source and "\\" in candidate:
+            first_backslash = candidate.find("\\")
+            if first_backslash != -1:
+                start = candidate.rfind("/", 0, first_backslash)
+                if start != -1:
+                    segment = candidate[start:]
+                    segment = segment.lstrip("/\\")
+                    if segment:
+                        return "\\\\" + segment.replace("/", "\\")
+
+        if is_unc_source and "//" in candidate:
+            first_forward = candidate.find("//")
+            if first_forward != -1:
+                segment = candidate[first_forward:]
+                segment = segment.lstrip("/\\")
+                if segment:
+                    return "\\\\" + segment.replace("/", "\\")
 
         return candidate
 
@@ -334,7 +361,7 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     for sentinel, literal in sentinel_map.items():
         expanded = expanded.replace(sentinel, literal)
 
-    expanded = _extract_windows_path(expanded)
+    expanded = _extract_windows_path(expanded, original=original_value)
 
     return Path(expanded)
 
