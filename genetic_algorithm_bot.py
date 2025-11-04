@@ -11,37 +11,62 @@ import logging
 from pathlib import Path
 from typing import List
 
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from .data_bot import DataBot, persist_sc_thresholds
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
 logger = logging.getLogger(__name__)
 
-manager = None
-try:  # pragma: no cover - optional self-coding dependencies
-    from context_builder_util import create_context_builder
-    from .self_coding_engine import SelfCodingEngine
-    from .code_database import CodeDB
-    from .gpt_memory import GPTMemoryManager
-    from .self_coding_manager import internalize_coding_bot
-    from .shared.model_pipeline_core import ModelAutomationPipeline
-    from .threshold_service import ThresholdService
-    from .self_coding_thresholds import get_thresholds
-    from .shared_evolution_orchestrator import get_orchestrator
-except Exception:  # pragma: no cover - gracefully degrade when optional deps missing
-    logger.debug(
-        "GeneticAlgorithmBot self-coding manager dependencies unavailable", exc_info=True
-    )
-else:  # pragma: no cover - heavy bootstrap exercised in integration flows
-    try:
-        _ga_context_builder = create_context_builder()
-        engine = SelfCodingEngine(
-            CodeDB(), GPTMemoryManager(), context_builder=_ga_context_builder
+
+def _lazy_helper(func):
+    """Mark *func* as lazily evaluated for ``self_coding_managed`` helpers."""
+
+    setattr(func, "__self_coding_lazy__", True)
+    return func
+
+
+@lru_cache(maxsize=1)
+def _get_registry() -> BotRegistry:
+    """Return a shared :class:`BotRegistry` instance."""
+
+    return BotRegistry()
+
+
+@lru_cache(maxsize=1)
+def _get_data_bot() -> DataBot:
+    """Return a shared :class:`DataBot` instance."""
+
+    return DataBot(start_server=False)
+
+
+@lru_cache(maxsize=1)
+def _build_manager():
+    """Construct the optional self-coding manager lazily."""
+
+    try:  # pragma: no cover - optional self-coding dependencies
+        from context_builder_util import create_context_builder
+        from .self_coding_engine import SelfCodingEngine
+        from .code_database import CodeDB
+        from .gpt_memory import GPTMemoryManager
+        from .self_coding_manager import internalize_coding_bot
+        from .shared.model_pipeline_core import ModelAutomationPipeline
+        from .threshold_service import ThresholdService
+        from .self_coding_thresholds import get_thresholds
+        from .shared_evolution_orchestrator import get_orchestrator
+    except Exception:  # pragma: no cover - gracefully degrade when optional deps missing
+        logger.debug(
+            "GeneticAlgorithmBot self-coding manager dependencies unavailable",
+            exc_info=True,
         )
-        pipeline = ModelAutomationPipeline(context_builder=_ga_context_builder)
+        return None
+
+    try:  # pragma: no cover - heavy bootstrap exercised in integration flows
+        ga_context_builder = create_context_builder()
+        engine = SelfCodingEngine(
+            CodeDB(), GPTMemoryManager(), context_builder=ga_context_builder
+        )
+        pipeline = ModelAutomationPipeline(context_builder=ga_context_builder)
         thresholds = get_thresholds("GeneticAlgorithmBot")
         persist_sc_thresholds(
             "GeneticAlgorithmBot",
@@ -49,13 +74,13 @@ else:  # pragma: no cover - heavy bootstrap exercised in integration flows
             error_increase=thresholds.error_increase,
             test_failure_increase=thresholds.test_failure_increase,
         )
-        orchestrator = get_orchestrator("GeneticAlgorithmBot", data_bot, engine)
-        manager = internalize_coding_bot(
+        orchestrator = get_orchestrator("GeneticAlgorithmBot", _get_data_bot(), engine)
+        return internalize_coding_bot(
             "GeneticAlgorithmBot",
             engine,
             pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
+            data_bot=_get_data_bot(),
+            bot_registry=_get_registry(),
             evolution_orchestrator=orchestrator,
             threshold_service=ThresholdService(),
             roi_threshold=thresholds.roi_drop,
@@ -67,7 +92,22 @@ else:  # pragma: no cover - heavy bootstrap exercised in integration flows
             "GeneticAlgorithmBot self-coding manager initialisation failed; running without autonomous patching",
             exc_info=logger.isEnabledFor(logging.DEBUG),
         )
-        manager = None
+        return None
+
+
+@_lazy_helper
+def _registry_proxy() -> BotRegistry:
+    return _get_registry()
+
+
+@_lazy_helper
+def _data_bot_proxy() -> DataBot:
+    return _get_data_bot()
+
+
+@_lazy_helper
+def _manager_proxy():
+    return _build_manager()
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -113,7 +153,11 @@ class GAStore:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+@self_coding_managed(
+    bot_registry=_registry_proxy,
+    data_bot=_data_bot_proxy,
+    manager=_manager_proxy,
+)
 class GeneticAlgorithmBot:
     """Run a simple DEAP-based genetic algorithm."""
 

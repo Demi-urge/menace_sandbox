@@ -37,6 +37,7 @@ from menace_sandbox.coding_bot_interface import self_coding_managed
 from menace_sandbox.task_handoff_bot import TaskPackage, TaskInfo
 from menace_sandbox.shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
+from functools import lru_cache
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
@@ -102,42 +103,100 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
 
     return factory
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-_pipeline_factory = _create_pipeline_factory()
-pipeline: ModelAutomationPipeline | None = _pipeline_factory(_context_builder)
-if pipeline is None:
-    logger.warning(
-        "ModelAutomationPipeline unavailable; ImplementationOptimiserBot will run without self-coding manager"
+def _lazy_helper(func):
+    """Mark helper as lazily evaluated for the decorator bootstrap."""
+
+    setattr(func, "__self_coding_lazy__", True)
+    return func
+
+
+@lru_cache(maxsize=1)
+def _get_registry() -> BotRegistry:
+    return BotRegistry()
+
+
+@lru_cache(maxsize=1)
+def _get_data_bot() -> DataBot:
+    return DataBot(start_server=False)
+
+
+@lru_cache(maxsize=1)
+def _get_context_builder() -> ContextBuilder:
+    return create_context_builder()
+
+
+@lru_cache(maxsize=1)
+def _get_engine() -> SelfCodingEngine:
+    return SelfCodingEngine(
+        CodeDB(),
+        GPTMemoryManager(),
+        context_builder=_get_context_builder(),
     )
-evolution_orchestrator = get_orchestrator(
-    "ImplementationOptimiserBot", data_bot, engine
-)
-_th = get_thresholds("ImplementationOptimiserBot")
-persist_sc_thresholds(
-    "ImplementationOptimiserBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-if pipeline is not None:
-    manager: SelfCodingManager | None = internalize_coding_bot(
+
+
+@lru_cache(maxsize=1)
+def _get_thresholds() -> Any:
+    th = get_thresholds("ImplementationOptimiserBot")
+    persist_sc_thresholds(
         "ImplementationOptimiserBot",
-        engine,
-        pipeline,
-        data_bot=data_bot,
-        bot_registry=registry,
-        evolution_orchestrator=evolution_orchestrator,
-        roi_threshold=_th.roi_drop,
-        error_threshold=_th.error_increase,
-        test_failure_threshold=_th.test_failure_increase,
-        threshold_service=ThresholdService(),
+        roi_drop=th.roi_drop,
+        error_increase=th.error_increase,
+        test_failure_increase=th.test_failure_increase,
     )
-else:
-    manager = None
+    return th
+
+
+@lru_cache(maxsize=1)
+def _build_manager() -> SelfCodingManager | None:
+    pipeline_factory = _create_pipeline_factory()
+    pipeline = pipeline_factory(_get_context_builder())
+    if pipeline is None:
+        logger.warning(
+            "ModelAutomationPipeline unavailable; ImplementationOptimiserBot will run without self-coding manager"
+        )
+        return None
+
+    thresholds = _get_thresholds()
+    orchestrator = get_orchestrator(
+        "ImplementationOptimiserBot",
+        _get_data_bot(),
+        _get_engine(),
+    )
+    try:
+        return internalize_coding_bot(
+            "ImplementationOptimiserBot",
+            _get_engine(),
+            pipeline,
+            data_bot=_get_data_bot(),
+            bot_registry=_get_registry(),
+            evolution_orchestrator=orchestrator,
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+            threshold_service=ThresholdService(),
+        )
+    except Exception as exc:  # pragma: no cover - degrade gracefully
+        logger.warning(
+            "ImplementationOptimiserBot self-coding manager initialisation failed: %s",
+            exc,
+        )
+        return None
+
+
+@_lazy_helper
+def _registry_proxy() -> BotRegistry:
+    return _get_registry()
+
+
+@_lazy_helper
+def _data_bot_proxy() -> DataBot:
+    return _get_data_bot()
+
+
+@_lazy_helper
+def _manager_proxy() -> SelfCodingManager | None:
+    return _build_manager()
 
 
 @dataclass
@@ -148,7 +207,11 @@ class ImplementationAdvice:
     optimised_code: str
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+@self_coding_managed(
+    bot_registry=_registry_proxy,
+    data_bot=_data_bot_proxy,
+    manager=_manager_proxy,
+)
 class ImplementationOptimiserBot:
     """Receive ``TaskPackage`` objects and refine them.
 
@@ -191,7 +254,7 @@ class ImplementationOptimiserBot:
                 except Exception:  # pragma: no cover - best effort
                     pass
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = data_bot
+        self.data_bot = _get_data_bot()
 
     # ------------------------------------------------------------------
     @staticmethod
