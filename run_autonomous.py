@@ -278,7 +278,9 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     protected = re.sub(escaped_pattern, _protect, raw)
     expanded = os.path.expandvars(os.path.expanduser(protected))
 
-    def _extract_windows_path(candidate: str, *, original: str) -> str:
+    def _extract_windows_path(
+        candidate: str, *, original: str, windows_hint: bool
+    ) -> str:
         """Return a canonical Windows path when ``candidate`` embeds one.
 
         Windows callers frequently combine ``~`` expansion with environment
@@ -324,30 +326,36 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
         # style UNC paths in configuration files.
         orig_stripped = original.lstrip()
         is_unc_source = bool(re.match(r"^~?[/\\]{2}", orig_stripped))
-        unc_match = re.search(r"(?:\\\\|//)[^\\/]+[\\/][^\\/]+.*", candidate)
-        if is_unc_source and unc_match:
-            segment = unc_match.group(0)
-            segment = segment.lstrip("/\\")
-            if segment:
-                return "\\\\" + segment.replace("/", "\\")
+        if not (windows_hint or is_unc_source):
+            return candidate
 
-        if is_unc_source and "\\" in candidate:
+        def _normalise_unc(segment: str) -> str | None:
+            cleaned = segment.lstrip("/\\")
+            if not cleaned:
+                return None
+            return "\\\\" + cleaned.replace("/", "\\")
+
+        unc_match = re.search(r"(?:\\\\|//)[^\\/]+[\\/][^\\/]+.*", candidate)
+        if unc_match:
+            normalised = _normalise_unc(unc_match.group(0))
+            if normalised:
+                return normalised
+
+        if "\\" in candidate:
             first_backslash = candidate.find("\\")
             if first_backslash != -1:
                 start = candidate.rfind("/", 0, first_backslash)
                 if start != -1:
-                    segment = candidate[start:]
-                    segment = segment.lstrip("/\\")
-                    if segment:
-                        return "\\\\" + segment.replace("/", "\\")
+                    normalised = _normalise_unc(candidate[start:])
+                    if normalised:
+                        return normalised
 
-        if is_unc_source and "//" in candidate:
+        if "//" in candidate:
             first_forward = candidate.find("//")
             if first_forward != -1:
-                segment = candidate[first_forward:]
-                segment = segment.lstrip("/\\")
-                if segment:
-                    return "\\\\" + segment.replace("/", "\\")
+                normalised = _normalise_unc(candidate[first_forward:])
+                if normalised:
+                    return normalised
 
         return candidate
 
@@ -383,7 +391,13 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     for sentinel, literal in sentinel_map.items():
         expanded = expanded.replace(sentinel, literal)
 
-    expanded = _extract_windows_path(expanded, original=original_value)
+    if "%%" in expanded:
+        expanded = re.sub(r"%%([^%]+)%%", lambda m: f"%{m.group(1)}%", expanded)
+
+    windows_hint = os.name == "nt" or "\\" in original_value
+    expanded = _extract_windows_path(
+        expanded, original=original_value, windows_hint=windows_hint
+    )
 
     return Path(expanded)
 
@@ -2555,17 +2569,25 @@ def main(argv: List[str] | None = None) -> None:
     _ensure_repo_path_environment(apply_defaults=False)
 
     # ``SANDBOX_REPO_PATH`` is required by a number of services spawned from the
-    # runner, however new installations (and the Windows developer experience in
-    # particular) benefit from the script selecting a sensible default instead
-    # of aborting immediately.  When the variable is absent after the strict
-    # check we re-run the helper with defaults enabled so the detected repository
-    # root is exported before environment validation.
+    # runner.  Surface a clear message when the variable is absent before
+    # delegating to :func:`check_env` so that unit tests and fresh installations
+    # receive a deterministic failure instead of silently accepting an inferred
+    # default path.  When the validation succeeds we normalise the environment
+    # afterwards so later imports observe the canonical value.
     repo_env = os.environ.get("SANDBOX_REPO_PATH")
-    if repo_env is None or not str(repo_env).strip():
+    repo_missing = repo_env is None or not str(repo_env).strip()
+    if repo_missing:
         _console("SANDBOX_REPO_PATH missing; selecting default repository root")
-        _ensure_repo_path_environment()
 
-    check_env()
+    try:
+        check_env()
+    except SystemExit:
+        if repo_missing:
+            _ensure_repo_path_environment()
+        raise
+
+    if repo_missing:
+        _ensure_repo_path_environment()
 
     if (
         args.runs == 0

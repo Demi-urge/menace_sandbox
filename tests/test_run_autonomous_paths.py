@@ -146,3 +146,16 @@ def test_expand_path_handles_unc_with_forward_slashes(
     assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
         r"//server/share/logs"
     )
+
+
+def test_expand_path_handles_unc_from_environment(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    """UNC targets defined via environment variables should be preserved."""
+
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.setenv("HOMESHARE", "//server/share")
+    result = expand_path(r"~\\%HOMESHARE%\\data")
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"//server/share/data"
+    )
