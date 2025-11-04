@@ -338,6 +338,42 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     return Path(expanded)
 
 
+def _configured_sandbox_data_dir() -> Path | None:
+    """Return the sandbox data directory configured in settings when available."""
+
+    log = logging.getLogger(__name__)
+
+    try:
+        configured = settings.sandbox_data_dir  # type: ignore[name-defined]
+    except NameError:
+        try:
+            configured = SandboxSettings().sandbox_data_dir
+        except Exception:  # pragma: no cover - transient settings bootstrap issues
+            log.debug(
+                "sandbox settings unavailable during early bootstrap; "
+                "deferring to runtime defaults",
+                exc_info=True,
+            )
+            return None
+    except Exception:  # pragma: no cover - defensive guard for bad settings modules
+        log.debug(
+            "failed to read sandbox_data_dir from sandbox settings", exc_info=True
+        )
+        return None
+
+    if not configured:
+        return None
+
+    try:
+        return _expand_path(configured)
+    except Exception:  # pragma: no cover - unexpected expansion failure
+        log.debug(
+            "unable to expand configured sandbox data directory %r", configured,
+            exc_info=True,
+        )
+        return None
+
+
 def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None:
     """Populate sandbox data directory environment variables early."""
 
@@ -351,64 +387,66 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
     override_path = _expand_path(override_raw) if override_raw else None
     if override_path is not None:
         _console(f"sandbox data dir override detected: {override_path}")
-        os.environ["SANDBOX_DATA_DIR"] = str(override_path)
 
-    data_dir_value = os.environ.get("SANDBOX_DATA_DIR")
-    default_config_dir: Path | None = None
-    try:
-        default_config_dir = Path(settings.sandbox_data_dir).resolve()
-    except Exception:
-        default_config_dir = None
+    log = logging.getLogger(__name__)
+    configured_dir = _configured_sandbox_data_dir()
 
-    override_required = False
-    if not data_dir_value:
-        override_required = True
-    else:
-        try:
-            current_dir = Path(data_dir_value).resolve()
-        except Exception:
-            override_required = True
-        else:
-            if (
-                default_config_dir is not None
-                and current_dir == default_config_dir
-                and Path.cwd() != default_config_dir
-            ):
-                override_required = True
-
-    if override_required:
-        default_base = Path.cwd() / "sandbox_data"
-        os.environ["SANDBOX_DATA_DIR"] = str(default_base)
-        os.environ.setdefault(
-            "SANDBOX_ACTIVE_OVERLAYS", str(default_base / "active_overlays.json")
-        )
-        os.environ.setdefault(
-            "SANDBOX_FAILED_OVERLAYS", str(default_base / "failed_overlays.json")
-        )
-        default_base.mkdir(parents=True, exist_ok=True)
-        _sync_sandbox_environment(default_base)
-        _console(
-            "no sandbox data dir specified; initialised default at "
-            f"{default_base}"
-        )
-        return
-
-    base_path = _expand_path(data_dir_value)
-    os.environ["SANDBOX_DATA_DIR"] = str(base_path)
-    _console(f"sandbox data dir resolved to {base_path}")
+    base_path: Path | None = None
+    base_source = "environment"
 
     if override_path is not None:
-        os.environ["SANDBOX_ACTIVE_OVERLAYS"] = str(base_path / "active_overlays.json")
-        os.environ["SANDBOX_FAILED_OVERLAYS"] = str(base_path / "failed_overlays.json")
+        base_path = override_path
+        base_source = "override"
+    else:
+        data_dir_value = os.environ.get("SANDBOX_DATA_DIR")
+        env_path: Path | None = None
+        if data_dir_value:
+            try:
+                env_path = _expand_path(data_dir_value)
+            except Exception:
+                log.debug(
+                    "invalid SANDBOX_DATA_DIR value %r; ignoring", data_dir_value,
+                    exc_info=True,
+                )
+        if env_path is not None:
+            base_path = env_path
+        elif configured_dir is not None:
+            base_path = configured_dir
+            base_source = "settings"
+        else:
+            base_path = Path.cwd() / "sandbox_data"
+            base_source = "default"
+
+    assert base_path is not None
+
+    os.environ["SANDBOX_DATA_DIR"] = str(base_path)
+
+    overlays_path = base_path / "active_overlays.json"
+    failed_path = base_path / "failed_overlays.json"
+
+    if base_source == "override":
+        os.environ["SANDBOX_ACTIVE_OVERLAYS"] = str(overlays_path)
+        os.environ["SANDBOX_FAILED_OVERLAYS"] = str(failed_path)
         _console("applied explicit overlay paths from override")
     else:
-        os.environ.setdefault(
-            "SANDBOX_ACTIVE_OVERLAYS", str(base_path / "active_overlays.json")
-        )
-        os.environ.setdefault(
-            "SANDBOX_FAILED_OVERLAYS", str(base_path / "failed_overlays.json")
-        )
+        os.environ.setdefault("SANDBOX_ACTIVE_OVERLAYS", str(overlays_path))
+        os.environ.setdefault("SANDBOX_FAILED_OVERLAYS", str(failed_path))
         _console("ensured default overlay paths are configured")
+
+    try:
+        base_path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        log.debug("unable to ensure sandbox data directory exists", exc_info=True)
+
+    if base_source == "default":
+        _console(
+            "no sandbox data dir specified; initialised default at "
+            f"{base_path}"
+        )
+    elif base_source == "settings":
+        _console(f"sandbox data dir resolved from settings: {base_path}")
+    else:
+        _console(f"sandbox data dir resolved to {base_path}")
 
     _sync_sandbox_environment(base_path)
     _console("sandbox environment paths synchronised")
