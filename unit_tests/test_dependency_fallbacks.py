@@ -68,3 +68,35 @@ def test_performance_bot_fallback(monkeypatch, caplog):
     bot = mod.PerformanceAssessmentBot(metrics_db=DummyDB())
     score = bot.self_assess("b1")
     assert isinstance(score, float)
+
+
+def test_adaptive_roi_predictor_top_level_import(monkeypatch):
+    project_root = Path(__file__).resolve().parent.parent
+    monkeypatch.setattr(sys, "path", [str(project_root)])
+
+    stored_modules = {}
+    targets = {
+        "adaptive_roi_predictor",
+        "logging_utils",
+        "adaptive_roi_dataset",
+        "roi_tracker",
+        "evaluation_history_db",
+        "evolution_history_db",
+        "truth_adapter",
+    }
+    for name in list(sys.modules):
+        if name == "menace_sandbox" or name.startswith("menace_sandbox."):
+            stored_modules[name] = sys.modules.pop(name)
+    for name in targets:
+        if name in sys.modules:
+            stored_modules[name] = sys.modules.pop(name)
+
+    try:
+        mod = importlib.import_module("adaptive_roi_predictor")
+    finally:
+        for name in targets:
+            sys.modules.pop(name, None)
+        sys.modules.update(stored_modules)
+
+    assert hasattr(mod, "AdaptiveROIPredictor")
+    assert hasattr(mod, "build_dataset")
