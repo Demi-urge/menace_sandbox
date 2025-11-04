@@ -266,7 +266,13 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
 
     def _protect(match: re.Match[str]) -> str:
         token = f"__RUN_AUTONOMOUS_ESC_{len(sentinel_map)}__"
-        sentinel_map[token] = f"%{match.group(1)}%"
+        # Preserve the exact placeholder text so escaped percent sequences such
+        # as ``%%USERPROFILE%%`` survive the round-trip unchanged.  Returning the
+        # original match ensures callers that intentionally doubled the percent
+        # signs (a common Windows idiom for literal ``%`` characters) do not end
+        # up with single ``%`` delimiters that other tools might subsequently
+        # treat as expansion markers.
+        sentinel_map[token] = match.group(0)
         return token
 
     protected = re.sub(escaped_pattern, _protect, raw)
