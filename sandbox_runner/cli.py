@@ -14,6 +14,7 @@ import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from dynamic_path_router import resolve_path, path_for_prompt
+from pydantic import ValidationError
 
 try:
     from context_builder_util import create_context_builder
@@ -96,11 +97,67 @@ logger = get_logger(__name__)
 _settings_cache: SandboxSettings | None = None
 _settings_mtime: float | None = None
 _settings_path: str | None = None
+_settings_env_snapshot: dict[str, str | None] | None = None
+
+
+def _build_env_alias_map() -> dict[str, tuple[str, ...]]:
+    """Return mapping of settings field names to environment aliases."""
+
+    aliases: dict[str, tuple[str, ...]] = {}
+    for name, field in SandboxSettings.model_fields.items():
+        extra = getattr(field, "json_schema_extra", None)
+        if not isinstance(extra, dict):
+            continue
+        env_value = extra.get("env")
+        if isinstance(env_value, str):
+            aliases[name] = (env_value,)
+        elif isinstance(env_value, (list, tuple, set)):
+            filtered = tuple(str(item) for item in env_value if isinstance(item, str))
+            if filtered:
+                aliases[name] = filtered
+    return aliases
+
+
+_SETTINGS_ENV_ALIASES = _build_env_alias_map()
+_SETTINGS_ENV_KEYS = {
+    env_name
+    for aliases in _SETTINGS_ENV_ALIASES.values()
+    for env_name in aliases
+}
+
+
+def _clear_invalid_env_overrides(exc: ValidationError) -> bool:
+    """Remove invalid environment overrides referenced in ``exc``.
+
+    Returns ``True`` when at least one variable was removed which allows the
+    caller to retry settings initialisation with a clean environment.
+    """
+
+    handled = False
+    for error in exc.errors():
+        loc = error.get("loc")
+        if not loc:
+            continue
+        field_name = loc[0]
+        if not isinstance(field_name, str):
+            continue
+        env_aliases = _SETTINGS_ENV_ALIASES.get(field_name, ())
+        for env_name in env_aliases:
+            if env_name not in os.environ:
+                continue
+            raw_value = os.environ.pop(env_name)
+            logger.warning(
+                "invalid %s value %r; ignoring environment override",
+                env_name,
+                raw_value,
+            )
+            handled = True
+    return handled
 
 
 def get_settings() -> SandboxSettings:
     """Return cached :class:`SandboxSettings`, reloading when the config changes."""
-    global _settings_cache, _settings_mtime, _settings_path
+    global _settings_cache, _settings_mtime, _settings_path, _settings_env_snapshot
     path = os.getenv("SANDBOX_SETTINGS_PATH")
     mtime = None
     if path:
@@ -108,17 +165,29 @@ def get_settings() -> SandboxSettings:
             mtime = os.path.getmtime(path)
         except OSError:
             mtime = None
+    current_snapshot = {key: os.environ.get(key) for key in _SETTINGS_ENV_KEYS}
     if (
         _settings_cache is None
         or path != _settings_path
         or mtime != _settings_mtime
+        or current_snapshot != _settings_env_snapshot
     ):
-        if path:
-            _settings_cache = load_sandbox_settings(path)
-        else:
-            _settings_cache = SandboxSettings()
+        while True:
+            try:
+                if path:
+                    _settings_cache = load_sandbox_settings(path)
+                else:
+                    _settings_cache = SandboxSettings()
+            except ValidationError as exc:
+                if not _clear_invalid_env_overrides(exc):
+                    raise
+                # One or more environment variables were removed. Retry the
+                # settings load so the defaults can be applied.
+                continue
+            break
         _settings_path = path
         _settings_mtime = mtime
+        _settings_env_snapshot = {key: os.environ.get(key) for key in _SETTINGS_ENV_KEYS}
     return _settings_cache
 
 
