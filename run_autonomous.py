@@ -548,8 +548,8 @@ def _format_dependency_warnings(line: str) -> list[str]:
         joined = " ".join(packages)
         optional_label = " optional" if "optional" in prefix else ""
         messages.append(
-            "Windows hint: install the"
-            f"{optional_label} Python packages with 'python -m pip install {joined}'."
+            f"Windows hint: install the{optional_label} Python packages "
+            f"with 'python -m pip install {joined}'."
         )
 
     return messages
