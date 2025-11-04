@@ -41,6 +41,107 @@ else:
     SelfCodingManager = _RealSelfCodingManager
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
+def _make_stub_context_builder() -> Any:
+    class _StubContextBuilder:
+        def refresh_db_weights(self) -> None:
+            _LOGGER.debug("stub context builder refresh requested; skipping")
+
+    return _StubContextBuilder()
+
+
+def _make_stub_manager() -> Any:
+    class _StubRegistry:
+        def update_bot(self, *args: Any, **kwargs: Any) -> None:
+            _LOGGER.debug(
+                "stub registry update ignored",
+                extra={"args": args, "kwargs": kwargs},
+            )
+
+    class _StubOrchestrator:
+        provenance_token: Any = None
+
+        def register_patch_cycle(self, *_args: Any, **_kwargs: Any) -> None:
+            _LOGGER.debug("stub orchestrator register_patch_cycle ignored")
+
+    class _StubManager:
+        bot_registry = _StubRegistry()
+        evolution_orchestrator = _StubOrchestrator()
+        quick_fix: Any = None
+        error_db: Any = None
+        _last_commit_hash: Any = None
+        _retirement_stub = True
+
+        def generate_patch(self, *_args: Any, **_kwargs: Any) -> Any:
+            _LOGGER.debug("stub manager generate_patch invoked; returning None")
+            return None
+
+    _LOGGER.warning(
+        "ModuleRetirementService operating in stub mode; self-coding actions will be skipped"
+    )
+    return _StubManager()
+
+
+def _is_valid_context_builder(candidate: Any) -> bool:
+    if candidate is None:
+        return False
+    if ContextBuilder is not None and isinstance(candidate, ContextBuilder):
+        return True
+    return callable(getattr(candidate, "refresh_db_weights", None))
+
+
+def _normalise_manager(manager: Any) -> Any:
+    if manager is None:
+        return None
+    required = ("generate_patch", "bot_registry", "evolution_orchestrator")
+    if all(hasattr(manager, attr) for attr in required):
+        return manager
+    raise TypeError(
+        "manager must provide generate_patch, bot_registry, and evolution_orchestrator"
+    )
+
+
+def _build_default_context_builder() -> Any:
+    if ContextBuilder is None:
+        _LOGGER.warning(
+            "vector_service.context_builder.ContextBuilder unavailable; using stub"
+        )
+        return _make_stub_context_builder()
+    try:  # pragma: no cover - heavy dependency path
+        from context_builder_util import create_context_builder
+
+        builder = create_context_builder()
+    except Exception as exc:  # pragma: no cover - fallback path exercised in CI
+        _LOGGER.warning(
+            "Failed to create context builder; using stub fallback: %s", exc
+        )
+        return _make_stub_context_builder()
+    if not _is_valid_context_builder(builder):
+        _LOGGER.warning(
+            "Context builder factory returned incompatible instance; using stub"
+        )
+        return _make_stub_context_builder()
+    return builder
+
+
+def _build_default_manager() -> Any:
+    if SelfCodingManager is None:
+        return _make_stub_manager()
+    try:  # pragma: no cover - heavy dependency path
+        from coding_bot_interface import get_shared_manager  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - fall back to stub when helper missing
+        return _make_stub_manager()
+    try:
+        manager = get_shared_manager()  # type: ignore[call-arg]
+    except Exception:
+        return _make_stub_manager()
+    if not isinstance(manager, SelfCodingManager):
+        return _make_stub_manager()
+    return manager
+
+
 class ModuleRetirementService:
     """Handle archival, compression, or replacement of modules based on relevancy flags."""
 
@@ -48,34 +149,24 @@ class ModuleRetirementService:
         self,
         repo_root: Path | str = ".",
         *,
-        context_builder: ContextBuilder,
-        manager: SelfCodingManager,
+        context_builder: Any | None = None,
+        manager: Any | None = None,
     ) -> None:
-        if ContextBuilder is None:
-            raise RuntimeError(
-                "vector_service.context_builder.ContextBuilder is unavailable"
-            ) from _context_builder_import_error
-        if context_builder is None:
-            raise ValueError("ContextBuilder is required")
-        if not isinstance(context_builder, ContextBuilder):
-            raise TypeError("context_builder must be a ContextBuilder instance")
-        if SelfCodingManager is None:
-            raise RuntimeError(
-                "self_coding_manager.SelfCodingManager is unavailable"
-            ) from _self_coding_manager_import_error
-        if manager is None:
-            raise ValueError("SelfCodingManager is required")
-        if not isinstance(manager, SelfCodingManager):
-            raise TypeError("manager must be a SelfCodingManager instance")
+        context_builder = (
+            context_builder if _is_valid_context_builder(context_builder) else None
+        ) or _build_default_context_builder()
+        manager = _normalise_manager(manager) or _build_default_manager()
         self.root = Path(resolve_path(repo_root))
         self.logger = logging.getLogger(self.__class__.__name__)
         try:
-            self._graph = build_import_graph(self.root)
+            graph = build_import_graph(self.root)
         except Exception:  # pragma: no cover - dependency graph failures
-            self._graph = None
+            graph = None
             self.logger.exception("failed to build import graph")
+        self._graph = graph
         self._context_builder = context_builder
         self.manager = manager
+        self._using_stub_manager = bool(getattr(manager, "_retirement_stub", False))
         try:
             self._context_builder.refresh_db_weights()
         except Exception:
@@ -119,7 +210,8 @@ class ModuleRetirementService:
                 shutil.move(str(path), archive_dir / path.name)
                 retired_modules_total.inc()
                 return True
-            self.logger.error("module not found: %s", module)
+            log_level = logging.DEBUG if self._using_stub_manager else logging.ERROR
+            self.logger.log(log_level, "module not found: %s", module)
         except Exception:  # pragma: no cover - filesystem issues
             self.logger.exception("failed to retire module %s", module)
         return False
@@ -134,7 +226,8 @@ class ModuleRetirementService:
             )
         )
         if not path.exists():
-            self.logger.error("module not found: %s", module)
+            log_level = logging.DEBUG if self._using_stub_manager else logging.ERROR
+            self.logger.log(log_level, "module not found: %s", module)
             return False
         orchestrator = getattr(self.manager, "evolution_orchestrator", None)
         token = getattr(orchestrator, "provenance_token", None)
@@ -194,7 +287,8 @@ class ModuleRetirementService:
             )
         )
         if not path.exists():
-            self.logger.error("module not found: %s", module)
+            log_level = logging.DEBUG if self._using_stub_manager else logging.ERROR
+            self.logger.log(log_level, "module not found: %s", module)
             return False
         orchestrator = getattr(self.manager, "evolution_orchestrator", None)
         token = getattr(orchestrator, "provenance_token", None)

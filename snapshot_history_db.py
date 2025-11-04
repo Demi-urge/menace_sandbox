@@ -1,36 +1,68 @@
+"""Persistent storage helpers for self-improvement snapshot data.
+
+The real Menace stack records rich telemetry about each autonomous run. The
+sandbox environment only requires a small subset of that functionality but it
+must behave deterministically across platforms, including Windows. This module
+provides a minimal SQLite-backed implementation that mirrors the production
+interface so :mod:`run_autonomous` can execute end-to-end without optional cloud
+services.
+"""
+
 from __future__ import annotations
 
-"""Persistent store for snapshot history and regression records."""
-
-from pathlib import Path
-from typing import Any, Dict
 import json
 import time
+from pathlib import Path
+from threading import RLock
+from typing import Any, Dict, Tuple
 
-from sandbox_settings import SandboxSettings
-try:  # pragma: no cover - prefer namespaced package when available
+try:  # pragma: no cover - prefer package-relative import
+    from menace_sandbox.sandbox_settings import SandboxSettings
+except ImportError:  # pragma: no cover - flat execution fallback
+    from sandbox_settings import SandboxSettings  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import
     from menace_sandbox.self_improvement import prompt_memory
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - flat execution fallback
     from self_improvement import prompt_memory  # type: ignore
+
+try:  # pragma: no cover - prefer package-relative import
+    from menace_sandbox.dynamic_path_router import resolve_path
+except ImportError:  # pragma: no cover - flat execution fallback
+    from dynamic_path_router import resolve_path  # type: ignore
+
 from db_router import DBRouter
 
-from dynamic_path_router import resolve_path
+__all__ = [
+    "record_snapshot",
+    "record_delta",
+    "log_regression",
+    "last_successful_cycle",
+]
 
 
-def _db_path(settings: SandboxSettings | None = None) -> Path:
+_LOCK = RLock()
+_ROUTER_CACHE: dict[Path, DBRouter] = {}
+
+
+def _ensure_router(settings: SandboxSettings | None = None) -> Tuple[DBRouter, Path]:
+    """Return a configured :class:`DBRouter` and the database path."""
+
     settings = settings or SandboxSettings()
-    return resolve_path(settings.sandbox_data_dir) / "snapshot_history.db"
+    sandbox_dir = Path(resolve_path(getattr(settings, "sandbox_data_dir", ".")))
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
+    db_path = sandbox_dir / "snapshot_history.db"
+
+    with _LOCK:
+        router = _ROUTER_CACHE.get(db_path)
+        if router is None:
+            router = DBRouter("snapshot_history", str(db_path), str(db_path))
+            _ROUTER_CACHE[db_path] = router
+    return router, db_path
 
 
-def _get_conn(settings: SandboxSettings | None = None):
-    """Return a connection to the snapshot history database.
-
-    The required tables are created on demand.
-    """
-
-    path = _db_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    router = DBRouter("snapshot_history", str(path), str(path))
+def _get_connection(settings: SandboxSettings | None = None):
+    router, _ = _ensure_router(settings)
     conn = router.get_connection("history")
     conn.execute(
         """
@@ -83,26 +115,39 @@ def _get_conn(settings: SandboxSettings | None = None):
 
 
 def record_snapshot(cycle: int, stage: str, snap: Any) -> int:
-    """Store *snap* for ``cycle`` and return the inserted row id."""
+    """Persist ``snap`` for ``cycle`` and return the inserted row id."""
 
-    conn = _get_conn()
+    conn = _get_connection()
+    payload = {
+        "roi": float(getattr(snap, "roi", 0.0)),
+        "sandbox_score": float(getattr(snap, "sandbox_score", 0.0)),
+        "entropy": float(getattr(snap, "entropy", 0.0)),
+        "call_graph_complexity": float(getattr(snap, "call_graph_complexity", 0.0)),
+        "token_diversity": float(getattr(snap, "token_diversity", 0.0)),
+    }
+    prompt = getattr(snap, "prompt", "")
+    if isinstance(prompt, dict):
+        prompt = json.dumps(prompt)
+    diff = getattr(snap, "diff", "")
+    if diff is None:
+        diff = ""
+
     cur = conn.execute(
         (
             "INSERT INTO snapshots(" "cycle, stage, ts, roi, sandbox_score, entropy, "
-            "call_graph_complexity, token_diversity, prompt, diff)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)"
+            "call_graph_complexity, token_diversity, prompt, diff) VALUES(?,?,?,?,?,?,?,?,?,?)"
         ),
         (
             int(cycle),
             stage,
             float(getattr(snap, "timestamp", time.time())),
-            float(getattr(snap, "roi", 0.0)),
-            float(getattr(snap, "sandbox_score", 0.0)),
-            float(getattr(snap, "entropy", 0.0)),
-            float(getattr(snap, "call_graph_complexity", 0.0)),
-            float(getattr(snap, "token_diversity", 0.0)),
-            getattr(snap, "prompt", None) or "",
-            getattr(snap, "diff", None) or "",
+            payload["roi"],
+            payload["sandbox_score"],
+            payload["entropy"],
+            payload["call_graph_complexity"],
+            payload["token_diversity"],
+            prompt or "",
+            diff,
         ),
     )
     conn.commit()
@@ -116,14 +161,14 @@ def record_delta(
     delta: Dict[str, Any],
     ts: float | None = None,
 ) -> int:
-    """Store ``delta`` for ``cycle`` and return the inserted row id."""
+    """Persist ``delta`` for ``cycle`` and return the inserted row id."""
 
-    conn = _get_conn()
+    conn = _get_connection()
     cur = conn.execute(
         (
             "INSERT INTO deltas(" "cycle, before_id, after_id, ts, roi_delta, "
             "sandbox_score_delta, entropy_delta, call_graph_complexity_delta, "
-            "token_diversity_delta, regression) VALUES(" "?,?,?,?,?,?,?,?,?,?)"
+            "token_diversity_delta, regression) VALUES(?,?,?,?,?,?,?,?,?,?)"
         ),
         (
             int(cycle),
@@ -145,7 +190,7 @@ def record_delta(
 def last_successful_cycle(settings: SandboxSettings | None = None) -> int | None:
     """Return the most recent cycle id without a regression."""
 
-    conn = _get_conn(settings)
+    conn = _get_connection(settings)
     row = conn.execute(
         "SELECT cycle FROM deltas WHERE regression=0 ORDER BY cycle DESC LIMIT 1"
     ).fetchone()
@@ -155,18 +200,20 @@ def last_successful_cycle(settings: SandboxSettings | None = None) -> int | None
 def log_regression(prompt: str | None, diff: str | None, delta: Dict[str, Any]) -> None:
     """Persist a regression record to the ``regressions`` table."""
 
-    conn = _get_conn()
+    conn = _get_connection()
     ts = time.time()
     diff_text = diff or ""
     try:
-        if diff and Path(diff).is_file():
-            diff_text = Path(diff).read_text(encoding="utf-8")
-    except Exception:  # pragma: no cover - best effort
-        diff_text = diff or ""
+        diff_path = Path(diff_text)
+        if diff_path.exists() and diff_path.is_file():
+            diff_text = diff_path.read_text(encoding="utf-8")
+    except Exception:  # pragma: no cover - best effort for unusual paths
+        pass
+
     conn.execute(
         (
-            "INSERT INTO regressions(" "ts, prompt, diff, roi_delta, entropy_delta, "
-            "delta_json) VALUES(?,?,?,?,?,?)"
+            "INSERT INTO regressions(" "ts, prompt, diff, roi_delta, entropy_delta, delta_json)"
+            " VALUES(?,?,?,?,?,?)"
         ),
         (
             ts,
@@ -180,15 +227,7 @@ def log_regression(prompt: str | None, diff: str | None, delta: Dict[str, Any]) 
     conn.commit()
 
     if prompt:
-        try:  # pragma: no cover - best effort
+        try:  # pragma: no cover - optional downgrade logging
             prompt_memory.record_downgrade(str(prompt))
         except Exception:
             pass
-
-
-__all__ = [
-    "record_snapshot",
-    "record_delta",
-    "last_successful_cycle",
-    "log_regression",
-]
