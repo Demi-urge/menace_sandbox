@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 try:  # pragma: no cover - optional dependency
     import sqlparse
@@ -443,6 +444,46 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         raise ValueError(f"Unknown table: {table}")
 
 
+_DDL_TABLE_PATTERNS = (
+    re.compile(
+        r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"(?P<name>(?:\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[^\s(]+))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"
+        r"(?P<name>(?:\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[^\s(]+))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"
+        r"(?P<name>(?:\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[^\s(;]+))",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _strip_identifier(name: str) -> str:
+    """Return ``name`` without surrounding quotes or schema prefixes."""
+
+    if not name:
+        return "unknown"
+    cleaned = name.strip('"`[]')
+    if "." in cleaned:
+        cleaned = cleaned.split(".")[-1]
+    return cleaned or "unknown"
+
+
+def _match_ddl_table(sql: str) -> str | None:
+    """Return table name for common DDL statements without sqlparse."""
+
+    for pattern in _DDL_TABLE_PATTERNS:
+        match = pattern.match(sql)
+        if match:
+            return _strip_identifier(match.group("name"))
+    return None
+
+
 class LoggedCursor(sqlite3.Cursor):
     """Cursor that records database access via :func:`log_db_access`."""
 
@@ -450,10 +491,34 @@ class LoggedCursor(sqlite3.Cursor):
     _rows: list[Any] | None = None
 
     def _table_from_sql(self, sql: str) -> str:
+        stripped_sql = sql.lstrip()
+        if not stripped_sql:
+            return "unknown"
+
+        ddl_name = _match_ddl_table(stripped_sql)
+        if ddl_name:
+            return ddl_name
+
+        leading = stripped_sql[:16].upper()
+        if leading.startswith((
+            "PRAGMA",
+            "VACUUM",
+            "ANALYZE",
+            "ATTACH",
+            "DETACH",
+            "BEGIN",
+            "END",
+            "COMMIT",
+            "ROLLBACK",
+        )):
+            return "unknown"
+
         if sqlparse is None:  # pragma: no cover - fallback without sqlparse
             return "unknown"
+        if len(stripped_sql) > 4000:  # safeguard against pathological statements
+            return "unknown"
         try:
-            statement = sqlparse.parse(sql)[0]
+            statement = sqlparse.parse(stripped_sql)[0]
         except Exception:
             return "unknown"
 
