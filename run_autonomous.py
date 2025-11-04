@@ -2542,6 +2542,18 @@ def main(argv: List[str] | None = None) -> None:
     logger.info("validating environment variables")
     _console("validating environment variables")
     _ensure_repo_path_environment(apply_defaults=False)
+
+    # ``SANDBOX_REPO_PATH`` is required by a number of services spawned from the
+    # runner, however new installations (and the Windows developer experience in
+    # particular) benefit from the script selecting a sensible default instead
+    # of aborting immediately.  When the variable is absent after the strict
+    # check we re-run the helper with defaults enabled so the detected repository
+    # root is exported before environment validation.
+    repo_env = os.environ.get("SANDBOX_REPO_PATH")
+    if repo_env is None or not str(repo_env).strip():
+        _console("SANDBOX_REPO_PATH missing; selecting default repository root")
+        _ensure_repo_path_environment()
+
     check_env()
 
     if (
