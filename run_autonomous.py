@@ -955,7 +955,12 @@ def _initialise_settings() -> SandboxSettings:
 if _DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT:
     settings = SandboxSettings()
 else:
-    settings = _initialise_settings()
+    try:
+        settings = _initialise_settings()
+    except KeyboardInterrupt:  # pragma: no cover - CLI interrupt path
+        logger.debug("initialisation interrupted", exc_info=True)
+        _console("initialisation interrupted; exiting")
+        raise SystemExit(130) from None
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 def _normalise_refresh_interval(value: float | int | None) -> float:
     """Return a sane refresh interval even when settings provide bad values."""
