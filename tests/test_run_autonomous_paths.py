@@ -1,0 +1,49 @@
+"""Tests for the path utilities defined in ``run_autonomous``."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from typing import Callable
+
+import pytest
+
+
+def _load_expand_path() -> Callable[[str], Path]:
+    """Extract and return the ``_expand_path`` function from the source file."""
+
+    module_path = Path("run_autonomous.py")
+    source = module_path.read_text()
+    parsed = ast.parse(source)
+    func_node = next(
+        node
+        for node in parsed.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_expand_path"
+    )
+    func_source = ast.get_source_segment(source, func_node)
+    if func_source is None:  # pragma: no cover - defensive guard
+        raise AssertionError("Failed to locate _expand_path source")
+
+    namespace: dict[str, object] = {}
+    exec("import os\nimport re\nfrom pathlib import Path", namespace)
+    exec(func_source, namespace)
+    expand_path = namespace.get("_expand_path")
+    assert callable(expand_path)
+    return expand_path  # type: ignore[return-value]
+
+
+@pytest.fixture(scope="module")
+def expand_path() -> Callable[[str], Path]:
+    return _load_expand_path()
+
+
+def test_expand_path_expands_percent_tokens(monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]) -> None:
+    monkeypatch.setenv("USERPROFILE", r"C:\\Users\\Tester")
+    result = expand_path(r"%USERPROFILE%\\Sandbox")
+    assert str(result) == r"C:\\Users\\Tester\\Sandbox"
+
+
+def test_expand_path_preserves_escaped_tokens(monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]) -> None:
+    monkeypatch.setenv("FOO", "Value")
+    result = expand_path(r"C:\\%%FOO%%\\%foo%")
+    assert str(result) == r"C:\\%FOO%\\Value"
