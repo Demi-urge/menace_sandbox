@@ -991,7 +991,13 @@ else:  # pragma: no cover - help/metadata path
 LocalKnowledgeModule = _LocalKnowledgeModule
 
 from filelock import FileLock
-from pydantic import BaseModel, RootModel, ValidationError, validator
+from pydantic import (
+    BaseModel,
+    RootModel,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # Default to test mode when using the bundled SQLite database.
 if settings.menace_mode.lower() == "production" and settings.database_url.startswith(
@@ -1311,7 +1317,8 @@ class PresetModel(BaseModel):
     class Config:
         extra = "forbid"
 
-    @validator("CPU_LIMIT", pre=True, allow_reuse=True)
+    @field_validator("CPU_LIMIT", mode="before")
+    @classmethod
     def _cpu_numeric(cls, v):
         try:
             float(v)
@@ -1319,7 +1326,8 @@ class PresetModel(BaseModel):
             raise ValueError("CPU_LIMIT must be numeric") from e
         return str(v)
 
-    @validator("MEMORY_LIMIT", pre=True, allow_reuse=True)
+    @field_validator("MEMORY_LIMIT", mode="before")
+    @classmethod
     def _mem_numeric(cls, v):
         val = str(v)
         digits = "".join(ch for ch in val if ch.isdigit() or ch == ".")
@@ -1331,14 +1339,14 @@ class PresetModel(BaseModel):
             raise ValueError("MEMORY_LIMIT must contain a numeric value") from e
         return val
 
-    @validator(
+    @field_validator(
         "NETWORK_LATENCY_MS",
         "NETWORK_JITTER_MS",
         "PACKET_LOSS",
         "PACKET_DUPLICATION",
-        pre=True,
-        allow_reuse=True,
+        mode="before",
     )
+    @classmethod
     def _float_fields(cls, v):
         if v is None:
             return v
@@ -1347,9 +1355,10 @@ class PresetModel(BaseModel):
         except Exception as e:
             raise ValueError("value must be numeric") from e
 
-    @validator(
-        "SECURITY_LEVEL", "THREAT_INTENSITY", "GPU_LIMIT", pre=True, allow_reuse=True
+    @field_validator(
+        "SECURITY_LEVEL", "THREAT_INTENSITY", "GPU_LIMIT", mode="before"
     )
+    @classmethod
     def _int_fields(cls, v):
         if v is None:
             return v
@@ -1358,7 +1367,8 @@ class PresetModel(BaseModel):
         except Exception as e:
             raise ValueError("value must be an integer") from e
 
-    @validator("FAILURE_MODES", pre=True, allow_reuse=True)
+    @field_validator("FAILURE_MODES", mode="before")
+    @classmethod
     def _fm_list(cls, v):
         if v is None:
             return v
@@ -1372,7 +1382,8 @@ class PresetModel(BaseModel):
 class SynergyEntry(RootModel[dict[str, float]]):
     """Schema for synergy history entries."""
 
-    @validator("root", pre=True, allow_reuse=True)
+    @model_validator(mode="before")
+    @classmethod
     def _check_values(cls, v):
         if not isinstance(v, dict):
             raise ValueError("entry must be a dict")
@@ -1391,8 +1402,8 @@ def validate_presets(presets: list[dict]) -> list[dict]:
     errors: list[dict] = []
     for idx, p in enumerate(presets):
         try:
-            model = PresetModel.parse_obj(p)
-            validated.append(model.dict(exclude_none=True))
+            model = PresetModel.model_validate(p)
+            validated.append(model.model_dump(exclude_none=True))
         except ValidationError as exc:
             for err in exc.errors():
                 new_err = err.copy()
@@ -1408,7 +1419,7 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     validated: list[dict[str, float]] = []
     for idx, entry in enumerate(hist):
         try:
-            validated.append(SynergyEntry.parse_obj(entry).root)
+            validated.append(SynergyEntry.model_validate(entry).root)
         except ValidationError as exc:
             sys.exit(f"Invalid synergy history entry at index {idx}: {exc}")
     return validated
