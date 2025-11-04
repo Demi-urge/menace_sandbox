@@ -2617,7 +2617,10 @@ def bootstrap(
     bootstrap_environment, _verify_required_dependencies = _get_bootstrap_helpers()
     bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-    os.environ.setdefault("SANDBOX_DATA_DIR", resolve_path(settings.sandbox_data_dir))
+    os.environ.setdefault(
+        "SANDBOX_DATA_DIR",
+        os.fspath(resolve_path(settings.sandbox_data_dir)),
+    )
 
     init_self_improvement(settings)
 
