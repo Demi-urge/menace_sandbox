@@ -294,7 +294,22 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
         drive_match = re.search(r"(?i)[A-Z]:(?:\\|/)", candidate)
         if drive_match:
             segment = candidate[drive_match.start() :]
-            return str(PureWindowsPath(segment))
+            # Maintain the separator style used in ``candidate`` so that callers
+            # running on Windows receive paths that respect the original
+            # environment variable formatting (for example preserving doubled
+            # backslashes) while POSIX hosts executing unit tests continue to
+            # observe forward slash separators when provided.  ``PureWindowsPath``
+            # normalises separators which collapsed intentional escaping in the
+            # Windows-specific tests.  Convert mixed separators only when both
+            # variants appear so the result remains deterministic.
+            if "\\" in segment and "/" in segment:
+                backslash = segment.count("\\")
+                forward = segment.count("/")
+                if backslash >= forward:
+                    segment = segment.replace("/", "\\")
+                else:
+                    segment = segment.replace("\\", "/")
+            return segment
 
         # UNC paths begin with two backslashes.  ``expanduser`` on POSIX hosts
         # converts ``~\\\\server\\share`` into ``/home/user/\\\\server\\share``;
@@ -1885,8 +1900,16 @@ def _normalise_repo_path(
     )
 
 
-def _ensure_repo_path_environment() -> None:
-    """Normalise ``SANDBOX_REPO_PATH`` and capture hints when it is unset."""
+def _ensure_repo_path_environment(*, apply_defaults: bool = True) -> None:
+    """Normalise ``SANDBOX_REPO_PATH`` and capture hints when it is unset.
+
+    When ``apply_defaults`` is ``False`` the function refrains from mutating
+    :data:`os.environ` when the variable is absent.  This keeps the initial
+    validation stage honest – unit tests and first-run setups expect
+    ``check_env`` to raise when ``SANDBOX_REPO_PATH`` has not been provided yet.
+    Downstream bootstrap calls invoke the helper again with defaults enabled so
+    the relaxed behaviour remains available when the sandbox actually starts.
+    """
 
     global _REPO_PATH_HINT
 
@@ -1936,22 +1959,29 @@ def _ensure_repo_path_environment() -> None:
                 repo_path = None
 
     if repo_path:
-        os.environ["SANDBOX_REPO_PATH"] = repo_path
         _REPO_PATH_HINT = repo_path
-        try:
-            if not getattr(settings, "sandbox_repo_path", None):
-                settings.sandbox_repo_path = repo_path  # type: ignore[assignment]
-        except Exception:
-            log.debug(
-                "unable to update settings.sandbox_repo_path to %s",
+        if apply_defaults:
+            os.environ["SANDBOX_REPO_PATH"] = repo_path
+            try:
+                if not getattr(settings, "sandbox_repo_path", None):
+                    settings.sandbox_repo_path = repo_path  # type: ignore[assignment]
+            except Exception:
+                log.debug(
+                    "unable to update settings.sandbox_repo_path to %s",
+                    repo_path,
+                    exc_info=True,
+                )
+            log.info(
+                "SANDBOX_REPO_PATH defaulted to %s (%s)",
                 repo_path,
-                exc_info=True,
+                resolved_source,
             )
-        log.info(
-            "SANDBOX_REPO_PATH defaulted to %s (%s)",
-            repo_path,
-            resolved_source,
-        )
+        else:
+            log.info(
+                "SANDBOX_REPO_PATH candidate %s available from %s but not applied", 
+                repo_path,
+                resolved_source,
+            )
     else:
         log.debug(
             "SANDBOX_REPO_PATH not set; environment validation will require explicit configuration",
@@ -2511,7 +2541,7 @@ def main(argv: List[str] | None = None) -> None:
 
     logger.info("validating environment variables")
     _console("validating environment variables")
-    _ensure_repo_path_environment()
+    _ensure_repo_path_environment(apply_defaults=False)
     check_env()
 
     if (
