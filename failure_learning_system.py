@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Sequence
 import importlib
 
 from vector_service import EmbeddableDBMixin
@@ -18,8 +18,9 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from . import bot_planning_bot as bpb
-from . import capital_management_bot as cmb
+if TYPE_CHECKING:  # pragma: no cover - imported for type annotations only
+    from .bot_planning_bot import BotPlanningBot
+    from .capital_management_bot import CapitalManagementBot
 
 
 @dataclass
@@ -332,11 +333,11 @@ class FailureLearningSystem:
             return 0.0
         return float(len(df[df["model_id"] == model_id])) / float(total)
 
-    def advise_planner(self, planner: bpb.BotPlanningBot) -> List[str]:
+    def advise_planner(self, planner: "BotPlanningBot") -> List[str]:
         counts = self.risk_features()
         return [feat for feat, c in counts.items() if c > 1]
 
-    def advise_capital(self, manager: cmb.CapitalManagementBot, model_id: str) -> float:
+    def advise_capital(self, manager: "CapitalManagementBot", model_id: str) -> float:
         return self.failure_score(model_id)
 
 
