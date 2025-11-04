@@ -215,6 +215,30 @@ def verify_dependencies(*, auto_install: bool = False) -> None:
     missing: list[tuple[str, str]] = []  # (message, install cmd)
     mismatched: list[tuple[str, str]] = []
 
+    optional_missing = {"telemetry_feedback", "telemetry_backend"}
+    optional_mismatched = {"quick_fix_engine", "sandbox_runner"}
+
+    def _filter_optional(
+        entries: list[tuple[str, str]],
+        allowed: set[str],
+        category: str,
+    ) -> list[tuple[str, str]]:
+        filtered: list[tuple[str, str]] = []
+        for message, command in entries:
+            name = message.split(" – ", 1)[0].split(" ", 1)[0]
+            if name in allowed:
+                logger.warning(
+                    "optional dependency unavailable; continuing",
+                    extra=log_record(
+                        dependency=name,
+                        remediation=command,
+                        category=category,
+                    ),
+                )
+                continue
+            filtered.append((message, command))
+        return filtered
+
     for pkg, cfg in checks.items():
         modules = cfg["modules"]
         requirement = cfg.get("version")
@@ -248,6 +272,9 @@ def verify_dependencies(*, auto_install: bool = False) -> None:
                         cmd,
                     )
                 )
+    missing = _filter_optional(missing, optional_missing, "missing")
+    mismatched = _filter_optional(mismatched, optional_mismatched, "mismatched")
+
     if missing or mismatched:
         if auto_install:
             for msg, cmd in missing + mismatched:
