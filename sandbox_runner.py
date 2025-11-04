@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
+from dependency_hints import format_system_package_instructions
 
 
 shutdown_event = threading.Event()
@@ -150,11 +151,7 @@ def _verify_required_dependencies(settings: "SandboxSettings | None" = None) -> 
     messages: list[str] = []
     if missing_sys:
         messages.append("Missing system packages: " + ", ".join(missing_sys))
-        pkg_line = " ".join(missing_sys)
-        messages.append("Install them on Debian/Ubuntu with:")
-        messages.append(f"  sudo apt-get install {pkg_line}")
-        messages.append("Or on macOS with:")
-        messages.append(f"  brew install {pkg_line}")
+        messages.extend(format_system_package_instructions(missing_sys))
     if missing_req:
         messages.append(
             "Missing Python packages: "
