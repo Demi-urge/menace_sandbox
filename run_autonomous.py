@@ -68,7 +68,7 @@ import _thread
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List
+from typing import TYPE_CHECKING, Callable, List, Mapping
 import math
 import uuid
 # ``scipy`` is optional in lightweight developer environments (especially on
@@ -489,6 +489,11 @@ _DEPENDENCY_WARNINGS: list[str] = []
 _DEPENDENCY_SUMMARY_EMITTED = False
 
 
+_WINDOWS_INCOMPATIBLE_PYTHON_DEPS = {
+    "pyroute2",
+}
+
+
 def _format_dependency_warnings(line: str) -> list[str]:
     """Return ``line`` plus any platform specific remediation hints."""
 
@@ -537,6 +542,52 @@ def _record_dependency_warning(line: str) -> tuple[str, list[str], bool]:
     primary = messages[0] if messages else line
     hints = messages[1:] if len(messages) > 1 else []
     return primary, hints, is_new
+
+
+def _filter_dependency_errors(
+    errors: Mapping[str, list[str]],
+    *,
+    platform: str | None = None,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Normalise ``errors`` for the current platform and return skip notes.
+
+    ``sandbox_runner.bootstrap`` reports missing dependencies without any
+    awareness of the host OS.  Some Python packages such as ``pyroute2`` are
+    only available on POSIX platforms and cause Windows setups to emit
+    misleading remediation hints on every run.  Filter those entries out so the
+    dependency summary reflects what the user can actually install while still
+    preserving the original ``errors`` mapping for other platforms.
+    """
+
+    platform = platform or os.name
+    filtered: dict[str, list[str]] = {
+        key: list(values) for key, values in errors.items()
+    }
+    skip_notes: list[str] = []
+
+    if platform == "nt":
+        removed: list[str] = []
+        for bucket in ("python", "optional"):
+            values = filtered.get(bucket)
+            if not values:
+                continue
+            kept: list[str] = []
+            for pkg in values:
+                if pkg.lower() in _WINDOWS_INCOMPATIBLE_PYTHON_DEPS:
+                    removed.append(pkg)
+                    continue
+                kept.append(pkg)
+            filtered[bucket] = kept
+        if removed:
+            dedup: dict[str, str] = {}
+            for pkg in removed:
+                dedup.setdefault(pkg.lower(), pkg)
+            skip_notes.append(
+                "Skipping Windows-incompatible Python packages: "
+                + ", ".join(dedup.values())
+            )
+
+    return filtered, skip_notes
 
 
 def _emit_dependency_summary() -> None:
@@ -591,6 +642,10 @@ def _initialise_settings() -> SandboxSettings:
 
         def _relaxed_verifier(settings_obj: SandboxSettings, *_: object) -> dict[str, list[str]]:
             errors = _verify_required_dependencies(settings_obj, strict=False)  # type: ignore[misc]
+            errors, skip_notes = _filter_dependency_errors(errors)
+            for note in skip_notes:
+                logger.info("dependency check (relaxed) platform skip: %s", note)
+                _console(f"dependency check (relaxed) platform skip: {note}")
             for line in _format_lines(errors):
                 primary, hints, is_new = _record_dependency_warning(line)
                 if not is_new:
