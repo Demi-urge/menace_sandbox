@@ -71,7 +71,44 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List
 import math
 import uuid
-from scipy.stats import t
+# ``scipy`` is optional in lightweight developer environments (especially on
+# Windows) and can be expensive to build.  The runner only needs access to the
+# cumulative distribution function for the Student's t-distribution when
+# estimating convergence confidence.  Fall back to a normal approximation when
+# ``scipy`` is unavailable so the script remains runnable on machines without
+# the dependency.
+try:  # pragma: no cover - exercised in integration tests
+    from scipy.stats import t as _scipy_student_t
+except Exception:  # pragma: no cover - optional dependency missing
+    _scipy_student_t = None
+    try:
+        from statistics import NormalDist as _NormalDist
+    except Exception:  # pragma: no cover - Python < 3.8 or minimal builds
+        _NormalDist = None
+else:
+    _NormalDist = None
+
+
+def _student_t_cdf(x: float, df: float) -> float:
+    """Return the two-tailed CDF for a Student's t-statistic.
+
+    ``scipy`` provides the most accurate calculation.  When it is unavailable
+    (common on Windows workstations) approximate the distribution using the
+    normal distribution scaled by ``sqrt(df / max(df - 2, 1))`` which keeps the
+    tails reasonably close for moderate degrees of freedom.
+    """
+
+    if _scipy_student_t is not None:
+        return float(_scipy_student_t.cdf(x, df))
+
+    if _NormalDist is None:
+        # Last resort approximation using the error function; ``NormalDist`` is
+        # unavailable on very old Python versions.  ``math.erf`` is always
+        # present and provides a usable estimate.
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    scale = math.sqrt(df / max(df - 2.0, 1.0))
+    return _NormalDist().cdf(x / scale)
 from db_router import init_db_router
 
 try:  # pragma: no cover - exercised indirectly in tests
@@ -1620,7 +1657,7 @@ def update_metrics(
             else:
                 se = std_m / math.sqrt(n)
                 t_stat = abs(ema_m) / se
-                p = 2 * (1 - t.cdf(t_stat, n - 1))
+                p = 2 * (1 - _student_t_cdf(t_stat, n - 1))
                 conf_m = 1 - p
             synergy_details[k] = {
                 "ema": ema_m,
