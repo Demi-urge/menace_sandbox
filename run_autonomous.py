@@ -293,6 +293,7 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
     """Populate sandbox data directory environment variables early."""
 
     _console("preparing sandbox data directory environment variables")
+
     if argv is None:
         argv = sys.argv[1:]
         _console("no argv provided; defaulting to sys.argv slice")
@@ -1537,6 +1538,37 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
 _SETUP_MARKER = resolve_path(".autonomous_setup_complete")
 
 
+def _ensure_repo_path_environment() -> None:
+    """Ensure ``SANDBOX_REPO_PATH`` is populated with a sensible default."""
+
+    current = os.environ.get("SANDBOX_REPO_PATH")
+    if current and str(current).strip():
+        return
+
+    candidate = settings.sandbox_repo_path or str(REPO_ROOT)
+    resolved: Path
+    try:
+        resolved = resolve_path(candidate)
+        if not isinstance(resolved, Path):
+            resolved = Path(resolved)
+    except Exception:  # pragma: no cover - defensive fallback
+        try:
+            resolved = Path(candidate).expanduser()
+        except Exception:  # pragma: no cover - path parsing failure
+            resolved = REPO_ROOT
+
+    if not resolved.is_absolute():
+        try:
+            resolved = (REPO_ROOT / resolved).resolve()
+        except Exception:  # pragma: no cover - resolution failure
+            resolved = (REPO_ROOT / resolved).absolute()
+
+    repo_path = resolved.as_posix() if os.name != "nt" else str(resolved)
+    os.environ["SANDBOX_REPO_PATH"] = repo_path
+    logger.debug("defaulting SANDBOX_REPO_PATH to %s", repo_path)
+
+
+
 def _check_dependencies(settings: SandboxSettings) -> bool:
     """Return ``True`` and warn if the setup script has not been executed."""
     if not _SETUP_MARKER.exists():
@@ -2027,6 +2059,7 @@ def main(argv: List[str] | None = None) -> None:
 
     logger.info("validating environment variables")
     _console("validating environment variables")
+    _ensure_repo_path_environment()
     check_env()
 
     if (
@@ -2121,6 +2154,7 @@ def main(argv: List[str] | None = None) -> None:
 
     logger.info("validating environment variables")
     _console("validating environment variables")
+    _ensure_repo_path_environment()
     check_env()
     logger.info("environment validation complete")
     _console("environment validation complete")
