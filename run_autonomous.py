@@ -1481,13 +1481,17 @@ def _check_dependencies(settings: SandboxSettings) -> bool:
 
 def check_env() -> None:
     """Exit if critical environment variables are unset."""
-    missing = [
-        name
-        for name, val in (
-            ("SANDBOX_REPO_PATH", settings.sandbox_repo_path),
-        )
-        if not val
-    ]
+    required = (
+        ("SANDBOX_REPO_PATH", settings.sandbox_repo_path),
+    )
+    missing: list[str] = []
+    for env_name, value in required:
+        raw = os.environ.get(env_name)
+        if raw is None or not str(raw).strip():
+            missing.append(env_name)
+            continue
+        if not value:
+            missing.append(env_name)
     if missing:
         raise SystemExit(
             "Missing required environment variables: " + ", ".join(missing)
@@ -1951,6 +1955,10 @@ def main(argv: List[str] | None = None) -> None:
     _console("arguments parsed; configuring logging")
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    logger.info("validating environment variables")
+    _console("validating environment variables")
+    check_env()
 
     if (
         args.runs == 0
