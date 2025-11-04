@@ -596,7 +596,27 @@ if _DEFER_BOOTSTRAP:
 else:
     settings = _initialise_settings()
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
-LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
+def _normalise_refresh_interval(value: float | int | None) -> float:
+    """Return a sane refresh interval even when settings provide bad values."""
+
+    try:
+        interval = float(value) if value is not None else float("nan")
+    except (TypeError, ValueError):
+        interval = float("nan")
+
+    if not math.isfinite(interval) or interval <= 0.0:
+        # The sandbox historically defaulted to a ten minute cadence.  Retain
+        # that behaviour so that developer workstations (including Windows
+        # environments where settings files are sometimes sparse) continue to
+        # refresh on a predictable schedule.
+        interval = 600.0
+
+    return interval
+
+
+LOCAL_KNOWLEDGE_REFRESH_INTERVAL = _normalise_refresh_interval(
+    settings.local_knowledge_refresh_interval
+)
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
 
@@ -1712,7 +1732,7 @@ def update_metrics(
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
 
-    global settings
+    global settings, LOCAL_KNOWLEDGE_REFRESH_INTERVAL
     _console("main() reached - preparing sandbox environment")
     _prepare_sandbox_data_dir_environment(argv)
     set_correlation_id(str(uuid.uuid4()))
@@ -1820,6 +1840,14 @@ def main(argv: List[str] | None = None) -> None:
             _console("settings validation failed during check-settings; exiting")
             return
         raise
+    previous_interval = LOCAL_KNOWLEDGE_REFRESH_INTERVAL
+    new_interval = _normalise_refresh_interval(settings.local_knowledge_refresh_interval)
+    if not math.isclose(previous_interval, new_interval, rel_tol=0.0, abs_tol=1e-9):
+        _console(
+            "local knowledge refresh interval updated from %.3fs to %.3fs"
+            % (previous_interval, new_interval)
+        )
+    LOCAL_KNOWLEDGE_REFRESH_INTERVAL = new_interval
     _console("runtime settings loaded")
 
     auto_include_isolated = bool(
