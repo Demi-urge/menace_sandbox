@@ -317,8 +317,43 @@ def _prepare_sandbox_data_dir_environment(argv: List[str] | None = None) -> None
         os.environ["SANDBOX_DATA_DIR"] = str(override_path)
 
     data_dir_value = os.environ.get("SANDBOX_DATA_DIR")
+    default_config_dir: Path | None = None
+    try:
+        default_config_dir = Path(settings.sandbox_data_dir).resolve()
+    except Exception:
+        default_config_dir = None
+
+    override_required = False
     if not data_dir_value:
-        _console("no sandbox data dir specified; using defaults")
+        override_required = True
+    else:
+        try:
+            current_dir = Path(data_dir_value).resolve()
+        except Exception:
+            override_required = True
+        else:
+            if (
+                default_config_dir is not None
+                and current_dir == default_config_dir
+                and Path.cwd() != default_config_dir
+            ):
+                override_required = True
+
+    if override_required:
+        default_base = Path.cwd() / "sandbox_data"
+        os.environ["SANDBOX_DATA_DIR"] = str(default_base)
+        os.environ.setdefault(
+            "SANDBOX_ACTIVE_OVERLAYS", str(default_base / "active_overlays.json")
+        )
+        os.environ.setdefault(
+            "SANDBOX_FAILED_OVERLAYS", str(default_base / "failed_overlays.json")
+        )
+        default_base.mkdir(parents=True, exist_ok=True)
+        _sync_sandbox_environment(default_base)
+        _console(
+            "no sandbox data dir specified; initialised default at "
+            f"{default_base}"
+        )
         return
 
     base_path = _expand_path(data_dir_value)
@@ -1190,9 +1225,15 @@ if TYPE_CHECKING:  # pragma: no cover - static typing helpers
     from preset_logger import PresetLogger
     from relevancy_radar_service import RelevancyRadarService
 else:
-    environment_generator = None  # type: ignore[assignment]
-    sandbox_runner = None  # type: ignore[assignment]
-    cli = None  # type: ignore[assignment]
+    environment_generator = sys.modules.get(  # type: ignore[assignment]
+        "menace.environment_generator"
+    )
+    sandbox_runner = sys.modules.get("sandbox_runner")  # type: ignore[assignment]
+    cli = (
+        getattr(sandbox_runner, "cli", None)
+        if sandbox_runner is not None
+        else None
+    )  # type: ignore[assignment]
     get_logger = logging.getLogger  # type: ignore[assignment]
     setup_logging = None  # type: ignore[assignment]
     log_record = None  # type: ignore[assignment]
@@ -1231,6 +1272,33 @@ def _ensure_runtime_imports() -> None:
     global _RUNTIME_IMPORTS_LOADED
     if _RUNTIME_IMPORTS_LOADED:
         return
+
+    global GPTMemoryManager, MemoryMaintenance, _load_retention_rules, GPTKnowledgeService
+    global LocalKnowledgeModule
+    if (
+        GPTMemoryManager is None
+        or MemoryMaintenance is None
+        or GPTKnowledgeService is None
+        or LocalKnowledgeModule is None
+        or getattr(_load_retention_rules, "__module__", __name__) == __name__
+    ):
+        from menace_sandbox.gpt_memory import GPTMemoryManager as _GPTMemoryManager
+        from memory_maintenance import (
+            MemoryMaintenance as _MemoryMaintenance,
+            _load_retention_rules as _load_retention_rules_impl,
+        )
+        from gpt_knowledge_service import (
+            GPTKnowledgeService as _GPTKnowledgeService,
+        )
+        from local_knowledge_module import (
+            LocalKnowledgeModule as _LocalKnowledgeModule,
+        )
+
+        GPTMemoryManager = _GPTMemoryManager  # type: ignore[assignment]
+        MemoryMaintenance = _MemoryMaintenance  # type: ignore[assignment]
+        _load_retention_rules = _load_retention_rules_impl  # type: ignore[assignment]
+        GPTKnowledgeService = _GPTKnowledgeService  # type: ignore[assignment]
+        LocalKnowledgeModule = _LocalKnowledgeModule  # type: ignore[assignment]
 
     global environment_generator, sandbox_runner, cli
     global get_logger, setup_logging, log_record, set_correlation_id
@@ -1645,11 +1713,17 @@ def _get_env_override(name: str, current, settings: SandboxSettings):
             except Exception:
                 continue
 
+    extra_kwargs: dict[str, object] = {}
+    if callable(log_record):
+        try:
+            extra_kwargs["extra"] = log_record(variable=name, value=result)
+        except Exception:
+            extra_kwargs = {}
     logger.debug(
         "environment variable %s overrides CLI value: %s",
         name,
         result,
-        extra=log_record(variable=name, value=result),
+        **extra_kwargs,
     )
 
     return result
@@ -1780,7 +1854,10 @@ def execute_iteration(
 ) -> tuple[ROITracker | None, ForesightTracker | None]:
     """Run one autonomous iteration using ``presets`` and return trackers."""
 
-    recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
+    recovery = SandboxRecoveryManager(
+        sandbox_runner._sandbox_main,
+        settings=settings,
+    )
     sandbox_runner._sandbox_main = recovery.run
     volatility_threshold = settings.sandbox_volatility_threshold
     foresight_tracker = ForesightTracker(
@@ -2185,15 +2262,46 @@ def main(argv: List[str] | None = None) -> None:
     _console("environment validation complete")
 
     try:
-        settings = SandboxSettings()
+        refreshed_settings = SandboxSettings()
     except ValidationError as exc:
         if args.check_settings:
             logger.warning("%s", exc)
             _console("settings validation failed during check-settings; exiting")
             return
-        raise
+        logger.warning("settings validation failed; continuing with existing configuration: %s", exc)
+        _console("settings validation failed; continuing with existing configuration")
+        refreshed_settings = settings
+    else:
+        settings = refreshed_settings
+    settings = refreshed_settings
+
+    env_file = resolve_path(refreshed_settings.menace_env_file)
+    try:
+        env_path = Path(env_file)
+    except TypeError:
+        env_path = Path(str(env_file))
+    try:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        if not env_path.exists():
+            env_path.touch()
+            _console(f"ensured environment file exists at {env_path}")
+    except Exception:
+        logger.debug("unable to create environment file at %s", env_path, exc_info=True)
+
+    cwd_env = Path.cwd() / ".env"
+    if not cwd_env.exists():
+        try:
+            cwd_env.touch()
+            _console(f"ensured environment file exists at {cwd_env}")
+        except Exception:
+            logger.debug(
+                "unable to create working directory environment file at %s",
+                cwd_env,
+                exc_info=True,
+            )
+
     previous_interval = LOCAL_KNOWLEDGE_REFRESH_INTERVAL
-    new_interval = _normalise_refresh_interval(settings.local_knowledge_refresh_interval)
+    new_interval = _normalise_refresh_interval(refreshed_settings.local_knowledge_refresh_interval)
     if not math.isclose(previous_interval, new_interval, rel_tol=0.0, abs_tol=1e-9):
         _console(
             "local knowledge refresh interval updated from %.3fs to %.3fs"
@@ -2203,7 +2311,7 @@ def main(argv: List[str] | None = None) -> None:
     _console("runtime settings loaded")
 
     auto_include_isolated = bool(
-        getattr(settings, "auto_include_isolated", True)
+        getattr(refreshed_settings, "auto_include_isolated", True)
         or getattr(args, "auto_include_isolated", False)
     )
     recursive_orphans = getattr(settings, "recursive_orphan_scan", True)
