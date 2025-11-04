@@ -270,6 +270,10 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
         # ``os.path.expandvars`` ignores ``%VAR%`` placeholders on non-Windows
         # hosts and is case-sensitive on Windows.  Retry unresolved tokens with
         # a case-insensitive lookup while respecting escaped literals (``%%``).
+        # Environment variables on Windows frequently reference other
+        # variables (``%OUTER%`` -> ``%INNER%\bin``).  Resolve recursively
+        # until the string stabilises so nested references expand just like
+        # they would in ``cmd.exe``.
         env_lower = {key.lower(): value for key, value in os.environ.items()}
 
         def _replace(match: re.Match[str]) -> str:
@@ -282,7 +286,14 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
                 return direct
             return env_lower.get(lowered, match.group(0))
 
-        expanded = re.sub(token_pattern, _replace, expanded)
+        previous = None
+        current = expanded
+        for _ in range(10):
+            if "%" not in current or current == previous:
+                break
+            previous = current
+            current = re.sub(token_pattern, _replace, current)
+        expanded = current
 
     for sentinel, literal in sentinel_map.items():
         expanded = expanded.replace(sentinel, literal)
