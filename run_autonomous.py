@@ -166,19 +166,46 @@ def _sync_sandbox_environment(base_path: Path) -> None:
     default_failed = str(base_path / "failed_overlays.json")
 
     env_path_func = getattr(env_mod, "_env_path", None)
-    if callable(env_path_func):
-        active_path = env_path_func("SANDBOX_ACTIVE_OVERLAYS", default_active)
-        failed_path = env_path_func("SANDBOX_FAILED_OVERLAYS", default_failed)
-    else:
-        active_path = Path(os.getenv("SANDBOX_ACTIVE_OVERLAYS", default_active))
-        failed_path = Path(os.getenv("SANDBOX_FAILED_OVERLAYS", default_failed))
+    log = logging.getLogger(__name__)
 
-    try:
-        env_mod._ACTIVE_OVERLAYS_FILE = Path(active_path)
-        env_mod._FAILED_OVERLAYS_FILE = Path(failed_path)
-    except TypeError:
-        env_mod._ACTIVE_OVERLAYS_FILE = Path(str(active_path))
-        env_mod._FAILED_OVERLAYS_FILE = Path(str(failed_path))
+    def _resolve_env_path(name: str, default: str) -> Path:
+        raw_value: str | os.PathLike[str] | None
+        if callable(env_path_func):
+            try:  # pragma: no cover - exercised in integration tests
+                raw_value = env_path_func(name, default)
+            except FileNotFoundError:
+                raw_value = os.environ.get(name, default)
+            except Exception:  # pragma: no cover - defensive guard
+                log.debug(
+                    "sandbox environment shim rejected %s=%r; using default",
+                    name,
+                    os.environ.get(name, default),
+                    exc_info=True,
+                )
+                raw_value = os.environ.get(name, default)
+        else:
+            raw_value = os.environ.get(name, default)
+
+        if raw_value is None:
+            raw_value = default
+
+        try:
+            return _expand_path(raw_value)
+        except Exception:
+            log.debug(
+                "unable to expand sandbox path %s=%r; falling back to %s",
+                name,
+                raw_value,
+                default,
+                exc_info=True,
+            )
+            return _expand_path(default)
+
+    active_path = _resolve_env_path("SANDBOX_ACTIVE_OVERLAYS", default_active)
+    failed_path = _resolve_env_path("SANDBOX_FAILED_OVERLAYS", default_failed)
+
+    env_mod._ACTIVE_OVERLAYS_FILE = active_path
+    env_mod._FAILED_OVERLAYS_FILE = failed_path
 
     filelock_cls = getattr(env_mod, "FileLock", None)
     if filelock_cls is not None:
