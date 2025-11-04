@@ -575,6 +575,8 @@ else:  # pragma: no cover - convenience path used during CLI discovery
 
 _BOOTSTRAP_HELPERS: tuple[Callable[..., object], Callable[..., object]] | None = None
 _BOOTSTRAP_SUPPORTS_ENFORCE: bool | None = None
+_PREPARSED_ARGS: argparse.Namespace | None = None
+_PREPARSED_ARGV: list[str] | None = None
 
 
 def _get_bootstrap_helpers() -> tuple[Callable[..., object], Callable[..., object]]:
@@ -1211,10 +1213,19 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
 
 
 if __name__ == "__main__" and (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
-    _args = _build_argument_parser(settings).parse_args(sys.argv[1:])
-    if getattr(_args, "smoke_test", False):
-        _console("smoke test requested; bootstrap sequence skipped")
-    sys.exit(0)
+    parser = _build_argument_parser(settings)
+    try:
+        parsed = parser.parse_args(sys.argv[1:])
+    except SystemExit:
+        # ``argparse`` has already emitted the relevant help or error output.
+        # Re-raise so the interpreter terminates without importing heavyweight
+        # modules.  This keeps ``python run_autonomous.py --help`` snappy while
+        # still allowing other lightweight invocations (``--runs 0`` for
+        # example) to flow through :func:`main` for their tailored output.
+        raise
+    else:
+        _PREPARSED_ARGS = parsed
+        _PREPARSED_ARGV = list(sys.argv[1:])
 
 
 # Initialise database router with a unique menace_id. All DB access must go
@@ -1376,6 +1387,14 @@ def _ensure_runtime_imports() -> None:
     global _RUNTIME_IMPORTS_LOADED
     if _RUNTIME_IMPORTS_LOADED:
         return
+
+    if "menace_sandbox" not in sys.modules:
+        # Lightweight invocations (``--runs 0`` or ``--smoke-test``) defer the
+        # bootstrap that normally wires up the local package.  Ensure the shim
+        # is registered before attempting the heavyweight imports so auxiliary
+        # commands executed from Windows terminals resolve modules consistently
+        # with the full bootstrap path.
+        _ensure_local_package()
 
     global GPTMemoryManager, MemoryMaintenance, _load_retention_rules, GPTKnowledgeService
     global LocalKnowledgeModule
@@ -2355,11 +2374,26 @@ def update_metrics(
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
 
-    global settings, LOCAL_KNOWLEDGE_REFRESH_INTERVAL
+    global settings, LOCAL_KNOWLEDGE_REFRESH_INTERVAL, _PREPARSED_ARGS, _PREPARSED_ARGV
+
+    if argv is None:
+        if _PREPARSED_ARGV is not None:
+            argv_list = list(_PREPARSED_ARGV)
+        else:
+            argv_list = list(sys.argv[1:])
+    else:
+        argv_list = list(argv)
+
     _console("main() reached - preparing sandbox environment")
-    _prepare_sandbox_data_dir_environment(argv)
+    _prepare_sandbox_data_dir_environment(argv_list)
     parser = _build_argument_parser(settings)
-    args = parser.parse_args(argv)
+
+    if argv is None and _PREPARSED_ARGS is not None and _PREPARSED_ARGV is not None:
+        args = _PREPARSED_ARGS
+        _PREPARSED_ARGS = None
+        _PREPARSED_ARGV = None
+    else:
+        args = parser.parse_args(argv_list)
     _console("arguments parsed; configuring logging")
 
     log_level = "DEBUG" if args.verbose else args.log_level
@@ -2383,6 +2417,11 @@ def main(argv: List[str] | None = None) -> None:
     ):
         logger.info("no sandbox runs requested; exiting before bootstrap")
         _console("no sandbox runs requested; skipping autonomous bootstrap")
+        return
+
+    if args.smoke_test:
+        logger.info("smoke test requested; exiting before sandbox launch")
+        _console("smoke test requested; bootstrap sequence validated; exiting")
         return
 
     _ensure_runtime_imports()
@@ -2705,12 +2744,6 @@ def main(argv: List[str] | None = None) -> None:
     _check_dependencies(settings)
     logger.info("dependency check complete")
     _console("dependency check complete")
-
-    if args.smoke_test:
-        logger.info("smoke test requested; exiting before sandbox launch")
-        _console("smoke test requested; bootstrap sequence validated; exiting")
-        exit_stack.close()
-        return
 
     dash_port = args.dashboard_port
     dash_env = settings.auto_dashboard_port
