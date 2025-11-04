@@ -13,6 +13,9 @@ from typing import Iterable, List, Optional, Dict, Any
 import re
 from collections import Counter
 import math
+import os
+import sys
+import logging
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
@@ -36,6 +39,9 @@ from security.secret_redactor import redact
 from license_detector import detect as detect_license
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
+
+
+logger = logging.getLogger(__name__)
 
 
 registry = BotRegistry()
@@ -66,13 +72,28 @@ class ResearchFallbackBot:
         self.max_retries = max_retries
         self.backoff = backoff
         if SentenceTransformer:
-            try:
-                from huggingface_hub import login
-                import os
+            token = os.getenv("HUGGINGFACE_API_TOKEN")
+            if token:
+                try:
+                    from huggingface_hub import login
 
-                login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
-            except Exception:  # pragma: no cover - runtime download issues
+                    login(token=token)
+                    self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+                except Exception:  # pragma: no cover - runtime download issues
+                    logger.warning(
+                        "Hugging Face login failed; disabling fallback embeddings",
+                        exc_info=logger.isEnabledFor(logging.DEBUG),
+                    )
+                    self.embedder = None
+            else:
+                if sys.stdin is not None and sys.stdin.isatty():
+                    logger.debug(
+                        "HUGGINGFACE_API_TOKEN not set; skipping interactive login to avoid blocking"
+                    )
+                else:
+                    logger.debug(
+                        "Hugging Face token unavailable in non-interactive environment; embeddings disabled"
+                    )
                 self.embedder = None
         else:
             self.embedder = None
