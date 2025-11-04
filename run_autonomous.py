@@ -56,6 +56,7 @@ import importlib.util
 import inspect
 import json
 import logging
+from collections.abc import Iterable
 import os
 import re
 import shutil
@@ -650,6 +651,52 @@ def _ensure_local_package() -> None:
     sys.modules.setdefault("menace", menace_pkg)
 
 logger = logging.getLogger(__name__)
+
+
+def _log_extra(**fields: object) -> dict[str, object]:
+    """Return structured logging extras when ``log_record`` is available."""
+
+    if not callable(log_record):
+        return {}
+
+    try:
+        record = log_record(**fields)  # type: ignore[call-arg]
+    except Exception:
+        logger.debug(
+            "log_record helper rejected payload", extra={"fields": fields}, exc_info=True
+        )
+        return {}
+
+    if isinstance(record, Mapping):
+        return {"extra": record}
+
+    if record is not None:
+        logger.debug(
+            "log_record returned non-mapping payload", extra={"payload": record}
+        )
+
+    return {}
+
+
+def _normalise_actions(raw: object) -> list[str]:
+    """Return a list of stringified actions from ``raw`` without raising."""
+
+    if raw is None:
+        return []
+
+    if isinstance(raw, Mapping):
+        return [f"{key}={value}" for key, value in raw.items()]
+
+    if isinstance(raw, (str, bytes)):
+        return [raw]
+
+    if isinstance(raw, Iterable):
+        try:
+            return [str(item) for item in raw]
+        except TypeError:
+            pass
+
+    return [str(raw)]
 
 
 _DEPENDENCY_WARNINGS: list[str] = []
@@ -1588,7 +1635,7 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
                 except Exception:
                     logger.exception(
                         "failed to refresh local knowledge module",
-                        extra=log_record(run=run),
+                        **_log_extra(run=run),
                     )
                     _console(f"local knowledge refresh cycle {run} failed; see logs")
 
@@ -1607,7 +1654,7 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
                 if _LKM_REFRESH_THREAD.is_alive():
                     logger.warning(
                         "local knowledge refresh thread did not exit within timeout",
-                        extra=log_record(timeout=1.0),
+                        **_log_extra(timeout=1.0),
                     )
                 _LKM_REFRESH_THREAD = None
             _LKM_REFRESH_STOP.clear()
@@ -2011,6 +2058,7 @@ def prepare_presets(
     """Return presets for ``run_idx`` and their source."""
 
     preset_source = "static file"
+    actions: list[str] = []
     if args.preset_files:
         pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
         try:
@@ -2022,7 +2070,8 @@ def prepare_presets(
         presets_raw = [data] if isinstance(data, dict) else list(data)
         presets = validate_presets(presets_raw)
         logger.info(
-            "loaded presets from file", extra=log_record(run=run_idx, presets=presets)
+            "loaded presets from file",
+            **_log_extra(run=run_idx, presets=presets, preset_file=str(pf)),
         )
     else:
         if getattr(args, "disable_preset_evolution", False):
@@ -2047,18 +2096,25 @@ def prepare_presets(
                     None,
                 ):
                     preset_source = "RL agent"
-        logger.info("generated presets", extra=log_record(run=run_idx, presets=presets))
-        actions = getattr(environment_generator.adapt_presets, "last_actions", [])
+        logger.info(
+            "generated presets", **_log_extra(run=run_idx, presets=presets)
+        )
+        actions = _normalise_actions(
+            getattr(environment_generator.adapt_presets, "last_actions", [])
+        )
         for act in actions:
             try:
                 synergy_adaptation_actions_total.labels(action=act).inc()
             except Exception:
-                logger.exception("failed to update adaptation actions gauge")
+                logger.exception(
+                    "failed to update adaptation actions gauge",
+                    **_log_extra(action=act),
+                )
         logger.debug(
             "preset source=%s last_actions=%s",
             preset_source,
             actions,
-            extra=log_record(
+            **_log_extra(
                 run=run_idx,
                 preset_source=preset_source,
                 last_actions=actions,
@@ -2070,7 +2126,10 @@ def prepare_presets(
         try:
             preset_log.log(run_idx, preset_source, actions)
         except Exception:
-            logger.exception("failed to log preset details")
+            logger.exception(
+                "failed to log preset details",
+                **_log_extra(run=run_idx, preset_source=preset_source),
+            )
     return presets, preset_source
 
 
@@ -2155,7 +2214,9 @@ def update_metrics(
             try:
                 insert_entry(history_conn, syn_vals)
             except Exception:
-                logger.exception("failed to save synergy history")
+                logger.exception(
+                    "failed to save synergy history", **_log_extra(run=run_idx)
+                )
         ma_entry: dict[str, float] = {}
         for k in syn_vals:
             vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
@@ -2184,7 +2245,7 @@ def update_metrics(
             roi_pred,
             ci_lo,
             ci_hi,
-            extra=log_record(
+            **_log_extra(
                 run=run_idx,
                 roi_prediction=roi_pred,
                 ci_lower=ci_lo,
@@ -2201,7 +2262,7 @@ def update_metrics(
         logger.debug(
             "synergy forecast=%.3f",
             syn_pred,
-            extra=log_record(run=run_idx, synergy_prediction=syn_pred),
+            **_log_extra(run=run_idx, synergy_prediction=syn_pred),
         )
     except Exception:
         logger.exception("synergy forecast failed")
@@ -2220,7 +2281,7 @@ def update_metrics(
         "roi threshold=%.3f method=%s",
         roi_threshold,
         thr_method,
-        extra=log_record(
+        **_log_extra(
             run=run_idx,
             roi_threshold=roi_threshold,
             method=thr_method,
@@ -2253,7 +2314,7 @@ def update_metrics(
         "synergy threshold=%.3f fixed=%s",
         syn_thr_val,
         thr is not None,
-        extra=log_record(
+        **_log_extra(
             run=run_idx,
             synergy_threshold=syn_thr_val,
             fixed=thr is not None,
@@ -2274,7 +2335,7 @@ def update_metrics(
         ema_val,
         conf,
         syn_thr_val,
-        extra=log_record(
+        **_log_extra(
             run=run_idx,
             converged=converged,
             ema_value=ema_val,
@@ -2290,7 +2351,7 @@ def update_metrics(
         roi_threshold,
         thr_method,
         syn_thr_val,
-        extra=log_record(
+        **_log_extra(
             run=run_idx,
             roi_prediction=roi_pred,
             ci_lower=ci_lo,
@@ -2331,7 +2392,7 @@ def update_metrics(
         logger.debug(
             "synergy metric stats: %s",
             synergy_details,
-            extra=log_record(run=run_idx, synergy_metric_stats=synergy_details),
+            **_log_extra(run=run_idx, synergy_metric_stats=synergy_details),
         )
 
     logger.debug(
@@ -2340,7 +2401,7 @@ def update_metrics(
         args.synergy_cycles,
         synergy_threshold_window,
         synergy_threshold_weight,
-        extra=log_record(
+        **_log_extra(
             run=run_idx,
             roi_ema=roi_ema_val,
             roi_std=roi_std_val,
@@ -2680,7 +2741,7 @@ def main(argv: List[str] | None = None) -> None:
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
             logger.info(
                 "generated presets from environment",
-                extra=log_record(presets=presets),
+                **_log_extra(presets=presets, source="environment"),
             )
         elif preset_file.exists():
             try:
@@ -2698,7 +2759,7 @@ def main(argv: List[str] | None = None) -> None:
                 presets = validate_presets(generate_presets(args.preset_count))
             logger.info(
                 "loaded presets from file",
-                extra=log_record(presets=presets, source=str(preset_file)),
+                **_log_extra(presets=presets, source=str(preset_file)),
             )
         else:
             if getattr(args, "disable_preset_evolution", False):
@@ -2715,17 +2776,22 @@ def main(argv: List[str] | None = None) -> None:
                     presets = validate_presets(
                         gen_func(str(data_dir), args.preset_count)
                     )
-                    actions = getattr(
-                        environment_generator.adapt_presets, "last_actions", []
+                    actions = _normalise_actions(
+                        getattr(
+                            environment_generator.adapt_presets, "last_actions", []
+                        )
                     )
                     for act in actions:
                         try:
                             synergy_adaptation_actions_total.labels(action=act).inc()
                         except Exception:
                             logger.exception(
-                                "failed to update adaptation actions gauge"
+                                "failed to update adaptation actions gauge",
+                                **_log_extra(action=act),
                             )
-            logger.info("generated presets", extra=log_record(presets=presets))
+            logger.info(
+                "generated presets", **_log_extra(presets=presets, source="auto")
+            )
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -3102,7 +3168,10 @@ def main(argv: List[str] | None = None) -> None:
                     for entry in missing:
                         insert_entry(history_conn, entry)
                 except Exception:
-                    logger.exception("failed to save synergy history")
+                    logger.exception(
+                        "failed to save synergy history",
+                        **_log_extra(run=run_idx, recovered_entries=len(missing)),
+                    )
                     _console("failed to persist recovered synergy history; see logs")
             if tracker.roi_history:
                 ema, _ = cli._ema(tracker.roi_history[-args.roi_cycles :])
@@ -3130,14 +3199,16 @@ def main(argv: List[str] | None = None) -> None:
             logger.info(
                 "using presets from %s",
                 preset_source,
-                extra=log_record(run=run_idx, preset_source=preset_source),
+                **_log_extra(run=run_idx, preset_source=preset_source),
             )
             _console(f"presets ready for run {run_idx} from {preset_source}")
             logger.debug(
                 "loaded presets from %s: %s",
                 preset_source,
                 presets,
-                extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
+                **_log_extra(
+                    run=run_idx, preset_source=preset_source, presets=presets
+                ),
             )
 
             tracker, foresight_tracker = execute_iteration(
@@ -3213,7 +3284,7 @@ def main(argv: List[str] | None = None) -> None:
                         slope,
                         second_derivative,
                         avg_stability,
-                        extra=log_record(
+                        **_log_extra(
                             run=run_idx,
                             foresight_slope=slope,
                             foresight_curve=second_derivative,
@@ -3230,7 +3301,7 @@ def main(argv: List[str] | None = None) -> None:
                 ema_val,
                 converged,
                 len(flagged),
-                extra=log_record(
+                **_log_extra(
                     run=run_idx,
                     roi_threshold=roi_threshold,
                     ema_value=ema_val,
@@ -3247,7 +3318,7 @@ def main(argv: List[str] | None = None) -> None:
             if all_mods and all_mods <= flagged and converged:
                 logger.info(
                     "convergence reached",
-                    extra=log_record(
+                    **_log_extra(
                         run=run_idx,
                         ema_value=ema_val,
                         flagged_modules=sorted(flagged),
@@ -3503,20 +3574,20 @@ def bootstrap(
     )
     logger.info(
         "autonomous bootstrap complete; handing off to sandbox runner",
-        extra=log_record(stage="launch"),
+        **_log_extra(stage="launch"),
     )
 
     try:
         launch_sandbox(settings=bootstrap_settings)
         logger.info(
             "autonomous sandbox run exited cleanly",
-            extra=log_record(stage="shutdown"),
+            **_log_extra(stage="shutdown"),
         )
     finally:
         _cleanup()
         logger.info(
             "autonomous cleanup complete",
-            extra=log_record(stage="cleanup"),
+            **_log_extra(stage="cleanup"),
         )
 
 
