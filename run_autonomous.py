@@ -625,6 +625,7 @@ logger = logging.getLogger(__name__)
 
 _DEPENDENCY_WARNINGS: list[str] = []
 _DEPENDENCY_SUMMARY_EMITTED = False
+_REPO_PATH_HINT: str | None = None
 
 
 _WINDOWS_INCOMPATIBLE_PYTHON_DEPS = {
@@ -1707,76 +1708,84 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
 _SETUP_MARKER = resolve_path(".autonomous_setup_complete")
 
 
+def _normalise_repo_path(
+    candidate: str | os.PathLike[str] | Path,
+    *,
+    source: str,
+) -> str:
+    """Return a canonical repository path for ``candidate``."""
+
+    log = logging.getLogger(__name__)
+
+    if isinstance(candidate, Path):
+        resolved_candidate = candidate
+    else:
+        try:
+            resolved_candidate = _expand_path(candidate)
+        except Exception:
+            log.debug(
+                "failed to expand repo path %r from %s; falling back to Path()",
+                candidate,
+                source,
+                exc_info=True,
+            )
+            resolved_candidate = Path(str(candidate)).expanduser()
+
+    if not isinstance(resolved_candidate, Path):
+        resolved_candidate = Path(os.fspath(resolved_candidate))
+
+    if not resolved_candidate.is_absolute():
+        try:
+            resolved_candidate = (REPO_ROOT / resolved_candidate).resolve()
+        except Exception:
+            resolved_candidate = (REPO_ROOT / resolved_candidate).absolute()
+
+    return (
+        resolved_candidate.as_posix()
+        if os.name != "nt"
+        else str(resolved_candidate)
+    )
+
+
 def _ensure_repo_path_environment() -> None:
-    """Normalise ``SANDBOX_REPO_PATH`` without inventing implicit defaults."""
+    """Normalise ``SANDBOX_REPO_PATH`` and capture hints when it is unset."""
+
+    global _REPO_PATH_HINT
+
+    log = logging.getLogger(__name__)
+    _REPO_PATH_HINT = None
 
     current = os.environ.get("SANDBOX_REPO_PATH")
-    if not current or not str(current).strip():
-        candidate = settings.sandbox_repo_path or REPO_ROOT
-        logger.debug(
-            "SANDBOX_REPO_PATH missing; defaulting to configured repository path %r",
-            candidate,
-        )
-        if isinstance(candidate, Path):
-            resolved_candidate = candidate
-        else:
-            try:
-                resolved_candidate = _expand_path(candidate)
-            except Exception:
-                logger.debug(
-                    "failed to expand default repo path %r; using resolve_path fallback",
-                    candidate,
-                    exc_info=True,
-                )
-                try:
-                    resolved_candidate = resolve_path(str(candidate))
-                except Exception:
-                    resolved_candidate = Path(str(candidate)).expanduser()
-        if not isinstance(resolved_candidate, Path):
-            resolved_candidate = Path(os.fspath(resolved_candidate))
-        if not resolved_candidate.is_absolute():
-            try:
-                resolved_candidate = (REPO_ROOT / resolved_candidate).resolve()
-            except Exception:
-                resolved_candidate = (REPO_ROOT / resolved_candidate).absolute()
-        repo_path = (
-            resolved_candidate.as_posix()
-            if os.name != "nt"
-            else str(resolved_candidate)
-        )
+    if current and str(current).strip():
+        repo_path = _normalise_repo_path(current, source="environment")
         os.environ["SANDBOX_REPO_PATH"] = repo_path
-        logger.debug("normalised SANDBOX_REPO_PATH default to %s", repo_path)
+        _REPO_PATH_HINT = repo_path
+        log.debug("normalised SANDBOX_REPO_PATH from environment to %s", repo_path)
         return
 
-    candidate = current
-    source = "environment"
-
-    try:
-        resolved = _expand_path(candidate)
-    except Exception:  # pragma: no cover - unexpected expansion failure
-        logger.debug(
-            "failed to expand repo path %r from %s; falling back to resolve_path",
-            candidate,
-            source,
-            exc_info=True,
-        )
+    candidate = getattr(settings, "sandbox_repo_path", None)
+    if candidate:
         try:
-            resolved = resolve_path(candidate)
+            _REPO_PATH_HINT = _normalise_repo_path(candidate, source="settings")
         except Exception:
-            resolved = Path(str(candidate)).expanduser()
+            log.debug(
+                "SANDBOX_REPO_PATH missing; unable to resolve default %r from settings",
+                candidate,
+                exc_info=True,
+            )
+        else:
+            log.debug(
+                "SANDBOX_REPO_PATH missing; settings default would resolve to %s",
+                _REPO_PATH_HINT,
+            )
+    else:
+        log.debug(
+            "SANDBOX_REPO_PATH missing and no sandbox_repo_path configured in settings",
+        )
 
-    if not isinstance(resolved, Path):
-        resolved = Path(os.fspath(resolved))
-
-    if not resolved.is_absolute():
-        try:
-            resolved = (REPO_ROOT / resolved).resolve()
-        except Exception:  # pragma: no cover - resolution failure
-            resolved = (REPO_ROOT / resolved).absolute()
-
-    repo_path = resolved.as_posix() if os.name != "nt" else str(resolved)
-    os.environ["SANDBOX_REPO_PATH"] = repo_path
-    logger.debug("normalised SANDBOX_REPO_PATH from environment to %s", repo_path)
+    log.debug(
+        "SANDBOX_REPO_PATH not set; environment validation will require explicit configuration",
+    )
 
 
 
@@ -1803,9 +1812,33 @@ def check_env() -> None:
         if not value:
             missing.append(env_name)
     if missing:
-        raise SystemExit(
-            "Missing required environment variables: " + ", ".join(missing)
-        )
+        message = "Missing required environment variables: " + ", ".join(missing)
+        hints: list[str] = []
+        if "SANDBOX_REPO_PATH" in missing:
+            hint_value = _REPO_PATH_HINT
+            if hint_value is None:
+                candidate = getattr(settings, "sandbox_repo_path", None)
+                if candidate:
+                    try:
+                        hint_value = _normalise_repo_path(candidate, source="settings")
+                    except Exception:
+                        hint_value = None
+            if hint_value:
+                hints.append(
+                    "Set SANDBOX_REPO_PATH to the repository root (for example "
+                    f"{hint_value})."
+                )
+            if os.name == "nt":
+                hints.append(
+                    "Windows PowerShell example: setx SANDBOX_REPO_PATH \"C:\\path\\to\\repo\""
+                )
+            else:
+                hints.append(
+                    "Shell example: export SANDBOX_REPO_PATH=\"/path/to/repo\""
+                )
+        if hints:
+            message += " " + " ".join(hints)
+        raise SystemExit(message)
 
 
 def _get_env_override(name: str, current, settings: SandboxSettings):
@@ -3229,19 +3262,28 @@ def bootstrap(
     import threading
 
     try:
-        settings = load_sandbox_settings(resolve_path(config_path))
+        bootstrap_settings = load_sandbox_settings(resolve_path(config_path))
     except ValidationError as exc:
         raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
 
     bootstrap_environment, _verify_required_dependencies = _get_bootstrap_helpers()
-    bootstrap_environment(settings, _verify_required_dependencies)
-    os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
+    bootstrap_environment(bootstrap_settings, _verify_required_dependencies)
+
+    global settings
+    previous_settings = settings
+    try:
+        settings = bootstrap_settings
+        _ensure_repo_path_environment()
+        check_env()
+    finally:
+        settings = previous_settings
+
     os.environ.setdefault(
         "SANDBOX_DATA_DIR",
-        os.fspath(resolve_path(settings.sandbox_data_dir)),
+        os.fspath(resolve_path(bootstrap_settings.sandbox_data_dir)),
     )
 
-    init_self_improvement(settings)
+    init_self_improvement(bootstrap_settings)
 
     try:
         ROIResultsDB()
@@ -3271,7 +3313,7 @@ def bootstrap(
                 self.exception = exc
                 raise
 
-    learn_start, learn_stop = run_learning_background()
+    learn_start, learn_stop = run_learning_background(bootstrap_settings)
 
     _orig_thread = threading.Thread
     learn_thread: _ExceptionThread | None = None
@@ -3373,7 +3415,7 @@ def bootstrap(
     )
 
     try:
-        launch_sandbox(settings=settings)
+        launch_sandbox(settings=bootstrap_settings)
         logger.info(
             "autonomous sandbox run exited cleanly",
             extra=log_record(stage="shutdown"),
