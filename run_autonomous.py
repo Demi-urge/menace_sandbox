@@ -199,6 +199,14 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     """Return ``value`` as a :class:`Path` with user and env vars expanded."""
 
     raw = os.fspath(value)
+    if raw.startswith("~\\"):
+        # Windows shells commonly emit ``~\`` when expanding home shortcuts.
+        # Convert the leading backslash to a forward slash before passing the
+        # string through ``expanduser`` so the shortcut resolves correctly on
+        # non-Windows hosts (where ``~\`` would otherwise be treated
+        # literally).  Only the leading separator is adjusted to preserve the
+        # remainder of the Windows-style path untouched.
+        raw = "~/" + raw[2:]
     escaped_pattern = r"%%([^%]+)%%"
     token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
 
