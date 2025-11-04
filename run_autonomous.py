@@ -241,12 +241,13 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     raw = os.fspath(value)
     if raw.startswith("~\\"):
         # Windows shells commonly emit ``~\`` when expanding home shortcuts.
-        # Convert the leading backslash to a forward slash before passing the
-        # string through ``expanduser`` so the shortcut resolves correctly on
-        # non-Windows hosts (where ``~\`` would otherwise be treated
-        # literally).  Only the leading separator is adjusted to preserve the
-        # remainder of the Windows-style path untouched.
-        raw = "~/" + raw[2:]
+        # Convert the leading separator to a forward slash and strip any
+        # redundant slashes so ``expanduser`` produces a canonical path even
+        # when executed on POSIX hosts.  Without trimming the additional
+        # backslash Python would interpret the next component literally (for
+        # example resolving ``~\\Documents`` to ``~/\\Documents`` on Linux).
+        tail = raw[2:].lstrip(r"\/")
+        raw = "~/" + tail
     escaped_pattern = r"%%([^%]+)%%"
     token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
 
