@@ -70,7 +70,7 @@ import _thread
 import time
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
-from typing import TYPE_CHECKING, Callable, List, Mapping
+from typing import TYPE_CHECKING, Callable, ClassVar, List, Mapping
 import math
 import uuid
 # ``scipy`` is optional in lightweight developer environments (especially on
@@ -1322,6 +1322,7 @@ LocalKnowledgeModule = _LocalKnowledgeModule
 from filelock import FileLock
 from pydantic import (
     BaseModel,
+    ConfigDict,
     RootModel,
     ValidationError,
     field_validator,
@@ -1666,6 +1667,8 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
 class PresetModel(BaseModel):
     """Schema for environment presets."""
 
+    model_config = ConfigDict(extra="allow")
+
     CPU_LIMIT: str
     MEMORY_LIMIT: str
     DISK_LIMIT: str | None = None
@@ -1684,8 +1687,7 @@ class PresetModel(BaseModel):
     VM_SETTINGS: dict | None = None
     FAILURE_MODES: list[str] | str | None = None
 
-    class Config:
-        extra = "forbid"
+    _EXTRA_KEY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Z0-9_]+$")
 
     @field_validator("CPU_LIMIT", mode="before")
     @classmethod
@@ -1747,6 +1749,49 @@ class PresetModel(BaseModel):
         if isinstance(v, list):
             return [str(m) for m in v]
         raise ValueError("FAILURE_MODES must be a list or comma separated string")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_extra_fields(cls, data):
+        """Coerce recognised preset metadata and validate extra keys."""
+
+        if not isinstance(data, Mapping):
+            return data
+
+        normalised: dict[str, object] = dict(data)
+        for key in list(normalised.keys()):
+            if not isinstance(key, str):
+                raise TypeError("preset keys must be strings")
+            if key not in cls.model_fields and not cls._EXTRA_KEY_PATTERN.fullmatch(key):
+                raise ValueError(f"Unsupported preset attribute '{key}'")
+
+        def _coerce(value: object) -> object:
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped == "":
+                    return value
+                lowered = stripped.lower()
+                if lowered in {"true", "false"}:
+                    return lowered == "true"
+                if lowered in {"null", "none"}:
+                    return None
+                try:
+                    if any(ch in stripped for ch in ".eE"):
+                        return float(stripped)
+                    return int(stripped)
+                except ValueError:
+                    return value
+            if isinstance(value, Mapping):
+                return {k: _coerce(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_coerce(item) for item in value]
+            return value
+
+        for key, value in list(normalised.items()):
+            if key not in cls.model_fields:
+                normalised[key] = _coerce(value)
+
+        return normalised
 
 
 class SynergyEntry(RootModel[dict[str, float]]):
