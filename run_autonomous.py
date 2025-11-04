@@ -241,13 +241,15 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     raw = os.fspath(value)
     if raw.startswith("~\\"):
         # Windows shells commonly emit ``~\`` when expanding home shortcuts.
-        # Convert the leading separator to a forward slash and strip any
-        # redundant slashes so ``expanduser`` produces a canonical path even
-        # when executed on POSIX hosts.  Without trimming the additional
-        # backslash Python would interpret the next component literally (for
-        # example resolving ``~\\Documents`` to ``~/\\Documents`` on Linux).
-        tail = raw[2:].lstrip(r"\/")
-        raw = "~/" + tail
+        # Convert the leading separator to a forward slash so ``expanduser``
+        # produces a canonical path even when executed on POSIX hosts.  UNC
+        # paths (``~\\\\server``) retain their leading double backslash while
+        # conventional paths strip redundant separators.
+        tail = raw[2:]
+        if tail.startswith("\\\\"):
+            raw = "~/" + tail
+        else:
+            raw = "~/" + tail.lstrip(r"\\/")
     escaped_pattern = r"%%([^%]+)%%"
     token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
 
@@ -266,6 +268,38 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
 
     protected = re.sub(escaped_pattern, _protect, raw)
     expanded = os.path.expandvars(os.path.expanduser(protected))
+
+    def _extract_windows_path(candidate: str) -> str:
+        """Return a canonical Windows path when ``candidate`` embeds one.
+
+        Windows callers frequently combine ``~`` expansion with environment
+        variables (for example ``~\\%USERPROFILE%\\data``).  When the
+        environment variable resolves to an absolute Windows path the default
+        :func:`os.path.expanduser` implementation (executed on POSIX during
+        tests) prefixes it with the current home directory, yielding strings such
+        as ``/root/C:\\Users\\Example``.  Detect embedded drive letters or UNC
+        prefixes and slice away the spurious prefix so Windows hosts receive the
+        intended path once this logic runs there.
+        """
+
+        # Normal drive letter (``C:\``) handling.
+        drive_match = re.search(r"(?i)[A-Z]:\\", candidate)
+        if drive_match:
+            return candidate[drive_match.start() :]
+
+        # UNC paths begin with two backslashes.  ``expanduser`` on POSIX hosts
+        # converts ``~\\\\server\\share`` into ``/home/user/\\\\server\\share``;
+        # trim the home prefix in that scenario.
+        unc_match = re.search(r"\\\\[^\\/]+\\[^\\/]+", candidate)
+        if unc_match:
+            start = unc_match.start()
+            # Guard against accidental matches of escaped sequences within a
+            # normal POSIX path by requiring the UNC prefix to be preceded by a
+            # path separator when it is not at the beginning of the string.
+            if start == 0 or candidate[start - 1] in "\\/":
+                return candidate[start:]
+
+        return candidate
 
     if "%" in expanded:
         # ``os.path.expandvars`` ignores ``%VAR%`` placeholders on non-Windows
@@ -298,6 +332,8 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
 
     for sentinel, literal in sentinel_map.items():
         expanded = expanded.replace(sentinel, literal)
+
+    expanded = _extract_windows_path(expanded)
 
     return Path(expanded)
 
