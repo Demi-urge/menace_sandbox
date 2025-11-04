@@ -164,11 +164,20 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     raw = os.fspath(value)
     expanded = os.path.expandvars(os.path.expanduser(raw))
     if "%" in expanded and os.name != "nt":
-        expanded = re.sub(
-            r"%([^%]+)%",
-            lambda match: os.environ.get(match.group(1), match.group(0)),
-            expanded,
-        )
+        # ``os.path.expandvars`` on non-Windows hosts does not recognise the
+        # ``%VAR%`` placeholder syntax that Windows uses.  Emulate the Windows
+        # behaviour by performing a case-insensitive lookup so that mixed-case
+        # environment variables such as ``%LocalAppData%`` expand correctly.
+        env_lower = {key.lower(): value for key, value in os.environ.items()}
+
+        def _replace(match: re.Match[str]) -> str:
+            name = match.group(1)
+            direct = os.environ.get(name)
+            if direct is not None:
+                return direct
+            return env_lower.get(name.lower(), match.group(0))
+
+        expanded = re.sub(r"%([^%]+)%", _replace, expanded)
     return Path(expanded)
 
 
