@@ -196,6 +196,26 @@ def test_expand_path_preserves_escaped_percent(monkeypatch):
     assert os.fspath(result) == "%LocalAppData%/Menace"
 
 
+def test_dependency_warning_includes_optional_windows_hint(monkeypatch):
+    mod = _load_module(monkeypatch)
+    monkeypatch.setattr(mod.os, "name", "nt")
+    mod._DEPENDENCY_WARNINGS.clear()
+    mod._DEPENDENCY_SUMMARY_EMITTED = False
+
+    message = (
+        "Missing optional Python packages: nltk, spacy. "
+        "Install them with 'pip install <package>'."
+    )
+    primary, hints, is_new = mod._record_dependency_warning(message)
+
+    assert primary == message
+    assert is_new is True
+    assert hints == [
+        "Windows hint: install the optional Python packages "
+        "with 'python -m pip install nltk spacy'."
+    ]
+
+
 def test_invalid_roi_cycles_warns(monkeypatch, caplog):
     stub_env = types.ModuleType("sandbox_runner.environment")
     stub_env.SANDBOX_ENV_PRESETS = [{}]

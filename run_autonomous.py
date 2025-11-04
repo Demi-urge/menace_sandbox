@@ -474,11 +474,15 @@ def _format_dependency_warnings(line: str) -> list[str]:
             "Windows hint: install the system packages via Chocolatey "
             f"(e.g. 'choco install {joined}') or download the official installers."
         )
-    elif packages and prefix.startswith("missing python packages"):
+    elif packages and (
+        prefix.startswith("missing python packages")
+        or prefix.startswith("missing optional python packages")
+    ):
         joined = " ".join(packages)
+        optional_label = " optional" if "optional" in prefix else ""
         messages.append(
-            "Windows hint: install the Python packages with 'python -m pip install "
-            f"{joined}'."
+            "Windows hint: install the"
+            f"{optional_label} Python packages with 'python -m pip install {joined}'."
         )
 
     return messages
