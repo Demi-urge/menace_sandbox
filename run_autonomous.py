@@ -199,14 +199,29 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
     """Return ``value`` as a :class:`Path` with user and env vars expanded."""
 
     raw = os.fspath(value)
-    expanded = os.path.expandvars(os.path.expanduser(raw))
+    escaped_pattern = r"%%([^%]+)%%"
+    token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
+
+    # Protect escaped tokens (``%%VAR%%``) by substituting temporary sentinels
+    # before performing any environment or user expansions.  ``expandvars`` and
+    # ``expanduser`` can change the length of the string which made the previous
+    # span-based detection unreliable on Windows where paths such as
+    # ``~\\%%USERPROFILE%%`` are common.  Using sentinels keeps the placeholders
+    # intact regardless of earlier substitutions.
+    sentinel_map: dict[str, str] = {}
+
+    def _protect(match: re.Match[str]) -> str:
+        token = f"__RUN_AUTONOMOUS_ESC_{len(sentinel_map)}__"
+        sentinel_map[token] = f"%{match.group(1)}%"
+        return token
+
+    protected = re.sub(escaped_pattern, _protect, raw)
+    expanded = os.path.expandvars(os.path.expanduser(protected))
+
     if "%" in expanded:
         # ``os.path.expandvars`` ignores ``%VAR%`` placeholders on non-Windows
         # hosts and is case-sensitive on Windows.  Retry unresolved tokens with
         # a case-insensitive lookup while respecting escaped literals (``%%``).
-        escaped_pattern = r"%%([^%]+)%%"
-        token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
-        escaped_spans = [match.span() for match in re.finditer(escaped_pattern, raw)]
         env_lower = {key.lower(): value for key, value in os.environ.items()}
 
         def _replace(match: re.Match[str]) -> str:
@@ -214,23 +229,16 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
             lowered = name.lower()
             if any(ch in name for ch in "\\/%"):
                 return match.group(0)
-            if any(start <= match.start() and match.end() <= end for start, end in escaped_spans):
-                # ``%%NAME%%`` in Windows batch syntax resolves to the literal
-                # ``%NAME%`` token.  Preserve that behaviour so escaped
-                # placeholders remain untouched after expansion.
-                return match.group(0)
             direct = os.environ.get(name)
             if direct is not None:
                 return direct
             return env_lower.get(lowered, match.group(0))
 
         expanded = re.sub(token_pattern, _replace, expanded)
-        if escaped_spans:
-            expanded = re.sub(
-                escaped_pattern,
-                lambda m: f"%{m.group(1)}%",
-                expanded,
-            )
+
+    for sentinel, literal in sentinel_map.items():
+        expanded = expanded.replace(sentinel, literal)
+
     return Path(expanded)
 
 

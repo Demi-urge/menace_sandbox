@@ -190,7 +190,10 @@ def test_expand_path_preserves_escaped_percent(monkeypatch):
     mod = _load_module(monkeypatch)
     monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Alice/AppData/Local")
     result = mod._expand_path("%%LocalAppData%%/Menace")
-    assert os.fspath(result) == "%%LocalAppData%%/Menace"
+    # ``%%VAR%%`` is the Windows batch syntax for emitting ``%VAR%`` literally.
+    # ``_expand_path`` mirrors that behaviour so callers receive the single
+    # percent form after expansion.
+    assert os.fspath(result) == "%LocalAppData%/Menace"
 
 
 def test_invalid_roi_cycles_warns(monkeypatch, caplog):
