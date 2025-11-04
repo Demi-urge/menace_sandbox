@@ -204,23 +204,33 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
         # ``os.path.expandvars`` ignores ``%VAR%`` placeholders on non-Windows
         # hosts and is case-sensitive on Windows.  Retry unresolved tokens with
         # a case-insensitive lookup while respecting escaped literals (``%%``).
-        escaped_names = {
-            match.group(1).lower()
-            for match in re.finditer(r"%%([^%]+)%%", raw)
-        }
+        escaped_pattern = r"%%([^%]+)%%"
+        token_pattern = r"%(?!%)([^%]+?)(?<!\\)%"
+        escaped_spans = [match.span() for match in re.finditer(escaped_pattern, raw)]
         env_lower = {key.lower(): value for key, value in os.environ.items()}
 
         def _replace(match: re.Match[str]) -> str:
             name = match.group(1)
             lowered = name.lower()
-            if lowered in escaped_names:
+            if any(ch in name for ch in "\\/%"):
+                return match.group(0)
+            if any(start <= match.start() and match.end() <= end for start, end in escaped_spans):
+                # ``%%NAME%%`` in Windows batch syntax resolves to the literal
+                # ``%NAME%`` token.  Preserve that behaviour so escaped
+                # placeholders remain untouched after expansion.
                 return match.group(0)
             direct = os.environ.get(name)
             if direct is not None:
                 return direct
             return env_lower.get(lowered, match.group(0))
 
-        expanded = re.sub(r"%([^%]+)%", _replace, expanded)
+        expanded = re.sub(token_pattern, _replace, expanded)
+        if escaped_spans:
+            expanded = re.sub(
+                escaped_pattern,
+                lambda m: f"%{m.group(1)}%",
+                expanded,
+            )
     return Path(expanded)
 
 
@@ -320,6 +330,11 @@ def _dependency_aware_logger_error(
 _INITIAL_ARGV = sys.argv[1:]
 _STRICT_DEPENDENCIES = "--strict-dependencies" in _INITIAL_ARGV
 _DEFER_BOOTSTRAP = _should_defer_bootstrap(_INITIAL_ARGV)
+_LIGHTWEIGHT_IMPORT = os.getenv("RUN_AUTONOMOUS_LIGHTWEIGHT_IMPORT", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 if not _STRICT_DEPENDENCIES:
     logging.Logger.error = _dependency_aware_logger_error  # type: ignore[assignment]
@@ -335,7 +350,7 @@ elif not os.environ.get("SANDBOX_SKIP_DEPENDENCY_CHECKS"):
     # (including Windows developer machines) can still execute the runner.
     os.environ["SANDBOX_SKIP_DEPENDENCY_CHECKS"] = "1"
 
-if not _DEFER_BOOTSTRAP:
+if not (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
     _prepare_sandbox_data_dir_environment(_INITIAL_ARGV)
 else:  # pragma: no cover - convenience path used during CLI discovery
     os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
@@ -591,7 +606,7 @@ def _initialise_settings() -> SandboxSettings:
         return relaxed_settings
 
 
-if _DEFER_BOOTSTRAP:
+if _DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT:
     settings = SandboxSettings()
 else:
     settings = _initialise_settings()
@@ -908,7 +923,7 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
     return parser
 
 
-if __name__ == "__main__" and _DEFER_BOOTSTRAP:
+if __name__ == "__main__" and (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
     _build_argument_parser(settings).parse_args(sys.argv[1:])
     sys.exit(0)
 
@@ -917,7 +932,7 @@ if __name__ == "__main__" and _DEFER_BOOTSTRAP:
 # through the router.  Import modules requiring database access afterwards so
 # they can rely on ``GLOBAL_ROUTER``.  When running in help/metadata mode we
 # skip the connection setup entirely to avoid touching the filesystem.
-if not _DEFER_BOOTSTRAP:
+if not (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
     MENACE_ID = uuid.uuid4().hex
     LOCAL_DB_PATH = settings.menace_local_db_path or str(
         resolve_path(f"menace_{MENACE_ID}_local.db")
@@ -932,7 +947,7 @@ else:  # pragma: no cover - help/metadata path
     SHARED_DB_PATH = ""
     GLOBAL_ROUTER = None
 
-if not _DEFER_BOOTSTRAP:
+if not (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
     _ensure_local_package()
     from menace_sandbox.gpt_memory import GPTMemoryManager as _GPTMemoryManager
     from memory_maintenance import (
