@@ -139,6 +139,7 @@ path_for_prompt = getattr(
     lambda name: resolve_path(name).as_posix(),
 )
 from sandbox_settings import SandboxSettings
+from dependency_hints import format_system_package_instructions
 
 
 def _extract_flag_value(argv: List[str], flag: str) -> str | None:
@@ -634,10 +635,14 @@ def _initialise_settings() -> SandboxSettings:
         def _format_lines(errors: dict[str, list[str]]) -> list[str]:
             messages: list[str] = []
             if errors.get("system"):
+                system_packages = list(dict.fromkeys(errors["system"]))
                 messages.append(
                     "Missing system packages: "
-                    + ", ".join(errors["system"])
-                    + ". Install them using your package manager."
+                    + ", ".join(system_packages)
+                    + "."
+                )
+                messages.extend(
+                    format_system_package_instructions(system_packages)
                 )
             if errors.get("python"):
                 messages.append(
