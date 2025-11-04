@@ -1764,28 +1764,60 @@ def _ensure_repo_path_environment() -> None:
         return
 
     candidate = getattr(settings, "sandbox_repo_path", None)
+    resolved_source = "settings"
+    repo_path: str | None = None
     if candidate:
         try:
-            _REPO_PATH_HINT = _normalise_repo_path(candidate, source="settings")
+            repo_path = _normalise_repo_path(candidate, source=resolved_source)
         except Exception:
             log.debug(
                 "SANDBOX_REPO_PATH missing; unable to resolve default %r from settings",
                 candidate,
                 exc_info=True,
             )
-        else:
-            log.debug(
-                "SANDBOX_REPO_PATH missing; settings default would resolve to %s",
-                _REPO_PATH_HINT,
-            )
+            repo_path = None
     else:
         log.debug(
             "SANDBOX_REPO_PATH missing and no sandbox_repo_path configured in settings",
         )
 
-    log.debug(
-        "SANDBOX_REPO_PATH not set; environment validation will require explicit configuration",
-    )
+    if repo_path is None:
+        resolved_source = "computed default"
+        fallback = getattr(settings, "sandbox_repo_path", None) or REPO_ROOT
+        try:
+            repo_path = _normalise_repo_path(fallback, source=resolved_source)
+        except Exception:
+            log.debug(
+                "SANDBOX_REPO_PATH fallback normalisation failed for %r",
+                fallback,
+                exc_info=True,
+            )
+            try:
+                repo_path = _normalise_repo_path(Path.cwd(), source="working directory")
+            except Exception:
+                repo_path = None
+
+    if repo_path:
+        os.environ["SANDBOX_REPO_PATH"] = repo_path
+        _REPO_PATH_HINT = repo_path
+        try:
+            if not getattr(settings, "sandbox_repo_path", None):
+                settings.sandbox_repo_path = repo_path  # type: ignore[assignment]
+        except Exception:
+            log.debug(
+                "unable to update settings.sandbox_repo_path to %s",
+                repo_path,
+                exc_info=True,
+            )
+        log.info(
+            "SANDBOX_REPO_PATH defaulted to %s (%s)",
+            repo_path,
+            resolved_source,
+        )
+    else:
+        log.debug(
+            "SANDBOX_REPO_PATH not set; environment validation will require explicit configuration",
+        )
 
 
 
