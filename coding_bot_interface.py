@@ -1634,6 +1634,14 @@ class _DisabledSelfCodingManager:
             "self-coding disabled; ignoring register_patch_cycle invocation"
         )
 
+    def register(self, *_args: Any, **_kwargs: Any) -> None:
+        logger.debug("self-coding disabled; ignoring register invocation")
+
+    def register_bot(self, *_args: Any, **_kwargs: Any) -> None:
+        logger.debug(
+            "self-coding disabled; ignoring register_bot invocation"
+        )
+
     def run_post_patch_cycle(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
         logger.debug(
             "self-coding disabled; ignoring run_post_patch_cycle invocation"
