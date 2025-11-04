@@ -280,7 +280,7 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
     if argv is None:
         argv = sys.argv[1:]
     for token in argv:
-        if token in {"-h", "--help", "--version"}:
+        if token in {"-h", "--help", "--version", "--check-settings"}:
             return True
     runs_val = _extract_flag_value(argv, "--runs")
     if runs_val is not None:
