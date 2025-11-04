@@ -127,9 +127,6 @@ from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
@@ -139,36 +136,141 @@ from .shared_evolution_orchestrator import get_orchestrator
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from context_builder_util import create_context_builder
 
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from .model_automation_pipeline import ModelAutomationPipeline
+    from .self_coding_engine import SelfCodingEngine
+    from .self_coding_manager import SelfCodingManager
+
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+_self_coding_lock = threading.RLock()
+_context_builder: ContextBuilder | None = None
+_engine: "SelfCodingEngine" | None = None
+_pipeline: "ModelAutomationPipeline" | None = None
+_evolution_orchestrator = None
+_thresholds = None
+_manager_instance: "SelfCodingManager" | None = None
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .evolution_orchestrator import EvolutionOrchestrator
 
-evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, engine)
-_th = get_thresholds("ErrorBot")
-persist_sc_thresholds(
-    "ErrorBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "ErrorBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
+def _ensure_self_coding_manager() -> "SelfCodingManager":
+    """Initialise and return the shared self-coding manager lazily."""
+
+    global _context_builder, _engine, _pipeline
+    global _evolution_orchestrator, _thresholds, _manager_instance
+
+    with _self_coding_lock:
+        if _context_builder is None:
+            _context_builder = create_context_builder()
+
+        if _engine is None:
+            from .self_coding_engine import SelfCodingEngine
+
+            _engine = SelfCodingEngine(
+                CodeDB(),
+                GPTMemoryManager(),
+                context_builder=_context_builder,
+            )
+        assert _engine is not None
+
+        if _pipeline is None:
+            from .model_automation_pipeline import ModelAutomationPipeline
+
+            _pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+        assert _pipeline is not None
+
+        if _evolution_orchestrator is None:
+            _evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, _engine)
+
+        if _thresholds is None:
+            _thresholds = get_thresholds("ErrorBot")
+            persist_sc_thresholds(
+                "ErrorBot",
+                roi_drop=_thresholds.roi_drop,
+                error_increase=_thresholds.error_increase,
+                test_failure_increase=_thresholds.test_failure_increase,
+            )
+
+        if _manager_instance is None:
+            from .self_coding_manager import internalize_coding_bot
+
+            _manager_instance = internalize_coding_bot(
+                "ErrorBot",
+                _engine,
+                _pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                evolution_orchestrator=_evolution_orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=_thresholds.roi_drop,
+                error_threshold=_thresholds.error_increase,
+                test_failure_threshold=_thresholds.test_failure_increase,
+            )
+
+    assert _manager_instance is not None
+    return _manager_instance
+
+
+class _ManagerProxy:
+    """Proxy that lazily resolves the shared self-coding manager."""
+
+    __self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+    def __call__(self) -> "SelfCodingManager":
+        return _ensure_self_coding_manager()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(_ensure_self_coding_manager(), item)
+
+
+manager: "SelfCodingManager" | _ManagerProxy = _ManagerProxy()
+
+
+def get_manager() -> "SelfCodingManager":
+    """Return the shared :class:`SelfCodingManager` instance."""
+
+    return _ensure_self_coding_manager()
+
+
+def get_engine() -> "SelfCodingEngine":
+    """Return the lazily instantiated :class:`SelfCodingEngine`."""
+
+    _ensure_self_coding_manager()
+    assert _engine is not None
+    return _engine
+
+
+def get_pipeline() -> "ModelAutomationPipeline":
+    """Return the lazily instantiated :class:`ModelAutomationPipeline`."""
+
+    _ensure_self_coding_manager()
+    assert _pipeline is not None
+    return _pipeline
+
+
+def get_context_builder() -> ContextBuilder:
+    """Return the shared :class:`ContextBuilder` instance."""
+
+    _ensure_self_coding_manager()
+    assert _context_builder is not None
+    return _context_builder
+
+
+def __getattr__(name: str) -> Any:
+    """Provide backwards compatible access to lazily initialised helpers."""
+
+    if name == "engine":
+        return get_engine()
+    if name == "pipeline":
+        return get_pipeline()
+    if name == "context_builder":
+        return get_context_builder()
+    if name == "evolution_orchestrator":
+        _ensure_self_coding_manager()
+        return _evolution_orchestrator
+    if name == "manager":
+        return get_manager()
+    raise AttributeError(name)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
