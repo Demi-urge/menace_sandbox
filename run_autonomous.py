@@ -2575,18 +2575,32 @@ def main(argv: List[str] | None = None) -> None:
     # default path.  When the validation succeeds we normalise the environment
     # afterwards so later imports observe the canonical value.
     repo_env = os.environ.get("SANDBOX_REPO_PATH")
-    repo_missing = repo_env is None or not str(repo_env).strip()
-    if repo_missing:
-        _console("SANDBOX_REPO_PATH missing; selecting default repository root")
+    repo_missing_initial = repo_env is None or not str(repo_env).strip()
 
     try:
         check_env()
     except SystemExit:
-        if repo_missing:
-            _ensure_repo_path_environment()
-        raise
+        if not repo_missing_initial:
+            raise
 
-    if repo_missing:
+        _console("SANDBOX_REPO_PATH missing; selecting default repository root")
+        _ensure_repo_path_environment()
+        repo_env = os.environ.get("SANDBOX_REPO_PATH")
+        repo_missing_after_fallback = repo_env is None or not str(repo_env).strip()
+        if repo_missing_after_fallback:
+            raise
+
+        _console(f"SANDBOX_REPO_PATH defaulted to {repo_env}")
+
+        try:
+            check_env()
+        except SystemExit:
+            raise
+
+    else:
+        repo_missing_after_fallback = repo_missing_initial
+
+    if repo_missing_after_fallback:
         _ensure_repo_path_environment()
 
     if (
