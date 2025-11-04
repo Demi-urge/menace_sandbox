@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+import os
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 import pytest
@@ -47,3 +48,14 @@ def test_expand_path_preserves_escaped_tokens(monkeypatch: pytest.MonkeyPatch, e
     monkeypatch.setenv("FOO", "Value")
     result = expand_path(r"C:\\%%FOO%%\\%foo%")
     assert str(result) == r"C:\\%FOO%\\Value"
+
+
+def test_expand_path_expands_windows_home_with_backslash(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    monkeypatch.setenv("HOME", r"C:\\Users\\Alice")
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    result = expand_path(r"~\\Desktop\\Menace")
+    assert PureWindowsPath(os.fspath(result)) == PureWindowsPath(
+        r"C:\\Users\\Alice\\Desktop\\Menace"
+    )
