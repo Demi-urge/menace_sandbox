@@ -97,10 +97,16 @@ def connect_locked(
         lock = FileLock(str(lock_path))
         with lock:
             conn = connect(path, router=router)
-            yield conn
+            try:
+                yield conn
+            finally:
+                conn.close()
     else:
         conn = connect(router=router)
-        yield conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 
 def _parse_entry(text: str) -> Dict[str, Any]:

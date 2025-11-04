@@ -339,6 +339,8 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
     for token in argv:
         if token in {"-h", "--help", "--version", "--check-settings"}:
             return True
+        if token == "--smoke-test":
+            return True
     runs_val = _extract_flag_value(argv, "--runs")
     if runs_val is not None:
         try:
@@ -813,6 +815,11 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         help="maximum number of full sandbox runs to execute",
     )
     parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="bootstrap dependencies and exit before launching the sandbox",
+    )
+    parser.add_argument(
         "--strict-dependencies",
         action="store_true",
         help="fail fast instead of relaxing dependency checks",
@@ -1054,7 +1061,9 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
 
 
 if __name__ == "__main__" and (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
-    _build_argument_parser(settings).parse_args(sys.argv[1:])
+    _args = _build_argument_parser(settings).parse_args(sys.argv[1:])
+    if getattr(_args, "smoke_test", False):
+        _console("smoke test requested; bootstrap sequence skipped")
     sys.exit(0)
 
 
@@ -2266,12 +2275,15 @@ def main(argv: List[str] | None = None) -> None:
 
     synergy_history: list[dict[str, float]] = []
     synergy_ma_prev: list[dict[str, float]] = []
+    exit_stack = contextlib.ExitStack()
     history_conn: sqlite3.Connection | None = None
     if args.save_synergy_history or args.recover:
         _console("loading previous synergy history from disk")
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
         logger.warning("🔥 SQLite audit still active despite AUDIT_FILE_MODE")
-        history_conn = shd.connect_locked(data_dir / "synergy_history.db")
+        history_conn = exit_stack.enter_context(
+            shd.connect_locked(data_dir / "synergy_history.db")
+        )
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
     _console(
@@ -2365,6 +2377,12 @@ def main(argv: List[str] | None = None) -> None:
     logger.info("dependency check complete")
     _console("dependency check complete")
 
+    if args.smoke_test:
+        logger.info("smoke test requested; exiting before sandbox launch")
+        _console("smoke test requested; bootstrap sequence validated; exiting")
+        exit_stack.close()
+        return
+
     dash_port = args.dashboard_port
     dash_env = settings.auto_dashboard_port
     if dash_port is None and dash_env is not None:
@@ -2375,6 +2393,7 @@ def main(argv: List[str] | None = None) -> None:
         synergy_dash_port = dash_env + 1
 
     cleanup_funcs: list[Callable[[], None]] = []
+    cleanup_funcs.append(exit_stack.close)
     _console("starting local knowledge refresh thread")
     _start_local_knowledge_refresh(cleanup_funcs)
 
@@ -2393,10 +2412,16 @@ def main(argv: List[str] | None = None) -> None:
     def _handle_shutdown_signal(sig: int | None, _frame: object) -> None:
         """Request cooperative shutdown when external signals are received."""
 
+        first_request = not shutdown_requested.is_set()
         shutdown_requested.set()
         if sig is not None:
-            logger.info("received signal %s; requesting shutdown", sig)
-            _console(f"shutdown signal {sig} received; interrupting main loop")
+            if first_request:
+                logger.info("received signal %s; requesting shutdown", sig)
+                _console(f"shutdown signal {sig} received; interrupting main loop")
+            else:
+                logger.debug("additional shutdown signal %s ignored", sig)
+        if not first_request:
+            return
         try:
             _thread.interrupt_main()
         except RuntimeError:  # pragma: no cover - defensive when no main thread
@@ -2928,9 +2953,6 @@ def main(argv: List[str] | None = None) -> None:
                 )
             except Exception:
                 logger.exception("failed to stop synergy auto trainer")
-
-        if history_conn is not None:
-            history_conn.close()
 
         if GPT_MEMORY_MANAGER is not None:
             try:
