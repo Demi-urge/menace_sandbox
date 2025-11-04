@@ -89,3 +89,24 @@ def test_expand_path_normalises_posix_backslash_home(
     monkeypatch.delenv("USERPROFILE", raising=False)
     result = expand_path(r"~\\Documents")
     assert result == Path("/home/tester/Documents")
+
+
+def test_expand_path_prefers_embedded_windows_drive(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    """Windows drive letters take precedence over the POSIX home prefix."""
+
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.setenv("USERPROFILE", r"C:\\Users\\Example")
+    result = expand_path(r"~\\%USERPROFILE%\\data")
+    assert str(result) == r"C:\\Users\\Example\\data"
+
+
+def test_expand_path_handles_unc_paths(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    """Ensure UNC style paths survive the home directory substitution."""
+
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    result = expand_path(r"\\\\server\\share\\folder")
+    assert str(result) == r"\\\\server\\share\\folder"
