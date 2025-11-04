@@ -1708,23 +1708,32 @@ _SETUP_MARKER = resolve_path(".autonomous_setup_complete")
 
 
 def _ensure_repo_path_environment() -> None:
-    """Ensure ``SANDBOX_REPO_PATH`` is populated with a sensible default."""
+    """Normalise ``SANDBOX_REPO_PATH`` without inventing implicit defaults."""
 
     current = os.environ.get("SANDBOX_REPO_PATH")
-    if current and str(current).strip():
+    if not current or not str(current).strip():
+        logger.debug("SANDBOX_REPO_PATH missing; validation will report the error")
         return
 
-    candidate = settings.sandbox_repo_path or str(REPO_ROOT)
-    resolved: Path
+    candidate = current
+    source = "environment"
+
     try:
-        resolved = resolve_path(candidate)
-        if not isinstance(resolved, Path):
-            resolved = Path(resolved)
-    except Exception:  # pragma: no cover - defensive fallback
+        resolved = _expand_path(candidate)
+    except Exception:  # pragma: no cover - unexpected expansion failure
+        logger.debug(
+            "failed to expand repo path %r from %s; falling back to resolve_path",
+            candidate,
+            source,
+            exc_info=True,
+        )
         try:
-            resolved = Path(candidate).expanduser()
-        except Exception:  # pragma: no cover - path parsing failure
-            resolved = REPO_ROOT
+            resolved = resolve_path(candidate)
+        except Exception:
+            resolved = Path(str(candidate)).expanduser()
+
+    if not isinstance(resolved, Path):
+        resolved = Path(os.fspath(resolved))
 
     if not resolved.is_absolute():
         try:
@@ -1734,7 +1743,7 @@ def _ensure_repo_path_environment() -> None:
 
     repo_path = resolved.as_posix() if os.name != "nt" else str(resolved)
     os.environ["SANDBOX_REPO_PATH"] = repo_path
-    logger.debug("defaulting SANDBOX_REPO_PATH to %s", repo_path)
+    logger.debug("normalised SANDBOX_REPO_PATH from environment to %s", repo_path)
 
 
 
