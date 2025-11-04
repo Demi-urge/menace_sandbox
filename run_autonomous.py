@@ -222,6 +222,18 @@ def _console(message: str) -> None:
     print(f"[RUN_AUTONOMOUS] {message}", flush=True)
 
 
+def _basic_setup_logging(*, level: str | int | None = None) -> None:
+    """Fallback logger configuration when runtime imports are deferred."""
+
+    if isinstance(level, str):
+        resolved = getattr(logging, level.upper(), logging.INFO)
+    elif isinstance(level, int):
+        resolved = level
+    else:
+        resolved = logging.INFO
+    logging.basicConfig(level=resolved)
+
+
 def _expand_path(value: str | os.PathLike[str]) -> Path:
     """Return ``value`` as a :class:`Path` with user and env vars expanded."""
 
@@ -2000,16 +2012,18 @@ def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
 
     global settings, LOCAL_KNOWLEDGE_REFRESH_INTERVAL
-    _ensure_runtime_imports()
     _console("main() reached - preparing sandbox environment")
     _prepare_sandbox_data_dir_environment(argv)
-    set_correlation_id(str(uuid.uuid4()))
-    _console("correlation id initialised; configuring argument parser")
     parser = _build_argument_parser(settings)
     args = parser.parse_args(argv)
     _console("arguments parsed; configuring logging")
 
-    setup_logging(level="DEBUG" if args.verbose else args.log_level)
+    log_level = "DEBUG" if args.verbose else args.log_level
+
+    configure_logging = (
+        setup_logging if callable(setup_logging) else _basic_setup_logging
+    )
+    configure_logging(level=log_level)
 
     logger.info("validating environment variables")
     _console("validating environment variables")
@@ -2025,6 +2039,13 @@ def main(argv: List[str] | None = None) -> None:
         logger.info("no sandbox runs requested; exiting before bootstrap")
         _console("no sandbox runs requested; skipping autonomous bootstrap")
         return
+
+    _ensure_runtime_imports()
+    set_correlation_id(str(uuid.uuid4()))
+    _console("correlation id initialised; runtime imports loaded")
+
+    if configure_logging is not setup_logging and callable(setup_logging):
+        setup_logging(level=log_level)
 
     class _SuppressAuditPersistenceFilter(logging.Filter):
         _TARGET = (
