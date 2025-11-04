@@ -50,6 +50,25 @@ def test_expand_path_preserves_escaped_tokens(monkeypatch: pytest.MonkeyPatch, e
     assert str(result) == r"C:\\%FOO%\\Value"
 
 
+def test_expand_path_expands_backslash_prefixed_token(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    """Ensure Windows-style ``\\%VAR%`` segments expand correctly."""
+
+    monkeypatch.setenv("TOOLROOT", "Tools")
+    result = expand_path(r"C:\\%TOOLROOT%\\bin")
+    assert str(result) == r"C:\\Tools\\bin"
+
+
+def test_expand_path_expands_nested_tokens(
+    monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
+) -> None:
+    monkeypatch.setenv("INNER", r"C:\\Lib")
+    monkeypatch.setenv("OUTER", r"%INNER%\\site-packages")
+    result = expand_path(r"%OUTER%\\menace")
+    assert str(result) == r"C:\\Lib\\site-packages\\menace"
+
+
 def test_expand_path_expands_windows_home_with_backslash(
     monkeypatch: pytest.MonkeyPatch, expand_path: Callable[[str], Path]
 ) -> None:
