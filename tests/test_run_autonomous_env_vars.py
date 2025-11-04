@@ -177,6 +177,22 @@ def _load_module_capture(monkeypatch, capture):
     return mod
 
 
+def test_expand_path_handles_windows_case(monkeypatch):
+    mod = _load_module(monkeypatch)
+    monkeypatch.delenv("LocalAppData", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Alice/AppData/Local")
+    result = mod._expand_path("%LocalAppData%/Menace")
+    assert os.fspath(result) == "C:/Users/Alice/AppData/Local/Menace"
+
+
+def test_expand_path_preserves_escaped_percent(monkeypatch):
+    mod = _load_module(monkeypatch)
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Alice/AppData/Local")
+    result = mod._expand_path("%%LocalAppData%%/Menace")
+    assert os.fspath(result) == "%%LocalAppData%%/Menace"
+
+
 def test_invalid_roi_cycles_warns(monkeypatch, caplog):
     stub_env = types.ModuleType("sandbox_runner.environment")
     stub_env.SANDBOX_ENV_PRESETS = [{}]

@@ -163,19 +163,25 @@ def _expand_path(value: str | os.PathLike[str]) -> Path:
 
     raw = os.fspath(value)
     expanded = os.path.expandvars(os.path.expanduser(raw))
-    if "%" in expanded and os.name != "nt":
-        # ``os.path.expandvars`` on non-Windows hosts does not recognise the
-        # ``%VAR%`` placeholder syntax that Windows uses.  Emulate the Windows
-        # behaviour by performing a case-insensitive lookup so that mixed-case
-        # environment variables such as ``%LocalAppData%`` expand correctly.
+    if "%" in expanded:
+        # ``os.path.expandvars`` ignores ``%VAR%`` placeholders on non-Windows
+        # hosts and is case-sensitive on Windows.  Retry unresolved tokens with
+        # a case-insensitive lookup while respecting escaped literals (``%%``).
+        escaped_names = {
+            match.group(1).lower()
+            for match in re.finditer(r"%%([^%]+)%%", raw)
+        }
         env_lower = {key.lower(): value for key, value in os.environ.items()}
 
         def _replace(match: re.Match[str]) -> str:
             name = match.group(1)
+            lowered = name.lower()
+            if lowered in escaped_names:
+                return match.group(0)
             direct = os.environ.get(name)
             if direct is not None:
                 return direct
-            return env_lower.get(name.lower(), match.group(0))
+            return env_lower.get(lowered, match.group(0))
 
         expanded = re.sub(r"%([^%]+)%", _replace, expanded)
     return Path(expanded)
