@@ -17,8 +17,10 @@ def get_latest_sandbox_score(path: str) -> float:
     """Return the most recent sandbox score stored in ``path``.
 
     The helper expects a SQLite database containing a ``scores`` table with a
-    ``score`` column and an accompanying timestamp column.  When the database or
-    table is missing a warning is logged and ``0.0`` is returned.
+    ``score`` column and an accompanying timestamp column.  When the database is
+    missing a warning is logged and ``0.0`` is returned.  When the table is
+    missing it is created automatically to avoid noisy warnings during the first
+    run.
     """
 
     try:
@@ -32,7 +34,31 @@ def get_latest_sandbox_score(path: str) -> float:
         )
         row = cur.fetchone()
         return float(row[0]) if row else 0.0
-    except Exception:
+    except sqlite3.OperationalError as exc:
+        if "no such table: scores" in str(exc):
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS scores (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT,
+                        module TEXT,
+                        score REAL,
+                        notes TEXT
+                    )
+                    """
+                )
+                conn.commit()
+                logger.info(
+                    "initialized scores table in sandbox score database %s", path
+                )
+                return 0.0
+            except Exception:
+                logger.warning(
+                    "failed to initialize scores table in sandbox score database %s",
+                    path,
+                )
+                return 0.0
         logger.warning("scores table missing in sandbox score database %s", path)
         return 0.0
     finally:
