@@ -27,6 +27,7 @@ if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - s
     _bootstrap(__name__, __file__)
 
 from typing import Any, Callable, Dict, List
+import inspect
 import argparse
 import json
 import logging
@@ -163,7 +164,7 @@ class SandboxRecoveryManager:
 
     def __init__(
         self,
-        sandbox_main: Callable[[Dict[str, Any], argparse.Namespace], Any],
+        sandbox_main: Callable[..., Any],
         *,
         retry_delay: float | None = None,
         max_retries: int | None = None,
@@ -175,6 +176,7 @@ class SandboxRecoveryManager:
         service_name: str | None = None,
     ) -> None:
         self.sandbox_main = sandbox_main
+        self._supports_builder, self._requires_builder = self._inspect_sandbox_main(sandbox_main)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.on_retry = on_retry
         self.restart_count = 0
@@ -238,7 +240,40 @@ class SandboxRecoveryManager:
         return tracker
 
     # ------------------------------------------------------------------
-    def run(self, preset: Dict[str, Any], args: argparse.Namespace):
+    @staticmethod
+    def _inspect_sandbox_main(func: Callable[..., Any]) -> tuple[bool, bool]:
+        """Return ``(supports_builder, requires_builder)`` for ``func``."""
+
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            return True, False
+
+        params = list(signature.parameters.values())
+        if any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params):
+            return True, False
+
+        positional = [
+            p
+            for p in params
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+
+        if len(positional) < 3:
+            return False, False
+
+        third = positional[2]
+        requires = third.default is inspect._empty
+        return True, requires
+
+    # ------------------------------------------------------------------
+    def run(
+        self,
+        preset: Dict[str, Any],
+        args: argparse.Namespace,
+        builder: object | None = None,
+    ):
         """Execute ``sandbox_main`` with retry and circuit-breaker support.
 
         Recoverable failures trigger exponential backoff retries while fatal
@@ -253,7 +288,17 @@ class SandboxRecoveryManager:
             set_correlation_id(cid)
             start = time.monotonic()
             try:
-                return self._circuit.call(lambda: self.sandbox_main(preset, args))
+                call: Callable[[], Any]
+                if builder is not None and self._supports_builder:
+                    call = lambda: self.sandbox_main(preset, args, builder)
+                else:
+                    if builder is None or not self._requires_builder:
+                        call = lambda: self.sandbox_main(preset, args)
+                    else:
+                        raise TypeError(
+                            "sandbox_main expects a context builder but none was provided"
+                        )
+                return self._circuit.call(call)
             except CircuitOpenError as exc:
                 self.logger.error("recovery circuit open", exc_info=exc)
                 recovery_failure_total.labels(severity="fatal").inc()
