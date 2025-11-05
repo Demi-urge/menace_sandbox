@@ -30,13 +30,16 @@ class _LazyBotRegistry:
     def register_bot(
         self,
         name: str,
+        module_path: str | os.PathLike[str] | None = None,
         *,
         roi_threshold: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
         manager: Any | None = None,
         data_bot: Any | None = None,
-        module_path: str | os.PathLike[str] | None = None,
+        patch_id: int | str | None = None,
+        commit: str | None = None,
+        provenance: Any | None = None,
         is_coding_bot: bool = False,
     ) -> str:
         if self._real is None:
@@ -47,12 +50,15 @@ class _LazyBotRegistry:
                     "register_bot",
                     (name,),
                     {
+                        "module_path": module_path,
                         "roi_threshold": roi_threshold,
                         "error_threshold": error_threshold,
                         "test_failure_threshold": test_failure_threshold,
                         "manager": manager,
                         "data_bot": data_bot,
-                        "module_path": module_path,
+                        "patch_id": patch_id,
+                        "commit": commit,
+                        "provenance": provenance,
                         "is_coding_bot": is_coding_bot,
                     },
                 )
@@ -61,12 +67,15 @@ class _LazyBotRegistry:
         return str(
             self._real.register_bot(  # type: ignore[return-value]
                 name,
+                module_path,
                 roi_threshold=roi_threshold,
                 error_threshold=error_threshold,
                 test_failure_threshold=test_failure_threshold,
                 manager=manager,
                 data_bot=data_bot,
-                module_path=module_path,
+                patch_id=patch_id,
+                commit=commit,
+                provenance=provenance,
                 is_coding_bot=is_coding_bot,
             )
         )
