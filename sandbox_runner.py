@@ -1016,7 +1016,6 @@ def _sandbox_init(
         _manager_generate_helper_with_builder as _helper_fn,
     )
     from menace.model_automation_pipeline import ModelAutomationPipeline
-    from menace.unified_event_bus import UnifiedEventBus
     from menace.bot_registry import BotRegistry
 
     bus = UnifiedEventBus()
