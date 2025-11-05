@@ -120,7 +120,7 @@ class ESIndex:
 
     def __init__(
         self,
-        url: str | Sequence[str] = "https://localhost:9200",
+        url: str | Sequence[str] = "http://localhost:9200",
         index: str = "steward",
         username: str = "elastic",
         password: str = "ybgIfNG7G4UQ7XAso1Hn",
