@@ -2202,14 +2202,16 @@ class BotRegistry:
     def register_bot(
         self,
         name: str,
+        module_path: str | os.PathLike[str] | None = None,
         *,
         roi_threshold: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
         manager: "SelfCodingManager" | None = None,
         data_bot: "DataBot" | None = None,
-        module_path: str | os.PathLike[str] | None = None,
         patch_id: int | str | None = None,
+        commit: str | None = None,
+        provenance: Any | None = None,
         is_coding_bot: bool = False,
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
@@ -2228,25 +2230,46 @@ class BotRegistry:
                     resolved_path = str(module_path)
                 node["module"] = resolved_path
                 self.modules[name] = resolved_path
-            if patch_id is not None:
+            provenance_payload: Any | None = None
+            if provenance is not None:
+                try:
+                    if is_dataclass(provenance):
+                        provenance_payload = asdict(provenance)
+                    elif isinstance(provenance, MutableMapping):
+                        provenance_payload = dict(provenance)
+                    elif isinstance(provenance, SimpleNamespace):
+                        provenance_payload = dict(provenance.__dict__)
+                    else:
+                        provenance_payload = provenance
+                except Exception:  # pragma: no cover - defensive best effort
+                    logger.exception(
+                        "failed to normalise provenance metadata for %s", name
+                    )
+                    provenance_payload = provenance
+            if patch_id is not None or commit is not None or provenance_payload is not None:
                 try:
                     history = node.get("patch_history")
                     if not isinstance(history, list):
                         history = []
-                    history.append(
-                        {
-                            "patch_id": patch_id,
-                            "commit": None,
-                            "ts": time.time(),
-                            "source": "registration",
-                        }
-                    )
+                    history_entry: dict[str, Any] = {
+                        "patch_id": patch_id,
+                        "commit": commit,
+                        "ts": time.time(),
+                        "source": "registration",
+                    }
+                    if provenance_payload is not None:
+                        history_entry["provenance"] = provenance_payload
+                    history.append(history_entry)
                     node["patch_history"] = history
                 except Exception:  # pragma: no cover - defensive best effort
                     logger.exception(
                         "failed to record patch provenance for %s during registration",
                         name,
                     )
+            if commit is not None:
+                node["commit"] = commit
+            if provenance_payload is not None:
+                node["provenance"] = provenance_payload
             if not is_coding_bot:
                 self._internalization_retry_attempts.pop(name, None)
                 self._cancel_internalization_retry(name)

@@ -2152,14 +2152,12 @@ def self_coding_managed(
                     if register_as_coding_local:
                         try:
                             register_kwargs = dict(update_kwargs_local)
-                            # ``register_bot`` does not accept provenance specific
-                            # kwargs such as ``patch_id`` or ``commit``.  Those are
-                            # only meaningful when updating an existing bot and the
-                            # new ``register_bot`` call would otherwise explode with
-                            # ``TypeError``.  Drop them before forwarding the
-                            # kwargs to the registry.
-                            register_kwargs.pop("patch_id", None)
-                            register_kwargs.pop("commit", None)
+                            if (
+                                decision_local is not None
+                                and decision_local.provenance is not None
+                                and "provenance" not in register_kwargs
+                            ):
+                                register_kwargs["provenance"] = decision_local.provenance
                             if orchestrator_factory is None and manager_local is not None:
                                 orchestrator_factory = getattr(
                                     manager_local,
