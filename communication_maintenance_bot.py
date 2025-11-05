@@ -375,9 +375,16 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
     ErrorBot, ErrorDB = _build_stub_error_components()
 
     def _construct_error_bot(
-        context_builder: "ContextBuilder", error_db_path: Path | str
+        context_builder: "ContextBuilder",
+        error_db_path: Path | str,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> "ErrorBot":
-        return ErrorBot(ErrorDB(error_db_path), context_builder=context_builder)
+        return ErrorBot(
+            ErrorDB(error_db_path),
+            context_builder=context_builder,
+            manager=manager,
+        )
 else:
     if TYPE_CHECKING:  # pragma: no cover - typing only
         from .error_bot import ErrorBot as _ErrorBotType, ErrorDB as _ErrorDBType
@@ -400,11 +407,18 @@ else:
         return _RuntimeErrorBot, _RuntimeErrorDB
 
     def _construct_error_bot(
-        context_builder: "ContextBuilder", error_db_path: Path | str
+        context_builder: "ContextBuilder",
+        error_db_path: Path | str,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> _ErrorBotType:
         error_bot_cls, error_db_cls = _load_error_bot_components()
         error_db = error_db_cls(error_db_path)
-        return error_bot_cls(error_db, context_builder=context_builder)
+        return error_bot_cls(
+            error_db,
+            context_builder=context_builder,
+            manager=manager,
+        )
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     ResourceAllocationBot = None  # type: ignore
     AllocationDB = None  # type: ignore
@@ -1165,6 +1179,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         comm_store: CommunicationLogHandler | None = None,
         config: MaintenanceBotConfig | None = None,
         admin_tokens: Optional[Iterable[str] | str] = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         super().__init__(db_router=db_router or router)
         self.logger = configure_logger(
@@ -1190,12 +1205,14 @@ class CommunicationMaintenanceBot(AdminBotBase):
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
+        manager = manager or getattr(type(self), "manager", None)
         if error_bot is not None:
             self.error_bot = error_bot
         else:
             self.error_bot = _construct_error_bot(
                 context_builder=self.context_builder,
                 error_db_path=self.config.error_db_path,
+                manager=manager,
             )
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
