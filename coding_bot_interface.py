@@ -2138,7 +2138,11 @@ def self_coding_managed(
                     "orchestrator_factory", None
                 )
 
-                if register_as_coding_local and manager_local is not None:
+                if (
+                    register_as_coding_local
+                    and manager_local is not None
+                    and hasattr(manager_local, "register")
+                ):
                     try:
                         manager_local.register(name, cls)
                     except Exception:  # pragma: no cover - best effort
