@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Iterable
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -118,9 +118,28 @@ class MongoStore:
 class ESIndex:
     """Minimal Elasticsearch wrapper."""
 
-    def __init__(self, url: str = "http://localhost:9200", index: str = "steward") -> None:
+    def __init__(
+        self,
+        url: str | Sequence[str] = "https://localhost:9200",
+        index: str = "steward",
+        username: str = "elastic",
+        password: str = "ybgIfNG7G4UQ7XAso1Hn",
+        verify_certs: bool = False,
+    ) -> None:
         if Elasticsearch:
-            self.es = Elasticsearch(url)
+            kwargs = {
+                "basic_auth": (username, password),
+                "verify_certs": verify_certs,
+            }
+            try:
+                self.es = Elasticsearch(url, **kwargs)
+            except TypeError:
+                hosts: Sequence[str]
+                if isinstance(url, (list, tuple)):
+                    hosts = url
+                else:
+                    hosts = [url]
+                self.es = Elasticsearch(hosts, **kwargs)
             self.index = index
             try:
                 resp = self.es.indices.create(index=index, ignore=400)  # type: ignore
