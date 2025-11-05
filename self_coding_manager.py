@@ -530,17 +530,42 @@ class SelfCodingManager:
                 "failed to register bot with evolution orchestrator",
             )
 
-    def register_bot(self, name: str) -> None:
+    def register_bot(
+        self,
+        name: str,
+        module_path: str | os.PathLike[str] | None = None,
+        *,
+        roi_threshold: float | None = None,
+        error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
+        patch_id: int | str | None = None,
+        commit: str | None = None,
+        provenance: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
         if not self.bot_registry:
             return
         try:
-            self.bot_registry.register_bot(
-                name,
-                manager=self,
-                data_bot=self.data_bot,
-                is_coding_bot=True,
-            )
+            register_kwargs: dict[str, Any] = {
+                "manager": self,
+                "data_bot": self.data_bot,
+                "is_coding_bot": True,
+            }
+            if roi_threshold is not None:
+                register_kwargs["roi_threshold"] = roi_threshold
+            if error_threshold is not None:
+                register_kwargs["error_threshold"] = error_threshold
+            if test_failure_threshold is not None:
+                register_kwargs["test_failure_threshold"] = test_failure_threshold
+            if patch_id is not None:
+                register_kwargs["patch_id"] = patch_id
+            if commit is not None:
+                register_kwargs["commit"] = commit
+            if provenance is not None:
+                register_kwargs["provenance"] = provenance
+            register_kwargs.update(kwargs)
+            self.bot_registry.register_bot(name, module_path, **register_kwargs)
             if self.data_bot:
                 try:
                     self.threshold_service.reload(name)
