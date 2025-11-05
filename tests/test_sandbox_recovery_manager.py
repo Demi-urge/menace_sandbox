@@ -33,6 +33,22 @@ def test_restart_on_failure(monkeypatch):
     assert len(calls) == 2
 
 
+def test_run_with_context_builder(monkeypatch):
+    builder = object()
+    seen = {}
+
+    def succeed(preset, args, ctx):
+        seen["ctx"] = ctx
+        return "ok"
+
+    monkeypatch.setattr(srm.time, "sleep", lambda s: None)
+    mgr = srm.SandboxRecoveryManager(succeed, retry_delay=0)
+    result = mgr.run({}, argparse.Namespace(), builder)
+
+    assert result == "ok"
+    assert seen["ctx"] is builder
+
+
 def test_logging_and_callback(monkeypatch, tmp_path):
     calls = []
 
