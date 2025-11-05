@@ -2092,6 +2092,28 @@ def self_coding_managed(
                         manager_sources,
                         module_provenance,
                     )
+                    if provenance_decision.mode == "missing":
+                        reason = provenance_decision.reason or "provenance metadata unavailable"
+                        logger.warning(
+                            "Skipping bot update for %s because provenance metadata is unavailable (%s)",
+                            name,
+                            reason,
+                        )
+                        should_update_local = False
+                        register_as_coding_local = False
+                    else:
+                        if (
+                            provenance_decision.patch_id is not None
+                            and "patch_id" not in update_kwargs_local
+                        ):
+                            update_kwargs_local["patch_id"] = provenance_decision.patch_id
+                        if (
+                            provenance_decision.commit is not None
+                            and "commit" not in update_kwargs_local
+                        ):
+                            update_kwargs_local["commit"] = provenance_decision.commit
+                        if provenance_decision.mode == "unsigned":
+                            _warn_unsigned_once(name)
                     decision_local = _BootstrapDecision(
                         provenance=provenance_decision,
                         manager=manager_local,
