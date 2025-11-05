@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from importlib import import_module
@@ -19,7 +20,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from .db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from .db_router import LOCAL_TABLES
 from .strategy_prediction_bot import StrategyPredictionBot
 from .bot_database import BotDB
 from .code_database import CodeDB
@@ -79,14 +80,22 @@ class EfficiencyMetrics:
 
 
 class EfficiencyDB:
-    """SQLite backed store for efficiency records."""
+    """SQLite backed store for efficiency records with resilient connections."""
 
     def __init__(self, path: str | Path = "efficiency.db") -> None:
         LOCAL_TABLES.add("efficiency")
-        p = Path(path).resolve()
-        self.router = GLOBAL_ROUTER or init_db_router("efficiency_db", str(p), str(p))
-        self.conn = self.router.get_connection("efficiency")
-        self.conn.execute(
+        self._path = Path(path).resolve()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn: sqlite3.Connection | None = None
+        self._connect()
+
+    # ------------------------------------------------------------------
+    def _connect(self) -> sqlite3.Connection:
+        """Establish a SQLite connection and ensure the schema exists."""
+
+        conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        logger.debug("[EfficiencyDB] Connected: %s", conn)
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS efficiency(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,18 +107,52 @@ class EfficiencyDB:
             )
             """
         )
-        self.conn.commit()
+        conn.commit()
+        self.conn = conn
+        return conn
 
+    # ------------------------------------------------------------------
+    def _ensure_connection(self) -> sqlite3.Connection:
+        """Return an active connection, reconnecting if the prior one was closed."""
+
+        conn = self.conn
+        if conn is None:
+            return self._connect()
+
+        try:
+            conn.execute("SELECT 1")
+        except sqlite3.ProgrammingError as exc:
+            if "closed" not in str(exc).lower():
+                raise
+            logger.warning("EfficiencyDB connection was closed; reconnecting.")
+            return self._connect()
+
+        return conn
+
+    # ------------------------------------------------------------------
+    def close(self) -> None:
+        """Close the underlying SQLite connection."""
+
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None
+
+    # ------------------------------------------------------------------
     def add(self, model: str, metrics: EfficiencyMetrics) -> int:
-        cur = self.conn.execute(
+        conn = self._ensure_connection()
+        cur = conn.execute(
             "INSERT INTO efficiency(model, latency, throughput, cost, ts) VALUES (?,?,?,?,?)",
             (model, metrics.latency, metrics.throughput, metrics.cost, datetime.utcnow().isoformat()),
         )
-        self.conn.commit()
+        conn.commit()
         return int(cur.lastrowid)
 
+    # ------------------------------------------------------------------
     def history(self) -> List[Tuple[str, float, float, float, str]]:
-        cur = self.conn.execute(
+        conn = self._ensure_connection()
+        cur = conn.execute(
             "SELECT model, latency, throughput, cost, ts FROM efficiency ORDER BY id"
         )
         return cur.fetchall()
