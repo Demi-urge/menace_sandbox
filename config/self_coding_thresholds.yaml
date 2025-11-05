@@ -18,8 +18,7 @@ default:
   auto_recalibrate: true
   model: exponential
   confidence: 0.95
-  model_params:
-    alpha: 0.3
+  model_params: {alpha: 0.3}
   test_command:
     - pytest
     - -q
@@ -34,8 +33,7 @@ bots:
     patch_success_drop: -0.2
     model: arima
     confidence: 0.9
-    model_params:
-      order: [1, 1, 1]
+    model_params: {order: [1, 1, 1]}
     test_command:
       - pytest
       - tests/quickfix
@@ -74,8 +72,7 @@ bots:
   AverageMetricBot:
     model: exponential
     confidence: 0.9
-    model_params:
-      alpha: 0.3
+    model_params: {alpha: 0.3}
 
 stack:
   enabled: true
