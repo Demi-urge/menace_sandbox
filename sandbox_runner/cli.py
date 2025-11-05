@@ -483,10 +483,9 @@ def _capture_run(preset: dict[str, str], args: argparse.Namespace):
     from sandbox_runner import _sandbox_main
 
     holder: dict[str, Any] = {}
-    builder = create_context_builder()
 
-    def wrapper(p: dict[str, str], a: argparse.Namespace):
-        holder["tracker"] = _sandbox_main(p, a, builder)
+    def wrapper(p: dict[str, str], a: argparse.Namespace, b: Any) -> None:
+        holder["tracker"] = _sandbox_main(p, a, b)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get("tracker")

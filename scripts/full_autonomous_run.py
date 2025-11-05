@@ -12,15 +12,12 @@ from metrics_dashboard import MetricsDashboard
 from dynamic_path_router import resolve_path
 from pathlib import Path
 from threading import Thread
-from context_builder_util import create_context_builder
-
 
 def _capture_run(preset: Dict[str, str], args: argparse.Namespace):
     holder = {}
 
-    def wrapper(p: Dict[str, str], a: argparse.Namespace):
-        builder = create_context_builder()
-        holder['tracker'] = _sandbox_main(p, a, builder)
+    def wrapper(p: Dict[str, str], a: argparse.Namespace, b: object) -> None:
+        holder['tracker'] = _sandbox_main(p, a, b)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get('tracker')
