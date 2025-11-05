@@ -16,8 +16,8 @@ from threading import Thread
 def _capture_run(preset: Dict[str, str], args: argparse.Namespace):
     holder = {}
 
-    def wrapper(p: Dict[str, str], a: argparse.Namespace, b: object) -> None:
-        holder['tracker'] = _sandbox_main(p, a, b)
+    def wrapper(p: Dict[str, str], a: argparse.Namespace, builder: object) -> None:
+        holder['tracker'] = _sandbox_main(p, a, builder)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get('tracker')
