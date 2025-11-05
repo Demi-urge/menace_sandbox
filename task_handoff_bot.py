@@ -682,6 +682,10 @@ class _PassiveSelfCodingManager:
         self.data_bot = data_bot
         self.evolution_orchestrator = None
 
+    def register(self, *_args: Any, **_kwargs: Any) -> None:
+        """No-op compatibility shim for passive manager mode."""
+        logger.debug("passive self-coding manager skipping register call")
+
 
 manager = _PassiveSelfCodingManager(registry, data_bot)
 
