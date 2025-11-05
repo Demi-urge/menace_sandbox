@@ -547,6 +547,7 @@ class ModelAutomationPipeline:
         bot_registry: "BotRegistry | None" = None,
         context_builder: ContextBuilder,
         validator_factory: Callable[[], "TaskValidationBot"] | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         helpers = _pipeline_helpers()
         LazyAggregator = helpers["LazyAggregator"]
@@ -578,6 +579,7 @@ class ModelAutomationPipeline:
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
+        self.manager = manager
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
@@ -645,7 +647,10 @@ class ModelAutomationPipeline:
         if comms_bot is None:
             comms_bot_cls = get_communication_maintenance_bot_cls()
             try:
-                comms_bot = comms_bot_cls(context_builder=self.context_builder)
+                comms_bot = comms_bot_cls(
+                    context_builder=self.context_builder,
+                    manager=self.manager,
+                )
             except TypeError as exc:
                 if "context_builder" not in str(exc):
                     raise
