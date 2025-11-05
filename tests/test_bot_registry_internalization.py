@@ -443,3 +443,17 @@ def test_import_error_without_hints_disables_self_coding(monkeypatch):
     assert "self_coding_runtime" in disabled["missing_dependencies"]
     assert "unresolved import error" in disabled["reason"]
     assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)
+
+
+def test_register_bot_records_patch_id():
+    reg = bot_registry.BotRegistry()
+
+    reg.register_bot("ExampleBot", patch_id=123)
+
+    node = reg.graph.nodes["ExampleBot"]
+    history = node.get("patch_history")
+
+    assert isinstance(history, list) and history, "patch history entry should be created"
+    latest = history[-1]
+    assert latest.get("patch_id") == 123
+    assert latest.get("source") == "registration"

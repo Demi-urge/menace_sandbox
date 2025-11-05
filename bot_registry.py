@@ -2209,6 +2209,7 @@ class BotRegistry:
         manager: "SelfCodingManager" | None = None,
         data_bot: "DataBot" | None = None,
         module_path: str | os.PathLike[str] | None = None,
+        patch_id: int | str | None = None,
         is_coding_bot: bool = False,
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
@@ -2227,6 +2228,25 @@ class BotRegistry:
                     resolved_path = str(module_path)
                 node["module"] = resolved_path
                 self.modules[name] = resolved_path
+            if patch_id is not None:
+                try:
+                    history = node.get("patch_history")
+                    if not isinstance(history, list):
+                        history = []
+                    history.append(
+                        {
+                            "patch_id": patch_id,
+                            "commit": None,
+                            "ts": time.time(),
+                            "source": "registration",
+                        }
+                    )
+                    node["patch_history"] = history
+                except Exception:  # pragma: no cover - defensive best effort
+                    logger.exception(
+                        "failed to record patch provenance for %s during registration",
+                        name,
+                    )
             if not is_coding_bot:
                 self._internalization_retry_attempts.pop(name, None)
                 self._cancel_internalization_retry(name)
