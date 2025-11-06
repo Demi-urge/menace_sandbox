@@ -43,9 +43,12 @@ class SandboxLauncherGUI(tk.Tk):
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
         self._last_health_snapshot: dict[str, Any] | None = None
+        self._sandbox_process: subprocess.Popen[str] | None = None
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
         self.start_sandbox_button.configure(command=self._on_start_sandbox)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.after(100, self._process_decisions)
         self.after(100, self._drain_ui_queue)
@@ -374,12 +377,17 @@ class SandboxLauncherGUI(tk.Tk):
             self._submit_to_ui(self._on_sandbox_finished)
             return
 
-        assert process.stdout is not None
-        with process.stdout:
-            for line in process.stdout:
-                self._log_async(line.rstrip("\n"))
+        self._sandbox_process = process
+        try:
+            assert process.stdout is not None
+            with process.stdout:
+                for line in process.stdout:
+                    self._log_async(line.rstrip("\n"))
 
-        retcode = process.wait()
+            retcode = process.wait()
+        finally:
+            self._sandbox_process = None
+
         self._submit_to_ui(lambda retcode=retcode: self._on_sandbox_finished(retcode))
 
     def _on_sandbox_finished(self, retcode: int | None = None) -> None:
@@ -620,3 +628,40 @@ class SandboxLauncherGUI(tk.Tk):
         self.enable_run_preflight()
         self.disable_start_sandbox()
         self.append_log("Preflight run aborted.")
+
+    def _terminate_sandbox_process(self) -> None:
+        process = self._sandbox_process
+        if not process:
+            return
+
+        if process.poll() is None:
+            self._log_async("Terminating sandbox process...")
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                self._log_async("Killing sandbox process...")
+                process.kill()
+                process.wait()
+
+        self._sandbox_process = None
+
+    def _join_thread(self, thread: threading.Thread | None, name: str) -> None:
+        if not thread:
+            return
+
+        thread.join(timeout=5.0)
+        if thread.is_alive():
+            self.append_log(f"Warning: {name} did not finish within timeout.")
+
+    def _on_close(self) -> None:
+        self.abort_preflight()
+        self._terminate_sandbox_process()
+        self._join_thread(self._sandbox_thread, "sandbox thread")
+        self._join_thread(self._preflight_thread, "preflight thread")
+        super().destroy()
+
+
+if __name__ == "__main__":
+    gui = SandboxLauncherGUI()
+    gui.mainloop()
