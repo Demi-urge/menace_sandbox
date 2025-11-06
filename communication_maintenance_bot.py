@@ -209,6 +209,19 @@ try:
 except ImportError:  # pragma: no cover - optional
     Celery = None  # type: ignore
 
+
+def _load_embedded_celery_app() -> "Celery | None":
+    """Return the shared Celery app defined in :mod:`celery_app` if available."""
+
+    if Celery is None:
+        return None
+    try:
+        from .celery_app import app as shared_app  # type: ignore
+    except Exception as exc:  # pragma: no cover - best effort logging only
+        logger.debug("default Celery app unavailable: %s", exc)
+        return None
+    return shared_app
+
 CHECK_INTERVAL = float(os.getenv("MAINTENANCE_CHECK_INTERVAL", "3600"))
 OPTIMISE_INTERVAL = float(os.getenv("MAINTENANCE_OPTIMISE_INTERVAL", "86400"))
 
@@ -1095,11 +1108,22 @@ class CommunicationMaintenanceBot(AdminBotBase):
 
     def _create_scheduler(self, broker: str | None):
         """Return Celery app or a lightweight scheduler for development."""
+        backend = getattr(self, "_celery_backend", os.getenv("CELERY_RESULT_BACKEND", "rpc://"))
+        shared_app = getattr(self, "_shared_celery_app", None)
+        if Celery and shared_app is not None:
+            shared_broker = getattr(shared_app.conf, "broker_url", None)
+            if shared_broker:
+                if backend and not getattr(shared_app.conf, "result_backend", None):
+                    shared_app.conf.result_backend = backend
+                self.logger.info("Using embedded Celery app for scheduler")
+                return shared_app
+            self.logger.debug("Embedded Celery app missing broker configuration; ignoring")
         if Celery and broker:
+            self.logger.info("Using configured Celery broker for scheduler")
             return Celery(
                 "maintenance",
                 broker=broker,
-                backend=os.getenv("CELERY_RESULT_BACKEND", "rpc://"),
+                backend=backend,
             )
         if Celery and MENACE_MODE.lower() == "production":
             raise RuntimeError("CELERY_BROKER_URL must be configured in production")
@@ -1216,10 +1240,27 @@ class CommunicationMaintenanceBot(AdminBotBase):
             )
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
+        shared_celery_app: "Celery | None" = None
+        if Celery and not broker:
+            shared_celery_app = _load_embedded_celery_app()
+            if shared_celery_app is not None:
+                resolved_broker = getattr(shared_celery_app.conf, "broker_url", None)
+                if resolved_broker:
+                    broker = resolved_broker
+                    self.logger.info("Using broker from embedded Celery app")
+                else:
+                    shared_celery_app = None
         if Celery and not broker and MENACE_MODE.lower() == "production":
             raise RuntimeError("CELERY_BROKER_URL must be configured in production")
         if not Celery and MENACE_MODE.lower() == "production" and not broker:
             self.logger.warning("Running without Celery broker in production mode")
+        celery_backend = os.getenv("CELERY_RESULT_BACKEND", "rpc://")
+        if shared_celery_app is not None:
+            configured_backend = getattr(shared_celery_app.conf, "result_backend", None)
+            if configured_backend:
+                celery_backend = configured_backend
+        self._shared_celery_app = shared_celery_app
+        self._celery_backend = celery_backend
         self.repo = self._ensure_repo(repo_path)
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
