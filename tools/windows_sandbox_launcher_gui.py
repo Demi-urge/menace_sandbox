@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import logging
+import os
 import queue
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -11,12 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import Sequence
+from typing import Callable, Sequence
 
 from dependency_health import DependencyMode
 
 
 logger = logging.getLogger(__name__)
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -329,35 +334,65 @@ class _PreflightWorker:
     def run(self) -> None:
         """Execute the configured preflight steps in sequence."""
 
+        self._execute_preflight()
+
+    def _execute_preflight(self) -> None:
+        """Sequentially execute steps while respecting abort semantics."""
+
         for step in self._steps:
             if self._abort_event.is_set():
+                self._logger.info("Preflight aborted before %s", step.label)
                 break
-            should_continue = self._run_step(step)
+
+            try:
+                runner = getattr(sys.modules[__name__], step.runner_name)
+            except AttributeError as exc:  # pragma: no cover - defensive guard
+                self._logger.exception("Runner %s is not available", step.runner_name)
+                self._debug_queue.put(str(exc))
+                break
+            if not callable(runner):  # pragma: no cover - defensive guard
+                self._logger.error("Runner %s is not callable", step.runner_name)
+                break
+
+            action = lambda func=runner: func(self._logger)
+            should_continue = self._run_step(
+                step.label,
+                step.failure_title,
+                step.failure_message,
+                action,
+            )
             if not should_continue:
                 break
 
-    def _run_step(self, step: _PreflightStep) -> bool:
-        """Execute ``step`` and handle pause/retry/abort semantics."""
+            if self._abort_event.is_set():
+                self._logger.info("Preflight aborted after %s", step.label)
+                break
+
+    def _run_step(
+        self,
+        label: str,
+        failure_title: str,
+        failure_message: str,
+        action: Callable[[], None],
+    ) -> bool:
+        """Execute a single step and handle pause/retry/abort semantics."""
 
         while True:
             if self._abort_event.is_set():
-                self._logger.info("Preflight aborted before %s", step.label)
+                self._logger.info("Preflight aborted before %s", label)
                 return False
 
-            self._logger.info("Starting %s", step.label)
+            self._logger.info("Starting %s", label)
             try:
-                runner = getattr(sys.modules[__name__], step.runner_name)
-                if not callable(runner):  # pragma: no cover - defensive guard
-                    raise TypeError(f"Step '{step.runner_name}' is not callable")
-                runner(self._logger)
+                action()
             except Exception as exc:  # pragma: no cover - logged via GUI
-                self._logger.exception("%s failed", step.label)
+                self._logger.exception("%s failed", label)
                 self._debug_queue.put(str(exc))
                 self._pause_event.set()
                 self._decision_queue.put(
                     (
-                        step.failure_title,
-                        f"{step.failure_message}\n\n{exc}",
+                        failure_title,
+                        f"{failure_message}\n\n{exc}",
                     )
                 )
                 decision = self._await_decision()
@@ -368,11 +403,11 @@ class _PreflightWorker:
 
                 # ``skip`` – continue to the next step after logging.
                 self._logger.warning(
-                    "Continuing after failure in %s", step.label
+                    "Continuing after failure in %s", label
                 )
                 return True
 
-            self._logger.info("Finished %s", step.label)
+            self._logger.info("Finished %s", label)
             return True
 
     def _await_decision(self) -> str:
@@ -422,58 +457,258 @@ def run_full_preflight(
     worker.run()
 
 
-def _git_fetch_and_reset(logger: logging.Logger) -> None:
+def _git_sync(logger: logging.Logger) -> None:
     """Ensure the local repository mirrors the remote state."""
 
     logger.info("Fetching latest repository state…")
+    _run_subprocess(logger, ["git", "fetch", "origin"], cwd=REPO_ROOT)
+
+    branch_proc = _run_subprocess(
+        logger,
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=REPO_ROOT,
+        timeout=60,
+    )
+    branch = branch_proc.stdout.strip() or "HEAD"
+    target = f"origin/{branch}" if branch != "HEAD" else "origin/HEAD"
+
+    logger.info("Resetting local branch to %s", target)
+    _run_subprocess(
+        logger,
+        ["git", "reset", "--hard", target],
+        cwd=REPO_ROOT,
+        timeout=120,
+    )
 
 
-def _purge_stale_state(logger: logging.Logger) -> None:
+def _purge_stale_files(logger: logging.Logger) -> None:
     """Remove temporary files that could affect subsequent runs."""
 
-    logger.info("Purging stale state…")
+    from bootstrap_self_coding import purge_stale_files as _purge
+
+    logger.info("Purging stale bootstrap artefacts…")
+    _purge()
 
 
-def _remove_lock_artifacts(logger: logging.Logger) -> None:
+def _delete_lock_files(logger: logging.Logger) -> None:
     """Remove stale lock files that block dependency installs."""
 
-    logger.info("Removing stale lock files…")
+    sandbox_dir = REPO_ROOT / "sandbox_data"
+    if sandbox_dir.exists():
+        for pattern in ("*.lock", "*.lck", "*.lock.json"):
+            for path in sandbox_dir.glob(pattern):
+                _safe_unlink(path, logger)
+            for path in sandbox_dir.rglob(pattern):
+                _safe_unlink(path, logger)
 
+    hf_root = Path(
+        os.environ.get("HF_HOME") or (Path.home() / ".cache" / "huggingface")
+    ).expanduser()
 
-def _prefetch_heavy_dependencies(logger: logging.Logger) -> None:
-    """Download heavy dependencies ahead of time."""
-
-    logger.info("Prefetching heavy dependencies…")
+    if hf_root.exists():
+        logger.info("Cleaning Hugging Face cache locks in %s", hf_root)
+        for pattern in ("**/*.lock", "**/*.json.lock"):
+            for path in hf_root.glob(pattern):
+                _safe_unlink(path, logger)
+        _purge_stale_model_caches(hf_root, logger)
+    else:
+        logger.info("Hugging Face cache directory not found: %s", hf_root)
 
 
 def _warm_shared_vector_service(logger: logging.Logger) -> None:
-    """Warm up the shared vector service cache."""
+    """Download heavy dependencies and warm the shared vector service cache."""
 
-    logger.info("Warming shared vector service…")
+    from neurosales.scripts import setup_heavy_deps
+    from vector_service import SharedVectorService
+
+    logger.info("Downloading heavy dependencies (download only)…")
+    setup_heavy_deps.main(download_only=True)
+
+    logger.info("Instantiating SharedVectorService to warm caches…")
+    service = SharedVectorService()
+    warm_payload = {"text": "sandbox warm-up"}
+    try:
+        vector = service.vectorise("text", warm_payload)
+        logger.info("Vector warm-up produced %d dimensions", len(vector))
+    except Exception:
+        logger.warning(
+            "SharedVectorService warm-up vectorisation failed; continuing after instantiation",
+            exc_info=True,
+        )
 
 
-def _ensure_environment(logger: logging.Logger) -> None:
+def _ensure_env_flags(logger: logging.Logger) -> None:
     """Ensure environment prerequisites are satisfied."""
 
-    logger.info("Ensuring environment configuration…")
+    from auto_env_setup import ensure_env
+
+    logger.info("Ensuring sandbox environment configuration…")
+    ensure_env()
+
+    overrides = {
+        "MENACE_LIGHT_IMPORTS": "1",
+        "MENACE_SKIP_CREATE": "1",
+        "MENACE_SKIP_STRIPE_ROUTER": "1",
+    }
+    for key, value in overrides.items():
+        previous = os.environ.get(key)
+        os.environ[key] = value
+        if previous != value:
+            logger.info("Set %s=%s", key, value)
 
 
-def _prime_self_coding_registry(logger: logging.Logger) -> None:
+def _prime_registry(logger: logging.Logger) -> None:
     """Prime the self-coding registry to avoid runtime delays."""
 
+    from prime_registry import main as prime_main
+
     logger.info("Priming self-coding registry…")
+    prime_main()
 
 
-def _run_pip_commands(logger: logging.Logger) -> None:
+def _install_dependencies(logger: logging.Logger) -> None:
     """Run required pip commands for the sandbox."""
 
-    logger.info("Running pip commands…")
+    logger.info("Installing sandbox dependencies in editable mode…")
+    _run_subprocess(
+        logger,
+        [sys.executable, "-m", "pip", "install", "-e", str(REPO_ROOT)],
+        cwd=REPO_ROOT,
+        timeout=900,
+    )
+
+    logger.info("Installing jsonschema dependency…")
+    _run_subprocess(
+        logger,
+        [sys.executable, "-m", "pip", "install", "jsonschema"],
+        cwd=REPO_ROOT,
+        timeout=600,
+    )
 
 
-def _bootstrap_ai_counter_bot(logger: logging.Logger) -> None:
+def _bootstrap_self_coding(logger: logging.Logger) -> None:
     """Bootstrap the AI counter bot dependencies."""
 
-    logger.info("Bootstrapping AI counter bot…")
+    from bootstrap_self_coding import bootstrap_self_coding as bootstrap
+
+    logger.info("Bootstrapping self-coding for AICounterBot…")
+    bootstrap("AICounterBot")
+
+
+def _run_subprocess(
+    logger: logging.Logger,
+    args: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = 300,
+) -> subprocess.CompletedProcess[str]:
+    """Execute *args* and forward captured output to *logger*."""
+
+    display_cmd = " ".join(args)
+    logger.info("Running command: %s", display_cmd)
+
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=str(cwd) if cwd is not None else None,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.error(
+            "Command timed out after %s seconds: %s", timeout, display_cmd, exc_info=True
+        )
+        _log_subprocess_streams(logger, exc.stdout, exc.stderr)
+        raise
+    except subprocess.CalledProcessError as exc:
+        logger.error(
+            "Command failed with exit code %s: %s", exc.returncode, display_cmd, exc_info=True
+        )
+        _log_subprocess_streams(logger, exc.stdout, exc.stderr)
+        raise
+
+    _log_subprocess_streams(logger, completed.stdout, completed.stderr)
+    return completed
+
+
+def _log_subprocess_streams(
+    logger: logging.Logger,
+    stdout: str | None,
+    stderr: str | None,
+) -> None:
+    """Forward ``stdout`` and ``stderr`` to *logger* when available."""
+
+    if stdout:
+        for line in stdout.splitlines():
+            logger.info("[stdout] %s", line)
+    if stderr:
+        for line in stderr.splitlines():
+            logger.info("[stderr] %s", line)
+
+
+def _safe_unlink(path: Path, logger: logging.Logger) -> None:
+    """Attempt to remove ``path`` if it exists, logging failures."""
+
+    try:
+        if path.exists():
+            path.unlink()
+            logger.info("Removed stale lock file: %s", path)
+    except IsADirectoryError:
+        return
+    except OSError as exc:
+        logger.warning("Failed to remove %s: %s", path, exc)
+
+
+def _purge_stale_model_caches(cache_root: Path, logger: logging.Logger) -> None:
+    """Remove Hugging Face model caches that appear stale."""
+
+    hub_dir = cache_root / "hub"
+    if not hub_dir.exists():
+        return
+
+    cutoff = _dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=30)
+    size_threshold = 1 * 1024 * 1024  # 1 MiB
+
+    for model_dir in hub_dir.glob("models--*"):
+        if not model_dir.is_dir():
+            continue
+
+        try:
+            stat = model_dir.stat()
+        except OSError as exc:
+            logger.warning("Unable to stat %s: %s", model_dir, exc)
+            continue
+
+        mtime = _dt.datetime.fromtimestamp(stat.st_mtime, tz=_dt.timezone.utc)
+        size = _dir_size(model_dir, limit_bytes=size_threshold)
+        is_old = mtime < cutoff
+        is_small = size <= size_threshold
+
+        if not (is_old or is_small):
+            continue
+
+        try:
+            shutil.rmtree(model_dir)
+            logger.info("Removed stale model cache: %s", model_dir)
+        except OSError as exc:
+            logger.warning("Failed to remove model cache %s: %s", model_dir, exc)
+
+
+def _dir_size(path: Path, *, limit_bytes: int | None = None) -> int:
+    """Return size of ``path`` in bytes, short-circuiting at ``limit_bytes``."""
+
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += (Path(root) / name).stat().st_size
+            except OSError:
+                continue
+            if limit_bytes is not None and total > limit_bytes:
+                return total
+    return total
 
 
 def _evaluate_health_snapshot(
@@ -512,25 +747,19 @@ _DEFAULT_STEPS: Sequence[_PreflightStep] = (
         label="Fetching latest Git snapshot",
         failure_title="Git fetch failed",
         failure_message="Updating the repository from origin failed.",
-        runner_name="_git_fetch_and_reset",
+        runner_name="_git_sync",
     ),
     _PreflightStep(
         label="Purging stale state",
         failure_title="State purge failed",
         failure_message="Purging stale artefacts encountered an error.",
-        runner_name="_purge_stale_state",
+        runner_name="_purge_stale_files",
     ),
     _PreflightStep(
         label="Removing lock artefacts",
         failure_title="Lock artefact removal failed",
         failure_message="Removing stale lock files was unsuccessful.",
-        runner_name="_remove_lock_artifacts",
-    ),
-    _PreflightStep(
-        label="Prefetching heavy dependencies",
-        failure_title="Dependency prefetch failed",
-        failure_message="Prefetching heavy dependencies encountered an error.",
-        runner_name="_prefetch_heavy_dependencies",
+        runner_name="_delete_lock_files",
     ),
     _PreflightStep(
         label="Warming shared vector service",
@@ -542,25 +771,25 @@ _DEFAULT_STEPS: Sequence[_PreflightStep] = (
         label="Ensuring environment",
         failure_title="Environment validation failed",
         failure_message="Ensuring environment prerequisites failed.",
-        runner_name="_ensure_environment",
+        runner_name="_ensure_env_flags",
     ),
     _PreflightStep(
         label="Priming self-coding registry",
         failure_title="Self-coding registry priming failed",
         failure_message="Priming the self-coding registry failed.",
-        runner_name="_prime_self_coding_registry",
+        runner_name="_prime_registry",
     ),
     _PreflightStep(
         label="Running pip commands",
         failure_title="Pip commands failed",
         failure_message="Executing pip commands failed.",
-        runner_name="_run_pip_commands",
+        runner_name="_install_dependencies",
     ),
     _PreflightStep(
         label="Bootstrapping AI counter bot",
         failure_title="AI counter bot bootstrap failed",
         failure_message="Bootstrapping the AI counter bot failed.",
-        runner_name="_bootstrap_ai_counter_bot",
+        runner_name="_bootstrap_self_coding",
     ),
 )
 

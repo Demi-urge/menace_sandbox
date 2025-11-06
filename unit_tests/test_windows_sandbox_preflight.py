@@ -108,15 +108,14 @@ class PreflightWorkerTests(unittest.TestCase):
         calls: list[str] = []
 
         patchers = [
-            self._patch_step("_git_fetch_and_reset", calls),
-            self._patch_step("_purge_stale_state", calls),
-            self._patch_step("_remove_lock_artifacts", calls),
-            self._patch_step("_prefetch_heavy_dependencies", calls),
+            self._patch_step("_git_sync", calls),
+            self._patch_step("_purge_stale_files", calls),
+            self._patch_step("_delete_lock_files", calls),
             self._patch_step("_warm_shared_vector_service", calls),
-            self._patch_step("_ensure_environment", calls),
-            self._patch_step("_prime_self_coding_registry", calls),
-            self._patch_step("_run_pip_commands", calls),
-            self._patch_step("_bootstrap_ai_counter_bot", calls),
+            self._patch_step("_ensure_env_flags", calls),
+            self._patch_step("_prime_registry", calls),
+            self._patch_step("_install_dependencies", calls),
+            self._patch_step("_bootstrap_self_coding", calls),
         ]
 
         with contextlib.ExitStack() as stack:
@@ -134,15 +133,14 @@ class PreflightWorkerTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                "_git_fetch_and_reset",
-                "_purge_stale_state",
-                "_remove_lock_artifacts",
-                "_prefetch_heavy_dependencies",
+                "_git_sync",
+                "_purge_stale_files",
+                "_delete_lock_files",
                 "_warm_shared_vector_service",
-                "_ensure_environment",
-                "_prime_self_coding_registry",
-                "_run_pip_commands",
-                "_bootstrap_ai_counter_bot",
+                "_ensure_env_flags",
+                "_prime_registry",
+                "_install_dependencies",
+                "_bootstrap_self_coding",
             ],
         )
         self.assertFalse(self.pause_event.is_set())
@@ -153,17 +151,14 @@ class PreflightWorkerTests(unittest.TestCase):
 
         failing_error = RuntimeError("lock cleanup failed")
         patchers = [
-            self._patch_step("_git_fetch_and_reset", calls),
-            self._patch_step("_purge_stale_state", calls),
-            self._patch_step(
-                "_remove_lock_artifacts", calls, side_effect=failing_error
-            ),
-            self._patch_step("_prefetch_heavy_dependencies", calls),
+            self._patch_step("_git_sync", calls),
+            self._patch_step("_purge_stale_files", calls),
+            self._patch_step("_delete_lock_files", calls, side_effect=failing_error),
             self._patch_step("_warm_shared_vector_service", calls),
-            self._patch_step("_ensure_environment", calls),
-            self._patch_step("_prime_self_coding_registry", calls),
-            self._patch_step("_run_pip_commands", calls),
-            self._patch_step("_bootstrap_ai_counter_bot", calls),
+            self._patch_step("_ensure_env_flags", calls),
+            self._patch_step("_prime_registry", calls),
+            self._patch_step("_install_dependencies", calls),
+            self._patch_step("_bootstrap_self_coding", calls),
         ]
 
         with contextlib.ExitStack() as stack:
@@ -201,15 +196,14 @@ class PreflightWorkerTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                "_git_fetch_and_reset",
-                "_purge_stale_state",
-                "_remove_lock_artifacts",
-                "_prefetch_heavy_dependencies",
+                "_git_sync",
+                "_purge_stale_files",
+                "_delete_lock_files",
                 "_warm_shared_vector_service",
-                "_ensure_environment",
-                "_prime_self_coding_registry",
-                "_run_pip_commands",
-                "_bootstrap_ai_counter_bot",
+                "_ensure_env_flags",
+                "_prime_registry",
+                "_install_dependencies",
+                "_bootstrap_self_coding",
             ],
         )
         self.assertFalse(self.abort_event.is_set())
@@ -221,21 +215,18 @@ class PreflightWorkerTests(unittest.TestCase):
         attempts = {"count": 0}
 
         patchers = [
-            self._patch_step("_git_fetch_and_reset", calls),
-            self._patch_step("_purge_stale_state", calls),
+            self._patch_step("_git_sync", calls),
+            self._patch_step("_purge_stale_files", calls),
             mock.patch.object(
                 gui,
-                "_remove_lock_artifacts",
-                side_effect=lambda _logger: self._retryable_step(
-                    calls, attempts
-                ),
+                "_delete_lock_files",
+                side_effect=lambda _logger: self._retryable_step(calls, attempts),
             ),
-            self._patch_step("_prefetch_heavy_dependencies", calls),
             self._patch_step("_warm_shared_vector_service", calls),
-            self._patch_step("_ensure_environment", calls),
-            self._patch_step("_prime_self_coding_registry", calls),
-            self._patch_step("_run_pip_commands", calls),
-            self._patch_step("_bootstrap_ai_counter_bot", calls),
+            self._patch_step("_ensure_env_flags", calls),
+            self._patch_step("_prime_registry", calls),
+            self._patch_step("_install_dependencies", calls),
+            self._patch_step("_bootstrap_self_coding", calls),
         ]
 
         with contextlib.ExitStack() as stack:
@@ -268,14 +259,14 @@ class PreflightWorkerTests(unittest.TestCase):
             thread.join(timeout=2)
             self.assertFalse(thread.is_alive())
 
-        self.assertEqual(calls.count("_remove_lock_artifacts"), 2)
+        self.assertEqual(calls.count("_delete_lock_files"), 2)
         self.assertFalse(self.abort_event.is_set())
         self.assertFalse(self.pause_event.is_set())
 
     def _retryable_step(
         self, calls: list[str], attempts: dict[str, int]
     ) -> None:
-        calls.append("_remove_lock_artifacts")
+        calls.append("_delete_lock_files")
         if attempts["count"] == 0:
             attempts["count"] += 1
             raise RuntimeError("retry me")
@@ -285,11 +276,9 @@ class PreflightWorkerTests(unittest.TestCase):
 
         failing_error = RuntimeError("stop here")
         patchers = [
-            self._patch_step("_git_fetch_and_reset", calls),
-            self._patch_step("_purge_stale_state", calls),
-            self._patch_step(
-                "_remove_lock_artifacts", calls, side_effect=failing_error
-            ),
+            self._patch_step("_git_sync", calls),
+            self._patch_step("_purge_stale_files", calls),
+            self._patch_step("_delete_lock_files", calls, side_effect=failing_error),
         ]
 
         with contextlib.ExitStack() as stack:
@@ -322,9 +311,9 @@ class PreflightWorkerTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                "_git_fetch_and_reset",
-                "_purge_stale_state",
-                "_remove_lock_artifacts",
+                "_git_sync",
+                "_purge_stale_files",
+                "_delete_lock_files",
             ],
         )
         self.assertTrue(self.abort_event.is_set())
