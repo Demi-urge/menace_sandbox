@@ -179,13 +179,16 @@ class SandboxLauncherGUI(tk.Tk):
         log_container.columnconfigure(0, weight=1)
         log_container.rowconfigure(0, weight=1)
 
+        text_background = "#1e1e1e"
+        text_foreground = "#ffffff"
+
         self.log_text = tk.Text(
             log_container,
             wrap="word",
             state=tk.DISABLED,
-            bg="#1e1e1e",
-            fg="#ffffff",
-            insertbackground="#ffffff",
+            bg=text_background,
+            fg=text_foreground,
+            insertbackground=text_foreground,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
@@ -207,6 +210,9 @@ class SandboxLauncherGUI(tk.Tk):
             wrap="word",
             state=tk.DISABLED,
             height=8,
+            bg=text_background,
+            fg=text_foreground,
+            insertbackground=text_foreground,
         )
         self.debug_text.grid(row=0, column=0, sticky="nsew")
 
@@ -272,7 +278,7 @@ class SandboxLauncherGUI(tk.Tk):
             "warning", foreground="#ffeb3b", font=bold_font
         )
         self.log_text.tag_configure(
-            "error", foreground="#ff1744", font=bold_font
+            "error", foreground="#f44336", font=bold_font
         )
 
     def _toggle_debug_panel(self) -> None:  # pragma: no cover - UI interaction
