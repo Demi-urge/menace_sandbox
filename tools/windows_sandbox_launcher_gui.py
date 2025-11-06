@@ -13,6 +13,7 @@ import time
 import tkinter as tk
 import tkinter.font as tkfont
 import tkinter.messagebox as messagebox
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk
 from typing import Callable, Iterable, Mapping, Sequence
@@ -31,6 +32,7 @@ from sandbox_runner.bootstrap import sandbox_health
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LOG_FILE_PATH = Path(__file__).with_name("menace_gui_logs.txt")
 HF_TRANSFORMERS_CACHE = Path.home() / ".cache" / "huggingface" / "transformers"
 try:
     LOCK_STALE_TIMEOUT = max(300, int(os.getenv("SANDBOX_LOCK_TIMEOUT", "300")))
@@ -41,7 +43,9 @@ except ValueError:
 class TextWidgetQueueHandler(logging.Handler):
     """Logging handler that places formatted log messages onto a queue."""
 
-    def __init__(self, log_queue: "queue.Queue[tuple[str, str]]") -> None:
+    def __init__(
+        self, log_queue: "queue.Queue[tuple[str, str, str | None]]"
+    ) -> None:
         super().__init__()
         self.log_queue = log_queue
 
@@ -50,9 +54,27 @@ class TextWidgetQueueHandler(logging.Handler):
             message = self.format(record)
             if not message.endswith("\n"):
                 message = f"{message}\n"
-            self.log_queue.put((record.levelname.lower(), message))
+            debug_text: str | None = None
+            if record.levelno >= logging.ERROR:
+                debug_text = message
+            extra_detail = getattr(record, "debug_detail", None)
+            if extra_detail:
+                details = str(extra_detail)
+                debug_text = f"{message}{details}\n" if debug_text is None else debug_text
+            self.log_queue.put((record.levelname.lower(), message, debug_text))
         except Exception:  # pragma: no cover - rely on logging's default handling
             self.handleError(record)
+
+
+@dataclass(slots=True)
+class PauseContext:
+    """Metadata describing a paused preflight step."""
+
+    title: str
+    message: str
+    handler: Callable[[], None] | None
+    step_index: int
+    context: dict[str, object] | None = None
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -63,7 +85,7 @@ class SandboxLauncherGUI(tk.Tk):
         self.title("Windows Sandbox Launcher")
         self.geometry("600x400")
 
-        self.log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.log_queue: "queue.Queue[tuple[str, str, str | None]]" = queue.Queue()
         self.logger = logging.getLogger("windows_sandbox_launcher_gui")
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
@@ -78,10 +100,25 @@ class SandboxLauncherGUI(tk.Tk):
         self.abort_event = threading.Event()
         self.decision_queue: "queue.Queue[tuple[str, str | None, dict[str, object] | None]]" = queue.Queue()
 
+        self._pause_context_lock = threading.Lock()
+        self._pause_context: PauseContext | None = None
+        self._resume_lock = threading.Lock()
+        self._resume_action = "continue"
+        self._pause_controls_visible = False
+        self._max_debug_lines = 400
+        self._debug_visible = False
+
+        self.elapsed_var = tk.StringVar(value="Elapsed: 00:00:00")
+        self._elapsed_start: float | None = None
+        self._elapsed_last: float = 0.0
+        self._elapsed_running = False
+
         self._build_notebook()
         self._build_controls()
+        self._build_pause_controls()
         self._configure_logging()
 
+        self.after(1000, self._update_elapsed_time)
         self._process_log_queue()
 
     def _build_notebook(self) -> None:
@@ -90,13 +127,33 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.status_tab, text="Status")
 
+        self.status_paned = ttk.PanedWindow(self.status_tab, orient=tk.VERTICAL)
+        self.status_paned.pack(fill="both", expand=True, padx=10, pady=10)
+
+        status_container = ttk.Frame(self.status_paned)
+        status_container.columnconfigure(0, weight=1)
+        status_container.rowconfigure(0, weight=1)
         self.status_text = tk.Text(
-            self.status_tab,
+            status_container,
             wrap="word",
             state="disabled",
             background="#1e1e1e",
         )
-        self.status_text.pack(fill="both", expand=True, padx=10, pady=10)
+        self.status_text.grid(row=0, column=0, sticky="nsew")
+        self.status_paned.add(status_container, weight=4)
+
+        self.debug_container = ttk.Labelframe(
+            self.status_paned, text="Debug Details"
+        )
+        self.debug_container.columnconfigure(0, weight=1)
+        self.debug_container.rowconfigure(0, weight=1)
+        self.debug_text = tk.Text(
+            self.debug_container,
+            wrap="word",
+            state="disabled",
+            background="#1e1e1e",
+        )
+        self.debug_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
@@ -119,6 +176,56 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self.start_sandbox_button.pack(side="left")
 
+        self.debug_toggle_var = tk.BooleanVar(value=False)
+        self.debug_toggle = ttk.Checkbutton(
+            controls,
+            text="Show Debug",
+            variable=self.debug_toggle_var,
+            command=self._toggle_debug_panel,
+        )
+        self.debug_toggle.pack(side="right", padx=(5, 0))
+
+        self.elapsed_label = ttk.Label(controls, textvariable=self.elapsed_var)
+        self.elapsed_label.pack(side="right")
+
+    def _build_pause_controls(self) -> None:
+        self.pause_controls = ttk.Frame(self)
+        self.pause_status_var = tk.StringVar(value="")
+        self.pause_status_label = ttk.Label(
+            self.pause_controls,
+            textvariable=self.pause_status_var,
+            anchor="w",
+            wraplength=360,
+        )
+        self.pause_status_label.pack(side="left", expand=True, fill="x")
+
+        self.retry_button = ttk.Button(
+            self.pause_controls,
+            text="Retry Step",
+            command=self._on_retry_step,
+            state="disabled",
+        )
+        self.retry_button.pack(side="left", padx=(5, 0))
+
+        self.resume_button = ttk.Button(
+            self.pause_controls,
+            text="Resume",
+            command=self._on_resume_step,
+            state="disabled",
+        )
+        self.resume_button.pack(side="left", padx=(5, 0))
+
+        self.abort_button = ttk.Button(
+            self.pause_controls,
+            text="Abort",
+            command=self._on_abort_preflight,
+            state="disabled",
+        )
+        self.abort_button.pack(side="left", padx=(5, 0))
+
+        self.pause_controls.pack(fill="x", padx=10, pady=(0, 10))
+        self.pause_controls.pack_forget()
+
     def _configure_logging(self) -> None:
         default_font = tkfont.nametofont("TkDefaultFont")
 
@@ -130,12 +237,28 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_text.tag_config("error", foreground="red", font=error_font)
         self._error_font = error_font
 
+        self.debug_text.configure(font=default_font, foreground="white")
+
         queue_handler = TextWidgetQueueHandler(self.log_queue)
         queue_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         self.logger.addHandler(queue_handler)
         self._queue_handler = queue_handler
+
+        try:
+            LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+        except OSError:
+            file_handler = None
+        if file_handler is not None:
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            self.logger.addHandler(file_handler)
+            self._file_handler = file_handler
+        else:
+            self._file_handler = None
 
     def run_preflight(self) -> None:
         """Kick off the preflight routine in a background thread."""
@@ -163,6 +286,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_successful = False
         self.pause_event.clear()
         self.abort_event.clear()
+        self._clear_pause_context()
+        self._set_resume_action("continue")
+        self._update_pause_controls()
         while not self.decision_queue.empty():
             try:
                 self.decision_queue.get_nowait()
@@ -170,6 +296,11 @@ class SandboxLauncherGUI(tk.Tk):
                 break
         self._preflight_running = True
         self.logger.info("Preflight checks initiated...")
+
+        self._elapsed_start = time.perf_counter()
+        self._elapsed_last = 0.0
+        self._elapsed_running = True
+        self._refresh_elapsed_display()
 
         self._preflight_thread = threading.Thread(
             target=self._execute_preflight,
@@ -264,11 +395,15 @@ class SandboxLauncherGUI(tk.Tk):
         )
 
         try:
-            for title, start_message, success_message, handler in steps:
+            index = 0
+            total_steps = len(steps)
+            while index < total_steps:
                 if self.abort_event.is_set():
+                    title = steps[index][0]
                     self.logger.info("Preflight aborted before '%s'.", title)
                     return
 
+                title, start_message, success_message, handler = steps[index]
                 self.logger.info(start_message)
                 try:
                     handler()
@@ -280,15 +415,50 @@ class SandboxLauncherGUI(tk.Tk):
                         "exception": str(exc),
                     }
                     self.pause_event.set()
+                    self._set_pause_context(
+                        title=title,
+                        message=failure_message,
+                        handler=handler,
+                        step_index=index,
+                        context=context,
+                    )
                     self.decision_queue.put((title, failure_message, context))
                     self._update_pause_state(title, failure_message, context)
-                    if not self._await_resume(title):
+                    action = self._await_resume(title)
+                    if action is None:
                         return
+                    if action == "restart":
+                        self.logger.info(
+                            "Restarting preflight from first step after '%s'.",
+                            title,
+                        )
+                        index = 0
+                        continue
+                    if action == "retry":
+                        self.logger.info(
+                            "Retrying preflight step '%s' per user request.", title
+                        )
+                        continue
+                    index += 1
                     continue
 
                 self.logger.info(success_message)
-                if not self._await_resume(title):
+                action = self._await_resume(title)
+                if action is None:
                     return
+                if action == "restart":
+                    self.logger.info(
+                        "Restarting preflight from first step at user request."
+                    )
+                    index = 0
+                    continue
+                if action == "retry":
+                    self.logger.info(
+                        "Repeating preflight step '%s' at user request.", title
+                    )
+                    continue
+                index += 1
+
             if self.abort_event.is_set():
                 self.logger.info("Preflight aborted after completing queued steps.")
                 return
@@ -299,15 +469,18 @@ class SandboxLauncherGUI(tk.Tk):
         finally:
             self.after(0, self._reset_preflight_state)
 
-    def _await_resume(self, title: str) -> bool:
-        """Wait for the pause event to clear or abort if requested."""
+    def _await_resume(self, title: str) -> str | None:
+        """Wait for the pause event to clear and return the requested action."""
 
         while self.pause_event.is_set() and not self.abort_event.is_set():
             time.sleep(0.05)
         if self.abort_event.is_set():
             self.logger.info("Preflight aborted during '%s'.", title)
-            return False
-        return True
+            return None
+        with self._resume_lock:
+            action = self._resume_action
+            self._resume_action = "continue"
+        return action
 
     def _git_sync(self) -> None:
         """Synchronise the repository with origin/main."""
@@ -530,6 +703,14 @@ class SandboxLauncherGUI(tk.Tk):
         """Re-enable UI controls and clear state after preflight finishes."""
         self._preflight_running = False
         self._preflight_thread = None
+        if self._elapsed_running and self._elapsed_start is not None:
+            self._elapsed_last = time.perf_counter() - self._elapsed_start
+        self._elapsed_running = False
+        self._elapsed_start = None
+        self._refresh_elapsed_display()
+        self.pause_event.clear()
+        self._clear_pause_context()
+        self._update_pause_controls()
         if not self._sandbox_running:
             self.run_preflight_button.configure(state="normal")
             self.start_sandbox_button.configure(
@@ -539,14 +720,25 @@ class SandboxLauncherGUI(tk.Tk):
     def _process_log_queue(self) -> None:
         while True:
             try:
-                tag, message = self.log_queue.get_nowait()
+                payload = self.log_queue.get_nowait()
             except queue.Empty:
                 break
             else:
+                if not isinstance(payload, tuple):
+                    continue
+                if len(payload) == 3:
+                    tag, message, debug_text = payload
+                elif len(payload) == 2:
+                    tag, message = payload
+                    debug_text = None
+                else:
+                    continue
                 self._append_status(message, tag)
-        if self.pause_event.is_set():
-            self._handle_preflight_pause()
+                if debug_text:
+                    self._append_debug_message(debug_text)
 
+        self._drain_decision_queue()
+        self._update_pause_controls()
         self.after(100, self._process_log_queue)
 
     def _append_status(self, message: str, tag: str = "info") -> None:
@@ -555,39 +747,177 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_text.configure(state="disabled")
         self.status_text.see("end")
 
-    def _handle_preflight_pause(self) -> None:
-        try:
-            payload = self.decision_queue.get_nowait()
-        except queue.Empty:
-            return
+    def _drain_decision_queue(self) -> None:
+        while True:
+            try:
+                payload = self.decision_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not isinstance(payload, tuple) or not payload:
+                continue
+            title = str(payload[0])
+            message: str | None = None
+            context: dict[str, object] | None = None
+            if len(payload) > 1 and payload[1] is not None:
+                message = str(payload[1])
+            if len(payload) > 2 and isinstance(payload[2], dict):
+                context = payload[2]
 
-        title: str
-        message: str | None
-        context: dict[str, object] | None
-        if not isinstance(payload, tuple):
-            return
-        if len(payload) == 3:
-            title, message, context = payload
-        else:
-            title = payload[0]
-            message = payload[1] if len(payload) > 1 else None
-            context = None
+            detail_lines = [line for line in (message,) if line]
+            if context and context.get("exception"):
+                detail_lines.append(str(context["exception"]))
 
-        detail_lines = [message or "No additional details provided."]
-        if context and context.get("exception"):
-            detail_lines.append(str(context["exception"]))
-        prompt = (
-            f"{title} failed. Continue preflight?\n\nDetails: "
-            + "\n".join(detail_lines)
+            if detail_lines:
+                combined = "\n".join(detail_lines)
+                self._append_debug_message(
+                    f"Pause details for {title}:\n{combined}\n"
+                )
+
+    def _append_debug_message(self, message: str) -> None:
+        if not message:
+            return
+        if not message.endswith("\n"):
+            message = f"{message}\n"
+        self.debug_text.configure(state="normal")
+        self.debug_text.insert("end", message)
+        self._trim_debug_log()
+        self.debug_text.configure(state="disabled")
+        if self.debug_toggle_var.get():
+            self.debug_text.see("end")
+
+    def _trim_debug_log(self) -> None:
+        lines = int(self.debug_text.index("end-1c").split(".")[0])
+        if lines <= self._max_debug_lines:
+            return
+        excess = lines - self._max_debug_lines
+        self.debug_text.delete("1.0", f"{excess + 1}.0")
+
+    def _toggle_debug_panel(self) -> None:
+        if self.debug_toggle_var.get():
+            if not self._debug_visible:
+                self.status_paned.add(self.debug_container, weight=1)
+                self._debug_visible = True
+                self.debug_text.see("end")
+        elif self._debug_visible:
+            self.status_paned.forget(self.debug_container)
+            self._debug_visible = False
+
+    def _get_pause_context(self) -> PauseContext | None:
+        with self._pause_context_lock:
+            return self._pause_context
+
+    def _set_pause_context(
+        self,
+        *,
+        title: str,
+        message: str,
+        handler: Callable[[], None] | None,
+        step_index: int,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        pause_context = PauseContext(
+            title=title,
+            message=message,
+            handler=handler,
+            step_index=step_index,
+            context=context,
         )
-        user_choice = messagebox.askyesno("Preflight paused", prompt)
-        if user_choice:
-            self.logger.info("User opted to continue after '%s'.", title)
-            self.pause_event.clear()
+        with self._pause_context_lock:
+            self._pause_context = pause_context
+        self.after(0, self._update_pause_controls)
+
+    def _clear_pause_context(self) -> None:
+        with self._pause_context_lock:
+            self._pause_context = None
+
+    def _set_resume_action(self, action: str) -> None:
+        with self._resume_lock:
+            self._resume_action = action
+
+    def _refresh_elapsed_display(self) -> None:
+        seconds = self._elapsed_last
+        if self._elapsed_running and self._elapsed_start is not None:
+            seconds = time.perf_counter() - self._elapsed_start
+            self._elapsed_last = seconds
+        elapsed_seconds = int(seconds)
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        self.elapsed_var.set(f"Elapsed: {hours:02d}:{minutes:02d}:{secs:02d}")
+
+    def _update_elapsed_time(self) -> None:
+        self._refresh_elapsed_display()
+        self.after(1000, self._update_elapsed_time)
+
+    def _update_pause_controls(self) -> None:
+        if self.pause_event.is_set():
+            context = self._get_pause_context()
+            detail_lines: list[str] = []
+            if context and context.message:
+                detail_lines.append(str(context.message))
+            else:
+                detail_lines.append("Preflight paused.")
+            if context and context.context and context.context.get("exception"):
+                detail_lines.append(str(context.context["exception"]))
+            if not (context and context.handler):
+                detail_lines.append(
+                    "Retry Step will restart the full preflight sequence."
+                )
+            self.pause_status_var.set("\n".join(detail_lines))
+            if not self._pause_controls_visible:
+                self.pause_controls.pack(fill="x", padx=10, pady=(0, 10))
+                self._pause_controls_visible = True
+            self.retry_button.state(["!disabled"])
+            self.resume_button.state(["!disabled"])
+            self.abort_button.state(["!disabled"])
         else:
-            self.logger.warning("User aborted preflight after '%s'.", title)
-            self.abort_event.set()
-            self.pause_event.clear()
+            if self._pause_controls_visible:
+                self.pause_controls.pack_forget()
+                self._pause_controls_visible = False
+            self.pause_status_var.set("")
+            self.retry_button.state(["disabled"])
+            self.resume_button.state(["disabled"])
+            self.abort_button.state(["disabled"])
+
+    def _on_retry_step(self) -> None:
+        context = self._get_pause_context()
+        if context and context.handler is not None:
+            self.logger.info("User requested retry of '%s'.", context.title)
+            self._set_resume_action("retry")
+        else:
+            if context:
+                self.logger.info(
+                    "Retry requested without handler; restarting after '%s'.",
+                    context.title,
+                )
+            else:
+                self.logger.info("Retry requested without pause context; restarting.")
+            self._set_resume_action("restart")
+        self.pause_event.clear()
+        self._clear_pause_context()
+        self._update_pause_controls()
+
+    def _on_resume_step(self) -> None:
+        context = self._get_pause_context()
+        if context:
+            self.logger.info("User opted to continue after '%s'.", context.title)
+        else:
+            self.logger.info("User opted to continue preflight.")
+        self._set_resume_action("continue")
+        self.pause_event.clear()
+        self._clear_pause_context()
+        self._update_pause_controls()
+
+    def _on_abort_preflight(self) -> None:
+        context = self._get_pause_context()
+        if context:
+            self.logger.warning("User aborted preflight after '%s'.", context.title)
+        else:
+            self.logger.warning("User aborted preflight while paused.")
+        self.abort_event.set()
+        self._set_resume_action("continue")
+        self.pause_event.clear()
+        self._clear_pause_context()
+        self._update_pause_controls()
 
     def _update_pause_state(
         self, title: str, message: str, context: dict[str, object] | None = None
