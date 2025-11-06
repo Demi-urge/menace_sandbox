@@ -79,6 +79,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._elapsed_start: float | None = None
         self._elapsed_job: str | None = None
         self._file_logger: logging.Logger | None = None
+        self._gui_logger: logging.Logger | None = None
         self._closing = False
 
         self._setup_file_logging()
@@ -202,7 +203,7 @@ class SandboxLauncherGUI(tk.Tk):
             gui_logger.addHandler(handler)
         gui_logger.propagate = True
 
-        self._logger = gui_logger
+        self._gui_logger = gui_logger
 
     # ------------------------------------------------------------------
     # Preflight configuration helpers
@@ -218,8 +219,9 @@ class SandboxLauncherGUI(tk.Tk):
     def log_message(self, level: int, message: str) -> None:
         """Emit *message* at *level* through the configured logger."""
 
-        if hasattr(self, "_logger"):
-            self._logger.log(level, message.rstrip("\n"))
+        logger = self._gui_logger
+        if logger is not None:
+            logger.log(level, message.rstrip("\n"))
 
     def append_log(
         self, message: str, *, level: int = logging.INFO, log_to_file: bool = True
@@ -274,8 +276,9 @@ class SandboxLauncherGUI(tk.Tk):
     def _append_debug(self, message: str) -> None:
         """Append debug-oriented *message* to the debug pane and log file."""
 
-        if hasattr(self, "_logger"):
-            self._logger.debug(message.rstrip("\n"))
+        logger = self._gui_logger
+        if logger is not None:
+            logger.debug(message.rstrip("\n"))
         self.debug_text.configure(state=tk.NORMAL)
         try:
             self.debug_text.insert(tk.END, message)
@@ -289,11 +292,6 @@ class SandboxLauncherGUI(tk.Tk):
         """Schedule a callback to run on the Tkinter UI thread."""
 
         self._ui_queue.put(callback)
-
-    def _log_async(self, message: str, level: int = logging.INFO) -> None:
-        """Emit *message* from background threads via the logger."""
-
-        self.log_message(level, message)
 
     def _on_toggle_debug(self) -> None:
         """Update the debug panel visibility."""
@@ -408,8 +406,11 @@ class SandboxLauncherGUI(tk.Tk):
     def _run_command(self, args: Sequence[str], *, cwd: Path | None = None) -> None:
         """Execute *args* streaming output to the GUI log."""
 
+        logger = self._gui_logger
         display = " ".join(shlex.quote(str(part)) for part in args)
-        self._log_async(f"$ {display}")
+        if logger is not None:
+            logger.info("$ %s", display)
+
         process = subprocess.Popen(
             [str(part) for part in args],
             stdout=subprocess.PIPE,
@@ -420,7 +421,9 @@ class SandboxLauncherGUI(tk.Tk):
         assert process.stdout is not None
         with process.stdout:
             for line in process.stdout:
-                self._log_async(line.rstrip("\n"))
+                normalized = line.rstrip("\n")
+                if logger is not None:
+                    logger.info("%s", normalized)
         retcode = process.wait()
         if retcode:
             raise subprocess.CalledProcessError(retcode, args)
@@ -431,7 +434,9 @@ class SandboxLauncherGUI(tk.Tk):
         try:
             if path.exists():
                 path.unlink()
-                self._log_async(f"Removed stale file: {path}")
+                logger = self._gui_logger
+                if logger is not None:
+                    logger.info("Removed stale file: %s", path)
         except IsADirectoryError:
             return
         except OSError as exc:
@@ -446,7 +451,9 @@ class SandboxLauncherGUI(tk.Tk):
 
         try:
             shutil.rmtree(path)
-            self._log_async(f"Removed stale directory: {path}")
+            logger = self._gui_logger
+            if logger is not None:
+                logger.info("Removed stale directory: %s", path)
         except OSError as exc:
             raise RuntimeError(f"Failed to remove directory {path}: {exc}") from exc
 
@@ -591,7 +598,9 @@ class SandboxLauncherGUI(tk.Tk):
             "menace_sandbox.start_autonomous_sandbox",
         ]
         display = " ".join(shlex.quote(str(part)) for part in command)
-        self._log_async(f"$ {display}")
+        logger = self._gui_logger
+        if logger is not None:
+            logger.info("$ %s", display)
 
         try:
             process = subprocess.Popen(
@@ -600,8 +609,9 @@ class SandboxLauncherGUI(tk.Tk):
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-        except Exception as exc:  # noqa: BLE001 - direct user feedback
-            self._log_async(f"Failed to launch sandbox: {exc}", level=logging.ERROR)
+        except Exception:  # noqa: BLE001 - direct user feedback
+            if logger is not None:
+                logger.exception("Failed to launch sandbox process")
             self._submit_to_ui(self._on_sandbox_finished)
             return
 
@@ -610,7 +620,9 @@ class SandboxLauncherGUI(tk.Tk):
             assert process.stdout is not None
             with process.stdout:
                 for line in process.stdout:
-                    self._log_async(line.rstrip("\n"))
+                    normalized = line.rstrip("\n")
+                    if logger is not None:
+                        logger.info("%s", normalized)
 
             retcode = process.wait()
         finally:
@@ -644,38 +656,27 @@ class SandboxLauncherGUI(tk.Tk):
         steps: Sequence[Tuple[str, Callable[[], None]]] = (
             list(self._preflight_steps) or self._build_default_preflight_steps()
         )
+        logger = self._gui_logger
 
         if not steps:
-            self._submit_to_ui(
-                lambda: self.log_message(
-                    logging.WARNING, "No preflight steps have been configured."
-                )
-            )
+            if logger is not None:
+                logger.warning("No preflight steps have been configured.")
 
         for title, step in steps:
             if self._abort_event.is_set():
                 break
 
-            self._submit_to_ui(
-                lambda title=title: self.log_message(
-                    logging.INFO, f"Running preflight step: {title}"
-                )
-            )
+            if logger is not None:
+                logger.info("Running preflight step: %s", title)
 
             while not self._abort_event.is_set():
                 try:
                     step()
                 except Exception as exc:  # noqa: BLE001 - direct user feedback
-                    if hasattr(self, "_logger"):
-                        self._logger.exception(
-                            "Error during preflight step '%s'", title
+                    if logger is not None:
+                        logger.exception(
+                            "Error during preflight step '%s': %s", title, exc
                         )
-                    self._submit_to_ui(
-                        lambda title=title, exc=exc: self.log_message(
-                            logging.ERROR,
-                            f"Error during preflight step '{title}': {exc}",
-                        )
-                    )
                     stack = traceback.format_exc()
                     self._submit_to_ui(
                         lambda title=title, stack=stack: self._append_debug(
@@ -709,12 +710,10 @@ class SandboxLauncherGUI(tk.Tk):
                     break
 
                 else:
-                    self._submit_to_ui(
-                        lambda title=title: self.log_message(
-                            logging.INFO,
-                            f"Preflight step '{title}' completed successfully.",
+                    if logger is not None:
+                        logger.info(
+                            "Preflight step '%s' completed successfully.", title
                         )
-                    )
                     self._wait_for_pause_to_clear()
                     break
 
@@ -964,12 +963,15 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         if process.poll() is None:
-            self._log_async("Terminating sandbox process...")
+            logger = self._gui_logger
+            if logger is not None:
+                logger.info("Terminating sandbox process...")
             process.terminate()
             try:
                 process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                self._log_async("Killing sandbox process...", level=logging.WARNING)
+                if logger is not None:
+                    logger.warning("Killing sandbox process...")
                 process.kill()
                 process.wait()
 
@@ -991,8 +993,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._join_thread(self._sandbox_thread, "sandbox thread")
         self._join_thread(self._preflight_thread, "preflight thread")
         self._closing = True
-        if hasattr(self, "_logger") and self._log_handler is not None:
-            self._logger.removeHandler(self._log_handler)
+        logger = self._gui_logger
+        if logger is not None and self._log_handler is not None:
+            logger.removeHandler(self._log_handler)
             self._log_handler.close()
             self._log_handler = None
         self._process_log_queue()
