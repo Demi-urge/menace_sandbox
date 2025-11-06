@@ -11,7 +11,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence, TextIO
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -517,6 +517,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._last_decision_payload: Optional[
             tuple[str, str, Optional[dict[str, object]]]
         ] = None
+        self._sandbox_thread: Optional[threading.Thread] = None
+        self._sandbox_process: Optional[subprocess.Popen[str]] = None
+        self._button_states_before_launch: Optional[dict[str, str]] = None
 
         self._configure_window()
         self._build_layout()
@@ -568,7 +571,12 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self.preflight_button.grid(row=0, column=0, padx=(0, 6), sticky="ew")
 
-        self.start_button = ttk.Button(frame, text="Start Sandbox", state="disabled")
+        self.start_button = ttk.Button(
+            frame,
+            text="Start Sandbox",
+            state="disabled",
+            command=self._on_start_sandbox,
+        )
         self.start_button.grid(row=0, column=1, padx=(6, 0), sticky="ew")
 
         self.retry_button = ttk.Button(
@@ -801,4 +809,126 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._pending_retry = False
         self._on_run_preflight()
+
+    def _on_start_sandbox(self) -> None:
+        """Launch the autonomous sandbox in a background process."""
+
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            self.logger.info("Sandbox launch already in progress.")
+            return
+
+        if self._sandbox_process and self._sandbox_process.poll() is None:
+            self.logger.info("Sandbox process already running.")
+            return
+
+        self._button_states_before_launch = {
+            "preflight": self.preflight_button.cget("state"),
+            "start": self.start_button.cget("state"),
+            "retry": self.retry_button.cget("state"),
+        }
+        self.preflight_button.configure(state="disabled")
+        self.start_button.configure(state="disabled")
+        self.retry_button.configure(state="disabled")
+        self.logger.info("Launching sandbox process…")
+
+        thread = threading.Thread(target=self._launch_sandbox_worker, daemon=True)
+        self._sandbox_thread = thread
+        thread.start()
+
+    def _launch_sandbox_worker(self) -> None:
+        """Spawn the sandbox process and stream its output."""
+
+        command = [
+            sys.executable,
+            "-c",
+            "import start_autonomous_sandbox as _sas; _sas.main([])",
+        ]
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI handling
+            self.after(0, self._handle_sandbox_launch_failure, exc)
+            return
+
+        self._sandbox_process = process
+
+        stream_threads: list[threading.Thread] = []
+        if process.stdout is not None:
+            stdout_thread = threading.Thread(
+                target=self._read_process_stream,
+                args=(process.stdout, "stdout"),
+                daemon=True,
+            )
+            stream_threads.append(stdout_thread)
+            stdout_thread.start()
+
+        if process.stderr is not None:
+            stderr_thread = threading.Thread(
+                target=self._read_process_stream,
+                args=(process.stderr, "stderr"),
+                daemon=True,
+            )
+            stream_threads.append(stderr_thread)
+            stderr_thread.start()
+
+        return_code = process.wait()
+
+        for thread in stream_threads:
+            thread.join(timeout=1)
+
+        self.after(0, self._handle_sandbox_exit, return_code)
+
+    def _read_process_stream(self, stream: TextIO, stream_name: str) -> None:
+        """Forward sandbox output streams into the GUI logger and debug queue."""
+
+        try:
+            for line in iter(stream.readline, ""):
+                message = line.rstrip()
+                if not message:
+                    continue
+                formatted = f"[sandbox {stream_name}] {message}"
+                self.logger.info(formatted)
+                _safe_queue_put(self.debug_queue, formatted)
+        finally:
+            try:
+                stream.close()
+            except Exception:  # pragma: no cover - defensive close
+                pass
+
+    def _handle_sandbox_launch_failure(self, error: BaseException) -> None:
+        """Handle failures that occur while starting the sandbox process."""
+
+        self._sandbox_thread = None
+        self._sandbox_process = None
+        self.logger.error("Failed to start sandbox: %s", error)
+        _safe_queue_put(self.debug_queue, str(error))
+        self._restore_controls_after_launch()
+
+    def _handle_sandbox_exit(self, return_code: int | None) -> None:
+        """Restore UI state when the sandbox process terminates."""
+
+        self._sandbox_thread = None
+        self._sandbox_process = None
+
+        if return_code == 0:
+            self.logger.info("Sandbox exited successfully.")
+        else:
+            self.logger.warning("Sandbox exited with code %s.", return_code)
+
+        self._restore_controls_after_launch()
+
+    def _restore_controls_after_launch(self) -> None:
+        """Restore button states captured before sandbox launch."""
+
+        previous_states = self._button_states_before_launch or {}
+        self.preflight_button.configure(state=previous_states.get("preflight", "normal"))
+        self.start_button.configure(state=previous_states.get("start", "disabled"))
+        self.retry_button.configure(state=previous_states.get("retry", "disabled"))
+        self._button_states_before_launch = None
 
