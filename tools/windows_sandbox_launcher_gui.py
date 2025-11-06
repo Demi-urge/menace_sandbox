@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import importlib
 import logging
 import os
@@ -31,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 class _GuiLogHandler(logging.Handler):
     """Forward log records into a Tkinter-safe queue."""
 
-    def __init__(self, log_queue: "queue.Queue[logging.LogRecord]") -> None:
+    def __init__(self, log_queue: "queue.Queue[tuple[int, str]]") -> None:
         super().__init__()
         self._queue = log_queue
         self.setFormatter(logging.Formatter("%(message)s"))
@@ -39,12 +38,16 @@ class _GuiLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401 - logging API
         try:
             message = self.format(record).rstrip()
-            cloned = copy.copy(record)
-            setattr(cloned, "gui_message", message)
-            setattr(cloned, "gui_levelname", record.levelname)
-            self._queue.put(cloned)
+            self._queue.put((record.levelno, message))
         except Exception:  # noqa: BLE001 - logging API mandates broad handling
             self.handleError(record)
+
+
+class _SkipFileFilter(logging.Filter):
+    """Prevent GUI-only messages from reaching persistent handlers."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401 - logging API
+        return not getattr(record, "gui_only", False)
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -70,7 +73,7 @@ class SandboxLauncherGUI(tk.Tk):
         ] = queue.Queue()
         self._abort_event = threading.Event()
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
-        self._log_queue: queue.Queue[logging.LogRecord] = queue.Queue()
+        self._log_queue: queue.Queue[tuple[int, str]] = queue.Queue()
         self._log_handler: _GuiLogHandler | None = None
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
         self._last_health_snapshot: dict[str, Any] | None = None
@@ -78,12 +81,11 @@ class SandboxLauncherGUI(tk.Tk):
         self._retry_requested = False
         self._elapsed_start: float | None = None
         self._elapsed_job: str | None = None
-        self._file_logger: logging.Logger | None = None
-        self._gui_logger: logging.Logger | None = None
+        self._logger: logging.Logger | None = None
         self._closing = False
 
         self._setup_file_logging()
-        self._install_gui_logging()
+        self._configure_log_widget()
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
         self.start_sandbox_button.configure(command=self._on_start_sandbox)
@@ -92,7 +94,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.after(100, self._process_decisions)
         self.after(100, self._drain_ui_queue)
-        self.after(100, self._process_log_queue)
+        self.after(100, self._poll_log_queue)
 
     def _create_widgets(self) -> None:
         main_frame = ttk.Frame(self)
@@ -113,7 +115,6 @@ class SandboxLauncherGUI(tk.Tk):
             wrap=tk.WORD,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
-        self.log_text.configure(background="#1e1e1e", foreground="white", insertbackground="white")
         base_font = tkfont.nametofont(self.log_text.cget("font"))
         self._log_bold_font = base_font.copy()
         self._log_bold_font.configure(weight="bold")
@@ -153,7 +154,7 @@ class SandboxLauncherGUI(tk.Tk):
         self.elapsed_label.pack(side=tk.RIGHT)
 
     def _setup_file_logging(self) -> logging.Logger:
-        """Configure logging to persistent storage."""
+        """Configure logging to persistent storage and the GUI."""
 
         logger = logging.getLogger("menace.sandbox.launcher")
         logger.setLevel(logging.INFO)
@@ -162,26 +163,43 @@ class SandboxLauncherGUI(tk.Tk):
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "sandbox_launcher.log"
 
-        if not any(isinstance(handler, RotatingFileHandler) for handler in logger.handlers):
+        file_handler: RotatingFileHandler | None = None
+        for handler in logger.handlers:
+            if isinstance(handler, RotatingFileHandler):
+                file_handler = handler
+                break
+
+        if file_handler is None:
             file_handler = RotatingFileHandler(
                 log_file,
                 maxBytes=1_000_000,
                 backupCount=5,
                 encoding="utf-8",
             )
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-            )
             logger.addHandler(file_handler)
 
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        if not any(isinstance(filt, _SkipFileFilter) for filt in file_handler.filters):
+            file_handler.addFilter(_SkipFileFilter())
+
+        handler = self._log_handler
+        if handler is None:
+            handler = _GuiLogHandler(self._log_queue)
+            self._log_handler = handler
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
+
         logger.propagate = False
-        self._file_logger = logger
+        self._logger = logger
         return logger
 
-    def _install_gui_logging(self) -> None:
-        """Attach a GUI-oriented logging handler and configure styles."""
+    def _configure_log_widget(self) -> None:
+        """Prepare the log text widget styling."""
 
         background = "#1e1e1e"
+        self.log_text.configure(background=background, foreground="white", insertbackground="white")
         self.log_text.tag_configure("default", foreground="white", background=background)
         self.log_text.tag_configure("info", foreground="white", background=background)
         self.log_text.tag_configure("warning", foreground="yellow", background=background)
@@ -191,19 +209,6 @@ class SandboxLauncherGUI(tk.Tk):
         self.log_text.tag_configure(
             "critical", foreground="red", background=background, font=self._log_bold_font
         )
-
-        handler = self._log_handler
-        if handler is None:
-            handler = _GuiLogHandler(self._log_queue)
-            self._log_handler = handler
-
-        gui_logger = logging.getLogger("menace.sandbox.launcher.gui")
-        gui_logger.setLevel(logging.INFO)
-        if handler not in gui_logger.handlers:
-            gui_logger.addHandler(handler)
-        gui_logger.propagate = True
-
-        self._gui_logger = gui_logger
 
     # ------------------------------------------------------------------
     # Preflight configuration helpers
@@ -216,24 +221,26 @@ class SandboxLauncherGUI(tk.Tk):
     # ------------------------------------------------------------------
     # Log helpers
     # ------------------------------------------------------------------
-    def log_message(self, level: int, message: str) -> None:
+    def log_message(self, level: int, message: str, *, gui_only: bool = False) -> None:
         """Emit *message* at *level* through the configured logger."""
 
-        logger = self._gui_logger
-        if logger is not None:
-            logger.log(level, message.rstrip("\n"))
+        logger = self._logger
+        if logger is None:
+            return
+
+        normalized = message.rstrip("\n")
+        extra: dict[str, bool] | None = {"gui_only": True} if gui_only else None
+        if extra is None:
+            logger.log(level, normalized)
+        else:
+            logger.log(level, normalized, extra=extra)
 
     def append_log(
         self, message: str, *, level: int = logging.INFO, log_to_file: bool = True
     ) -> None:
         """Append *message* to the log pane and optionally persist it."""
 
-        normalized = message.rstrip("\n")
-        if log_to_file:
-            self.log_message(level, normalized)
-            return
-
-        self._render_log_message(normalized, level)
+        self.log_message(level, message, gui_only=not log_to_file)
 
     def clear_log(self) -> None:
         """Clear all log content."""
@@ -244,7 +251,7 @@ class SandboxLauncherGUI(tk.Tk):
         finally:
             self.log_text.configure(state=tk.DISABLED)
 
-    def _render_log_message(self, message: str, level: int, tag: str | None = None) -> None:
+    def _append_to_log_widget(self, message: str, level: int, tag: str | None = None) -> None:
         """Render a message in the log widget according to *level*."""
 
         tag_name = tag or self._log_tag_for_level(level)
@@ -276,7 +283,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _append_debug(self, message: str) -> None:
         """Append debug-oriented *message* to the debug pane and log file."""
 
-        logger = self._gui_logger
+        logger = self._logger
         if logger is not None:
             logger.debug(message.rstrip("\n"))
         self.debug_text.configure(state=tk.NORMAL)
@@ -347,25 +354,23 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.after(100, self._drain_ui_queue)
 
-    def _process_log_queue(self) -> None:
+    def _poll_log_queue(self) -> None:
         """Flush queued log records into the text widget."""
 
         while True:
             try:
-                record = self._log_queue.get_nowait()
+                level, message = self._log_queue.get_nowait()
             except queue.Empty:
                 break
 
             try:
-                message = getattr(record, "gui_message", record.getMessage())
-                level_name = getattr(record, "gui_levelname", record.levelname).lower()
-                tag = level_name if level_name in {"critical", "error", "warning", "info"} else None
-                self._render_log_message(str(message), record.levelno, tag)
+                tag = self._log_tag_for_level(level)
+                self._append_to_log_widget(str(message), level, tag)
             finally:
                 self._log_queue.task_done()
 
         if not self._closing:
-            self.after(100, self._process_log_queue)
+            self.after(100, self._poll_log_queue)
 
     # ------------------------------------------------------------------
     # Button state helpers
@@ -406,7 +411,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _run_command(self, args: Sequence[str], *, cwd: Path | None = None) -> None:
         """Execute *args* streaming output to the GUI log."""
 
-        logger = self._gui_logger
+        logger = self._logger
         display = " ".join(shlex.quote(str(part)) for part in args)
         if logger is not None:
             logger.info("$ %s", display)
@@ -434,7 +439,7 @@ class SandboxLauncherGUI(tk.Tk):
         try:
             if path.exists():
                 path.unlink()
-                logger = self._gui_logger
+                logger = self._logger
                 if logger is not None:
                     logger.info("Removed stale file: %s", path)
         except IsADirectoryError:
@@ -451,7 +456,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         try:
             shutil.rmtree(path)
-            logger = self._gui_logger
+            logger = self._logger
             if logger is not None:
                 logger.info("Removed stale directory: %s", path)
         except OSError as exc:
@@ -496,7 +501,7 @@ class SandboxLauncherGUI(tk.Tk):
                     self._remove_directory(stale_dir)
 
     def _preflight_step_heavy_dependencies(self) -> None:
-        logger = self._gui_logger
+        logger = self._logger
         if logger is not None:
             logger.info("Preparing heavy dependencies in download-only mode...")
 
@@ -539,7 +544,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _preflight_step_registry_and_packages(self) -> None:
         import prime_registry
 
-        logger = self._gui_logger
+        logger = self._logger
         if logger is not None:
             logger.info("Refreshing sandbox registry...")
 
@@ -617,7 +622,7 @@ class SandboxLauncherGUI(tk.Tk):
             "menace_sandbox.start_autonomous_sandbox",
         ]
         display = " ".join(shlex.quote(str(part)) for part in command)
-        logger = self._gui_logger
+        logger = self._logger
         if logger is not None:
             logger.info("$ %s", display)
 
@@ -675,7 +680,7 @@ class SandboxLauncherGUI(tk.Tk):
         steps: Sequence[Tuple[str, Callable[[], None]]] = (
             list(self._preflight_steps) or self._build_default_preflight_steps()
         )
-        logger = self._gui_logger
+        logger = self._logger
 
         if not steps:
             if logger is not None:
@@ -982,7 +987,7 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         if process.poll() is None:
-            logger = self._gui_logger
+            logger = self._logger
             if logger is not None:
                 logger.info("Terminating sandbox process...")
             process.terminate()
@@ -1012,12 +1017,12 @@ class SandboxLauncherGUI(tk.Tk):
         self._join_thread(self._sandbox_thread, "sandbox thread")
         self._join_thread(self._preflight_thread, "preflight thread")
         self._closing = True
-        logger = self._gui_logger
+        logger = self._logger
         if logger is not None and self._log_handler is not None:
             logger.removeHandler(self._log_handler)
             self._log_handler.close()
             self._log_handler = None
-        self._process_log_queue()
+        self._poll_log_queue()
         super().destroy()
 
 
