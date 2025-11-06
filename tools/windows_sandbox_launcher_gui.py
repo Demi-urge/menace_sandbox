@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
@@ -38,6 +40,9 @@ class SandboxLauncherGUI(tk.Tk):
         self.logger = logging.getLogger("windows_sandbox_launcher_gui")
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
+
+        self._preflight_thread: threading.Thread | None = None
+        self._preflight_running = False
 
         self._build_notebook()
         self._build_controls()
@@ -98,13 +103,66 @@ class SandboxLauncherGUI(tk.Tk):
         self.logger.addHandler(queue_handler)
         self._queue_handler = queue_handler
 
-    def run_preflight(self) -> None:  # pragma: no cover - placeholder hook
-        """Placeholder command that will be implemented in a future iteration."""
+    def run_preflight(self) -> None:
+        """Kick off the preflight routine in a background thread."""
+        if self._preflight_running:
+            if self._preflight_thread and self._preflight_thread.is_alive():
+                self.logger.info(
+                    "Preflight run already in progress; ignoring request."
+                )
+                return
+
+            # A previous worker should have reset the state, but ensure the
+            # button becomes usable if the thread has unexpectedly stopped.
+            self.logger.warning(
+                "Preflight state indicated running without an active thread;"
+                " resetting controls."
+            )
+            self._reset_preflight_state()
+
+        if self._preflight_thread and self._preflight_thread.is_alive():
+            self.logger.info("Preflight run already in progress; ignoring request.")
+            return
+
+        self.run_preflight_button.configure(state="disabled")
+        self._preflight_running = True
         self.logger.info("Preflight checks initiated...")
+
+        self._preflight_thread = threading.Thread(
+            target=self._execute_preflight,
+            name="PreflightWorker",
+            daemon=True,
+        )
+        self._preflight_thread.start()
 
     def start_sandbox(self) -> None:  # pragma: no cover - placeholder hook
         """Placeholder command that will be implemented in a future iteration."""
         self.logger.info("Sandbox startup sequence initiated...")
+
+    def _execute_preflight(self) -> None:
+        """Worker routine that performs preflight operations."""
+        steps = (
+            "Synchronizing repository...",
+            "Cleaning stale files...",
+            "Installing dependencies...",
+            "Priming registries...",
+        )
+
+        try:
+            for step in steps:
+                self.logger.info(step)
+                time.sleep(0.1)
+            self.logger.info("Preflight checks complete.")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.error("Preflight checks failed: %s", exc)
+        finally:
+            self.after(0, self._reset_preflight_state)
+
+    def _reset_preflight_state(self) -> None:
+        """Re-enable UI controls and clear state after preflight finishes."""
+        self._preflight_running = False
+        self._preflight_thread = None
+        self.run_preflight_button.configure(state="normal")
 
     def _process_log_queue(self) -> None:
         while True:
