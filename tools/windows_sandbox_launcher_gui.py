@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import auto_env_setup
 import bootstrap_self_coding
@@ -292,9 +292,15 @@ class SandboxLauncherGUI(tk.Tk):
         self.decision_queue: "queue.Queue[tuple[str, str, Optional[dict[str, object]]]]" = queue.Queue()
         self.debug_queue: "queue.Queue[str]" = queue.Queue()
         self.logger = _TkStatusLogger(self)
+        self._pause_dialog_open = False
+        self._pending_retry = False
+        self._last_decision_payload: Optional[
+            tuple[str, str, Optional[dict[str, object]]]
+        ] = None
 
         self._configure_window()
         self._build_layout()
+        self.after(200, self._poll_runtime_events)
 
     def _configure_window(self) -> None:
         """Configure the top-level window attributes."""
@@ -333,6 +339,7 @@ class SandboxLauncherGUI(tk.Tk):
         frame = ttk.Frame(parent)
         frame.columnconfigure(0, weight=1)
         frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(2, weight=1)
 
         self.preflight_button = ttk.Button(
             frame,
@@ -343,6 +350,14 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.start_button = ttk.Button(frame, text="Start Sandbox", state="disabled")
         self.start_button.grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        self.retry_button = ttk.Button(
+            frame,
+            text="Retry Step",
+            command=self._on_retry_step,
+            state="disabled",
+        )
+        self.retry_button.grid(row=0, column=2, padx=(6, 0), sticky="ew")
 
         return frame
 
@@ -376,6 +391,9 @@ class SandboxLauncherGUI(tk.Tk):
         self.abort_event.clear()
         self._drain_queue(self.decision_queue)
         self._drain_queue(self.debug_queue)
+        self._pending_retry = False
+        self._last_decision_payload = None
+        self.retry_button.configure(state="disabled")
 
     def _run_preflight_worker(self) -> None:
         """Execute ``run_full_preflight`` in the background."""
@@ -443,4 +461,83 @@ class SandboxLauncherGUI(tk.Tk):
             self.start_button.configure(state="disabled")
         else:
             self.preflight_button.configure(state="normal")
+
+    def _poll_runtime_events(self) -> None:
+        """Poll runtime coordination primitives for UI updates."""
+
+        if self.pause_event.is_set():
+            self.retry_button.configure(state="normal")
+            if not self._pause_dialog_open:
+                payload = self._dequeue_decision_payload()
+                if payload:
+                    self._show_pause_prompt(payload)
+        else:
+            if not self._pending_retry:
+                self.retry_button.configure(state="disabled")
+            self._pause_dialog_open = False
+
+        self.after(200, self._poll_runtime_events)
+
+    def _dequeue_decision_payload(
+        self,
+    ) -> Optional[tuple[str, str, Optional[dict[str, object]]]]:
+        """Return the most recent decision payload, if any."""
+
+        try:
+            payload = self.decision_queue.get_nowait()
+        except queue.Empty:
+            payload = self._last_decision_payload
+
+        if payload:
+            self._last_decision_payload = payload
+        return payload
+
+    def _show_pause_prompt(
+        self, payload: tuple[str, str, Optional[dict[str, object]]]
+    ) -> None:
+        """Display an interactive prompt for handling a paused preflight."""
+
+        title, message, context = payload
+        context = context or {}
+        self._pause_dialog_open = True
+        prompt_message = f"{message}\n\nRetry the failed step now?"
+        decision = messagebox.askyesno(title=title, message=prompt_message)
+        if decision:
+            step_name = context.get("step", "unknown step")
+            self.logger.info("Retrying preflight step: %s", step_name)
+            self._resume_preflight()
+        else:
+            self.logger.info("Aborting preflight after failure.")
+            self.abort_event.set()
+            self.retry_button.configure(state="disabled")
+        self._pause_dialog_open = False
+
+    def _on_retry_step(self) -> None:
+        """Retry the failed preflight step after user intervention."""
+
+        if not self.pause_event.is_set() and not self._last_decision_payload:
+            return
+        self.logger.info("Retrying failed preflight step…")
+        self._resume_preflight()
+
+    def _resume_preflight(self) -> None:
+        """Clear pause state and schedule a fresh preflight run."""
+
+        self.pause_event.clear()
+        self._pending_retry = True
+        self.retry_button.configure(state="disabled")
+        self.after(200, self._attempt_retry_start)
+
+    def _attempt_retry_start(self) -> None:
+        """Start a retry once the prior preflight thread has exited."""
+
+        if self._preflight_thread and self._preflight_thread.is_alive():
+            self.after(200, self._attempt_retry_start)
+            return
+
+        if not self._pending_retry:
+            return
+
+        self._pending_retry = False
+        self._on_run_preflight()
 
