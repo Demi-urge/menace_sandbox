@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import importlib
 import logging
 import os
 import queue
@@ -17,7 +18,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Sequence
 
-from dependency_health import DependencyMode
+from dependency_health import DependencyMode, resolve_dependency_mode
 
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,27 @@ class SandboxLauncherGUI(tk.Tk):
         self._status_text.insert(tk.END, f"{message}\n", (tag,))
         self._status_text.see(tk.END)
         self._status_text.configure(state=tk.DISABLED)
+ 
+    def _enable_start_button(self) -> None:
+        """Enable the Start Sandbox button on the GUI thread."""
+
+        self._start_sandbox_btn.configure(state=tk.NORMAL)
+
+    def _show_health_warning(self, failures: Sequence[str]) -> None:
+        """Display a warning dialog summarising sandbox health issues."""
+
+        if not failures:
+            details = "No additional details were provided."
+        else:
+            bullet_list = "\n".join(f"• {item}" for item in failures)
+            details = f"{bullet_list}"
+
+        messagebox.showwarning(
+            "Sandbox health issues detected",
+            "The sandbox health check reported problems.\n\n"
+            "Please address the following before launching:\n\n"
+            f"{details}",
+        )
     # endregion public API
 
     # region callbacks
@@ -203,6 +225,8 @@ class SandboxLauncherGUI(tk.Tk):
         """Run the Phase 5 preflight orchestration on a worker thread."""
 
         success = False
+        health_snapshot: dict | None = None
+        health_failures: list[str] = []
         completion_message = "Preflight aborted."
         completion_tag = "warning"
 
@@ -213,7 +237,7 @@ class SandboxLauncherGUI(tk.Tk):
             if runner is None:
                 raise RuntimeError("Preflight runner is unavailable")
 
-            runner(
+            health_snapshot = runner(
                 logger=logger,
                 pause_event=self.pause_event,
                 decision_queue=self.decision_queue,
@@ -226,9 +250,35 @@ class SandboxLauncherGUI(tk.Tk):
                 completion_message = "Preflight aborted."
                 completion_tag = "warning"
             else:
-                success = True
-                completion_message = "Preflight completed successfully."
-                completion_tag = "success"
+                dependency_mode = resolve_dependency_mode()
+
+                if health_snapshot is None:
+                    healthy = False
+                    health_failures = [
+                        "Sandbox health check did not return a status snapshot."
+                    ]
+                else:
+                    healthy, health_failures = _evaluate_health_snapshot(
+                        health_snapshot,
+                        dependency_mode=dependency_mode,
+                    )
+
+                if healthy:
+                    success = True
+                    completion_message = (
+                        "Preflight completed successfully. Sandbox is healthy."
+                    )
+                    completion_tag = "success"
+                    logger.info("Sandbox health check passed under %s mode.", dependency_mode)
+                    self.after(0, self._enable_start_button)
+                else:
+                    completion_message = (
+                        "Preflight completed with sandbox health warnings."
+                    )
+                    completion_tag = "warning"
+                    summary = "; ".join(health_failures) if health_failures else "unknown issues"
+                    logger.warning("Sandbox health check reported issues: %s", summary)
+                    self.after(0, self._show_health_warning, health_failures)
         except Exception:  # pragma: no cover - surfaced via logging
             logger.exception("Sandbox preflight failed.")
             completion_message = "Preflight failed. Check logs for details."
@@ -331,12 +381,12 @@ class _PreflightWorker:
         self._debug_queue = debug_queue
         self._steps = steps
 
-    def run(self) -> None:
+    def run(self) -> dict | None:
         """Execute the configured preflight steps in sequence."""
 
-        self._execute_preflight()
+        return self._execute_preflight()
 
-    def _execute_preflight(self) -> None:
+    def _execute_preflight(self) -> dict | None:
         """Sequentially execute steps while respecting abort semantics."""
 
         for step in self._steps:
@@ -367,6 +417,31 @@ class _PreflightWorker:
             if self._abort_event.is_set():
                 self._logger.info("Preflight aborted after %s", step.label)
                 break
+
+        if self._abort_event.is_set():
+            return None
+
+        health_snapshot: dict | None = None
+
+        def _capture_health() -> None:
+            nonlocal health_snapshot
+
+            module = importlib.import_module("sandbox_runner.bootstrap")
+            health_probe = getattr(module, "sandbox_health", None)
+            if not callable(health_probe):
+                raise RuntimeError("sandbox_health() is not available")
+            health_snapshot = health_probe()
+
+        should_continue = self._run_step(
+            "Evaluating sandbox health",
+            "Sandbox health check failed",
+            "Capturing the sandbox health snapshot failed.",
+            _capture_health,
+        )
+        if not should_continue:
+            return None
+
+        return health_snapshot
 
     def _run_step(
         self,
@@ -454,7 +529,7 @@ def run_full_preflight(
         debug_queue=debug_queue,
         steps=_DEFAULT_STEPS,
     )
-    worker.run()
+    return worker.run()
 
 
 def _git_sync(logger: logging.Logger) -> None:
