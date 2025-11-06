@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import subprocess
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, TextIO
@@ -23,6 +24,12 @@ from tkinter import ttk
 from dependency_health import DependencyMode, resolve_dependency_mode
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
+import auto_env_setup
+import bootstrap_self_coding
+from neurosales.scripts import setup_heavy_deps
+import prime_registry
+from vector_service.vectorizer import SharedVectorService
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_FILE_PATH = REPO_ROOT / "menace_gui_logs.txt"
@@ -30,6 +37,18 @@ LOG_FILE_ENV = "MENACE_GUI_LOG_PATH"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def _path_exists(candidate: object) -> bool:
+    """Best-effort existence check for :func:`_purge_stale_files`."""
+
+    exists = getattr(candidate, "exists", None)
+    if callable(exists):
+        try:
+            return bool(exists())
+        except OSError:
+            return False
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -889,37 +908,130 @@ def _collect_sandbox_health(
 def _git_sync(logger: logging.Logger) -> None:
     logger.info("Ensuring repository is synchronised with origin.")
 
+    subprocess.run(["git", "fetch", "origin"], check=True, cwd=REPO_ROOT)
+    subprocess.run(
+        ["git", "reset", "--hard", "origin/main"], check=True, cwd=REPO_ROOT
+    )
+
+    logger.info("Repository reset to origin/main.")
+
 
 def _purge_stale_files(logger: logging.Logger) -> None:
     logger.info("Purging stale files and caches.")
+
+    iter_cleanup = getattr(bootstrap_self_coding, "_iter_cleanup_targets", None)
+    tracked_candidates: tuple[object, ...] = ()
+    if callable(iter_cleanup):
+        tracked_candidates = tuple(iter_cleanup())
+
+    before_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
+
+    bootstrap_self_coding.purge_stale_files()
+
+    after_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
+    removed = max(before_count - after_count, 0)
+
+    logger.info("Purged %d stale sandbox artefacts.", removed)
 
 
 def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
     logger.info("Removing stale lock files and model caches.")
 
+    removed_files = 0
+    removed_directories = 0
+
+    def _remove_path(path: Path) -> None:
+        nonlocal removed_files, removed_directories
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+                removed_directories += 1
+            else:
+                path.unlink()
+                removed_files += 1
+        except FileNotFoundError:
+            return
+
+    sandbox_lock_dir = REPO_ROOT / "sandbox_data"
+    for candidate in sandbox_lock_dir.glob("*.lock"):
+        _remove_path(candidate)
+
+    hf_cache = Path.home() / ".cache" / "huggingface" / "transformers"
+    for candidate in hf_cache.glob("*.lock"):
+        _remove_path(candidate)
+
+    incomplete_patterns = ("**/*.incomplete", "**/*.tmp", "**/*lock*")
+    for pattern in incomplete_patterns:
+        for candidate in hf_cache.glob(pattern):
+            if pattern == "**/*lock*" and not getattr(candidate, "is_dir", lambda: False)():
+                # Avoid double-counting regular lock files handled earlier.
+                continue
+            _remove_path(candidate)
+
+    logger.info(
+        "Removed %d stale files and %d stale directories.",
+        removed_files,
+        removed_directories,
+    )
+
 
 def _install_heavy_dependencies(logger: logging.Logger) -> None:
     logger.info("Installing heavy dependencies if required.")
+
+    setup_heavy_deps.main(download_only=True)
+
+    logger.info("Heavy dependency setup completed in download-only mode.")
 
 
 def _warm_shared_vector_service(logger: logging.Logger) -> None:
     logger.info("Warming the shared vector service cache.")
 
+    SharedVectorService()
+
+    logger.info("Shared vector service initialised.")
+
 
 def _ensure_env_flags(logger: logging.Logger) -> None:
     logger.info("Ensuring environment flags are set for sandbox run.")
+
+    auto_env_setup.ensure_env()
+    os.environ["SANDBOX_ENABLE_BOOTSTRAP"] = "1"
+    os.environ["SANDBOX_ENABLE_SELF_CODING"] = "1"
+
+    logger.info("Sandbox bootstrap and self-coding flags enabled.")
 
 
 def _prime_registry(logger: logging.Logger) -> None:
     logger.info("Priming the registry for sandbox resources.")
 
+    prime_registry.main()
+
+    logger.info("Registry primed successfully.")
+
 
 def _install_python_dependencies(logger: logging.Logger) -> None:
     logger.info("Ensuring Python dependencies are installed.")
 
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-e", "."],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "jsonschema"],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    logger.info("Python dependency installation complete.")
+
 
 def _bootstrap_self_coding(logger: logging.Logger) -> None:
     logger.info("Bootstrapping self-coding components.")
+
+    bootstrap_self_coding.bootstrap_self_coding("AICounterBot")
+
+    logger.info("Self-coding bootstrap invoked for AICounterBot.")
 
 
 _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
