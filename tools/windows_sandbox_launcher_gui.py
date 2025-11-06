@@ -180,8 +180,23 @@ class SandboxLauncherGUI(tk.Tk):
         log_container.columnconfigure(0, weight=1)
         log_container.rowconfigure(0, weight=1)
 
-        text_background = "#1e1e1e"
-        text_foreground = "#ffffff"
+        text_background = "#101010"
+        text_foreground = "#f0f0f0"
+
+        scrollbar_style = "Dark.Vertical.TScrollbar"
+        self.style.configure(
+            scrollbar_style,
+            background=text_background,
+            troughcolor=text_background,
+            bordercolor=text_background,
+            lightcolor=text_background,
+            darkcolor=text_background,
+        )
+        self.style.map(
+            scrollbar_style,
+            background=[("active", "#202020"), ("!active", text_background)],
+            troughcolor=[("active", "#202020"), ("!active", text_background)],
+        )
 
         self.log_text = tk.Text(
             log_container,
@@ -193,7 +208,12 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
-        scrollbar = ttk.Scrollbar(log_container, orient="vertical", command=self.log_text.yview)
+        scrollbar = ttk.Scrollbar(
+            log_container,
+            orient="vertical",
+            command=self.log_text.yview,
+            style=scrollbar_style,
+        )
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
@@ -218,7 +238,10 @@ class SandboxLauncherGUI(tk.Tk):
         self.debug_text.grid(row=0, column=0, sticky="nsew")
 
         debug_scrollbar = ttk.Scrollbar(
-            self.debug_container, orient="vertical", command=self.debug_text.yview
+            self.debug_container,
+            orient="vertical",
+            command=self.debug_text.yview,
+            style=scrollbar_style,
         )
         debug_scrollbar.grid(row=0, column=1, sticky="ns")
         self.debug_text.configure(yscrollcommand=debug_scrollbar.set)
@@ -274,12 +297,12 @@ class SandboxLauncherGUI(tk.Tk):
         bold_font = default_font.copy()
         bold_font.configure(weight="bold")
 
-        self.log_text.tag_configure("info", foreground="#ffffff")
+        self.log_text.tag_configure("info", foreground="#f5f5f5")
         self.log_text.tag_configure(
             "warning", foreground="#ffeb3b", font=bold_font
         )
         self.log_text.tag_configure(
-            "error", foreground="#f44336", font=bold_font
+            "error", foreground="#ff5252", font=bold_font
         )
 
     def _toggle_debug_panel(self) -> None:  # pragma: no cover - UI interaction
