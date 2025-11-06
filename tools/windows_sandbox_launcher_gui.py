@@ -3,13 +3,37 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import shutil
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 import tkinter.messagebox as messagebox
+from pathlib import Path
 from tkinter import ttk
+from typing import Callable, Iterable
+
+from menace_sandbox.auto_env_setup import ensure_env
+from menace_sandbox.bootstrap_self_coding import (
+    bootstrap_self_coding,
+    purge_stale_files,
+)
+from menace_sandbox.lock_utils import is_lock_stale
+from menace_sandbox.vector_service.vectorizer import SharedVectorService
+from neurosales.scripts import setup_heavy_deps
+from prime_registry import main as prime_registry_main
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HF_TRANSFORMERS_CACHE = Path.home() / ".cache" / "huggingface" / "transformers"
+try:
+    LOCK_STALE_TIMEOUT = max(300, int(os.getenv("SANDBOX_LOCK_TIMEOUT", "300")))
+except ValueError:
+    LOCK_STALE_TIMEOUT = 300
 
 
 class TextWidgetQueueHandler(logging.Handler):
@@ -46,7 +70,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_running = False
         self.pause_event = threading.Event()
         self.abort_event = threading.Event()
-        self.decision_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.decision_queue: "queue.Queue[tuple[str, str | None, dict[str, object] | None]]" = queue.Queue()
 
         self._build_notebook()
         self._build_controls()
@@ -152,45 +176,265 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _execute_preflight(self) -> None:
         """Worker routine that performs preflight operations."""
-        steps = (
-            ("Synchronizing repository", "Synchronizing repository..."),
-            ("Cleaning stale files", "Cleaning stale files..."),
-            ("Installing dependencies", "Installing dependencies..."),
-            ("Priming registries", "Priming registries..."),
+
+        steps: tuple[tuple[str, str, str, Callable[[], None]], ...] = (
+            (
+                "Synchronizing repository",
+                "Synchronizing repository...",
+                "Repository synchronized successfully.",
+                self._git_sync,
+            ),
+            (
+                "Cleaning stale files",
+                "Purging stale files and caches...",
+                "Stale files removed.",
+                self._cleanup_stale_files,
+            ),
+            (
+                "Installing heavy dependencies",
+                "Fetching heavy dependencies...",
+                "Heavy dependencies ready.",
+                self._install_heavy_dependencies,
+            ),
+            (
+                "Warming vector service",
+                "Priming shared vector service caches...",
+                "Vector service warmed.",
+                self._warm_shared_vector_service,
+            ),
+            (
+                "Ensuring environment",
+                "Ensuring environment configuration...",
+                "Environment prepared.",
+                self._ensure_env_flags,
+            ),
+            (
+                "Priming registry",
+                "Priming bot registry...",
+                "Bot registry primed.",
+                self._prime_registry,
+            ),
+            (
+                "Installing Python dependencies",
+                "Installing Python dependencies...",
+                "Python dependencies installed.",
+                self._install_python_dependencies,
+            ),
+            (
+                "Bootstrapping self-coding",
+                "Bootstrapping self-coding services...",
+                "Self-coding bootstrap complete.",
+                self._bootstrap_self_coding,
+            ),
         )
 
         try:
-            for title, log_message in steps:
+            for title, start_message, success_message, handler in steps:
                 if self.abort_event.is_set():
                     self.logger.info("Preflight aborted before '%s'.", title)
                     return
 
-                self.logger.info(log_message)
+                self.logger.info(start_message)
                 try:
-                    self._execute_step(title)
+                    handler()
                 except Exception as exc:  # pragma: no cover - requires GUI interaction
-                    self.logger.error("%s failed: %s", title, exc)
+                    self.logger.exception("%s failed", title)
+                    failure_message = f"{title} failed: {exc}"
+                    context = {
+                        "step": getattr(handler, "__name__", title),
+                        "exception": str(exc),
+                    }
                     self.pause_event.set()
-                    self.decision_queue.put((title, str(exc)))
-                    self._update_pause_state(title, str(exc))
-
-                    while self.pause_event.is_set() and not self.abort_event.is_set():
-                        time.sleep(0.05)
-
-                    if self.abort_event.is_set():
-                        self.logger.info("Preflight aborted after '%s'.", title)
+                    self.decision_queue.put((title, failure_message, context))
+                    self._update_pause_state(title, failure_message, context)
+                    if not self._await_resume(title):
                         return
                     continue
+
+                self.logger.info(success_message)
+                if not self._await_resume(title):
+                    return
             self.logger.info("Preflight checks complete.")
         except Exception as exc:  # pragma: no cover - defensive logging
-            self.logger.error("Preflight checks failed: %s", exc)
+            self.logger.exception("Preflight checks failed: %s", exc)
         finally:
             self.after(0, self._reset_preflight_state)
 
-    def _execute_step(self, title: str) -> None:
-        """Placeholder implementation for an individual preflight step."""
-        _ = title  # Placeholder for step-specific handling
-        time.sleep(0.1)
+    def _await_resume(self, title: str) -> bool:
+        """Wait for the pause event to clear or abort if requested."""
+
+        while self.pause_event.is_set() and not self.abort_event.is_set():
+            time.sleep(0.05)
+        if self.abort_event.is_set():
+            self.logger.info("Preflight aborted during '%s'.", title)
+            return False
+        return True
+
+    def _git_sync(self) -> None:
+        """Synchronise the repository with origin/main."""
+
+        commands = (
+            ["git", "fetch", "origin"],
+            ["git", "reset", "--hard", "origin/main"],
+        )
+        for command in commands:
+            result = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self._log_subprocess_result(command, result)
+
+    def _cleanup_stale_files(self) -> None:
+        """Remove stale lock files and model cache directories."""
+
+        purge_stale_files()
+        removed_files: list[Path] = []
+        for target in self._iter_lock_files():
+            if self._lock_is_stale(target):
+                try:
+                    target.unlink()
+                    removed_files.append(target)
+                except FileNotFoundError:
+                    continue
+        for removed in removed_files:
+            self.logger.info("Removed stale lock file: %s", removed)
+
+        removed_dirs: list[Path] = []
+        for directory in self._iter_stale_model_directories():
+            try:
+                shutil.rmtree(directory)
+                removed_dirs.append(directory)
+            except FileNotFoundError:
+                continue
+        for directory in removed_dirs:
+            self.logger.info("Removed stale model cache: %s", directory)
+
+    def _iter_lock_files(self) -> Iterable[Path]:
+        sandbox_lock_dir = REPO_ROOT / "sandbox_data"
+        for path in sandbox_lock_dir.glob("*.lock"):
+            if path.is_file():
+                yield path
+
+        if HF_TRANSFORMERS_CACHE.exists():
+            for path in HF_TRANSFORMERS_CACHE.glob("*.lock"):
+                if path.is_file():
+                    yield path
+
+    def _lock_is_stale(self, path: Path) -> bool:
+        try:
+            if is_lock_stale(path.as_posix(), timeout=LOCK_STALE_TIMEOUT):
+                return True
+        except Exception:  # pragma: no cover - best effort fall back
+            pass
+        try:
+            return time.time() - path.stat().st_mtime > LOCK_STALE_TIMEOUT
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+
+    def _iter_stale_model_directories(self) -> Iterable[Path]:
+        if not HF_TRANSFORMERS_CACHE.exists():
+            return
+
+        cutoff = time.time() - 3600
+
+        def maybe_collect(path: Path) -> Iterable[Path]:
+            try:
+                if not path.is_dir():
+                    return []
+            except OSError:
+                return []
+
+            name = path.name.lower()
+            if name.endswith((".partial", ".incomplete", ".tmp")):
+                return [path]
+
+            try:
+                entries = list(path.iterdir())
+            except FileNotFoundError:
+                return []
+            except OSError:
+                return []
+
+            lock_files = [entry for entry in entries if entry.suffix == ".lock"]
+            if lock_files and all(self._lock_is_stale(lock) for lock in lock_files):
+                return [path]
+
+            if not entries:
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        return [path]
+                except OSError:
+                    return [path]
+
+            return []
+
+        downloads_dir = HF_TRANSFORMERS_CACHE / "downloads"
+        if downloads_dir.exists():
+            for candidate in downloads_dir.iterdir():
+                yield from maybe_collect(candidate)
+
+        for model_dir in HF_TRANSFORMERS_CACHE.glob("models--*"):
+            snapshots = model_dir / "snapshots"
+            if snapshots.exists():
+                for snapshot in snapshots.iterdir():
+                    yield from maybe_collect(snapshot)
+            refs_dir = model_dir / "refs"
+            if refs_dir.exists():
+                for ref in refs_dir.iterdir():
+                    yield from maybe_collect(ref)
+
+    def _install_heavy_dependencies(self) -> None:
+        setup_heavy_deps.main(download_only=True)
+
+    def _warm_shared_vector_service(self) -> None:
+        SharedVectorService()
+
+    def _ensure_env_flags(self) -> None:
+        ensure_env()
+        os.environ["SANDBOX_ENABLE_BOOTSTRAP"] = "1"
+        os.environ["SANDBOX_ENABLE_SELF_CODING"] = "1"
+
+    def _prime_registry(self) -> None:
+        prime_registry_main()
+
+    def _install_python_dependencies(self) -> None:
+        commands = (
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                str(REPO_ROOT),
+            ],
+            [sys.executable, "-m", "pip", "install", "jsonschema"],
+        )
+        for command in commands:
+            result = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self._log_subprocess_result(command, result)
+
+    def _bootstrap_self_coding(self) -> None:
+        bootstrap_self_coding("AICounterBot")
+
+    def _log_subprocess_result(
+        self, command: Iterable[str], result: subprocess.CompletedProcess[str]
+    ) -> None:
+        cmd_display = " ".join(command)
+        if result.stdout:
+            self.logger.info("%s stdout:\n%s", cmd_display, result.stdout.strip())
+        if result.stderr:
+            self.logger.info("%s stderr:\n%s", cmd_display, result.stderr.strip())
 
     def _reset_preflight_state(self) -> None:
         """Re-enable UI controls and clear state after preflight finishes."""
@@ -219,11 +463,29 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _handle_preflight_pause(self) -> None:
         try:
-            title, message = self.decision_queue.get_nowait()
+            payload = self.decision_queue.get_nowait()
         except queue.Empty:
             return
 
-        prompt = f"{title} failed. Continue preflight?\n\nDetails: {message}"
+        title: str
+        message: str | None
+        context: dict[str, object] | None
+        if not isinstance(payload, tuple):
+            return
+        if len(payload) == 3:
+            title, message, context = payload
+        else:
+            title = payload[0]
+            message = payload[1] if len(payload) > 1 else None
+            context = None
+
+        detail_lines = [message or "No additional details provided."]
+        if context and context.get("exception"):
+            detail_lines.append(str(context["exception"]))
+        prompt = (
+            f"{title} failed. Continue preflight?\n\nDetails: "
+            + "\n".join(detail_lines)
+        )
         user_choice = messagebox.askyesno("Preflight paused", prompt)
         if user_choice:
             self.logger.info("User opted to continue after '%s'.", title)
@@ -233,11 +495,16 @@ class SandboxLauncherGUI(tk.Tk):
             self.abort_event.set()
             self.pause_event.clear()
 
-    def _update_pause_state(self, title: str, message: str) -> None:
+    def _update_pause_state(
+        self, title: str, message: str, context: dict[str, object] | None = None
+    ) -> None:
+        details = message or "No additional details provided."
+        if context and context.get("exception"):
+            details = f"{details}\nException: {context['exception']}"
         self.after(
             0,
             lambda: self._append_status(
-                f"Preflight paused: {title} encountered an error: {message}\n",
+                f"Preflight paused: {title} encountered an error. {details}\n",
                 "warning",
             ),
         )
