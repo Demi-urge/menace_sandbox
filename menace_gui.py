@@ -43,6 +43,7 @@ class MenaceGUI(tk.Tk):
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         self.context_builder = context_builder
         self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._max_log_lines = 1000
         self._log_file_path = Path(__file__).with_name("menace_gui_logs.txt")
         try:
             self.context_builder.refresh_db_weights()
@@ -146,8 +147,13 @@ class MenaceGUI(tk.Tk):
         self.log_text.tag_configure(
             "error", foreground="red", font=("TkDefaultFont", 10, "bold")
         )
-        handler = _TkHandler(self._log_queue)
-        logging.getLogger().addHandler(handler)
+        handler = _TkTextHandler(self._log_queue)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s — %(levelname)s — %(message)s")
+        )
+        self._logger = logging.getLogger(__name__)
+        self._logger.addHandler(handler)
+        self._logger.setLevel(logging.INFO)
         self.after(100, self._poll_log_queue)
 
     def _poll_log_queue(self) -> None:
@@ -164,6 +170,7 @@ class MenaceGUI(tk.Tk):
             self.log_text.configure(state="normal")
             for tag, message in drained:
                 self.log_text.insert(tk.END, message + "\n", tag)
+            self._trim_log()
             self.log_text.configure(state="disabled")
             self.log_text.see(tk.END)
             try:
@@ -174,6 +181,13 @@ class MenaceGUI(tk.Tk):
                 pass
 
         self.after(100, self._poll_log_queue)
+
+    def _trim_log(self) -> None:
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines <= self._max_log_lines:
+            return
+        excess = lines - self._max_log_lines
+        self.log_text.delete("1.0", f"{excess + 1}.0")
 
     # Statistics -------------------------------------------------------
     def _init_stats(self) -> None:
@@ -345,22 +359,31 @@ class MenaceGUI(tk.Tk):
         ]
 
 
-class _TkHandler(logging.Handler):
-    """Log handler that writes records into a queue for Tk processing."""
+class _TkTextHandler(logging.Handler):
+    """Queue-based handler that hands Tk log rendering off to the UI thread."""
+
+    _LEVEL_TAGS: tuple[tuple[int, str], ...] = (
+        (logging.ERROR, "error"),
+        (logging.WARNING, "warning"),
+    )
 
     def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
         super().__init__()
         self._queue = log_queue
 
     def emit(self, record: logging.LogRecord) -> None:
-        msg = self.format(record)
-        if record.levelno >= logging.ERROR:
-            tag = "error"
-        elif record.levelno >= logging.WARNING:
-            tag = "warning"
-        else:
-            tag = "info"
-        self._queue.put((tag, msg))
+        try:
+            message = self.format(record)
+        except Exception:
+            self.handleError(record)
+            return
+
+        tag = "info"
+        for level, mapped_tag in self._LEVEL_TAGS:
+            if record.levelno >= level:
+                tag = mapped_tag
+                break
+        self._queue.put((tag, message))
 
 
 __all__ = ["MenaceGUI"]
