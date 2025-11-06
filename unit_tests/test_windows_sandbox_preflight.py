@@ -93,6 +93,8 @@ class PreflightWorkerTests(unittest.TestCase):
         self.pause_event = threading.Event()
         self.decision_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self.abort_event = threading.Event()
+        self.retry_event = threading.Event()
+        self.debug_queue: "queue.Queue[str]" = queue.Queue()
 
     def _patch_step(self, name: str, calls: list[str], *, side_effect=None):
         def _runner(_logger):
@@ -125,6 +127,8 @@ class PreflightWorkerTests(unittest.TestCase):
                 pause_event=self.pause_event,
                 decision_queue=self.decision_queue,
                 abort_event=self.abort_event,
+                retry_event=self.retry_event,
+                debug_queue=self.debug_queue,
             )
 
         self.assertEqual(
@@ -173,6 +177,8 @@ class PreflightWorkerTests(unittest.TestCase):
                     "pause_event": self.pause_event,
                     "decision_queue": self.decision_queue,
                     "abort_event": self.abort_event,
+                    "retry_event": self.retry_event,
+                    "debug_queue": self.debug_queue,
                 },
                 daemon=True,
             )
@@ -207,6 +213,72 @@ class PreflightWorkerTests(unittest.TestCase):
             ],
         )
         self.assertFalse(self.abort_event.is_set())
+        self.assertFalse(self.debug_queue.empty())
+        self.assertIn("lock cleanup failed", self.debug_queue.get_nowait())
+
+    def test_retry_event_retries_failed_step(self) -> None:
+        calls: list[str] = []
+        attempts = {"count": 0}
+
+        patchers = [
+            self._patch_step("_git_fetch_and_reset", calls),
+            self._patch_step("_purge_stale_state", calls),
+            mock.patch.object(
+                gui,
+                "_remove_lock_artifacts",
+                side_effect=lambda _logger: self._retryable_step(
+                    calls, attempts
+                ),
+            ),
+            self._patch_step("_prefetch_heavy_dependencies", calls),
+            self._patch_step("_warm_shared_vector_service", calls),
+            self._patch_step("_ensure_environment", calls),
+            self._patch_step("_prime_self_coding_registry", calls),
+            self._patch_step("_run_pip_commands", calls),
+            self._patch_step("_bootstrap_ai_counter_bot", calls),
+        ]
+
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+
+            thread = threading.Thread(
+                target=gui.run_full_preflight,
+                kwargs={
+                    "logger": self.logger,
+                    "pause_event": self.pause_event,
+                    "decision_queue": self.decision_queue,
+                    "abort_event": self.abort_event,
+                    "retry_event": self.retry_event,
+                    "debug_queue": self.debug_queue,
+                },
+                daemon=True,
+            )
+            thread.start()
+
+            deadline = time.time() + 2
+            while not self.pause_event.is_set() and time.time() < deadline:
+                time.sleep(0.01)
+
+            self.assertTrue(self.pause_event.is_set())
+            self.assertFalse(self.decision_queue.empty())
+
+            self.retry_event.set()
+
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(calls.count("_remove_lock_artifacts"), 2)
+        self.assertFalse(self.abort_event.is_set())
+        self.assertFalse(self.pause_event.is_set())
+
+    def _retryable_step(
+        self, calls: list[str], attempts: dict[str, int]
+    ) -> None:
+        calls.append("_remove_lock_artifacts")
+        if attempts["count"] == 0:
+            attempts["count"] += 1
+            raise RuntimeError("retry me")
 
     def test_abort_event_short_circuits_execution(self) -> None:
         calls: list[str] = []
@@ -231,6 +303,8 @@ class PreflightWorkerTests(unittest.TestCase):
                     "pause_event": self.pause_event,
                     "decision_queue": self.decision_queue,
                     "abort_event": self.abort_event,
+                    "retry_event": self.retry_event,
+                    "debug_queue": self.debug_queue,
                 },
                 daemon=True,
             )
