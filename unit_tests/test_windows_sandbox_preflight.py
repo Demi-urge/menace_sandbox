@@ -35,6 +35,23 @@ prime_stub = types.ModuleType("prime_registry")
 prime_stub.main = lambda: None
 sys.modules.setdefault("prime_registry", prime_stub)
 
+sandbox_runner_pkg = sys.modules.setdefault(
+    "sandbox_runner", types.ModuleType("sandbox_runner")
+)
+
+def _healthy_sandbox_snapshot() -> dict:
+    return {
+        "databases_accessible": True,
+        "database_errors": {},
+        "dependency_health": {"missing": []},
+    }
+
+
+bootstrap_module = types.ModuleType("sandbox_runner.bootstrap")
+bootstrap_module.sandbox_health = staticmethod(_healthy_sandbox_snapshot)
+setattr(sandbox_runner_pkg, "bootstrap", bootstrap_module)
+sys.modules.setdefault("sandbox_runner.bootstrap", bootstrap_module)
+
 
 class _StubSharedVectorService:
     def __init__(self, *args, **kwargs) -> None:  # pragma: no cover - trivial
@@ -116,12 +133,20 @@ class PreflightWorkerTests(unittest.TestCase):
             self._patch_step("_prime_registry", calls),
             self._patch_step("_install_dependencies", calls),
             self._patch_step("_bootstrap_self_coding", calls),
+            mock.patch(
+                "sandbox_runner.bootstrap.sandbox_health",
+                side_effect=lambda: calls.append("sandbox_health")
+                or {
+                    "databases_accessible": True,
+                    "dependency_health": {"missing": []},
+                },
+            ),
         ]
 
         with contextlib.ExitStack() as stack:
             for patcher in patchers:
                 stack.enter_context(patcher)
-            gui.run_full_preflight(
+            result = gui.run_full_preflight(
                 logger=self.logger,
                 pause_event=self.pause_event,
                 decision_queue=self.decision_queue,
@@ -141,8 +166,10 @@ class PreflightWorkerTests(unittest.TestCase):
                 "_prime_registry",
                 "_install_dependencies",
                 "_bootstrap_self_coding",
+                "sandbox_health",
             ],
         )
+        self.assertIsInstance(result, dict)
         self.assertFalse(self.pause_event.is_set())
         self.assertTrue(self.decision_queue.empty())
 
@@ -159,6 +186,14 @@ class PreflightWorkerTests(unittest.TestCase):
             self._patch_step("_prime_registry", calls),
             self._patch_step("_install_dependencies", calls),
             self._patch_step("_bootstrap_self_coding", calls),
+            mock.patch(
+                "sandbox_runner.bootstrap.sandbox_health",
+                side_effect=lambda: calls.append("sandbox_health")
+                or {
+                    "databases_accessible": True,
+                    "dependency_health": {"missing": []},
+                },
+            ),
         ]
 
         with contextlib.ExitStack() as stack:
@@ -204,6 +239,7 @@ class PreflightWorkerTests(unittest.TestCase):
                 "_prime_registry",
                 "_install_dependencies",
                 "_bootstrap_self_coding",
+                "sandbox_health",
             ],
         )
         self.assertFalse(self.abort_event.is_set())
