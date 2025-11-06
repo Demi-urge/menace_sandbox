@@ -1,1111 +1,142 @@
-"""GUI for launching Windows sandbox environments."""
+"""Tkinter GUI for launching and monitoring the Windows sandbox."""
 
 from __future__ import annotations
 
-import logging
-import os
-import queue
-import shutil
-import subprocess
-import sys
-import threading
-import time
-import traceback
-import tkinter as tk
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
-from tkinter import font as tkfont
-from tkinter import messagebox
+import tkinter as tk
 from tkinter import ttk
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, TextIO
-
-from auto_env_setup import ensure_env
-from bootstrap_self_coding import bootstrap_self_coding, purge_stale_files
-from neurosales.scripts import setup_heavy_deps
-from prime_registry import main as prime_registry_main
-from dependency_health import DependencyMode, resolve_dependency_mode
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-
-_LOCK_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("sandbox_data", "*.lock"),
-    ("sandbox_data", "*.lock.*"),
-    ("sandbox_data", "*.lock*"),
-    ("logs", "*.lock"),
-    ("logs", "*.lock.*"),
-    ("vector_service", "*.lock"),
-    ("vector_service", "*.lock.*"),
-)
-
-_STALE_DIRECTORIES: tuple[Path, ...] = (
-    _REPO_ROOT / "sandbox_data" / "tmp",
-    _REPO_ROOT / "sandbox_data" / "cache",
-)
-
-
-@contextmanager
-def _temporary_environment(overrides: dict[str, str]) -> Iterator[None]:
-    """Temporarily apply ``overrides`` to :data:`os.environ`."""
-
-    original: dict[str, Optional[str]] = {}
-    try:
-        for key, value in overrides.items():
-            original[key] = os.environ.get(key)
-            os.environ[key] = value
-        yield
-    finally:
-        for key, previous in original.items():
-            if previous is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = previous
-
-
-@dataclass(frozen=True)
-class _PreflightStep:
-    """Descriptor for a preflight action executed by :func:`run_full_preflight`."""
-
-    name: str
-    failure_title: str
-    failure_message: str
-    runner: Callable[[], None]
-
-
-def _git_fetch_and_reset(logger: logging.Logger) -> None:
-    """Synchronise the working tree with the upstream repository."""
-
-    git = shutil.which("git")
-    if git is None:
-        raise RuntimeError("Git executable not found on PATH")
-
-    logger.info("Fetching latest repository changes")
-    subprocess.run(
-        [git, "fetch", "--all", "--prune"],
-        cwd=_REPO_ROOT,
-        check=True,
-    )
-
-    branch_proc = subprocess.run(
-        [git, "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=_REPO_ROOT,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    branch = branch_proc.stdout.strip() or "HEAD"
-    target = "origin/HEAD" if branch == "HEAD" else f"origin/{branch}"
-
-    logger.info("Resetting working tree to %s", target)
-    subprocess.run([git, "reset", "--hard", target], cwd=_REPO_ROOT, check=True)
-    logger.info("Repository refresh completed successfully")
-
-
-def _purge_stale_state(logger: logging.Logger) -> None:
-    """Remove known stale files produced by previous sandbox runs."""
-
-    logger.info("Purging stale sandbox state")
-    purge_stale_files()
-    logger.info("Stale sandbox files removed")
-
-
-def _remove_lock_artifacts(logger: logging.Logger) -> None:
-    """Delete stale lock files and temporary directories."""
-
-    failures: list[str] = []
-    removed: list[Path] = []
-
-    for directory, pattern in _LOCK_PATTERNS:
-        base = _REPO_ROOT / directory
-        if not base.exists():
-            continue
-        for candidate in base.glob(pattern):
-            try:
-                if candidate.is_dir():
-                    shutil.rmtree(candidate)
-                else:
-                    candidate.unlink()
-                removed.append(candidate)
-            except FileNotFoundError:
-                continue
-            except OSError as exc:  # pragma: no cover - surface via interception
-                failures.append(f"{candidate}: {exc}")
-
-    for directory in _STALE_DIRECTORIES:
-        if not directory.exists():
-            continue
-        try:
-            shutil.rmtree(directory)
-            removed.append(directory)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:  # pragma: no cover - surface via interception
-            failures.append(f"{directory}: {exc}")
-
-    for entry in removed:
-        try:
-            logger.info("Removed stale artefact %s", entry.relative_to(_REPO_ROOT))
-        except ValueError:  # pragma: no cover - defensive logging
-            logger.info("Removed stale artefact %s", entry)
-
-    if failures:
-        joined = "; ".join(failures)
-        raise RuntimeError(f"Failed to remove stale artefacts: {joined}")
-
-    logger.info("Lock artefact cleanup completed")
-
-
-def _prefetch_heavy_dependencies(logger: logging.Logger) -> None:
-    """Warm heavy dependency assets without installing additional packages."""
-
-    logger.info("Prefetching heavy dependency assets")
-    setup_heavy_deps.main(download_only=True)
-    logger.info("Heavy dependency prefetch finished")
-
-
-def _warm_shared_vector_service(logger: logging.Logger) -> None:
-    """Instantiate :class:`SharedVectorService` to prime embedding caches."""
-
-    logger.info("Initialising SharedVectorService")
-    from vector_service import SharedVectorService
-
-    service = SharedVectorService()
-    service.vectorise("text", {"text": "sandbox preflight warm-up"})
-    logger.info("SharedVectorService warm-up completed")
-
-
-def _ensure_environment(logger: logging.Logger) -> None:
-    """Generate or update the sandbox environment file with safe overrides."""
-
-    overrides = {
-        "MENACE_NON_INTERACTIVE": "1",
-        "MENACE_SAFE": "0",
-        "MENACE_SUPPRESS_PROMETHEUS_FALLBACK_NOTICE": "1",
-        "SANDBOX_DISABLE_CLEANUP": "1",
-    }
-    logger.info("Ensuring .env configuration with overrides")
-    with _temporary_environment(overrides):
-        ensure_env()
-    logger.info("Environment configuration verified")
-
-
-def _prime_self_coding_registry(logger: logging.Logger) -> None:
-    """Populate the bot registry cache for faster self-coding start-up."""
-
-    logger.info("Priming self-coding registry cache")
-    prime_registry_main()
-    logger.info("Self-coding registry primed successfully")
-
-
-def _run_pip_commands(logger: logging.Logger) -> None:
-    """Execute required ``pip install`` commands."""
-
-    commands: list[tuple[str, ...]] = [
-        (sys.executable, "-m", "pip", "install", "-r", str(_REPO_ROOT / "requirements.txt")),
-    ]
-
-    extras = _REPO_ROOT / "requirements-extra.txt"
-    if extras.exists():
-        commands.append(
-            (sys.executable, "-m", "pip", "install", "-r", str(extras))
-        )
-
-    for command in commands:
-        logger.info("Executing pip command: %s", " ".join(command))
-        subprocess.run(command, check=True)
-
-    logger.info("Pip dependency installation completed")
-
-
-def _bootstrap_ai_counter_bot(logger: logging.Logger) -> None:
-    """Trigger self-coding bootstrap for ``AICounterBot``."""
-
-    logger.info("Bootstrapping self-coding manager for AICounterBot")
-    bootstrap_self_coding("AICounterBot")
-    logger.info("AICounterBot bootstrap completed")
-
-
-def run_full_preflight(
-    *,
-    logger: logging.Logger,
-    pause_event: threading.Event,
-    decision_queue: queue.Queue[tuple[str, str]],
-    abort_event: threading.Event,
-    retry_event: threading.Event,
-    debug_queue: "queue.Queue[str]",
-) -> None:
-    """Execute the sandbox preflight checks using *logger* for progress."""
-
-    logger.info("starting Windows sandbox preflight routine")
-
-    steps: list[_PreflightStep] = [
-        _PreflightStep(
-            name="Git repository refresh",
-            failure_title="Repository refresh failed",
-            failure_message=(
-                "Synchronising the repository with 'git fetch' and 'git reset' "
-                "did not complete successfully. Continue the preflight?"
-            ),
-            runner=lambda: _git_fetch_and_reset(logger),
-        ),
-        _PreflightStep(
-            name="Stale file cleanup",
-            failure_title="Stale file cleanup failed",
-            failure_message=(
-                "Cleaning up stale sandbox state failed. Continue the preflight?"
-            ),
-            runner=lambda: _purge_stale_state(logger),
-        ),
-        _PreflightStep(
-            name="Lock artefact removal",
-            failure_title="Lock artefact removal failed",
-            failure_message=(
-                "Removing stale lock files or directories failed. Continue the preflight?"
-            ),
-            runner=lambda: _remove_lock_artifacts(logger),
-        ),
-        _PreflightStep(
-            name="Heavy dependency prefetch",
-            failure_title="Heavy dependency prefetch failed",
-            failure_message=(
-                "Downloading heavy dependency assets failed. Continue the preflight?"
-            ),
-            runner=lambda: _prefetch_heavy_dependencies(logger),
-        ),
-        _PreflightStep(
-            name="SharedVectorService warm-up",
-            failure_title="SharedVectorService warm-up failed",
-            failure_message=(
-                "Initialising SharedVectorService did not succeed. Continue the preflight?"
-            ),
-            runner=lambda: _warm_shared_vector_service(logger),
-        ),
-        _PreflightStep(
-            name="Environment configuration",
-            failure_title="Environment configuration failed",
-            failure_message=(
-                "Ensuring the sandbox environment configuration failed. Continue the preflight?"
-            ),
-            runner=lambda: _ensure_environment(logger),
-        ),
-        _PreflightStep(
-            name="Self-coding registry priming",
-            failure_title="Registry priming failed",
-            failure_message=(
-                "Priming the self-coding registry failed. Continue the preflight?"
-            ),
-            runner=lambda: _prime_self_coding_registry(logger),
-        ),
-        _PreflightStep(
-            name="Pip dependency installation",
-            failure_title="Pip installation failed",
-            failure_message=(
-                "One of the pip installation commands failed. Continue the preflight?"
-            ),
-            runner=lambda: _run_pip_commands(logger),
-        ),
-        _PreflightStep(
-            name="AICounterBot bootstrap",
-            failure_title="AICounterBot bootstrap failed",
-            failure_message=(
-                "Bootstrapping the AICounterBot self-coding manager failed. Continue the preflight?"
-            ),
-            runner=lambda: _bootstrap_ai_counter_bot(logger),
-        ),
-    ]
-
-    for step in steps:
-        while True:
-            if abort_event.is_set():
-                logger.info(
-                    "preflight routine aborted before completing remaining steps"
-                )
-                return
-
-            logger.info("Starting preflight step: %s", step.name)
-            try:
-                step.runner()
-            except Exception:
-                logger.exception(step.failure_title)
-                try:
-                    debug_queue.put_nowait(traceback.format_exc())
-                except Exception:
-                    pass
-                pause_event.set()
-                retry_event.clear()
-                decision_queue.put((step.failure_title, step.failure_message))
-                retry_requested = False
-                while pause_event.is_set():
-                    if abort_event.is_set():
-                        logger.info("preflight routine aborted during paused step")
-                        return
-                    if retry_event.is_set():
-                        retry_requested = True
-                        retry_event.clear()
-                        pause_event.clear()
-                        logger.info("Retrying preflight step: %s", step.name)
-                        break
-                    time.sleep(0.1)
-
-                if retry_requested:
-                    continue
-
-                if abort_event.is_set():
-                    logger.info("preflight routine aborted during paused step")
-                    return
-
-                if pause_event.is_set():
-                    pause_event.clear()
-
-                logger.info("Resuming preflight after operator confirmation")
-                break
-            else:
-                logger.info("Preflight step succeeded: %s", step.name)
-                break
-
-    logger.info("preflight routine completed successfully")
-
-
-def _dependency_failure_messages(
-    dependency_health: Mapping[str, Any] | None,
-    *,
-    dependency_mode: DependencyMode,
-) -> list[str]:
-    """Return user-facing failure reasons derived from dependency metadata."""
-
-    if not isinstance(dependency_health, Mapping):
-        return []
-
-    missing: Sequence[Mapping[str, Any]] = tuple(
-        item
-        for item in dependency_health.get("missing", [])
-        if isinstance(item, Mapping)
-    )
-
-    if not missing:
-        return []
-
-    required = [item for item in missing if not item.get("optional", False)]
-    optional = [item for item in missing if item.get("optional", False)]
-
-    failures: list[str] = []
-    if required:
-        failures.append(
-            "missing required dependencies: "
-            + ", ".join(sorted(str(item.get("name", "unknown")) for item in required))
-        )
-    if dependency_mode is not DependencyMode.MINIMAL and optional:
-        failures.append(
-            "missing optional dependencies in strict mode: "
-            + ", ".join(sorted(str(item.get("name", "unknown")) for item in optional))
-        )
-    return failures
-
-
-def _evaluate_health_snapshot(
-    health: Mapping[str, Any],
-    *,
-    dependency_mode: DependencyMode | None = None,
-) -> tuple[bool, list[str]]:
-    """Evaluate sandbox health metadata and return success flag and failures."""
-
-    mode = dependency_mode or resolve_dependency_mode()
-    failures: list[str] = []
-
-    if not health.get("databases_accessible", True):
-        db_errors = health.get("database_errors")
-        if isinstance(db_errors, Mapping) and db_errors:
-            details = ", ".join(
-                f"{name}: {error}" for name, error in sorted(db_errors.items())
-            )
-            failures.append(f"databases inaccessible ({details})")
-        else:
-            failures.append("databases inaccessible")
-
-    failures.extend(
-        _dependency_failure_messages(
-            health.get("dependency_health"),
-            dependency_mode=mode,
-        )
-    )
-
-    return not failures, failures
-
-
-def _collect_sandbox_health() -> Mapping[str, Any]:
-    """Return the current sandbox health snapshot."""
-
-    from sandbox_runner import bootstrap as sandbox_bootstrap
-
-    return sandbox_bootstrap.sandbox_health()
-
-
-class _LogQueueHandler(logging.Handler):
-    """Forward log records from worker threads to a :class:`queue.Queue`."""
-
-    _LEVEL_TO_TAG = {
-        logging.DEBUG: "info",
-        logging.INFO: "info",
-        logging.WARNING: "warning",
-        logging.ERROR: "error",
-        logging.CRITICAL: "error",
-    }
-
-    def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
-        super().__init__()
-        self._queue = log_queue
-
-    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - thin wrapper
-        try:
-            message = self.format(record)
-        except Exception:  # pragma: no cover - defensive fallback
-            self.handleError(record)
-            return
-        tag = self._LEVEL_TO_TAG.get(record.levelno, "info")
-        self._queue.put((tag, message))
 
 
 class SandboxLauncherGUI(tk.Tk):
-    """Tkinter-based GUI shell for managing sandbox launch tasks."""
+    """User interface for running the sandbox preflight and launch steps."""
 
-    DEFAULT_GEOMETRY = "900x600"
     WINDOW_TITLE = "Windows Sandbox Launcher"
+    WINDOW_GEOMETRY = "900x600"
 
     def __init__(self) -> None:
         super().__init__()
         self.title(self.WINDOW_TITLE)
-        self.geometry(self.DEFAULT_GEOMETRY)
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.geometry(self.WINDOW_GEOMETRY)
 
-        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
-        self._decision_queue: queue.Queue[tuple[str, str]] = queue.Queue()
-        self._log_handler: Optional[_LogQueueHandler] = None
-        self._logger = logging.getLogger(__name__ + ".preflight")
-        self._launch_logger = logging.getLogger(__name__ + ".launch")
-        self._preflight_thread: Optional[threading.Thread] = None
-        self._sandbox_thread: Optional[threading.Thread] = None
-        self._sandbox_process: Optional[subprocess.Popen[str]] = None
-        self._pause_event = threading.Event()
-        self._retry_event = threading.Event()
-        self._abort_event = threading.Event()
-        self._sandbox_abort_event = threading.Event()
-        self._max_log_lines = 1000
-        self._health_snapshot: Optional[Mapping[str, Any]] = None
-        self._health_failures: list[str] = []
-        self._debug_queue: "queue.Queue[str]" = queue.Queue()
-        self._debug_traces: list[str] = []
-        self._debug_panel_visible = False
-        self._pause_prompt_visible = False
-        self._log_file_path = Path(__file__).with_name("menace_gui_logs.txt")
-        self._preflight_start_time: Optional[float] = None
-        self._elapsed_after_id: Optional[str] = None
+        self._configure_icon()
+        self._configure_style()
 
-        self._create_widgets()
-        self._configure_layout()
-        self._setup_logging()
+        self._notebook = ttk.Notebook(self)
+        self._status_frame = ttk.Frame(self._notebook, padding=(12, 12, 12, 12))
+        self._notebook.add(self._status_frame, text="Status")
+        self._notebook.grid(row=0, column=0, sticky=tk.NSEW, padx=12, pady=(12, 6))
 
-    def _create_widgets(self) -> None:
-        """Instantiate and configure all widgets used by the GUI."""
-        self.notebook = ttk.Notebook(self)
+        self._create_status_view(self._status_frame)
+        self._control_frame = ttk.Frame(self, padding=(12, 6, 12, 12))
+        self._create_controls(self._control_frame)
+        self._control_frame.grid(row=1, column=0, sticky=tk.EW)
 
-        # Status Tab
-        self.status_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.status_frame, text="Status")
+        self._configure_weights()
 
-        fixed_font = tkfont.nametofont("TkFixedFont")
+    # region setup helpers
+    def _configure_icon(self) -> None:
+        """Configure the window icon if an ``.ico`` file is available."""
 
-        self.log_text = tk.Text(
-            self.status_frame,
-            wrap="word",
-            state="disabled",
-            font=fixed_font,
-            background="white",
-        )
-        self.log_vertical_scroll = ttk.Scrollbar(
-            self.status_frame, orient="vertical", command=self.log_text.yview
-        )
-        self.log_text.configure(yscrollcommand=self.log_vertical_scroll.set)
+        icon_path = Path(__file__).with_suffix(".ico")
+        if icon_path.exists():
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:  # pragma: no cover - platform specific
+                pass
 
-        # Pre-create tags for log styling.
-        self.log_text.tag_configure("info", foreground="black")
-        self.log_text.tag_configure("success", foreground="darkgreen")
-        self.log_text.tag_configure("warning", foreground="orange")
-        self.log_text.tag_configure("error", foreground="red")
+    def _configure_style(self) -> None:
+        """Apply consistent styling to the widgets."""
 
-        self.debug_toggle_button = ttk.Button(
-            self.status_frame,
-            text="Show Debug Panel",
-            command=self._toggle_debug_panel,
-        )
+        style = ttk.Style(self)
+        style.configure("TFrame", padding=0)
+        style.configure("TButton", padding=(8, 4))
+        style.configure("Sandbox.TButton", padding=(12, 6))
 
-        self.debug_frame = ttk.Frame(self.status_frame)
-        self.debug_text = tk.Text(
-            self.debug_frame,
-            wrap="word",
-            state="disabled",
-            font=fixed_font,
-            background="white",
-            height=10,
-        )
-        self.debug_scroll = ttk.Scrollbar(
-            self.debug_frame, orient="vertical", command=self.debug_text.yview
-        )
-        self.debug_text.configure(yscrollcommand=self.debug_scroll.set)
+    def _configure_weights(self) -> None:
+        """Apply grid weights to keep the layout responsive."""
 
-        self.pause_prompt_frame = ttk.Labelframe(
-            self.status_frame, text="Preflight paused"
-        )
-        self.pause_message_label = ttk.Label(
-            self.pause_prompt_frame,
-            anchor="w",
-            justify="left",
-            wraplength=760,
-        )
-        self.pause_continue_button = ttk.Button(
-            self.pause_prompt_frame,
-            text="Continue",
-            command=self._on_continue_after_pause,
-        )
-        self.pause_retry_button = ttk.Button(
-            self.pause_prompt_frame,
-            text="Retry Step",
-            command=self.on_retry_step,
-        )
-        self.pause_abort_button = ttk.Button(
-            self.pause_prompt_frame,
-            text="Abort Preflight",
-            command=self._on_abort_preflight,
-        )
-
-        self.footer_frame = ttk.Frame(self)
-        self.run_preflight_button = ttk.Button(
-            self.footer_frame,
-            text="Run Preflight",
-            command=self.on_run_preflight,
-            state="normal",
-        )
-        self.start_sandbox_button = ttk.Button(
-            self.footer_frame,
-            text="Start Sandbox",
-            command=self.on_start_sandbox,
-            state="disabled",
-        )
-        self.elapsed_time_label = ttk.Label(
-            self.footer_frame, text="Elapsed: 00:00", anchor="e"
-        )
-
-    def _configure_layout(self) -> None:
-        """Configure the geometry management for all widgets."""
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         self.rowconfigure(1, weight=0)
 
-        self.notebook.grid(row=0, column=0, sticky="nsew")
-        self.footer_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        self._status_frame.columnconfigure(0, weight=1)
+        self._status_frame.rowconfigure(0, weight=1)
 
-        # Status frame layout
-        self.status_frame.columnconfigure(0, weight=1)
-        self.status_frame.rowconfigure(0, weight=1)
-        self.status_frame.rowconfigure(1, weight=0)
-        self.status_frame.rowconfigure(2, weight=1)
-        self.status_frame.rowconfigure(3, weight=0)
+        self._control_frame.columnconfigure(0, weight=1)
+        self._control_frame.columnconfigure(1, weight=1)
+    # endregion setup helpers
 
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        self.log_vertical_scroll.grid(row=0, column=1, sticky="ns")
-        self.debug_toggle_button.grid(row=1, column=0, sticky="w", pady=(5, 0))
+    # region widget builders
+    def _create_status_view(self, parent: ttk.Frame) -> None:
+        """Create the status log view with scrollbars."""
 
-        self.debug_frame.columnconfigure(0, weight=1)
-        self.debug_frame.rowconfigure(0, weight=1)
-        self.debug_text.grid(row=0, column=0, sticky="nsew")
-        self.debug_scroll.grid(row=0, column=1, sticky="ns")
-        self.debug_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(5, 0))
-
-        self.pause_prompt_frame.columnconfigure(0, weight=1)
-        self.pause_message_label.grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 5)
+        self._status_text = tk.Text(
+            parent,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+            height=20,
+            relief=tk.FLAT,
         )
-        self.pause_continue_button.grid(row=1, column=0, padx=(0, 5), pady=(0, 5))
-        self.pause_retry_button.grid(row=1, column=1, padx=5, pady=(0, 5))
-        self.pause_abort_button.grid(row=1, column=2, padx=(5, 0), pady=(0, 5))
-        self.pause_prompt_frame.grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(5, 0)
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self._status_text.yview)
+        self._status_text.configure(yscrollcommand=scrollbar.set)
+
+        self._status_text.grid(row=0, column=0, sticky=tk.NSEW)
+        scrollbar.grid(row=0, column=1, sticky=tk.NS)
+
+        for tag, colour in {
+            "info": "#0b5394",
+            "success": "#38761d",
+            "warning": "#b45f06",
+            "error": "#990000",
+        }.items():
+            self._status_text.tag_configure(tag, foreground=colour)
+
+    def _create_controls(self, parent: ttk.Frame) -> None:
+        """Create the control buttons for preflight and sandbox launch."""
+
+        run_preflight = ttk.Button(
+            parent,
+            text="Run Preflight",
+            style="Sandbox.TButton",
+            command=self._on_run_preflight,
         )
+        run_preflight.grid(row=0, column=0, padx=(0, 6), sticky=tk.EW)
 
-        # Footer buttons
-        self.footer_frame.columnconfigure(0, weight=0)
-        self.footer_frame.columnconfigure(1, weight=0)
-        self.footer_frame.columnconfigure(2, weight=0)
-        self.footer_frame.columnconfigure(3, weight=1)
-
-        self.run_preflight_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.start_sandbox_button.grid(row=0, column=1, sticky="ew", padx=5)
-        self.elapsed_time_label.grid(row=0, column=3, sticky="e")
-
-        self.debug_frame.grid_remove()
-        self.pause_prompt_frame.grid_remove()
-
-    def _setup_logging(self) -> None:
-        """Initialise the shared logger/queue used by worker threads."""
-
-        handler = _LogQueueHandler(self._log_queue)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s — %(levelname)s — %(message)s")
+        start_sandbox = ttk.Button(
+            parent,
+            text="Start Sandbox",
+            style="Sandbox.TButton",
+            command=self._on_start_sandbox,
+            state=tk.DISABLED,
         )
-        self._log_handler = handler
+        start_sandbox.grid(row=0, column=1, padx=(6, 0), sticky=tk.EW)
 
-        self._logger.setLevel(logging.INFO)
-        self._logger.propagate = False
-        if handler not in self._logger.handlers:
-            self._logger.addHandler(handler)
+        self._run_preflight_btn = run_preflight
+        self._start_sandbox_btn = start_sandbox
+    # endregion widget builders
 
-        self._launch_logger.setLevel(logging.INFO)
-        self._launch_logger.propagate = False
-        if handler not in self._launch_logger.handlers:
-            self._launch_logger.addHandler(handler)
+    # region public API
+    def log_message(self, message: str, tag: str = "info") -> None:
+        """Append ``message`` to the status log using the provided tag."""
 
-        self.log_text.configure(state="disabled")
-        self.after(100, self._poll_log_queue)
+        self._status_text.configure(state=tk.NORMAL)
+        self._status_text.insert(tk.END, f"{message}\n", (tag,))
+        self._status_text.see(tk.END)
+        self._status_text.configure(state=tk.DISABLED)
+    # endregion public API
 
-    def _poll_log_queue(self) -> None:
-        """Flush queued log records into the text widget."""
+    # region callbacks
+    def _on_run_preflight(self) -> None:  # pragma: no cover - GUI callback
+        self.log_message("Running preflight checks...", "info")
 
-        drained: list[tuple[str, str]] = []
-        try:
-            while True:
-                drained.append(self._log_queue.get_nowait())
-        except queue.Empty:
-            pass
+    def _on_start_sandbox(self) -> None:  # pragma: no cover - GUI callback
+        self.log_message("Starting sandbox...", "info")
+    # endregion callbacks
 
-        debug_entries: list[str] = []
-        try:
-            while True:
-                debug_entries.append(self._debug_queue.get_nowait())
-        except queue.Empty:
-            pass
 
-        if drained:
-            self.log_text.configure(state="normal")
-            for tag, message in drained:
-                self.log_text.insert(tk.END, message + "\n", tag)
-            self._trim_log()
-            self.log_text.configure(state="disabled")
-            self.log_text.see(tk.END)
+__all__ = ["SandboxLauncherGUI"]
 
-        if debug_entries:
-            self._debug_traces.extend(debug_entries)
-            if self._debug_panel_visible:
-                self._refresh_debug_text()
 
-        if drained or debug_entries:
-            log_lines = [message for _, message in drained]
-            try:
-                with self._log_file_path.open("a", encoding="utf-8") as fh:
-                    for message in log_lines:
-                        fh.write(message + "\n")
-                    for trace in debug_entries:
-                        fh.write(trace.rstrip("\n") + "\n\n")
-            except OSError:
-                pass
-
-        self.after(100, self._poll_log_queue)
-
-    def _refresh_debug_text(self) -> None:
-        self.debug_text.configure(state="normal")
-        self.debug_text.delete("1.0", tk.END)
-        for trace in self._debug_traces:
-            self.debug_text.insert(tk.END, trace.rstrip() + "\n\n")
-        self.debug_text.configure(state="disabled")
-        self.debug_text.see(tk.END)
-
-    def _toggle_debug_panel(self) -> None:
-        if self._debug_panel_visible:
-            self.debug_frame.grid_remove()
-            self._debug_panel_visible = False
-            self.debug_toggle_button.configure(text="Show Debug Panel")
-        else:
-            self.debug_frame.grid()
-            self._debug_panel_visible = True
-            self.debug_toggle_button.configure(text="Hide Debug Panel")
-            self._refresh_debug_text()
-
-    def _show_pause_prompt(self, title: str, message: str) -> None:
-        text = f"{title}\n\n{message}".strip()
-        self.pause_message_label.configure(text=text)
-        if not self._pause_prompt_visible:
-            self.pause_prompt_frame.grid()
-            self._pause_prompt_visible = True
-
-    def _hide_pause_prompt(self) -> None:
-        if self._pause_prompt_visible:
-            self.pause_prompt_frame.grid_remove()
-            self.pause_message_label.configure(text="")
-            self._pause_prompt_visible = False
-
-    def _on_continue_after_pause(self) -> None:
-        if not self._pause_event.is_set():
-            return
-        self._logger.info("user opted to continue after pause")
-        self._hide_pause_prompt()
-        self._pause_event.clear()
-
-    def on_retry_step(self) -> None:
-        if not self._pause_event.is_set():
-            return
-        self._logger.info("user requested retry of current preflight step")
-        self._hide_pause_prompt()
-        self._retry_event.set()
-
-    def _on_abort_preflight(self) -> None:
-        if self._abort_event.is_set():
-            return
-        self._logger.info("user requested preflight cancellation")
-        self._hide_pause_prompt()
-        self._abort_event.set()
-        self._pause_event.clear()
-
-    def _start_elapsed_timer(self) -> None:
-        self._preflight_start_time = time.monotonic()
-        self._update_elapsed_label()
-
-    def _stop_elapsed_timer(self) -> None:
-        if self._elapsed_after_id is not None:
-            self.after_cancel(self._elapsed_after_id)
-            self._elapsed_after_id = None
-        self._preflight_start_time = None
-        self.elapsed_time_label.configure(text="Elapsed: 00:00")
-
-    def _update_elapsed_label(self) -> None:
-        start = self._preflight_start_time
-        if start is None:
-            self.elapsed_time_label.configure(text="Elapsed: 00:00")
-            self._elapsed_after_id = None
-            return
-
-        elapsed = int(time.monotonic() - start)
-        minutes, seconds = divmod(elapsed, 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            formatted = f"Elapsed: {hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            formatted = f"Elapsed: {minutes:02d}:{seconds:02d}"
-        self.elapsed_time_label.configure(text=formatted)
-        self._elapsed_after_id = self.after(1000, self._update_elapsed_label)
-
-    def _trim_log(self) -> None:
-        lines = int(self.log_text.index("end-1c").split(".")[0])
-        if lines <= self._max_log_lines:
-            return
-        excess = lines - self._max_log_lines
-        self.log_text.delete("1.0", f"{excess + 1}.0")
-
-    def on_run_preflight(self) -> None:
-        """Kick off the sandbox preflight routine in a background worker."""
-
-        if self._preflight_thread and self._preflight_thread.is_alive():
-            return
-
-        self._abort_event.clear()
-        self._pause_event.clear()
-        self._retry_event.clear()
-        self._flush_decision_queue()
-        self._hide_pause_prompt()
-        self.run_preflight_button.configure(state="disabled")
-        self._logger.info("launching preflight worker")
-
-        thread = threading.Thread(target=self._run_preflight_worker, daemon=True)
-        self._preflight_thread = thread
-        thread.start()
-        self._start_elapsed_timer()
-        self.after(100, self._monitor_preflight_worker)
-
-    def on_start_sandbox(self) -> None:
-        """Launch the autonomous sandbox in a background worker."""
-
-        if self._sandbox_thread and self._sandbox_thread.is_alive():
-            return
-
-        self.run_preflight_button.configure(state="disabled")
-        self.start_sandbox_button.configure(state="disabled")
-        self._sandbox_abort_event.clear()
-        self._launch_logger.info("starting autonomous sandbox process")
-
-        thread = threading.Thread(target=self._launch_sandbox_worker, daemon=True)
-        self._sandbox_thread = thread
-        thread.start()
-
-    def _run_preflight_worker(self) -> None:
-        """Invoke the preflight routine while reporting via the shared logger."""
-
-        try:
-            run_full_preflight(
-                logger=self._logger,
-                pause_event=self._pause_event,
-                decision_queue=self._decision_queue,
-                abort_event=self._abort_event,
-                retry_event=self._retry_event,
-                debug_queue=self._debug_queue,
-            )
-        except Exception:  # pragma: no cover - log and propagate to UI
-            self._logger.exception("preflight routine failed")
-        else:
-            if not self._abort_event.is_set():
-                self._logger.info("preflight worker completed")
-
-    def _monitor_preflight_worker(self) -> None:
-        """Re-enable UI controls once the worker thread terminates."""
-
-        thread = self._preflight_thread
-        if thread and thread.is_alive():
-            self._handle_worker_pause()
-            self.after(100, self._monitor_preflight_worker)
-            return
-
-        self._preflight_thread = None
-        self._stop_elapsed_timer()
-        self._hide_pause_prompt()
-        self.run_preflight_button.configure(state="normal")
-        if self._abort_event.is_set():
-            self._handle_abort_cleanup()
-        else:
-            self._handle_post_preflight_completion()
-
-    def on_close(self) -> None:
-        """Handle application shutdown."""
-
-        self._request_sandbox_abort()
-        self._stop_elapsed_timer()
-        if self._log_handler is not None:
-            self._logger.removeHandler(self._log_handler)
-            self._launch_logger.removeHandler(self._log_handler)
-        self.destroy()
-
-    def _forward_stream_lines(self, stream: TextIO, label: str, tag: str) -> None:
-        """Relay *stream* output to the UI log with the provided *tag*."""
-
-        try:
-            for raw_line in iter(stream.readline, ""):
-                line = raw_line.rstrip("\r\n")
-                if not line:
-                    continue
-                self._log_queue.put((tag, f"[sandbox {label}] {line}"))
-        except Exception as exc:  # pragma: no cover - log unexpected failures
-            self._log_queue.put(("error", f"failed to read sandbox {label}: {exc}"))
-        finally:
-            try:
-                stream.close()
-            except Exception:  # pragma: no cover - stream close best effort
-                pass
-
-    def _request_sandbox_abort(self) -> None:
-        """Terminate the sandbox process when the user aborts the launch."""
-
-        self._sandbox_abort_event.set()
-        process = self._sandbox_process
-        if not process or process.poll() is not None:
-            return
-
-        self._launch_logger.warning("terminating sandbox process at user request")
-        try:
-            process.terminate()
-        except Exception:
-            self._launch_logger.exception("failed to terminate sandbox process")
-            return
-
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self._launch_logger.warning(
-                "sandbox process did not exit after terminate; killing"
-            )
-            try:
-                process.kill()
-            except Exception:
-                self._launch_logger.exception("failed to kill sandbox process")
-
-    def _launch_sandbox_worker(self) -> None:
-        """Spawn ``start_autonomous_sandbox`` and monitor its lifecycle."""
-
-        if self._sandbox_abort_event.is_set():
-            self.after(0, self._handle_sandbox_completion, None, True)
-            return
-
-        command = [
-            sys.executable,
-            "-c",
-            "import start_autonomous_sandbox as sas; sas.main([])",
-        ]
-
-        try:
-            process = subprocess.Popen(
-                command,
-                cwd=_REPO_ROOT,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
-        except Exception:
-            self._launch_logger.exception("failed to start autonomous sandbox process")
-            self.after(0, self._handle_sandbox_completion, None, False)
-            return
-
-        self._sandbox_process = process
-        stream_threads: list[threading.Thread] = []
-        for label, stream, tag in (
-            ("stdout", process.stdout, "info"),
-            ("stderr", process.stderr, "error"),
-        ):
-            if stream is None:
-                continue
-            thread = threading.Thread(
-                target=self._forward_stream_lines,
-                args=(stream, label, tag),
-                daemon=True,
-            )
-            thread.start()
-            stream_threads.append(thread)
-
-        returncode: Optional[int] = None
-        aborted = False
-        try:
-            returncode = process.wait()
-            aborted = self._sandbox_abort_event.is_set()
-        except Exception:
-            self._launch_logger.exception("error while waiting for sandbox process")
-        finally:
-            for thread in stream_threads:
-                thread.join(timeout=1)
-            self._sandbox_process = None
-            self._sandbox_abort_event.clear()
-            self.after(0, self._handle_sandbox_completion, returncode, aborted)
-
-    def _handle_sandbox_completion(
-        self, returncode: Optional[int], aborted: bool
-    ) -> None:
-        """Update UI state once the sandbox process completes."""
-
-        self._sandbox_abort_event.clear()
-        self._sandbox_thread = None
-        self.run_preflight_button.configure(state="normal")
-
-        if aborted:
-            self._log_queue.put(
-                ("warning", "sandbox launch aborted by user; preflight re-enabled")
-            )
-            self._sync_launch_button_with_health()
-            return
-
-        if returncode == 0:
-            self._log_queue.put(("success", "sandbox process exited successfully"))
-            self.start_sandbox_button.configure(state="normal")
-            return
-
-        code_display = "unknown" if returncode is None else str(returncode)
-        self._log_queue.put(
-            ("error", f"sandbox process exited with status {code_display}")
-        )
-        self.start_sandbox_button.configure(state="disabled")
-
-    def _handle_worker_pause(self) -> None:
-        if not self._pause_event.is_set():
-            return
-
-        try:
-            title, message = self._decision_queue.get_nowait()
-        except queue.Empty:
-            return
-
-        self._show_pause_prompt(title, message)
-
-    def _handle_abort_cleanup(self) -> None:
-        self._abort_event.clear()
-        self._pause_event.clear()
-        self._flush_decision_queue()
-        self.start_sandbox_button.configure(state="disabled")
-        self._health_snapshot = None
-        self._health_failures = []
-        self._hide_pause_prompt()
-        self._logger.info("preflight routine cancelled by user")
-
-    def _flush_decision_queue(self) -> None:
-        while True:
-            try:
-                self._decision_queue.get_nowait()
-            except queue.Empty:
-                break
-
-    def _sync_launch_button_with_health(self) -> None:
-        """Enable the launch control when the cached health snapshot is valid."""
-
-        if self._health_snapshot and not self._health_failures:
-            self.start_sandbox_button.configure(state="normal")
-        else:
-            self.start_sandbox_button.configure(state="disabled")
-
-    def _handle_post_preflight_completion(self) -> None:
-        """Run sandbox health checks and update UI state accordingly."""
-
-        try:
-            health = _collect_sandbox_health()
-        except Exception:
-            self.start_sandbox_button.configure(state="disabled")
-            self._health_snapshot = None
-            self._health_failures = []
-            self._logger.exception("sandbox health check failed")
-            messagebox.showwarning(
-                title="Sandbox health check failed",
-                message=(
-                    "An unexpected error occurred while checking sandbox health.\n\n"
-                    "Review the logs for details and rerun the preflight when ready."
-                ),
-            )
-            return
-
-        healthy, failures = _evaluate_health_snapshot(
-            health, dependency_mode=resolve_dependency_mode()
-        )
-        self._health_snapshot = health
-        self._health_failures = failures
-
-        if healthy:
-            self.start_sandbox_button.configure(state="normal")
-            self._logger.info(
-                "sandbox health check passed; Start Sandbox button enabled"
-            )
-            return
-
-        self.start_sandbox_button.configure(state="disabled")
-        summary = "; ".join(failures) if failures else "unknown issues"
-        self._logger.warning("sandbox health check reported issues: %s", summary)
-        details = "\n".join(f"• {failure}" for failure in failures) or "Unknown issues"
-        messagebox.showwarning(
-            title="Sandbox health check failed",
-            message=(
-                "The sandbox health check detected issues:\n\n"
-                f"{details}\n\n"
-                "Address the reported problems and rerun the preflight to retry."
-            ),
-        )
-
-
-def main(argv: Optional[Sequence[str]] | None = None) -> int:
-    """Launch the sandbox GUI application."""
-
-    # ``argv`` is accepted for compatibility with ``python -m`` execution but is
-    # currently unused.
-    _ = argv
-
+if __name__ == "__main__":  # pragma: no cover - manual launch helper
     gui = SandboxLauncherGUI()
     gui.mainloop()
-    return 0
-
-
-__all__ = ["SandboxLauncherGUI", "run_full_preflight", "main"]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
