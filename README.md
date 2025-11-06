@@ -1,5 +1,22 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
+## Windows sandbox launcher GUI
+
+`python -m tools.windows_sandbox_launcher_gui` provides a Tk-based control panel for preparing and launching the Windows sandbox workflow. Ensure you are running Python 3.11+ with Tkinter support and that Git and network access are available so the preflight steps can clone/update dependencies. Running the GUI from an activated virtual environment that already has `menace-sandbox` installed in editable mode keeps the preflight faster, but the tool will install or update dependencies on demand when needed.
+
+### Expected workflow
+
+1. Start the interface with `python -m tools.windows_sandbox_launcher_gui` from the repository root.
+2. Click **Run Preflight** to execute the preparation sequence (repository sync, stale-file cleanup, dependency installation, registry priming, and self-coding bootstrap).
+3. Review the live status feed and optional debug panel. If every check passes, the banner switches to a success state and the **Start Sandbox** button becomes available.
+4. Launch the sandbox by selecting **Start Sandbox**, then stop it with **Stop Sandbox** when finished.
+
+The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the failure message in a modal prompt while capturing traceback details in the debug panel. You can choose to continue, abort, or use **Retry Step** to rerun only the failing action once you have addressed the underlying issue.
+
+### Logging and troubleshooting
+
+All GUI events stream into the on-screen log with severity-based colouring, and detailed tracebacks are written to `menace_gui_logs.txt` with log rotation so long sessions remain reviewable. Toggle **Show Debug Details** to inspect the latest captured diagnostics when a step pauses; clearing the pause or resuming preflight hides the retry controls until the next failure.
+
 ## Direct imports from the source tree
 
 All modules that participate in the bootstrap chain now call a shared
