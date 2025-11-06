@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import queue
+import sys
 import threading
 import time
 import traceback
@@ -283,7 +284,13 @@ class SandboxLauncherGUI(tk.Tk):
             logger.exception("Preflight aborted due to error: %s", exc)
             payload = {"success": False, "error": str(exc)}
         else:
-            payload = {"success": True, **result}
+            healthy = bool(result.get("healthy"))
+            success = (
+                healthy
+                and not bool(result.get("paused"))
+                and not bool(result.get("aborted"))
+            )
+            payload = {**result, "healthy": healthy, "success": success}
 
         self._worker_queue.put(("preflight_complete", payload))
 
@@ -304,11 +311,54 @@ class SandboxLauncherGUI(tk.Tk):
 
         success = bool(payload.get("success"))
         if success:
-            self.launch_button.state(["!disabled"])
-            logger.info("Phase 5 preflight sequence complete.")
-        else:
-            self.launch_button.state(["disabled"])
-            logger.error("Preflight sequence did not complete successfully.")
+            def _on_success() -> None:
+                self.launch_button.state(["!disabled"])
+                logger.info(
+                    "Sandbox health check passed. 'Start Sandbox' button enabled."
+                )
+
+            self.after_idle(_on_success)
+            return
+
+        self.launch_button.state(["disabled"])
+
+        message = self._format_health_failure_message(payload)
+        logger.warning("Sandbox health verification failed: %s", message)
+        messagebox.showwarning("Sandbox health issue detected", message)
+
+    def _format_health_failure_message(self, payload: dict[str, object]) -> str:
+        error = payload.get("error")
+        if error:
+            return str(error)
+
+        failures = payload.get("failures")
+        if isinstance(failures, Iterable) and not isinstance(failures, (str, bytes)):
+            details = [str(item) for item in failures if str(item).strip()]
+            if details:
+                return "; ".join(details)
+
+        snapshot = payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            db_errors = snapshot.get("database_errors")
+            if isinstance(db_errors, dict) and db_errors:
+                formatted = ", ".join(
+                    f"{name}: {reason}" for name, reason in db_errors.items()
+                )
+                return f"Database accessibility issues detected ({formatted})."
+
+        if payload.get("paused") and payload.get("failed_step"):
+            return f"Preflight paused during '{payload['failed_step']}'."
+
+        if payload.get("failed_step"):
+            return f"Preflight failed at step '{payload['failed_step']}'."
+
+        if payload.get("aborted"):
+            return "Preflight aborted by operator."
+
+        return (
+            "Sandbox health check did not complete successfully. Review the logs "
+            "for additional details."
+        )
 
 
 def _ensure_abort_not_requested(abort_event: threading.Event) -> bool:
@@ -333,7 +383,10 @@ def _run_step(
 
     logger.info(step.start_message)
     try:
-        step.runner(logger)
+        runner = getattr(sys.modules[__name__], step.name, step.runner)
+        if not callable(runner):
+            runner = step.runner
+        runner(logger)
     except Exception as exc:  # pragma: no cover - defensive path
         logger.exception("%s", step.failure_title)
 
