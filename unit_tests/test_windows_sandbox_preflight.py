@@ -1,7 +1,9 @@
 import contextlib
 import os
 import queue
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -100,11 +102,17 @@ class DummyLogger:
     def __init__(self) -> None:
         self.records: list[tuple[str, str]] = []
 
+    def debug(self, message: str, *args) -> None:  # pragma: no cover - debug support
+        self.records.append(("debug", message % args if args else message))
+
     def info(self, message: str, *args) -> None:
         self.records.append(("info", message % args if args else message))
 
     def warning(self, message: str, *args) -> None:  # pragma: no cover - unused
         self.records.append(("warning", message % args if args else message))
+
+    def error(self, message: str, *args) -> None:  # pragma: no cover - error support
+        self.records.append(("error", message % args if args else message))
 
     def exception(self, message: str, *args) -> None:
         self.records.append(("exception", message % args if args else message))
@@ -115,16 +123,12 @@ class StepImplementationTests(unittest.TestCase):
         self.logger = DummyLogger()
 
     def test_git_sync_runs_expected_commands(self) -> None:
-        with mock.patch("tools.windows_sandbox_launcher_gui.subprocess.run") as run_mock:
+        with mock.patch("tools.windows_sandbox_launcher_gui._run_command") as run_mock:
             gui._git_sync(self.logger)
 
         expected_calls = [
-            mock.call(["git", "fetch", "origin"], check=True, cwd=gui.REPO_ROOT),
-            mock.call(
-                ["git", "reset", "--hard", "origin/main"],
-                check=True,
-                cwd=gui.REPO_ROOT,
-            ),
+            mock.call(self.logger, ["git", "fetch", "origin"], cwd=gui.REPO_ROOT),
+            mock.call(self.logger, ["git", "reset", "--hard", "origin/main"], cwd=gui.REPO_ROOT),
         ]
         run_mock.assert_has_calls(expected_calls)
         self.assertEqual(run_mock.call_count, 2)
@@ -153,84 +157,69 @@ class StepImplementationTests(unittest.TestCase):
             candidates[0].remove()
             candidates[2].remove()
 
-        with mock.patch.object(
-            gui.bootstrap_self_coding, "_iter_cleanup_targets", side_effect=_iter_cleanup
-        ) as iter_mock:
-            with mock.patch.object(
-                gui.bootstrap_self_coding, "purge_stale_files", side_effect=_purge
-            ) as purge_mock:
-                gui._purge_stale_files(self.logger)
+        with mock.patch(
+            "bootstrap_self_coding._iter_cleanup_targets", side_effect=_iter_cleanup
+        ) as iter_mock, mock.patch(
+            "bootstrap_self_coding.purge_stale_files", side_effect=_purge
+        ) as purge_mock:
+            gui._purge_stale_files(self.logger)
 
         iter_mock.assert_called_once()
         purge_mock.assert_called_once()
         self.assertIn(("info", "Purged 2 stale sandbox artefacts."), self.logger.records)
 
     def test_cleanup_lock_and_model_artifacts_removes_expected_paths(self) -> None:
-        class _DummyPath:
-            def __init__(self, name: str, *, directory: bool = False) -> None:
-                self.name = name
-                self._directory = directory
-                self.unlinked = False
+        with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as home_dir:
+            repo_path = Path(repo_dir)
+            sandbox_dir = repo_path / "sandbox_data"
+            sandbox_dir.mkdir()
+            (sandbox_dir / "sandbox.lock").write_text("")
+            (sandbox_dir / "sandbox.lock.tmp").write_text("")
 
-            def is_dir(self) -> bool:
-                return self._directory
+            home_path = Path(home_dir)
+            hf_root = home_path / ".cache" / "huggingface" / "transformers"
+            (hf_root / "model").mkdir(parents=True)
+            (hf_root / "model" / "weights.lock").write_text("")
+            (hf_root / "model" / "nested.tmp").mkdir()
+            (hf_root / "model" / "nested.tmp" / "artifact").write_text("")
+            (hf_root / "orphan.incomplete").mkdir(parents=True)
+            (hf_root / "empty_download").mkdir()
 
-            def unlink(self) -> None:
-                self.unlinked = True
+            with mock.patch(
+                "tools.windows_sandbox_launcher_gui.REPO_ROOT", repo_path
+            ), mock.patch(
+                "tools.windows_sandbox_launcher_gui.Path.home", return_value=home_path
+            ):
+                gui._cleanup_lock_and_model_artifacts(self.logger)
 
-            def __str__(self) -> str:  # pragma: no cover - logging helper
-                return self.name
-
-        sandbox_lock = _DummyPath("sandbox.lock")
-        hf_lock = _DummyPath("hf.lock")
-        incomplete_dir = _DummyPath("dir.incomplete", directory=True)
-        tmp_dir = _DummyPath("dir.tmp", directory=True)
-        lock_dir = _DummyPath("dir.lock", directory=True)
-
-        fake_home = Path("/tmp/fake-home")
-        hf_root = fake_home / ".cache" / "huggingface" / "transformers"
-        sandbox_dir = gui.REPO_ROOT / "sandbox_data"
-
-        glob_map = {
-            (sandbox_dir, "*.lock"): [sandbox_lock],
-            (hf_root, "*.lock"): [hf_lock],
-            (hf_root, "**/*.incomplete"): [incomplete_dir],
-            (hf_root, "**/*.tmp"): [tmp_dir],
-            (hf_root, "**/*lock*"): [lock_dir],
-        }
-
-        def _glob(self: Path, pattern: str):  # pragma: no cover - deterministic stub
-            return list(glob_map.get((self, pattern), []))
-
-        with mock.patch(
-            "tools.windows_sandbox_launcher_gui.Path.home", return_value=fake_home
-        ), mock.patch("pathlib.Path.glob", new=_glob), mock.patch(
-            "tools.windows_sandbox_launcher_gui.shutil.rmtree"
-        ) as rmtree_mock:
-            gui._cleanup_lock_and_model_artifacts(self.logger)
-
-        self.assertTrue(sandbox_lock.unlinked)
-        self.assertTrue(hf_lock.unlinked)
-        self.assertEqual(rmtree_mock.call_count, 3)
-        self.assertIn(
-            ("info", "Removed 2 stale files and 3 stale directories."),
-            self.logger.records,
-        )
+            self.assertFalse((sandbox_dir / "sandbox.lock").exists())
+            self.assertFalse((sandbox_dir / "sandbox.lock.tmp").exists())
+            self.assertFalse((hf_root / "model" / "weights.lock").exists())
+            self.assertFalse((hf_root / "model" / "nested.tmp").exists())
+            self.assertFalse((hf_root / "orphan.incomplete").exists())
+            self.assertFalse((hf_root / "empty_download").exists())
+            self.assertIn(
+                ("info", "Removed 3 stale files and 4 stale directories."),
+                self.logger.records,
+            )
 
     def test_install_heavy_dependencies_invokes_setup(self) -> None:
-        with mock.patch.object(gui.setup_heavy_deps, "main") as main_mock:
+        with mock.patch("neurosales.scripts.setup_heavy_deps.main") as main_mock:
             gui._install_heavy_dependencies(self.logger)
 
         main_mock.assert_called_once_with(download_only=True)
 
     def test_warm_shared_vector_service_instantiates_service(self) -> None:
-        with mock.patch("tools.windows_sandbox_launcher_gui.SharedVectorService") as svc_mock:
+        with mock.patch("vector_service.vectorizer.SharedVectorService") as svc_mock:
+            instance = svc_mock.return_value
+            instance.vectorise.return_value = []
             gui._warm_shared_vector_service(self.logger)
 
         svc_mock.assert_called_once_with()
+        instance.vectorise.assert_called_once_with("text", {"text": "warmup"})
 
     def test_ensure_env_flags_sets_expected_variables(self) -> None:
-        with mock.patch.object(gui.auto_env_setup, "ensure_env") as ensure_mock:
+        with mock.patch("auto_env_setup.ensure_env") as ensure_mock:
             prev_bootstrap = os.environ.get("SANDBOX_ENABLE_BOOTSTRAP")
             prev_self_coding = os.environ.get("SANDBOX_ENABLE_SELF_CODING")
             os.environ.pop("SANDBOX_ENABLE_BOOTSTRAP", None)
@@ -249,29 +238,29 @@ class StepImplementationTests(unittest.TestCase):
             self.addCleanup(_restore)
             gui._ensure_env_flags(self.logger)
 
-        ensure_mock.assert_called_once_with()
+        ensure_mock.assert_called_once_with(str(gui.REPO_ROOT / ".env"))
         self.assertEqual(os.environ["SANDBOX_ENABLE_BOOTSTRAP"], "1")
         self.assertEqual(os.environ["SANDBOX_ENABLE_SELF_CODING"], "1")
 
     def test_prime_registry_invoked(self) -> None:
-        with mock.patch.object(gui.prime_registry, "main") as main_mock:
+        with mock.patch("prime_registry.main") as main_mock:
             gui._prime_registry(self.logger)
 
         main_mock.assert_called_once_with()
 
     def test_install_python_dependencies_runs_pip(self) -> None:
-        with mock.patch("tools.windows_sandbox_launcher_gui.subprocess.run") as run_mock:
+        with mock.patch("tools.windows_sandbox_launcher_gui._run_command") as run_mock:
             gui._install_python_dependencies(self.logger)
 
         expected_calls = [
             mock.call(
+                self.logger,
                 [sys.executable, "-m", "pip", "install", "-e", "."],
-                check=True,
                 cwd=gui.REPO_ROOT,
             ),
             mock.call(
+                self.logger,
                 [sys.executable, "-m", "pip", "install", "jsonschema"],
-                check=True,
                 cwd=gui.REPO_ROOT,
             ),
         ]
@@ -279,12 +268,28 @@ class StepImplementationTests(unittest.TestCase):
         self.assertEqual(run_mock.call_count, 2)
 
     def test_bootstrap_self_coding_invoked(self) -> None:
-        with mock.patch.object(
-            gui.bootstrap_self_coding, "bootstrap_self_coding"
-        ) as bootstrap_mock:
+        with mock.patch("bootstrap_self_coding.bootstrap_self_coding") as bootstrap_mock:
             gui._bootstrap_self_coding(self.logger)
 
         bootstrap_mock.assert_called_once_with("AICounterBot")
+
+    def test_run_command_reports_failures(self) -> None:
+        completed = subprocess.CompletedProcess(["echo"], 0, stdout="output", stderr="warn")
+        with mock.patch("subprocess.run", return_value=completed) as run_mock:
+            result = gui._run_command(self.logger, ["echo"], cwd="/")
+
+        self.assertIs(result, completed)
+        run_mock.assert_called_once()
+        self.assertIn(("info", "Command stdout: output"), self.logger.records)
+        self.assertIn(("warning", "Command stderr: warn"), self.logger.records)
+
+        error_process = subprocess.CalledProcessError(1, ["fail"], "bad", "worse")
+        with mock.patch("subprocess.run", side_effect=error_process):
+            with self.assertRaises(RuntimeError):
+                gui._run_command(self.logger, ["fail"])
+
+        self.assertIn(("error", "Command stdout: bad"), self.logger.records)
+        self.assertIn(("error", "Command stderr: worse"), self.logger.records)
 
 
 class PreflightWorkerTests(unittest.TestCase):
