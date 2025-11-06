@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import queue
+import shutil
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional
+from pathlib import Path
+from typing import Callable, Iterable, Optional, Sequence
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -18,6 +24,21 @@ from sandbox_runner import bootstrap as sandbox_bootstrap
 from vector_service import SharedVectorService
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+_TARGETED_CLEANUP_DIRECTORIES: tuple[Path, ...] = (
+    REPO_ROOT / "sandbox_data",
+    REPO_ROOT / "vector_service",
+    REPO_ROOT / "logs",
+)
+
+_TARGETED_CLEANUP_PATTERNS: tuple[str, ...] = ("*.lock", "*.tmp", "*.wal", "*.shm")
+
+_SUBPROCESS_LOGGER = logging.getLogger("windows_sandbox.preflight.subprocess")
+
+_MAX_STEP_ATTEMPTS = 2
+
+
 @dataclass(frozen=True)
 class _PreflightStep:
     """Metadata describing a single preflight step."""
@@ -26,6 +47,7 @@ class _PreflightStep:
     description: str
     failure_title: str
     failure_message: str
+    max_attempts: int = 1
 
 
 _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
@@ -34,6 +56,7 @@ _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
         description="Synchronising repository state",
         failure_title="Git synchronisation failed",
         failure_message="Synchronising repository state",
+        max_attempts=2,
     ),
     _PreflightStep(
         name="_purge_stale_files",
@@ -52,6 +75,7 @@ _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
         description="Installing heavy dependency bundles",
         failure_title="Heavy dependency installation failed",
         failure_message="Installing heavy dependency bundles",
+        max_attempts=2,
     ),
     _PreflightStep(
         name="_warm_shared_vector_service",
@@ -70,12 +94,14 @@ _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
         description="Priming registry data",
         failure_title="Registry priming failed",
         failure_message="Priming registry data",
+        max_attempts=2,
     ),
     _PreflightStep(
         name="_install_python_dependencies",
         description="Installing Python dependencies",
         failure_title="Python dependency installation failed",
         failure_message="Installing Python dependencies",
+        max_attempts=2,
     ),
     _PreflightStep(
         name="_bootstrap_self_coding",
@@ -93,6 +119,105 @@ def _log(logger, message: str, *args: object) -> None:
         logger.info(message, *args)
 
 
+def _warn(logger, message: str, *args: object) -> None:
+    """Log ``message`` at warning level if possible."""
+
+    if hasattr(logger, "warning"):
+        logger.warning(message, *args)
+    else:  # pragma: no cover - defensive: fall back to info logging
+        _log(logger, message, *args)
+
+
+def _log_subprocess_stream(prefix: str, payload: str | None, logger) -> None:
+    """Emit subprocess ``payload`` lines with ``prefix`` to both loggers."""
+
+    if not payload:
+        return
+
+    for line in payload.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        message = f"{prefix} {stripped}"
+        _SUBPROCESS_LOGGER.info(message)
+        _log(logger, "%s", message)
+
+
+def _run_command(
+    args: Sequence[str],
+    logger,
+    *,
+    description: str | None = None,
+    cwd: Path | str | None = None,
+    retries: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    """Execute ``args`` capturing stdout/stderr and log all output."""
+
+    attempt = 0
+    last_error: subprocess.CalledProcessError | None = None
+    while attempt <= retries:
+        attempt += 1
+        if description:
+            if attempt == 1:
+                _log(logger, "%s", description)
+            else:
+                _log(
+                    logger,
+                    "%s (retry %d/%d)",
+                    description,
+                    attempt,
+                    retries + 1,
+                )
+        try:
+            completed = subprocess.run(
+                list(args),
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            _log_subprocess_stream("[stdout]", exc.stdout, logger)
+            _log_subprocess_stream("[stderr]", exc.stderr, logger)
+            if attempt <= retries:
+                _warn(
+                    logger,
+                    "Command %s failed with exit code %s; retrying…",
+                    args[0],
+                    exc.returncode,
+                )
+                continue
+            raise RuntimeError(
+                f"Command {' '.join(args)} failed with exit code {exc.returncode}"
+            ) from exc
+        else:
+            _log_subprocess_stream("[stdout]", completed.stdout, logger)
+            _log_subprocess_stream("[stderr]", completed.stderr, logger)
+            return completed
+
+    if last_error is not None:  # pragma: no cover - defensive
+        raise RuntimeError(str(last_error))
+
+    raise RuntimeError("Subprocess execution aborted before start")  # pragma: no cover
+
+
+def _safe_remove_path(path: Path, logger) -> None:
+    """Remove ``path`` if it exists, logging successes and failures."""
+
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+            _log(logger, "Removed directory: %s", path)
+        elif path.exists():
+            path.unlink()
+            _log(logger, "Removed file: %s", path)
+    except FileNotFoundError:  # pragma: no cover - defensive
+        return
+    except OSError as exc:
+        _warn(logger, "Failed to remove %s: %s", path, exc)
+
+
 def _safe_queue_put(target_queue: queue.Queue, payload) -> None:
     """Insert ``payload`` into ``target_queue`` ignoring ``queue.Full`` errors."""
 
@@ -105,7 +230,41 @@ def _safe_queue_put(target_queue: queue.Queue, payload) -> None:
 def _git_sync(logger) -> None:
     """Synchronise git repositories."""
 
+    repo_cwd = str(REPO_ROOT)
     _log(logger, "Synchronising git repositories with remote state…")
+    _run_command(
+        ["git", "fetch", "--all", "--prune"],
+        logger,
+        description="Fetching remote references",
+        cwd=repo_cwd,
+        retries=1,
+    )
+    upstream: str | None = None
+    try:
+        result = _run_command(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            logger,
+            description="Determining upstream branch",
+            cwd=repo_cwd,
+        )
+        upstream = result.stdout.strip()
+    except RuntimeError:
+        _warn(
+            logger,
+            "Unable to determine upstream branch; defaulting to origin/HEAD",
+        )
+        upstream = "origin/HEAD"
+
+    if not upstream:
+        upstream = "origin/HEAD"
+
+    _run_command(
+        ["git", "reset", "--hard", upstream],
+        logger,
+        description=f"Resetting local branch to {upstream}",
+        cwd=repo_cwd,
+        retries=1,
+    )
 
 
 def _purge_stale_files(logger) -> None:
@@ -119,12 +278,21 @@ def _cleanup_lock_and_model_artifacts(logger) -> None:
     """Remove stale lock files and cached model artifacts."""
 
     _log(logger, "Cleaning up stale lock files and cached models…")
+    for directory in _TARGETED_CLEANUP_DIRECTORIES:
+        if not directory.exists():
+            continue
+        for pattern in _TARGETED_CLEANUP_PATTERNS:
+            for path in directory.glob(pattern):
+                _safe_remove_path(path, logger)
 
 
 def _install_heavy_dependencies(logger) -> None:
     """Install large dependency bundles required for sandbox startup."""
 
-    from neurosales.scripts import setup_heavy_deps
+    try:
+        from neurosales.scripts import setup_heavy_deps
+    except ImportError as exc:  # pragma: no cover - depends on optional dep
+        raise RuntimeError("Heavy dependency installer not available") from exc
 
     _log(logger, "Installing heavy dependencies (download only)…")
     setup_heavy_deps.main(download_only=True)
@@ -142,6 +310,9 @@ def _ensure_env_flags(logger) -> None:
 
     _log(logger, "Ensuring environment configuration flags…")
     auto_env_setup.ensure_env()
+    os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+    os.environ.setdefault("MENACE_SANDBOX_PREPARED", "1")
+    _log(logger, "Environment flags set: MENACE_LIGHT_IMPORTS, MENACE_SANDBOX_PREPARED")
 
 
 def _prime_registry(logger) -> None:
@@ -155,13 +326,33 @@ def _install_python_dependencies(logger) -> None:
     """Install Python dependencies required for the sandbox runtime."""
 
     _log(logger, "Validating Python dependency installation…")
+    requirements = REPO_ROOT / "requirements.txt"
+    if not requirements.exists():
+        _warn(logger, "No requirements.txt found at %s; skipping pip install", requirements)
+        return
+
+    _run_command(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "-r",
+            str(requirements),
+        ],
+        logger,
+        description="Installing Python requirements",
+        cwd=str(REPO_ROOT),
+        retries=1,
+    )
 
 
 def _bootstrap_self_coding(logger) -> None:
     """Bootstrap the self-coding environment used during sandbox runs."""
 
     _log(logger, "Bootstrapping self-coding environment…")
-    bootstrap_self_coding.bootstrap_self_coding()
+    bootstrap_self_coding.bootstrap_self_coding("AICounterBot")
 
 
 def _evaluate_health_snapshot(
@@ -227,25 +418,54 @@ def run_full_preflight(
             return result
 
         step_runner: Callable[[object], None] = globals()[step.name]
-        try:
-            _log(logger, "Running preflight step: %s", step.description)
-            step_runner(logger)
-            steps_completed = result.setdefault("steps_completed", [])
-            if isinstance(steps_completed, list):
-                steps_completed.append(step.name)
-        except Exception as exc:  # pragma: no cover - exercised via unit tests
-            pause_event.set()
-            if hasattr(logger, "exception"):
-                logger.exception("Preflight step %s failed: %s", step.name, exc)
-            context = {"step": step.name, "exception": str(exc)}
-            _safe_queue_put(debug_queue, str(exc))
-            _safe_queue_put(
-                decision_queue,
-                (step.failure_title, step.failure_message, context),
-            )
-            result["failures"] = [step.failure_message]
-            result["error_step"] = step.name
-            return result
+        max_attempts = max(1, min(step.max_attempts, _MAX_STEP_ATTEMPTS))
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                _log(
+                    logger,
+                    "Running preflight step: %s (attempt %d/%d)",
+                    step.description,
+                    attempt,
+                    max_attempts,
+                )
+                step_runner(logger)
+            except Exception as exc:  # pragma: no cover - exercised via unit tests
+                if attempt < max_attempts:
+                    _warn(
+                        logger,
+                        "Preflight step %s failed on attempt %d/%d: %s",
+                        step.name,
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    _safe_queue_put(debug_queue, str(exc))
+                    continue
+
+                pause_event.set()
+                if hasattr(logger, "exception"):
+                    logger.exception("Preflight step %s failed: %s", step.name, exc)
+                context = {
+                    "step": step.name,
+                    "exception": str(exc),
+                    "attempts": attempt,
+                }
+                _safe_queue_put(debug_queue, str(exc))
+                _safe_queue_put(
+                    decision_queue,
+                    (step.failure_title, step.failure_message, context),
+                )
+                result["failures"] = [step.failure_message]
+                result["error_step"] = step.name
+                return result
+            else:
+                _log(logger, "Completed preflight step: %s", step.description)
+                steps_completed = result.setdefault("steps_completed", [])
+                if isinstance(steps_completed, list):
+                    steps_completed.append(step.name)
+                break
 
     _log(logger, "Collecting sandbox health snapshot…")
     snapshot = sandbox_bootstrap.sandbox_health()
