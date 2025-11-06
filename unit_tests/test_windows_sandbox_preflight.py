@@ -8,6 +8,8 @@ import types
 import unittest
 from unittest import mock
 
+from dependency_health import DependencyMode
+
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 auto_env_stub = types.ModuleType("auto_env_setup")
@@ -252,6 +254,59 @@ class PreflightWorkerTests(unittest.TestCase):
             ],
         )
         self.assertTrue(self.abort_event.is_set())
+
+
+class HealthEvaluationTests(unittest.TestCase):
+    def test_health_snapshot_success(self) -> None:
+        health = {
+            "databases_accessible": True,
+            "dependency_health": {"missing": []},
+        }
+
+        healthy, failures = gui._evaluate_health_snapshot(
+            health, dependency_mode=DependencyMode.STRICT
+        )
+
+        self.assertTrue(healthy)
+        self.assertEqual(failures, [])
+
+    def test_health_snapshot_database_failure(self) -> None:
+        health = {
+            "databases_accessible": False,
+            "database_errors": {"metrics.db": "permission denied"},
+        }
+
+        healthy, failures = gui._evaluate_health_snapshot(
+            health, dependency_mode=DependencyMode.STRICT
+        )
+
+        self.assertFalse(healthy)
+        self.assertTrue(any("databases inaccessible" in msg for msg in failures))
+
+    def test_health_snapshot_optional_dependencies_respect_mode(self) -> None:
+        health = {
+            "databases_accessible": True,
+            "dependency_health": {
+                "missing": [
+                    {"name": "foo", "optional": True},
+                    {"name": "bar", "optional": False},
+                ]
+            },
+        }
+
+        strict_healthy, strict_failures = gui._evaluate_health_snapshot(
+            health, dependency_mode=DependencyMode.STRICT
+        )
+        minimal_healthy, minimal_failures = gui._evaluate_health_snapshot(
+            health, dependency_mode=DependencyMode.MINIMAL
+        )
+
+        self.assertFalse(strict_healthy)
+        self.assertTrue(strict_failures)
+        self.assertFalse(minimal_healthy)
+        # optional dependency should not appear when minimal mode ignores it
+        self.assertTrue(all("foo" not in failure for failure in minimal_failures))
+        self.assertTrue(any("bar" in failure for failure in minimal_failures))
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
