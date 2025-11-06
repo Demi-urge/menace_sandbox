@@ -164,28 +164,35 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         modules.append(path)
     return modules
 
-# Path to your persistent registry cache
-persist_path = Path(__file__).resolve().with_name("bot_graph.db")
+def main() -> None:
+    """Discover self-managed bots and persist the registry mapping."""
 
-# Collect discovered modules in a lightweight writer to avoid importing the
-# full runtime registry (which pulls in hundreds of supporting modules).
-registry = _RegistryWriter()
+    # Path to your persistent registry cache
+    persist_path = Path(__file__).resolve().with_name("bot_graph.db")
 
-# Discover and register all _bot.py files with their module paths
-bot_dir = Path(__file__).resolve().parent
-registered: dict[str, Path] = {}
-for module in _iter_bot_modules(bot_dir):
-    for class_name in _iter_decorated_bot_classes(module):
-        registry.register(class_name, module)
-        registered[class_name] = module
+    # Collect discovered modules in a lightweight writer to avoid importing the
+    # full runtime registry (which pulls in hundreds of supporting modules).
+    registry = _RegistryWriter()
 
-if registered:
-    logger.info("Registered bot mappings:")
-    for class_name, module in sorted(registered.items()):
-        logger.info(" - %s -> %s", class_name, module.name)
-else:
-    logger.info("No decorated bots discovered.")
+    # Discover and register all _bot.py files with their module paths
+    bot_dir = Path(__file__).resolve().parent
+    registered: dict[str, Path] = {}
+    for module in _iter_bot_modules(bot_dir):
+        for class_name in _iter_decorated_bot_classes(module):
+            registry.register(class_name, module)
+            registered[class_name] = module
 
-# Save the populated registry
-registry.save(persist_path)
-logger.info("Registry saved to %s", persist_path)
+    if registered:
+        logger.info("Registered bot mappings:")
+        for class_name, module in sorted(registered.items()):
+            logger.info(" - %s -> %s", class_name, module.name)
+    else:
+        logger.info("No decorated bots discovered.")
+
+    # Save the populated registry
+    registry.save(persist_path)
+    logger.info("Registry saved to %s", persist_path)
+
+
+if __name__ == "__main__":
+    main()
