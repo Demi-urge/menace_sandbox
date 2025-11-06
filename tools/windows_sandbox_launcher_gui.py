@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 import tkinter as tk
 from tkinter import font, ttk
 
@@ -38,6 +39,9 @@ class SandboxLauncherGUI(tk.Tk):
         self.title(self.WINDOW_TITLE)
         self.geometry(self.WINDOW_GEOMETRY)
         LOGGER.setLevel(logging.INFO)
+
+        self._is_preflight_running = False
+        self._preflight_thread: threading.Thread | None = None
 
         self._log_handler = QueueLoggingHandler(LOG_QUEUE)
         self._log_handler.setFormatter(
@@ -158,11 +162,56 @@ class SandboxLauncherGUI(tk.Tk):
 
     def run_preflight(self) -> None:
         """Callback for the Run Preflight button."""
-        LOGGER.info("Preflight checks started...")
+        if self._is_preflight_running:
+            LOGGER.info(
+                "event=preflight status=ignored reason=already_running"
+            )
+            return
+
+        self._is_preflight_running = True
+        self.preflight_button.state(["disabled"])
+        self.start_button.state(["disabled"])
+
+        self._preflight_thread = threading.Thread(
+            target=self._run_preflight,
+            daemon=True,
+        )
+        self._preflight_thread.start()
 
     def start_sandbox(self) -> None:
         """Callback for the Start Sandbox button."""
         LOGGER.info("Sandbox launch initiated.")
+
+    def _run_preflight(self) -> None:
+        """Execute the preflight process in a background thread."""
+        success = False
+        try:
+            LOGGER.info("event=preflight status=started")
+            LOGGER.info(
+                "event=preflight status=running step=validate_environment"
+            )
+            # Placeholder for actual preflight logic
+            LOGGER.info("event=preflight status=running step=collect_metadata")
+            success = True
+            LOGGER.info("event=preflight status=completed result=success")
+        except Exception:
+            LOGGER.exception("event=preflight status=failed")
+        finally:
+            try:
+                self.after(0, self._on_preflight_finished, success)
+            except tk.TclError:
+                # GUI was likely closed before the callback could be scheduled.
+                LOGGER.debug("event=preflight status=cleanup action=after_failed")
+
+    def _on_preflight_finished(self, success: bool) -> None:
+        """Handle GUI state updates when the preflight thread completes."""
+        self._is_preflight_running = False
+        self._preflight_thread = None
+        self.preflight_button.state(["!disabled"])
+        if success:
+            self.start_button.state(["!disabled"])
+        else:
+            self.start_button.state(["disabled"])
 
 
 __all__ = ["SandboxLauncherGUI"]
