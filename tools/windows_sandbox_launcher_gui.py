@@ -38,6 +38,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self.preflight_thread: threading.Thread | None = None
+        self.sandbox_thread: threading.Thread | None = None
         self.preflight_abort = threading.Event()
         self.pause_event = threading.Event()
         self.retry_event = threading.Event()
@@ -147,7 +148,7 @@ class SandboxLauncherGUI(tk.Tk):
             parent,
             text="Start Sandbox",
             style="Sandbox.TButton",
-            command=self._on_start_sandbox,
+            command=self._start_sandbox_clicked,
             state=tk.DISABLED,
         )
         start_sandbox.grid(row=0, column=1, padx=(6, 0), sticky=tk.EW)
@@ -218,8 +219,73 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self.preflight_thread.start()
 
-    def _on_start_sandbox(self) -> None:  # pragma: no cover - GUI callback
+    def _start_sandbox_clicked(self) -> None:  # pragma: no cover - GUI callback
+        if self.sandbox_thread and self.sandbox_thread.is_alive():
+            return
+
+        self._run_preflight_btn.configure(state=tk.DISABLED)
+        self._start_sandbox_btn.configure(state=tk.DISABLED)
         self.log_message("Starting sandbox...", "info")
+
+        self.sandbox_thread = threading.Thread(
+            target=self._launch_sandbox,
+            name="SandboxLaunchThread",
+            daemon=True,
+        )
+        self.sandbox_thread.start()
+
+    def _launch_sandbox(self) -> None:
+        """Launch the sandbox process and stream output to the logger."""
+
+        command = [sys.executable, "-m", "start_autonomous_sandbox"]
+        logger.info("Launching sandbox via: %s", " ".join(command))
+
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception:
+            logger.exception("Failed to start sandbox process.")
+            self.log_queue.put(
+                ("Failed to launch sandbox process. Check logs for details.", "error")
+            )
+            self.after(0, self._on_sandbox_exit, None)
+            return
+
+        assert process.stdout is not None  # For type checkers
+
+        try:
+            for line in process.stdout:
+                logger.info("[sandbox] %s", line.rstrip())
+        except Exception:
+            logger.exception("Error while reading sandbox output.")
+        finally:
+            process.stdout.close()
+
+        returncode = process.wait()
+
+        if returncode == 0:
+            logger.info("Sandbox process exited successfully.")
+            self.log_queue.put(("Sandbox exited successfully.", "success"))
+        else:
+            logger.error("Sandbox process exited with code %s", returncode)
+            self.log_queue.put(
+                (f"Sandbox exited with code {returncode}.", "error")
+            )
+
+        self.after(0, self._on_sandbox_exit, returncode)
+
+    def _on_sandbox_exit(self, returncode: int | None) -> None:
+        """Reset controls after the sandbox process finishes."""
+
+        self.sandbox_thread = None
+        self._run_preflight_btn.configure(state=tk.NORMAL)
+        self._start_sandbox_btn.configure(state=tk.DISABLED)
 
     def _execute_preflight(self) -> None:
         """Run the Phase 5 preflight orchestration on a worker thread."""
