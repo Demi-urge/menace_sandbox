@@ -143,6 +143,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._paused_step_index: int | None = None
         self._last_failed_step: str | None = None
         self._latest_pause_context: dict[str, object] | None = None
+        self._latest_pause_context_trace: str | None = None
+        self._pause_user_decision: str | None = None
         self._debug_visible = False
         self._preflight_start_time: float | None = None
         self._elapsed_job: str | None = None
@@ -377,9 +379,35 @@ class SandboxLauncherGUI(tk.Tk):
                 self.log_text.configure(state=tk.DISABLED)
             self._drain_running = False
             self._schedule_log_drain()
+        self._handle_pause_prompt()
 
+    def _format_pause_context_trace(
+        self,
+        *,
+        title: str,
+        message: str,
+        context: dict[str, object],
+    ) -> str:
+        parts = ["Preflight pause context captured:"]
+        if title:
+            parts.append(f"Title: {title}")
+        if message:
+            parts.append(f"Message: {message}")
+
+        step = context.get("step")
+        if step:
+            parts.append(f"Step: {step}")
+
+        exception = context.get("exception")
+        if exception:
+            parts.append(f"Exception: {exception}")
+
+        return "\n".join(parts)
+
+    def _handle_pause_prompt(self) -> None:
         pause_event = self.__dict__.get("pause_event")  # avoid Tk __getattr__ recursion
         decision_queue = self.__dict__.get("decision_queue")
+        abort_event = self.__dict__.get("abort_event")
 
         if pause_event is None or decision_queue is None:
             return
@@ -390,11 +418,32 @@ class SandboxLauncherGUI(tk.Tk):
             except queue.Empty:
                 return
 
-            messagebox.showerror(title=title, message=message)
-            self._pause_dialog_presented = True
-            if context is not None:
+            exception_text = ""
+            if isinstance(context, dict):
                 self._latest_pause_context = context
+                exception_text = str(context.get("exception") or "").strip()
+                self._latest_pause_context_trace = self._format_pause_context_trace(
+                    title=title, message=message, context=context
+                )
                 logger.debug("Preflight paused at step %s", context.get("step"))
+
+            prompt_parts = [message]
+            if exception_text:
+                prompt_parts.append(f"Details:\n{exception_text}")
+            prompt_parts.append("Do you want to continue with the next step?")
+            prompt = "\n\n".join(part for part in prompt_parts if part)
+
+            decision = messagebox.askyesno(title=title, message=prompt)
+            self._pause_user_decision = "continue" if decision else "abort"
+            self._pause_dialog_presented = True
+
+            if decision:
+                pause_event.clear()
+                if abort_event is not None:
+                    abort_event.clear()
+            elif abort_event is not None:
+                abort_event.set()
+
 
     def _initialise_file_logging(self) -> None:
         if self._file_listener is not None:
@@ -409,7 +458,12 @@ class SandboxLauncherGUI(tk.Tk):
         listener = QueueListener(log_queue, file_handler)
 
         listener.start()
-        logging.getLogger().addHandler(queue_handler)
+        root_logger = logging.getLogger()
+        if queue_handler not in root_logger.handlers:
+            root_logger.addHandler(queue_handler)
+        module_handlers = getattr(logger, "handlers", [])
+        if queue_handler not in module_handlers:
+            logger.addHandler(queue_handler)
 
         self._file_log_queue = log_queue
         self._file_queue_handler = queue_handler
@@ -422,7 +476,12 @@ class SandboxLauncherGUI(tk.Tk):
             self._file_listener = None
 
         if self._file_queue_handler is not None:
-            logging.getLogger().removeHandler(self._file_queue_handler)
+            root_logger = logging.getLogger()
+            if self._file_queue_handler in root_logger.handlers:
+                root_logger.removeHandler(self._file_queue_handler)
+            module_handlers = getattr(logger, "handlers", [])
+            if self._file_queue_handler in module_handlers:
+                logger.removeHandler(self._file_queue_handler)
             self._file_queue_handler = None
 
         if self._file_handler is not None:
@@ -460,6 +519,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._paused_step_index = None
         self._last_failed_step = None
         self._latest_pause_context = None
+        self._latest_pause_context_trace = None
+        self._pause_user_decision = None
         self._pause_dialog_presented = False
 
         self._clear_debug_panel()
@@ -517,13 +578,16 @@ class SandboxLauncherGUI(tk.Tk):
             logger.exception("Preflight aborted due to error: %s", exc)
             payload = {"success": False, "error": str(exc)}
         else:
+            result_aborted = bool(result.get("aborted")) or self.abort_event.is_set()
             healthy = bool(result.get("healthy"))
             success = (
                 healthy
                 and not bool(result.get("paused"))
-                and not bool(result.get("aborted"))
+                and not result_aborted
             )
             payload = {**result, "healthy": healthy, "success": success}
+            if result_aborted:
+                payload["aborted"] = True
 
         traces: list[str] = []
         try:
@@ -536,6 +600,8 @@ class SandboxLauncherGUI(tk.Tk):
             payload["debug_traces"] = traces
 
         payload["start_index"] = start_index
+        if self.abort_event.is_set() and not payload.get("aborted"):
+            payload["aborted"] = True
 
         self._worker_queue.put(("preflight_complete", payload))
 
@@ -646,15 +712,22 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread = None
         self.run_button.state(["!disabled"])
 
+        decision = self._pause_user_decision
+        self._pause_user_decision = None
+
         debug_traces = payload.get("debug_traces")
         if isinstance(debug_traces, Iterable) and not isinstance(
             debug_traces, (str, bytes)
         ):
             self._update_debug_panel(debug_traces)
 
+        if self._latest_pause_context_trace:
+            self._update_debug_panel([self._latest_pause_context_trace])
+            self._latest_pause_context_trace = None
+
         success = bool(payload.get("success"))
         paused = bool(payload.get("paused"))
-        aborted = bool(payload.get("aborted"))
+        aborted = bool(payload.get("aborted")) or decision == "abort"
         error_message = payload.get("error")
 
         if success:
@@ -688,6 +761,53 @@ class SandboxLauncherGUI(tk.Tk):
             failed_step = payload.get("failed_step")
             if failed_step:
                 self._last_failed_step = str(failed_step)
+
+            resume_from = self._paused_step_index
+
+            if decision == "continue":
+                total_steps = len(_PREFLIGHT_STEPS)
+                if isinstance(resume_from, int):
+                    resume_index = resume_from + 1
+                else:
+                    start_index = payload.get("start_index")
+                    resume_index = int(start_index) if isinstance(start_index, int) else 0
+                resume_index = min(max(resume_index, 0), total_steps)
+
+                failed_name = payload.get("failed_step") or self._last_failed_step or "unknown"
+                logger.info(
+                    "Operator opted to continue preflight past step %s; resuming at index %s.",
+                    failed_name,
+                    resume_index,
+                )
+
+                self.run_button.state(["disabled"])
+                self.retry_button.state(["disabled"])
+                self.retry_button.grid_remove()
+                self._pause_dialog_presented = False
+                self._paused_step_index = None
+
+                if self._preflight_start_time is None:
+                    self._preflight_start_time = time.monotonic()
+                self._ensure_elapsed_timer_running()
+
+                self._start_preflight_thread(resume_index)
+                return
+
+            if aborted:
+                payload = {**payload, "aborted": True}
+                self.pause_event.clear()
+                self.abort_event.set()
+
+                self.retry_button.state(["disabled"])
+                self.retry_button.grid_remove()
+                self.launch_button.state(["disabled"])
+
+                self._finish_elapsed_timer("Preflight aborted")
+                self._pause_dialog_presented = False
+
+                message = self._format_health_failure_message(payload)
+                logger.warning("Sandbox health verification aborted: %s", message)
+                return
 
             self.retry_button.state(["!disabled"])
             self.retry_button.grid()
@@ -863,16 +983,22 @@ def run_full_preflight(
             abort_event=abort_event,
             debug_queue=debug_queue,
         ):
-            return {
+            result: dict[str, object] = {
                 "paused": pause_event.is_set(),
                 "failed_step": step.name,
                 "failed_index": index,
             }
+            if abort_event.is_set():
+                result["aborted"] = True
+            return result
 
     snapshot = _collect_sandbox_health(logger, pause_event, decision_queue, abort_event, debug_queue)
     healthy, failures = _evaluate_health_snapshot(snapshot, dependency_mode=dependency_mode)
 
-    return {"snapshot": snapshot, "healthy": healthy, "failures": failures}
+    result: dict[str, object] = {"snapshot": snapshot, "healthy": healthy, "failures": failures}
+    if abort_event.is_set():
+        result["aborted"] = True
+    return result
 
 
 def _collect_sandbox_health(

@@ -1,6 +1,7 @@
 """Smoke tests for the Windows sandbox launcher GUI helpers."""
 
 import queue
+import threading
 from unittest import mock
 
 import pytest
@@ -59,6 +60,7 @@ def _make_stub_instance() -> gui.SandboxLauncherGUI:
     inst._file_queue_handler = None
     inst._file_handler = None
     inst._file_listener = None
+    inst._log_file_path = gui.LOG_FILE_PATH
     return inst
 
 
@@ -118,3 +120,53 @@ def test_drain_log_queue_flushes_entries(monkeypatch: pytest.MonkeyPatch) -> Non
     assert text.states == [gui.tk.NORMAL, gui.tk.DISABLED]
     assert text.seen == [gui.tk.END]
     assert scheduled == [True]
+
+
+def test_handle_pause_prompt_prompts_continue(monkeypatch: pytest.MonkeyPatch) -> None:
+    inst = _make_stub_instance()
+    inst.pause_event = threading.Event()
+    inst.pause_event.set()
+    inst.abort_event = threading.Event()
+    inst.abort_event.set()
+    inst.decision_queue = queue.Queue()
+    context = {"step": "demo", "exception": "boom"}
+    inst.decision_queue.put(("Failure", "Step failed", context))
+
+    captured: dict[str, str] = {}
+
+    def _fake_askyesno(*, title: str, message: str) -> bool:
+        captured["title"] = title
+        captured["message"] = message
+        return True
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", _fake_askyesno)
+
+    inst._handle_pause_prompt()
+
+    assert inst._pause_user_decision == "continue"
+    assert not inst.pause_event.is_set()
+    assert not inst.abort_event.is_set()
+    assert inst._latest_pause_context == context
+    assert inst._latest_pause_context_trace
+    assert "Details" in captured["message"]
+    assert "boom" in captured["message"]
+
+
+def test_handle_pause_prompt_prompts_abort(monkeypatch: pytest.MonkeyPatch) -> None:
+    inst = _make_stub_instance()
+    inst.pause_event = threading.Event()
+    inst.pause_event.set()
+    inst.abort_event = threading.Event()
+    inst.decision_queue = queue.Queue()
+    context = {"step": "demo", "exception": "explosion"}
+    inst.decision_queue.put(("Failure", "Step failed", context))
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda **_: False)
+
+    inst._handle_pause_prompt()
+
+    assert inst._pause_user_decision == "abort"
+    assert inst.pause_event.is_set()
+    assert inst.abort_event.is_set()
+    assert inst._latest_pause_context == context
+    assert inst._latest_pause_context_trace
