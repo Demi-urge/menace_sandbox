@@ -616,6 +616,7 @@ class PreflightGuiDecisionTests(unittest.TestCase):
         self.gui._latest_pause_context = None
         self.gui._latest_pause_context_trace = None
         self.gui._pause_user_decision = None
+        self.gui._resume_after_pause = False
 
     def test_handle_pause_prompt_continue_clears_pause(self) -> None:
         context = {"step": "_git_sync", "exception": "boom"}
@@ -631,6 +632,7 @@ class PreflightGuiDecisionTests(unittest.TestCase):
         self.assertFalse(self.gui.pause_event.is_set())
         self.assertFalse(self.gui.abort_event.is_set())
         self.assertEqual(self.gui._pause_user_decision, "continue")
+        self.assertTrue(self.gui._resume_after_pause)
         self.assertTrue(self.gui._pause_dialog_presented)
         self.assertIs(self.gui._latest_pause_context, context)
         self.assertIsNotNone(self.gui._latest_pause_context_trace)
@@ -651,11 +653,12 @@ class PreflightGuiDecisionTests(unittest.TestCase):
             self.gui._handle_pause_prompt()
 
         prompt_mock.assert_called_once()
-        self.assertFalse(self.gui.pause_event.is_set())
+        self.assertTrue(self.gui.pause_event.is_set())
         self.assertTrue(self.gui.abort_event.is_set())
         self.assertEqual(self.gui._pause_user_decision, "abort")
         self.assertTrue(self.gui._pause_dialog_presented)
         self.assertIs(self.gui._latest_pause_context, context)
+        self.assertFalse(self.gui._resume_after_pause)
         logger_mock.info.assert_called()
         logged_messages = [call.args[0] for call in logger_mock.info.call_args_list]
         self.assertTrue(any("abort" in message for message in logged_messages))
@@ -694,6 +697,42 @@ class PreflightGuiDecisionTests(unittest.TestCase):
         self.gui.retry_button.state.assert_called_with(["!disabled"])
         self.gui.retry_button.grid.assert_called_once()
         warning_mock.assert_called_once()
+        logger_mock.warning.assert_called()
+
+    def test_handle_preflight_completion_paused_auto_resumes(self) -> None:
+        payload = {"paused": True, "failed_index": 1, "failed_step": "_git_sync"}
+        self.gui._resume_after_pause = True
+        self.gui._pause_dialog_presented = True
+
+        with mock.patch.object(gui, "logger") as logger_mock:
+            self.gui._handle_preflight_completion(payload)
+
+        self.assertFalse(self.gui._resume_after_pause)
+        self.assertIsNone(self.gui._paused_step_index)
+        self.gui.retry_button.state.assert_called_with(["disabled"])
+        self.gui.retry_button.grid_remove.assert_called_once()
+        self.gui.run_button.state.assert_called_with(["disabled"])
+        self.gui.after_idle.assert_called_once()
+        start_call = self.gui.after_idle.call_args[0][0]
+        start_call()
+        self.gui._start_preflight_thread.assert_called_with(2)
+        logger_mock.warning.assert_not_called()
+
+    def test_handle_preflight_completion_paused_abort_path(self) -> None:
+        payload = {"paused": True, "failed_index": 0, "failed_step": "_git_sync"}
+        self.gui.abort_event.set()
+        self.gui._pause_dialog_presented = True
+
+        with mock.patch.object(gui, "logger") as logger_mock, mock.patch.object(
+            gui.messagebox, "showwarning"
+        ) as warning_mock:
+            self.gui._handle_preflight_completion(payload)
+
+        self.gui.retry_button.state.assert_called_with(["disabled"])
+        self.gui.retry_button.grid_remove.assert_called_once()
+        self.gui.launch_button.state.assert_called_with(["disabled"])
+        self.gui._finish_elapsed_timer.assert_called_once_with("Preflight aborted")
+        warning_mock.assert_called_once_with("Preflight aborted", "details")
         logger_mock.warning.assert_called()
 
 
