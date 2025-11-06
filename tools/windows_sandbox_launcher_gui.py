@@ -5,8 +5,9 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from tkinter import messagebox, ttk
+from typing import Any, Callable, Optional, Tuple
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,33 @@ class TkLogQueueHandler(logging.Handler):
             pass
 
 
+@dataclass(slots=True)
+class PreflightStep:
+    """Callable preflight step description."""
+
+    description: str
+    executor: Callable[..., None]
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+    def run(self) -> None:
+        self.executor(*self.args, **self.kwargs)
+
+
+@dataclass(slots=True)
+class PauseDecision:
+    """Metadata describing a pause triggered by a failed preflight step."""
+
+    title: str
+    message: str
+    context: dict[str, Any]
+    step: PreflightStep
+
+
+class _PreflightAborted(Exception):
+    """Raised internally when the preflight workflow is aborted."""
+
+
 class SandboxLauncherGUI(tk.Tk):
     """Main application window for the sandbox launcher."""
 
@@ -57,6 +85,9 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.log_queue: "queue.Queue[Tuple[str, str]]" = queue.Queue()
         self.worker_queue: "queue.Queue[Tuple[str, Optional[str]]]" = queue.Queue()
+        self.decision_queue: "queue.Queue[PauseDecision]" = queue.Queue()
+        self.pause_event = threading.Event()
+        self.abort_event = threading.Event()
         self._queue_handler = TkLogQueueHandler(self.log_queue)
         self._queue_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -69,6 +100,10 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread: Optional[threading.Thread] = None
         self._preflight_start_time: Optional[float] = None
         self._drain_running = True
+        self._state_lock = threading.Lock()
+        self._resume_action: Optional[str] = None
+        self._current_pause: Optional[PauseDecision] = None
+        self._awaiting_user_decision = False
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -117,6 +152,7 @@ class SandboxLauncherGUI(tk.Tk):
         controls_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
         controls_frame.columnconfigure(0, weight=1)
         controls_frame.columnconfigure(1, weight=1)
+        controls_frame.columnconfigure(2, weight=0)
 
         self.run_preflight_button = ttk.Button(
             controls_frame,
@@ -131,6 +167,15 @@ class SandboxLauncherGUI(tk.Tk):
             state=tk.DISABLED,
         )
         self.start_sandbox_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+        self.retry_step_button = ttk.Button(
+            controls_frame,
+            text="Retry Step",
+            state=tk.DISABLED,
+            command=self._on_retry_step,
+        )
+        self.retry_step_button.grid(row=0, column=2, sticky="ew", padx=(5, 0))
+        self.retry_step_button.grid_remove()
 
     def _schedule_log_drain(self) -> None:
         if self._drain_running:
@@ -168,6 +213,9 @@ class SandboxLauncherGUI(tk.Tk):
         if not self._drain_running:
             return
 
+        if self.pause_event.is_set():
+            self._process_pause_decision()
+
         try:
             status, message = self.worker_queue.get_nowait()
         except queue.Empty:
@@ -186,6 +234,9 @@ class SandboxLauncherGUI(tk.Tk):
         if status == "success":
             logger.info("Preflight completed successfully%s", duration_msg)
             self.start_sandbox_button.configure(state=tk.NORMAL)
+        elif status == "aborted":
+            logger.info("Preflight aborted by user%s", duration_msg)
+            self.start_sandbox_button.configure(state=tk.DISABLED)
         else:
             if message:
                 logger.error("Preflight failed: %s", message)
@@ -193,6 +244,9 @@ class SandboxLauncherGUI(tk.Tk):
                 logger.error("Preflight failed%s", duration_msg)
             self.start_sandbox_button.configure(state=tk.DISABLED)
 
+        self._clear_pause_ui()
+        self.pause_event.clear()
+        self.abort_event.clear()
         self.run_preflight_button.configure(state=tk.NORMAL)
 
     def _on_run_preflight(self) -> None:
@@ -203,6 +257,13 @@ class SandboxLauncherGUI(tk.Tk):
         self.run_preflight_button.configure(state=tk.DISABLED)
         self.start_sandbox_button.configure(state=tk.DISABLED)
         self._preflight_start_time = time.time()
+        self.pause_event.clear()
+        self.abort_event.clear()
+        self._clear_pause_ui()
+        self._drain_decision_queue()
+        with self._state_lock:
+            self._resume_action = None
+        self._current_pause = None
         logger.info("Starting preflight checks at %s", time.strftime("%H:%M:%S"))
 
         self._preflight_thread = threading.Thread(
@@ -215,16 +276,18 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _run_preflight_task(self) -> None:
         try:
-            stages = (
-                "Validating configuration",
-                "Checking required resources",
-                "Verifying sandbox prerequisites",
-            )
-            for stage in stages:
-                logger.info("Preflight stage: %s", stage)
-                time.sleep(0.1)
+            for step in self._get_preflight_steps():
+                self._execute_preflight_step(step)
 
-            self.worker_queue.put_nowait(("success", None))
+            try:
+                self.worker_queue.put_nowait(("success", None))
+            except queue.Full:
+                logger.error("Unable to report preflight completion; queue full")
+        except _PreflightAborted as aborted:
+            try:
+                self.worker_queue.put_nowait(("aborted", str(aborted)))
+            except queue.Full:
+                logger.error("Unable to report preflight abort; queue full")
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Unexpected error during preflight execution")
             try:
@@ -250,4 +313,149 @@ class SandboxLauncherGUI(tk.Tk):
 
         logger.removeHandler(self._queue_handler)
         self.destroy()
+
+    # ------------------------------------------------------------------
+    def _get_preflight_steps(self) -> list[PreflightStep]:
+        return [
+            PreflightStep("Validating configuration", self._validate_configuration),
+            PreflightStep("Checking required resources", self._check_required_resources),
+            PreflightStep(
+                "Verifying sandbox prerequisites", self._verify_sandbox_prerequisites
+            ),
+        ]
+
+    def _validate_configuration(self) -> None:
+        time.sleep(0.1)
+
+    def _check_required_resources(self) -> None:
+        time.sleep(0.1)
+
+    def _verify_sandbox_prerequisites(self) -> None:
+        time.sleep(0.1)
+
+    def _execute_preflight_step(self, step: PreflightStep) -> None:
+        while True:
+            if self.abort_event.is_set():
+                raise _PreflightAborted(f"Aborted during {step.description}")
+
+            logger.info("Preflight stage: %s", step.description)
+            try:
+                step.run()
+            except Exception as exc:
+                logger.exception("Preflight step failed: %s", step.description)
+                self._handle_step_failure(step, exc)
+                while self.pause_event.is_set():
+                    if self.abort_event.is_set():
+                        raise _PreflightAborted(
+                            f"Aborted during {step.description} after failure"
+                        )
+                    time.sleep(0.05)
+
+                action = self._consume_resume_action()
+                if action == "retry":
+                    logger.info("Retrying preflight step: %s", step.description)
+                    continue
+                else:
+                    logger.info(
+                        "Continuing after failure in preflight step: %s",
+                        step.description,
+                    )
+                break
+            else:
+                break
+
+    def _handle_step_failure(self, step: PreflightStep, exc: Exception) -> None:
+        with self._state_lock:
+            self._resume_action = None
+
+        context = {
+            "step": step.description,
+            "exception": repr(exc),
+        }
+        decision = PauseDecision(
+            title=f"{step.description} failed",
+            message=(
+                f"The step '{step.description}' encountered an error:\n{exc}\n\n"
+                "Would you like to continue running the preflight checks?"
+            ),
+            context=context,
+            step=step,
+        )
+
+        try:
+            self.decision_queue.put_nowait(decision)
+        except queue.Full:
+            logger.error("Unable to queue pause decision for step: %s", step.description)
+
+        self.pause_event.set()
+
+    def _consume_resume_action(self) -> Optional[str]:
+        with self._state_lock:
+            action = self._resume_action
+            self._resume_action = None
+        return action
+
+    def _process_pause_decision(self) -> None:
+        if self._current_pause is None:
+            try:
+                self._current_pause = self.decision_queue.get_nowait()
+            except queue.Empty:
+                return
+            else:
+                self._show_pause_ui(self._current_pause)
+
+        if self._current_pause is None or self._awaiting_user_decision:
+            return
+
+        self._awaiting_user_decision = True
+        decision = messagebox.askyesno(
+            title=self._current_pause.title,
+            message=self._current_pause.message,
+        )
+        self._awaiting_user_decision = False
+
+        if decision:
+            self._resume_from_pause("continue")
+        else:
+            self._abort_preflight()
+
+    def _resume_from_pause(self, action: str) -> None:
+        with self._state_lock:
+            self._resume_action = action
+
+        self.pause_event.clear()
+        self._clear_pause_ui()
+        self._current_pause = None
+        logger.info("Resuming preflight after pause with action: %s", action)
+
+    def _abort_preflight(self) -> None:
+        self.abort_event.set()
+        self.pause_event.clear()
+        self._clear_pause_ui()
+        self._current_pause = None
+        logger.info("Aborting preflight at user request")
+
+    def _on_retry_step(self) -> None:
+        if not self.pause_event.is_set() or self._current_pause is None:
+            return
+
+        logger.info("User requested retry for step: %s", self._current_pause.step.description)
+        self._resume_from_pause("retry")
+
+    def _show_pause_ui(self, decision: PauseDecision) -> None:
+        self.retry_step_button.configure(state=tk.NORMAL)
+        self.retry_step_button.grid()
+
+        logger.error("Preflight paused: %s", decision.context.get("exception", ""))
+
+    def _clear_pause_ui(self) -> None:
+        self.retry_step_button.configure(state=tk.DISABLED)
+        self.retry_step_button.grid_remove()
+
+    def _drain_decision_queue(self) -> None:
+        while True:
+            try:
+                self.decision_queue.get_nowait()
+            except queue.Empty:
+                break
 
