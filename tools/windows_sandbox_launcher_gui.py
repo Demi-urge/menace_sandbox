@@ -10,9 +10,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import tkinter as tk
 from collections.abc import Callable, Sequence
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import font, messagebox, ttk
 from typing import Any, TextIO
@@ -29,6 +31,7 @@ LOGGER = logging.getLogger(__name__)
 LOG_QUEUE: "queue.Queue[tuple[str, str]]" = queue.Queue()
 PAUSE_EVENT = threading.Event()
 DECISION_QUEUE: "queue.Queue[tuple[str, str, dict[str, Any] | None]]" = queue.Queue()
+RETRY_EVENT = threading.Event()
 
 
 _LOCK_FILE_PATTERNS: tuple[tuple[Path, str], ...] = (
@@ -278,6 +281,7 @@ def run_full_preflight(
     decision_queue: "queue.Queue[tuple[str, str, dict[str, Any] | None]]",
     abort_event: threading.Event,
     debug_queue: "queue.Queue[str]",
+    retry_event: threading.Event,
     dependency_mode: DependencyMode | None = None,
 ) -> dict[str, Any]:
     """Execute the full sandbox preflight workflow."""
@@ -291,31 +295,43 @@ def run_full_preflight(
     }
 
     def _step(name: str, func: Callable[[logging.Logger], None]) -> bool:
-        if abort_event.is_set():
-            logger.info("Preflight aborted before step %s", name)
-            result["aborted"] = True
-            return False
-        logger.info("event=preflight status=running step=%s", name)
-        try:
-            func(logger)
-        except Exception as exc:  # pragma: no cover - runtime safety
-            logger.exception("Preflight step %s failed", name)
-            try:
-                debug_queue.put_nowait(traceback.format_exc())
-            except queue.Full:  # pragma: no cover - unbounded queue
-                pass
-            title, message, context = _step_failure_details(name, exc)
-            context.setdefault("exception_type", type(exc).__name__)
-            decision_queue.put((title, message, context))
-            pause_event.set()
-            _wait_for_pause_resolution(pause_event, abort_event)
+        while True:
             if abort_event.is_set():
+                logger.info("Preflight aborted before step %s", name)
                 result["aborted"] = True
-            result["failed_step"] = name
-            return False
-        else:
-            result["steps"].append(name)
-            return True
+                return False
+            logger.info("event=preflight status=running step=%s", name)
+            try:
+                func(logger)
+            except Exception as exc:  # pragma: no cover - runtime safety
+                logger.exception("Preflight step %s failed", name)
+                try:
+                    debug_queue.put_nowait(traceback.format_exc())
+                except queue.Full:  # pragma: no cover - unbounded queue
+                    pass
+                title, message, context = _step_failure_details(name, exc)
+                context.setdefault("exception_type", type(exc).__name__)
+                context.setdefault("step", name)
+                decision_queue.put((title, message, context))
+                pause_event.set()
+                _wait_for_pause_resolution(pause_event, abort_event)
+                if abort_event.is_set():
+                    result["aborted"] = True
+                    result["failed_step"] = name
+                    return False
+                if retry_event.is_set():
+                    logger.info(
+                        "event=preflight status=retry action=restart step=%s", name
+                    )
+                    retry_event.clear()
+                    pause_event.clear()
+                    continue
+                result["failed_step"] = name
+                return False
+            else:
+                retry_event.clear()
+                result["steps"].append(name)
+                return True
 
     for step_name in _PRE_FLIGHT_STEP_NAMES:
         step_callable = _resolve_step(step_name)
@@ -324,14 +340,43 @@ def run_full_preflight(
 
     from sandbox_runner import bootstrap as bootstrap_module
 
-    logger.info("Collecting sandbox health snapshot")
-    snapshot = bootstrap_module.sandbox_health()
-    result["snapshot"] = snapshot
-    healthy, failures = _evaluate_health_snapshot(snapshot, dependency_mode=dependency_mode)
-    result["healthy"] = healthy
-    result["failures"] = failures
-    if not healthy:
-        summary = "\n".join(failures) if failures else "Unknown preflight health failures"
+    while True:
+        try:
+            logger.info("Collecting sandbox health snapshot")
+            snapshot = bootstrap_module.sandbox_health()
+            result["snapshot"] = snapshot
+            healthy, failures = _evaluate_health_snapshot(
+                snapshot,
+                dependency_mode=dependency_mode,
+            )
+            result["healthy"] = healthy
+            result["failures"] = failures
+            if healthy:
+                logger.info(
+                    "event=preflight status=health_verification result=healthy"
+                )
+                break
+            logger.warning(
+                "event=preflight status=health_verification result=unhealthy issues=%s",
+                failures,
+            )
+            summary = (
+                "\n".join(failures)
+                if failures
+                else "Unknown preflight health failures"
+            )
+        except Exception:
+            logger.exception(
+                "event=preflight status=health_verification result=error"
+            )
+            failures = [
+                "The sandbox health check raised an exception. See logs for details.",
+            ]
+            result["snapshot"] = {}
+            result["healthy"] = False
+            result["failures"] = failures
+            summary = "\n".join(failures)
+
         decision_queue.put(
             (
                 "Sandbox health check failed",
@@ -343,6 +388,15 @@ def run_full_preflight(
         _wait_for_pause_resolution(pause_event, abort_event)
         if abort_event.is_set():
             result["aborted"] = True
+            break
+        if retry_event.is_set():
+            LOGGER.info(
+                "event=preflight status=retry action=restart step=health_check"
+            )
+            retry_event.clear()
+            pause_event.clear()
+            continue
+        break
     return result
 
 
@@ -407,11 +461,37 @@ class SandboxLauncherGUI(tk.Tk):
         self._can_launch_sandbox = False
         self._abort_event = threading.Event()
 
+        self._pause_title_var = tk.StringVar(value="")
+        self._pause_message_var = tk.StringVar(value="")
+        self._paused_context: dict[str, Any] | None = None
+        self._pause_visible = False
+        self._debug_visible = tk.BooleanVar(value=False)
+        self._debug_details: list[str] = []
+        self._elapsed_var = tk.StringVar(value="Preflight idle")
+        self._elapsed_start: float | None = None
+        self._elapsed_job: int | None = None
+
         self._log_handler = QueueLoggingHandler(LOG_QUEUE)
         self._log_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         LOGGER.addHandler(self._log_handler)
+
+        log_file = REPO_ROOT / "menace_gui_logs.txt"
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        self._file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        self._file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        LOGGER.addHandler(self._file_handler)
 
         self._configure_styles()
         self._build_layout()
@@ -448,7 +528,29 @@ class SandboxLauncherGUI(tk.Tk):
             bg=self.cget("bg"),
             relief="flat",
         )
-        self.status_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.status_text.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+
+        debug_controls = ttk.Frame(status_frame)
+        debug_controls.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Checkbutton(
+            debug_controls,
+            text="Show Debug Details",
+            variable=self._debug_visible,
+            command=self._toggle_debug_visibility,
+        ).pack(side="left")
+
+        self.debug_frame = ttk.Frame(status_frame)
+        self.debug_frame.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+        self.debug_text = tk.Text(
+            self.debug_frame,
+            wrap="word",
+            height=8,
+            state="disabled",
+            bg=self.cget("bg"),
+            relief="groove",
+        )
+        self.debug_text.pack(fill="both", expand=True)
+        self.debug_frame.pack_forget()
 
         buttons_frame = ttk.Frame(self)
         buttons_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
@@ -468,6 +570,59 @@ class SandboxLauncherGUI(tk.Tk):
             state="disabled",
         )
         self.start_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        pause_title_font = font.nametofont("TkDefaultFont").copy()
+        pause_title_font.configure(weight="bold")
+
+        self.pause_frame = ttk.Frame(buttons_frame)
+        self.pause_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self.pause_frame.columnconfigure(0, weight=1)
+
+        self.pause_title_label = ttk.Label(
+            self.pause_frame,
+            textvariable=self._pause_title_var,
+            font=pause_title_font,
+        )
+        self.pause_title_label.grid(row=0, column=0, columnspan=3, sticky="w")
+
+        self.pause_message_label = ttk.Label(
+            self.pause_frame,
+            textvariable=self._pause_message_var,
+            wraplength=640,
+            justify="left",
+        )
+        self.pause_message_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 8))
+
+        self.retry_button = ttk.Button(
+            self.pause_frame,
+            text="Retry Step",
+            command=self._on_retry_step,
+            state="disabled",
+        )
+        self.retry_button.grid(row=2, column=0, sticky="w", padx=(0, 6))
+
+        self.resume_button = ttk.Button(
+            self.pause_frame,
+            text="Resume",
+            command=self._on_resume_preflight,
+        )
+        self.resume_button.grid(row=2, column=1, sticky="w", padx=(0, 6))
+
+        self.abort_button = ttk.Button(
+            self.pause_frame,
+            text="Abort Preflight",
+            command=self._on_abort_preflight_clicked,
+        )
+        self.abort_button.grid(row=2, column=2, sticky="w")
+
+        self.pause_frame.grid_remove()
+
+        self.elapsed_label = ttk.Label(
+            buttons_frame,
+            textvariable=self._elapsed_var,
+            anchor="e",
+        )
+        self.elapsed_label.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
     def _configure_text_tags(self) -> None:
         base_font = font.nametofont(self.status_text.cget("font"))
@@ -489,6 +644,135 @@ class SandboxLauncherGUI(tk.Tk):
         for tag, options in tag_styles.items():
             self.status_text.tag_configure(tag, **options)
 
+    def _toggle_debug_visibility(self) -> None:
+        if self._debug_visible.get():
+            self.debug_frame.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+            self._refresh_debug_text()
+        else:
+            self.debug_frame.pack_forget()
+
+    def _refresh_debug_text(self) -> None:
+        self.debug_text.configure(state="normal")
+        self.debug_text.delete("1.0", "end")
+        if self._debug_details:
+            content = "\n\n".join(self._debug_details)
+            self.debug_text.insert("1.0", content)
+        self.debug_text.configure(state="disabled")
+
+    def _add_debug_detail(self, detail: str) -> None:
+        self._debug_details.append(detail)
+        if len(self._debug_details) > 100:
+            del self._debug_details[:-100]
+        if self._debug_visible.get():
+            self._refresh_debug_text()
+
+    def _clear_debug_details(self) -> None:
+        self._debug_details.clear()
+        if self._debug_visible.get():
+            self._refresh_debug_text()
+
+    def _show_pause_controls(self) -> None:
+        if not self._pause_visible:
+            self.pause_frame.grid()
+            self._pause_visible = True
+
+    def _hide_pause_controls(self) -> None:
+        if self._pause_visible:
+            self.pause_frame.grid_remove()
+            self._pause_visible = False
+        self._pause_title_var.set("")
+        self._pause_message_var.set("")
+        self._paused_context = None
+        self.retry_button.state(["disabled"])
+
+    def _update_pause_prompt(
+        self,
+        title: str,
+        message: str,
+        context: dict[str, Any] | None,
+    ) -> None:
+        self._paused_context = dict(context or {})
+        self._pause_title_var.set(title)
+        lines: list[str] = []
+        if message:
+            lines.append(message)
+        step = self._paused_context.get("step")
+        if step:
+            lines.append(f"Step: {step}")
+        details = self._paused_context.get("details")
+        if details:
+            lines.append(str(details))
+        exception_type = self._paused_context.get("exception_type")
+        if exception_type and not details:
+            lines.append(f"Exception type: {exception_type}")
+        exception = self._paused_context.get("exception")
+        if exception:
+            lines.append(str(exception))
+        self._pause_message_var.set("\n\n".join(lines))
+        if step:
+            self.retry_button.state(["!disabled"])
+        else:
+            self.retry_button.state(["disabled"])
+        self._show_pause_controls()
+
+    def _on_resume_preflight(self) -> None:
+        if not PAUSE_EVENT.is_set():
+            return
+        LOGGER.info("event=preflight status=user_action action=continue")
+        if self._paused_context:
+            LOGGER.debug(
+                "event=preflight status=resume context=%s", self._paused_context
+            )
+        RETRY_EVENT.clear()
+        PAUSE_EVENT.clear()
+        self._hide_pause_controls()
+
+    def _on_retry_step(self) -> None:
+        if not PAUSE_EVENT.is_set():
+            return
+        LOGGER.info(
+            "event=preflight status=user_action action=retry step=%s",
+            (self._paused_context or {}).get("step"),
+        )
+        if self._paused_context:
+            LOGGER.debug(
+                "event=preflight status=retry context=%s", self._paused_context
+            )
+        RETRY_EVENT.set()
+        PAUSE_EVENT.clear()
+        self._hide_pause_controls()
+
+    def _on_abort_preflight_clicked(self) -> None:
+        LOGGER.info("event=preflight status=user_action action=abort")
+        self._abort_preflight()
+        self._hide_pause_controls()
+
+    def _start_elapsed_timer(self) -> None:
+        self._elapsed_start = time.time()
+        self._update_elapsed_time()
+
+    def _update_elapsed_time(self) -> None:
+        if self._elapsed_start is None:
+            self._elapsed_var.set("Preflight idle")
+            self._elapsed_job = None
+            return
+        elapsed = int(time.time() - self._elapsed_start)
+        self._elapsed_var.set(f"Preflight running: {elapsed} s")
+        try:
+            self._elapsed_job = self.after(1000, self._update_elapsed_time)
+        except tk.TclError:
+            self._elapsed_job = None
+
+    def _stop_elapsed_timer(self, message: str = "Preflight idle") -> None:
+        if self._elapsed_job is not None:
+            try:
+                self.after_cancel(self._elapsed_job)
+            except tk.TclError:
+                pass
+            self._elapsed_job = None
+        self._elapsed_start = None
+        self._elapsed_var.set(message)
+
     def _on_close(self) -> None:
         self._abort_preflight()
         self._terminate_sandbox_process()
@@ -504,6 +788,8 @@ class SandboxLauncherGUI(tk.Tk):
 
         LOGGER.removeHandler(self._log_handler)
         self._log_handler.close()
+        LOGGER.removeHandler(self._file_handler)
+        self._file_handler.close()
         self.destroy()
 
     def _poll_log_queue(self) -> None:
@@ -515,39 +801,25 @@ class SandboxLauncherGUI(tk.Tk):
             except queue.Empty:
                 pass
 
-            if PAUSE_EVENT.is_set():
-                prompts: list[tuple[str, str, dict[str, Any] | None]] = []
-                try:
-                    while True:
-                        prompts.append(DECISION_QUEUE.get_nowait())
-                except queue.Empty:
-                    pass
+            prompts: list[tuple[str, str, dict[str, Any] | None]] = []
+            try:
+                while True:
+                    prompt = DECISION_QUEUE.get_nowait()
+                    if len(prompt) == 3:
+                        prompts.append(prompt)
+                    else:
+                        title, text = prompt[:2]
+                        prompts.append((title, text, None))
+            except queue.Empty:
+                pass
 
-                for item in prompts:
-                    if len(item) == 3:
-                        title, message, context = item
-                    else:
-                        title, message = item[:2]
-                        context = None
-                    should_continue = messagebox.askyesno(
-                        title=title,
-                        message=message,
-                    )
-                    if should_continue:
-                        LOGGER.info(
-                            "event=preflight status=user_action action=continue"
-                        )
-                        if context:
-                            LOGGER.debug(
-                                "event=preflight status=resume context=%s", context
-                            )
-                        PAUSE_EVENT.clear()
-                    else:
-                        LOGGER.info(
-                            "event=preflight status=user_action action=abort"
-                        )
-                        self._abort_preflight()
-                        break
+            if prompts:
+                title, prompt_message, context = prompts[-1]
+                self._update_pause_prompt(title, prompt_message, context)
+            elif PAUSE_EVENT.is_set():
+                self._show_pause_controls()
+            else:
+                self._hide_pause_controls()
         finally:
             if self.winfo_exists():
                 self._poll_after_id = self.after(100, self._poll_log_queue)
@@ -577,7 +849,11 @@ class SandboxLauncherGUI(tk.Tk):
         self._can_launch_sandbox = False
         self._abort_event.clear()
         PAUSE_EVENT.clear()
+        RETRY_EVENT.clear()
         self._drain_decision_queue()
+        self._hide_pause_controls()
+        self._clear_debug_details()
+        self._start_elapsed_timer()
 
         self._preflight_thread = threading.Thread(
             target=self._run_preflight,
@@ -766,6 +1042,7 @@ class SandboxLauncherGUI(tk.Tk):
                 decision_queue=DECISION_QUEUE,
                 abort_event=self._abort_event,
                 debug_queue=debug_queue,
+                retry_event=RETRY_EVENT,
                 dependency_mode=dependency_mode,
             )
             aborted = bool(result.get("aborted"))
@@ -786,42 +1063,73 @@ class SandboxLauncherGUI(tk.Tk):
                 LOGGER.error("event=preflight failure=%s", failure)
 
             if preflight_success:
-                try:
-                    LOGGER.info(
-                        "event=preflight status=health_verification action=start"
-                    )
-                    from sandbox_runner import bootstrap as bootstrap_module
-
-                    health_snapshot = bootstrap_module.sandbox_health()
-                    LOGGER.info(
-                        "event=preflight status=health_snapshot details=%s",
-                        health_snapshot,
-                    )
-                    health_ok, health_failures = _evaluate_health_snapshot(
-                        health_snapshot,
-                        dependency_mode=dependency_mode,
-                    )
-                    if health_ok:
+                while True:
+                    try:
                         LOGGER.info(
-                            "event=preflight status=health_verification result=healthy"
+                            "event=preflight status=health_verification action=start"
                         )
-                    else:
-                        LOGGER.warning(
-                            "event=preflight status=health_verification result=unhealthy issues=%s",
-                            health_failures,
+                        from sandbox_runner import bootstrap as bootstrap_module
+
+                        health_snapshot = bootstrap_module.sandbox_health()
+                        LOGGER.info(
+                            "event=preflight status=health_snapshot details=%s",
+                            health_snapshot,
                         )
-                except Exception:
-                    LOGGER.exception(
-                        "event=preflight status=health_verification result=error"
+                        health_ok, health_failures = _evaluate_health_snapshot(
+                            health_snapshot,
+                            dependency_mode=dependency_mode,
+                        )
+                        if health_ok:
+                            LOGGER.info(
+                                "event=preflight status=health_verification result=healthy"
+                            )
+                        else:
+                            LOGGER.warning(
+                                "event=preflight status=health_verification result=unhealthy issues=%s",
+                                health_failures,
+                            )
+                    except Exception:
+                        LOGGER.exception(
+                            "event=preflight status=health_verification result=error"
+                        )
+                        health_failures = [
+                            "The sandbox health check raised an exception. See logs for details.",
+                        ]
+                        health_ok = False
+
+                    if health_ok:
+                        break
+
+                    decision_queue.put(
+                        (
+                            "Sandbox health check failed",
+                            "Preflight health checks reported issues. Review the log for details.",
+                            {"step": "health_check", "details": "\n".join(health_failures)},
+                        )
                     )
-                    health_failures = [
-                        "The sandbox health check raised an exception. See logs for details.",
-                    ]
-                    health_ok = False
+                    pause_event.set()
+                    _wait_for_pause_resolution(pause_event, abort_event)
+                    if abort_event.is_set():
+                        result["aborted"] = True
+                        break
+                    if retry_event.is_set():
+                        LOGGER.info(
+                            "event=preflight status=retry action=restart step=health_check"
+                        )
+                        retry_event.clear()
+                        pause_event.clear()
+                        continue
+                    break
 
             while not debug_queue.empty():
                 detail = debug_queue.get_nowait()
                 LOGGER.debug("event=preflight detail=%s", detail)
+                try:
+                    self.after(0, self._add_debug_detail, detail)
+                except tk.TclError:
+                    LOGGER.debug(
+                        "event=preflight status=cleanup action=debug_queue_dropped"
+                    )
         except Exception:
             LOGGER.exception("event=preflight status=failed")
         finally:
@@ -840,6 +1148,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _abort_preflight(self) -> None:
         self._abort_event.set()
         PAUSE_EVENT.clear()
+        RETRY_EVENT.clear()
 
     def _drain_decision_queue(self) -> None:
         while True:
@@ -858,6 +1167,14 @@ class SandboxLauncherGUI(tk.Tk):
         self._is_preflight_running = False
         self._preflight_thread = None
         self.preflight_button.state(["!disabled"])
+        if preflight_success and health_ok:
+            self._stop_elapsed_timer("Preflight completed")
+        elif self._abort_event.is_set():
+            self._stop_elapsed_timer("Preflight aborted")
+        else:
+            self._stop_elapsed_timer("Preflight finished")
+        self._hide_pause_controls()
+        RETRY_EVENT.clear()
         if preflight_success and health_ok:
             self._can_launch_sandbox = True
             self.start_button.state(["!disabled"])
