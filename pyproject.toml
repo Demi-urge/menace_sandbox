@@ -106,6 +106,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["*", "tools", "tools.*"]
+
+[tool.setuptools.package-dir]
+tools = "tools"
 
 
 [tool.poetry.scripts]

@@ -959,9 +959,14 @@ class _QueueLogHandler(logging.Handler):
         self._queue.put((message, tag))
 
 
-__all__ = ["SandboxLauncherGUI", "run_full_preflight"]
+__all__ = ["SandboxLauncherGUI", "run_full_preflight", "main"]
+
+
+def main() -> None:
+    """Launch the sandbox GUI event loop."""
+
+    SandboxLauncherGUI().mainloop()
 
 
 if __name__ == "__main__":  # pragma: no cover - manual launch helper
-    gui = SandboxLauncherGUI()
-    gui.mainloop()
+    SandboxLauncherGUI().mainloop()

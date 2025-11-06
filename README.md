@@ -2110,6 +2110,20 @@ supervisor so everything can be started via a single command.
 provided by `menace_gui` is useful for manual inspection but is not required for
 the autonomous workflow.
 
+For operators that prefer a guided workflow when preparing a Windows sandbox,
+launch the GUI helper via either the installed console script or the module
+entry point:
+
+```bash
+windows-sandbox-launcher-gui
+# or
+python -m tools.windows_sandbox_launcher_gui
+```
+
+The launcher runs the same preflight orchestration exposed by
+`tools.windows_sandbox_launcher_gui:main`, presenting progress updates and
+controls for retrying or aborting individual steps.
+
 The supervisor keeps these services running and restarts them automatically.
 It also runs the `SelfEvaluationService` which combines microtrend detection
 with workflow cloning so new trends immediately spawn variant bots.
