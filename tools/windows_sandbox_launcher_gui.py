@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import importlib
+import os
 import queue
+import shlex
+import subprocess
 import threading
 import time
+import sys
+from pathlib import Path
 from typing import Callable, Iterable, Sequence, Tuple
 
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -106,6 +114,11 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._ui_queue.put(callback)
 
+    def _log_async(self, message: str) -> None:
+        """Append *message* to the log from background threads."""
+
+        self._submit_to_ui(lambda message=message: self.append_log(message))
+
     def _drain_ui_queue(self) -> None:
         """Process pending UI callbacks."""
 
@@ -151,6 +164,143 @@ class SandboxLauncherGUI(tk.Tk):
     # ------------------------------------------------------------------
     # Preflight flow management
     # ------------------------------------------------------------------
+    def _wait_for_pause_to_clear(self) -> None:
+        """Block until the pause flag is cleared or an abort is requested."""
+
+        while self._pause_event.is_set() and not self._abort_event.is_set():
+            time.sleep(0.1)
+
+    def _run_command(self, args: Sequence[str], *, cwd: Path | None = None) -> None:
+        """Execute *args* streaming output to the GUI log."""
+
+        display = " ".join(shlex.quote(str(part)) for part in args)
+        self._log_async(f"$ {display}")
+        process = subprocess.Popen(
+            [str(part) for part in args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(cwd) if cwd is not None else None,
+        )
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                self._log_async(line.rstrip("\n"))
+        retcode = process.wait()
+        if retcode:
+            raise subprocess.CalledProcessError(retcode, args)
+
+    def _remove_path(self, path: Path) -> None:
+        """Remove a file if it exists and report the action."""
+
+        try:
+            if path.exists():
+                path.unlink()
+                self._log_async(f"Removed stale file: {path}")
+        except IsADirectoryError:
+            return
+        except OSError as exc:
+            raise RuntimeError(f"Failed to remove {path}: {exc}") from exc
+
+    def _remove_directory(self, path: Path) -> None:
+        """Remove a directory tree if it exists and log the outcome."""
+
+        if not path.exists():
+            return
+        import shutil
+
+        try:
+            shutil.rmtree(path)
+            self._log_async(f"Removed stale directory: {path}")
+        except OSError as exc:
+            raise RuntimeError(f"Failed to remove directory {path}: {exc}") from exc
+
+    def _build_default_preflight_steps(self) -> list[tuple[str, Callable[[], None]]]:
+        """Return the default preflight steps when none are configured."""
+
+        return [
+            ("Git reset", self._preflight_step_git_reset),
+            ("Cleanup", self._preflight_step_cleanup),
+            ("Heavy dependencies", self._preflight_step_heavy_dependencies),
+            ("Warm caches", self._preflight_step_warm_caches),
+            ("Environment setup", self._preflight_step_environment_setup),
+            ("Registry & packages", self._preflight_step_registry_and_packages),
+            ("Self-coding bootstrap", self._preflight_step_self_coding_bootstrap),
+        ]
+
+    def _preflight_step_git_reset(self) -> None:
+        self._run_command(["git", "fetch", "origin"], cwd=REPO_ROOT)
+        self._run_command(["git", "reset", "--hard", "origin/main"], cwd=REPO_ROOT)
+
+    def _preflight_step_cleanup(self) -> None:
+        import bootstrap_self_coding
+
+        bootstrap_self_coding.purge_stale_files()
+
+        sandbox_dir = REPO_ROOT / "sandbox_data"
+        if sandbox_dir.exists():
+            for lock_file in sandbox_dir.glob("*.lock"):
+                self._remove_path(lock_file)
+
+        hf_lock_dir = Path.home() / ".cache" / "huggingface" / "transformers"
+        if hf_lock_dir.exists():
+            for lock_file in hf_lock_dir.glob("*.lock"):
+                self._remove_path(lock_file)
+
+        hub_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        if hub_dir.exists():
+            for stale_dir in hub_dir.rglob("*.incomplete"):
+                if stale_dir.is_dir():
+                    self._remove_directory(stale_dir)
+
+    def _preflight_step_heavy_dependencies(self) -> None:
+        module = importlib.import_module("neurosales.scripts.setup_heavy_deps")
+        runner = getattr(module, "run", None)
+        if callable(runner):
+            runner(download_only=True)
+            return
+
+        main = getattr(module, "main", None)
+        if callable(main):
+            original_argv = sys.argv
+            try:
+                sys.argv = [str(Path(module.__file__)), "--download-only"]
+                main()
+            finally:
+                sys.argv = original_argv
+            return
+
+        python_exe = Path(sys.executable)
+        self._run_command(
+            [python_exe, "-m", "neurosales.scripts.setup_heavy_deps", "--download-only"]
+        )
+
+    def _preflight_step_warm_caches(self) -> None:
+        from vector_service.vectorizer import SharedVectorService
+
+        try:
+            SharedVectorService()
+        except Exception as exc:
+            raise RuntimeError("Failed to initialize SharedVectorService") from exc
+
+    def _preflight_step_environment_setup(self) -> None:
+        import auto_env_setup
+
+        auto_env_setup.ensure_env()
+        os.environ["SANDBOX_ENABLE_BOOTSTRAP"] = "1"
+        os.environ["SANDBOX_ENABLE_SELF_CODING"] = "1"
+
+    def _preflight_step_registry_and_packages(self) -> None:
+        python_exe = Path(sys.executable)
+        self._run_command([python_exe, str(REPO_ROOT / "prime_registry.py")])
+        self._run_command([python_exe, "-m", "pip", "install", "-e", str(REPO_ROOT)])
+        self._run_command([python_exe, "-m", "pip", "install", "jsonschema"])
+
+    def _preflight_step_self_coding_bootstrap(self) -> None:
+        import bootstrap_self_coding
+
+        bootstrap_self_coding.bootstrap_self_coding("AICounterBot")
+
     def _clear_decision_queue(self) -> None:
         while True:
             try:
@@ -181,7 +331,9 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _run_preflight_flow(self) -> None:
         errors: list[tuple[str, Exception]] = []
-        steps: Sequence[Tuple[str, Callable[[], None]]] = list(self._preflight_steps)
+        steps: Sequence[Tuple[str, Callable[[], None]]] = (
+            list(self._preflight_steps) or self._build_default_preflight_steps()
+        )
 
         if not steps:
             self._submit_to_ui(
@@ -217,6 +369,14 @@ class SandboxLauncherGUI(tk.Tk):
 
                 while self._pause_event.is_set() and not self._abort_event.is_set():
                     time.sleep(0.1)
+
+            else:
+                self._submit_to_ui(
+                    lambda title=title: self.append_log(
+                        f"Preflight step '{title}' completed successfully."
+                    )
+                )
+                self._wait_for_pause_to_clear()
 
             if self._abort_event.is_set():
                 break
