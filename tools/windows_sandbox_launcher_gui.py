@@ -662,6 +662,12 @@ class SandboxLauncherGUI(tk.Tk):
         super().destroy()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Launch the sandbox GUI."""
+
     gui = SandboxLauncherGUI()
     gui.mainloop()
+
+
+if __name__ == "__main__":
+    main()
