@@ -17,6 +17,14 @@ The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the f
 
 All GUI events stream into the on-screen log with severity-based colouring, and detailed tracebacks are written to `menace_gui_logs.txt` with log rotation so long sessions remain reviewable. Toggle **Show Debug Details** to inspect the latest captured diagnostics when a step pauses; clearing the pause or resuming preflight hides the retry controls until the next failure.
 
+### Testing checklist and smoke coverage
+
+Refer to [docs/windows_sandbox_manual_tests.md](docs/windows_sandbox_manual_tests.md) for the full manual verification checklist, environment prerequisites, and known limitations. Quick smoke coverage for the GUI logging pipeline can be executed headlessly with:
+
+```bash
+pytest unit_tests/test_windows_sandbox_gui_smoke.py
+```
+
 ## Direct imports from the source tree
 
 All modules that participate in the bootstrap chain now call a shared
