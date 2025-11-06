@@ -8,6 +8,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+import tkinter.messagebox as messagebox
 from tkinter import ttk
 
 
@@ -43,6 +44,9 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._preflight_thread: threading.Thread | None = None
         self._preflight_running = False
+        self.pause_event = threading.Event()
+        self.abort_event = threading.Event()
+        self.decision_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
 
         self._build_notebook()
         self._build_controls()
@@ -125,6 +129,13 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         self.run_preflight_button.configure(state="disabled")
+        self.pause_event.clear()
+        self.abort_event.clear()
+        while not self.decision_queue.empty():
+            try:
+                self.decision_queue.get_nowait()
+            except queue.Empty:  # pragma: no cover - race with concurrent reader
+                break
         self._preflight_running = True
         self.logger.info("Preflight checks initiated...")
 
@@ -142,21 +153,44 @@ class SandboxLauncherGUI(tk.Tk):
     def _execute_preflight(self) -> None:
         """Worker routine that performs preflight operations."""
         steps = (
-            "Synchronizing repository...",
-            "Cleaning stale files...",
-            "Installing dependencies...",
-            "Priming registries...",
+            ("Synchronizing repository", "Synchronizing repository..."),
+            ("Cleaning stale files", "Cleaning stale files..."),
+            ("Installing dependencies", "Installing dependencies..."),
+            ("Priming registries", "Priming registries..."),
         )
 
         try:
-            for step in steps:
-                self.logger.info(step)
-                time.sleep(0.1)
+            for title, log_message in steps:
+                if self.abort_event.is_set():
+                    self.logger.info("Preflight aborted before '%s'.", title)
+                    return
+
+                self.logger.info(log_message)
+                try:
+                    self._execute_step(title)
+                except Exception as exc:  # pragma: no cover - requires GUI interaction
+                    self.logger.error("%s failed: %s", title, exc)
+                    self.pause_event.set()
+                    self.decision_queue.put((title, str(exc)))
+                    self._update_pause_state(title, str(exc))
+
+                    while self.pause_event.is_set() and not self.abort_event.is_set():
+                        time.sleep(0.05)
+
+                    if self.abort_event.is_set():
+                        self.logger.info("Preflight aborted after '%s'.", title)
+                        return
+                    continue
             self.logger.info("Preflight checks complete.")
         except Exception as exc:  # pragma: no cover - defensive logging
             self.logger.error("Preflight checks failed: %s", exc)
         finally:
             self.after(0, self._reset_preflight_state)
+
+    def _execute_step(self, title: str) -> None:
+        """Placeholder implementation for an individual preflight step."""
+        _ = title  # Placeholder for step-specific handling
+        time.sleep(0.1)
 
     def _reset_preflight_state(self) -> None:
         """Re-enable UI controls and clear state after preflight finishes."""
@@ -172,6 +206,9 @@ class SandboxLauncherGUI(tk.Tk):
                 break
             else:
                 self._append_status(message, tag)
+        if self.pause_event.is_set():
+            self._handle_preflight_pause()
+
         self.after(100, self._process_log_queue)
 
     def _append_status(self, message: str, tag: str = "info") -> None:
@@ -179,6 +216,31 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_text.insert("end", message, (tag,))
         self.status_text.configure(state="disabled")
         self.status_text.see("end")
+
+    def _handle_preflight_pause(self) -> None:
+        try:
+            title, message = self.decision_queue.get_nowait()
+        except queue.Empty:
+            return
+
+        prompt = f"{title} failed. Continue preflight?\n\nDetails: {message}"
+        user_choice = messagebox.askyesno("Preflight paused", prompt)
+        if user_choice:
+            self.logger.info("User opted to continue after '%s'.", title)
+            self.pause_event.clear()
+        else:
+            self.logger.warning("User aborted preflight after '%s'.", title)
+            self.abort_event.set()
+            self.pause_event.clear()
+
+    def _update_pause_state(self, title: str, message: str) -> None:
+        self.after(
+            0,
+            lambda: self._append_status(
+                f"Preflight paused: {title} encountered an error: {message}\n",
+                "warning",
+            ),
+        )
 
 
 __all__ = ["SandboxLauncherGUI"]
