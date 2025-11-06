@@ -139,6 +139,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._latest_pause_context: dict[str, object] | None = None
         self._latest_pause_context_trace: str | None = None
         self._pause_user_decision: str | None = None
+        self._resume_after_pause = False
         self._debug_visible = False
         self._preflight_start_time: float | None = None
         self._elapsed_job: str | None = None
@@ -433,47 +434,59 @@ class SandboxLauncherGUI(tk.Tk):
         if not prompts:
             return
 
-        for title, message, context in prompts:
-            if isinstance(context, dict):
-                self._latest_pause_context = context
-                exception_text = str(context.get("exception") or "").strip()
-                self._latest_pause_context_trace = self._format_pause_context_trace(
-                    title=title, message=message, context=context
-                )
-                step_name = str(context.get("step") or "unknown")
-            else:
-                exception_text = ""
-                step_name = "unknown"
+        # When a pause dialog is already visible, ignore additional prompts but retain
+        # the most recent context for debugging purposes.
+        if self._pause_dialog_presented:
+            for title, message, context in prompts:
+                if isinstance(context, dict):
+                    self._latest_pause_context = context
+                    self._latest_pause_context_trace = self._format_pause_context_trace(
+                        title=title, message=message, context=context
+                    )
+            return
 
-            prompt_parts = [message]
-            if exception_text:
-                prompt_parts.append(f"Details:\n{exception_text}")
-            prompt_parts.append("Do you want to continue with the next step?")
-            prompt = "\n\n".join(part for part in prompt_parts if part)
+        title, message, context = prompts[-1]
 
-            decision = messagebox.askyesno(title=title, message=prompt)
-            self._pause_user_decision = "continue" if decision else "abort"
-            self._pause_dialog_presented = True
+        exception_text = ""
+        step_name = "unknown"
+        if isinstance(context, dict):
+            self._latest_pause_context = context
+            exception_text = str(context.get("exception") or "").strip()
+            self._latest_pause_context_trace = self._format_pause_context_trace(
+                title=title, message=message, context=context
+            )
+            step_name = str(context.get("step") or "unknown")
 
-            if decision:
-                logger.info(
-                    "Operator opted to continue after preflight step '%s'.", step_name
-                )
-                if abort_event is not None:
-                    abort_event.clear()
-                pause_event.clear()
-                retry_button = getattr(self, "retry_button", None)
-                if retry_button is not None:
-                    with contextlib.suppress(Exception):
-                        retry_button.state(["disabled"])
-                        retry_button.grid_remove()
-            else:
-                logger.info(
-                    "Operator opted to abort preflight during step '%s'.", step_name
-                )
-                if abort_event is not None:
-                    abort_event.set()
-                pause_event.clear()
+        prompt_parts = [message]
+        if exception_text:
+            prompt_parts.append(f"Details:\n{exception_text}")
+        prompt_parts.append("Do you want to continue with the next step?")
+        prompt = "\n\n".join(part for part in prompt_parts if part)
+
+        decision = messagebox.askyesno(title=title, message=prompt)
+        self._pause_user_decision = "continue" if decision else "abort"
+        self._pause_dialog_presented = True
+
+        if decision:
+            logger.info(
+                "Operator opted to continue after preflight step '%s'.", step_name
+            )
+            self._resume_after_pause = True
+            if abort_event is not None:
+                abort_event.clear()
+            pause_event.clear()
+            retry_button = getattr(self, "retry_button", None)
+            if retry_button is not None:
+                with contextlib.suppress(Exception):
+                    retry_button.state(["disabled"])
+                    retry_button.grid_remove()
+        else:
+            logger.info(
+                "Operator opted to abort preflight during step '%s'.", step_name
+            )
+            self._resume_after_pause = False
+            if abort_event is not None:
+                abort_event.set()
 
 
 
@@ -553,6 +566,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._latest_pause_context = None
         self._latest_pause_context_trace = None
         self._pause_user_decision = None
+        self._resume_after_pause = False
         self._pause_dialog_presented = False
 
         self._clear_debug_panel()
@@ -585,6 +599,7 @@ class SandboxLauncherGUI(tk.Tk):
         resume_index = self._paused_step_index
         self._paused_step_index = None
         self._pause_dialog_presented = False
+        self._resume_after_pause = False
 
         self._start_preflight_thread(resume_index)
 
@@ -809,6 +824,54 @@ class SandboxLauncherGUI(tk.Tk):
             failed_step = payload.get("failed_step")
             if failed_step:
                 self._last_failed_step = str(failed_step)
+
+            resume_requested = bool(self._resume_after_pause)
+            abort_requested = self.abort_event.is_set() or (
+                self._pause_user_decision == "abort"
+            )
+
+            if abort_requested and not resume_requested:
+                self.retry_button.state(["disabled"])
+                self.retry_button.grid_remove()
+                self.launch_button.state(["disabled"])
+
+                self._finish_elapsed_timer("Preflight aborted")
+                self._pause_dialog_presented = False
+
+                message = self._format_health_failure_message({**payload, "aborted": True})
+                logger.warning("Sandbox health verification aborted: %s", message)
+                messagebox.showwarning("Preflight aborted", message)
+                return
+
+            if resume_requested:
+                self._resume_after_pause = False
+                self.retry_button.state(["disabled"])
+                self.retry_button.grid_remove()
+                self.run_button.state(["disabled"])
+                previous_index = self._paused_step_index
+
+                next_index: int | None = None
+                if isinstance(failed_index, int):
+                    next_index = failed_index + 1
+                else:
+                    start_index = payload.get("start_index")
+                    if isinstance(start_index, int):
+                        next_index = max(0, start_index)
+                        if next_index == previous_index:
+                            next_index += 1
+
+                if next_index is None:
+                    next_index = 0
+
+                self._paused_step_index = None
+
+                def _resume() -> None:
+                    self._start_preflight_thread(next_index)
+
+                self.after_idle(_resume)
+                self._pause_dialog_presented = False
+                self._refresh_elapsed_timer()
+                return
 
             self.retry_button.state(["!disabled"])
             self.retry_button.grid()

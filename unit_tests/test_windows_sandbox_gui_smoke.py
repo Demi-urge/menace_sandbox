@@ -144,6 +144,7 @@ def test_handle_pause_prompt_prompts_continue(monkeypatch: pytest.MonkeyPatch) -
     inst._handle_pause_prompt()
 
     assert inst._pause_user_decision == "continue"
+    assert inst._resume_after_pause is True
     assert not inst.pause_event.is_set()
     assert not inst.abort_event.is_set()
     assert inst._latest_pause_context == context
@@ -166,6 +167,7 @@ def test_handle_pause_prompt_prompts_abort(monkeypatch: pytest.MonkeyPatch) -> N
     inst._handle_pause_prompt()
 
     assert inst._pause_user_decision == "abort"
+    assert inst._resume_after_pause is False
     assert inst.pause_event.is_set()
     assert inst.abort_event.is_set()
     assert inst._latest_pause_context == context
