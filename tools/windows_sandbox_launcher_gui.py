@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import queue
 import shlex
@@ -10,6 +11,8 @@ import subprocess
 import threading
 import time
 import sys
+import traceback
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple
 
@@ -31,6 +34,9 @@ class SandboxLauncherGUI(tk.Tk):
         self.title("Menace Sandbox Launcher")
         self.geometry("900x600")
 
+        self._show_debug_var = tk.BooleanVar(value=False)
+        self._elapsed_var = tk.StringVar(value="Elapsed: 00:00")
+
         self._create_widgets()
         self._initialize_state()
 
@@ -38,12 +44,19 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread: threading.Thread | None = None
         self._sandbox_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
-        self._decision_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._decision_queue: queue.Queue[
+            tuple[str, str, Callable[[], None] | None]
+        ] = queue.Queue()
         self._abort_event = threading.Event()
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
         self._last_health_snapshot: dict[str, Any] | None = None
         self._sandbox_process: subprocess.Popen[str] | None = None
+        self._retry_requested = False
+        self._elapsed_start: float | None = None
+        self._elapsed_job: str | None = None
+
+        self._setup_file_logging()
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
         self.start_sandbox_button.configure(command=self._on_start_sandbox)
@@ -62,7 +75,8 @@ class SandboxLauncherGUI(tk.Tk):
 
         status_frame = ttk.Frame(self.notebook)
         status_frame.columnconfigure(0, weight=1)
-        status_frame.rowconfigure(0, weight=1)
+        status_frame.rowconfigure(0, weight=3)
+        status_frame.rowconfigure(1, weight=1)
         self.notebook.add(status_frame, text="Status")
 
         self.log_text = scrolledtext.ScrolledText(
@@ -71,6 +85,16 @@ class SandboxLauncherGUI(tk.Tk):
             wrap=tk.WORD,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
+
+        self.debug_container = ttk.Labelframe(status_frame, text="Debug Details")
+        self.debug_text = scrolledtext.ScrolledText(
+            self.debug_container,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+        )
+        self.debug_text.pack(fill=tk.BOTH, expand=True)
+        self.debug_container.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self.debug_container.grid_remove()
 
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -84,6 +108,43 @@ class SandboxLauncherGUI(tk.Tk):
             state=tk.DISABLED,
         )
         self.start_sandbox_button.pack(side=tk.LEFT)
+
+        self.show_debug_check = ttk.Checkbutton(
+            button_frame,
+            text="Show Debug",
+            variable=self._show_debug_var,
+            command=self._on_toggle_debug,
+        )
+        self.show_debug_check.pack(side=tk.LEFT, padx=(10, 5))
+
+        self.elapsed_label = ttk.Label(button_frame, textvariable=self._elapsed_var)
+        self.elapsed_label.pack(side=tk.RIGHT)
+
+    def _setup_file_logging(self) -> None:
+        """Configure file-based logging with rotation support."""
+
+        logger = logging.getLogger("menace.sandbox.launcher")
+        if logger.handlers:
+            self._logger = logger
+            return
+
+        logger.setLevel(logging.INFO)
+        log_dir = REPO_ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "sandbox_launcher.log"
+
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=1_000_000,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        logger.addHandler(handler)
+        logger.propagate = False
+        self._logger = logger
 
     # ------------------------------------------------------------------
     # Preflight configuration helpers
@@ -99,6 +160,8 @@ class SandboxLauncherGUI(tk.Tk):
     def append_log(self, message: str) -> None:
         """Append a message to the log area."""
 
+        if hasattr(self, "_logger"):
+            self._logger.info(message.rstrip("\n"))
         self.log_text.configure(state=tk.NORMAL)
         try:
             self.log_text.insert(tk.END, message)
@@ -117,6 +180,20 @@ class SandboxLauncherGUI(tk.Tk):
         finally:
             self.log_text.configure(state=tk.DISABLED)
 
+    def _append_debug(self, message: str) -> None:
+        """Append debug-oriented *message* to the debug pane and log file."""
+
+        if hasattr(self, "_logger"):
+            self._logger.debug(message.rstrip("\n"))
+        self.debug_text.configure(state=tk.NORMAL)
+        try:
+            self.debug_text.insert(tk.END, message)
+            if not message.endswith("\n"):
+                self.debug_text.insert(tk.END, "\n")
+            self.debug_text.see(tk.END)
+        finally:
+            self.debug_text.configure(state=tk.DISABLED)
+
     def _submit_to_ui(self, callback: Callable[[], None]) -> None:
         """Schedule a callback to run on the Tkinter UI thread."""
 
@@ -126,6 +203,45 @@ class SandboxLauncherGUI(tk.Tk):
         """Append *message* to the log from background threads."""
 
         self._submit_to_ui(lambda message=message: self.append_log(message))
+
+    def _on_toggle_debug(self) -> None:
+        """Update the debug panel visibility."""
+
+        if self._show_debug_var.get():
+            self.debug_container.grid()
+        else:
+            self.debug_container.grid_remove()
+
+    def _start_elapsed_timer(self) -> None:
+        """Begin updating the elapsed time label."""
+
+        self._elapsed_start = time.time()
+        if self._elapsed_job is not None:
+            self.after_cancel(self._elapsed_job)
+            self._elapsed_job = None
+        self._update_elapsed_time()
+
+    def _stop_elapsed_timer(self) -> None:
+        """Stop updating the elapsed time label."""
+
+        if self._elapsed_job is not None:
+            self.after_cancel(self._elapsed_job)
+            self._elapsed_job = None
+        self._elapsed_start = None
+        self._elapsed_var.set("Elapsed: 00:00")
+
+    def _update_elapsed_time(self) -> None:
+        """Refresh the elapsed time label."""
+
+        if self._elapsed_start is None:
+            self._elapsed_var.set("Elapsed: 00:00")
+            self._elapsed_job = None
+            return
+
+        elapsed = int(time.time() - self._elapsed_start)
+        minutes, seconds = divmod(elapsed, 60)
+        self._elapsed_var.set(f"Elapsed: {minutes:02d}:{seconds:02d}")
+        self._elapsed_job = self.after(1000, self._update_elapsed_time)
 
     def _drain_ui_queue(self) -> None:
         """Process pending UI callbacks."""
@@ -328,6 +444,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._abort_event.clear()
         self._pause_event.clear()
         self._clear_decision_queue()
+        self._start_elapsed_timer()
 
         self.append_log("Starting preflight checks...")
 
@@ -431,33 +548,59 @@ class SandboxLauncherGUI(tk.Tk):
                 )
             )
 
-            try:
-                step()
-            except Exception as exc:  # noqa: BLE001 - direct user feedback
-                errors.append((title, exc))
-                self._submit_to_ui(
-                    lambda title=title, exc=exc: self.append_log(
-                        f"Error during preflight step '{title}': {exc}"
+            while not self._abort_event.is_set():
+                try:
+                    step()
+                except Exception as exc:  # noqa: BLE001 - direct user feedback
+                    if hasattr(self, "_logger"):
+                        self._logger.exception(
+                            "Error during preflight step '%s'", title
+                        )
+                    self._submit_to_ui(
+                        lambda title=title, exc=exc: self.append_log(
+                            f"Error during preflight step '{title}': {exc}"
+                        )
                     )
-                )
-                self._pause_event.set()
-                self._decision_queue.put(
-                    (
-                        title,
-                        f"Step '{title}' failed with error: {exc}\nDo you want to continue?",
+                    stack = traceback.format_exc()
+                    self._submit_to_ui(
+                        lambda title=title, stack=stack: self._append_debug(
+                            f"Stack trace for '{title}':\n{stack}"
+                        )
                     )
-                )
+                    self._retry_requested = False
+                    self._pause_event.set()
+                    self._decision_queue.put(
+                        (
+                            title,
+                            f"Step '{title}' failed with error: {exc}\nDo you want to continue?",
+                            step,
+                        )
+                    )
 
-                while self._pause_event.is_set() and not self._abort_event.is_set():
-                    time.sleep(0.1)
+                    while (
+                        self._pause_event.is_set()
+                        and not self._abort_event.is_set()
+                    ):
+                        time.sleep(0.1)
 
-            else:
-                self._submit_to_ui(
-                    lambda title=title: self.append_log(
-                        f"Preflight step '{title}' completed successfully."
+                    if self._abort_event.is_set():
+                        break
+
+                    if self._retry_requested:
+                        self._retry_requested = False
+                        continue
+
+                    errors.append((title, exc))
+                    break
+
+                else:
+                    self._submit_to_ui(
+                        lambda title=title: self.append_log(
+                            f"Preflight step '{title}' completed successfully."
+                        )
                     )
-                )
-                self._wait_for_pause_to_clear()
+                    self._wait_for_pause_to_clear()
+                    break
 
             if self._abort_event.is_set():
                 break
@@ -466,7 +609,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread = None
 
         if aborted:
-            self._submit_to_ui(lambda: self.append_log("Preflight run was aborted."))
+            self._submit_to_ui(self._on_preflight_aborted)
         else:
             self._submit_to_ui(
                 lambda errors=errors: self._on_preflight_finished(
@@ -474,10 +617,17 @@ class SandboxLauncherGUI(tk.Tk):
                 )
             )
 
+    def _on_preflight_aborted(self) -> None:
+        """Handle UI updates when the preflight flow is aborted."""
+
+        self.append_log("Preflight run was aborted.")
+        self._stop_elapsed_timer()
+
     def _on_preflight_finished(
         self, *, success: bool, errors: Sequence[Tuple[str, Exception]]
     ) -> None:
         self.enable_run_preflight()
+        self._stop_elapsed_timer()
 
         health_ok, health_issues = self._run_post_preflight_health_check()
 
@@ -589,17 +739,21 @@ class SandboxLauncherGUI(tk.Tk):
     def _process_decisions(self) -> None:
         if self._pause_event.is_set():
             try:
-                title, message = self._decision_queue.get_nowait()
+                title, message, retryable = self._decision_queue.get_nowait()
             except queue.Empty:
                 pass
             else:
                 if title:
                     self.append_log(f"Decision required: {title}")
-
-                continue_run = messagebox.askyesno("Continue?", message)
+                choice = self._show_pause_dialog(title or "Continue?", message, retryable)
                 self._decision_queue.task_done()
-                if continue_run:
+                if choice == "continue":
                     self.append_log("User elected to continue preflight.")
+                    self._retry_requested = False
+                    self._pause_event.clear()
+                elif choice == "retry" and retryable is not None:
+                    self.append_log("User elected to retry the preflight step.")
+                    self._retry_requested = True
                     self._pause_event.clear()
                 else:
                     self.append_log("User elected to abort preflight.")
@@ -608,11 +762,63 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.after(200, self._process_decisions)
 
+    def _show_pause_dialog(
+        self, title: str, message: str, retryable: Callable[[], None] | None
+    ) -> str:
+        """Display a modal pause dialog and return the selected action."""
+
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=message, wraplength=400, justify=tk.LEFT).pack(
+            padx=20, pady=15
+        )
+
+        result: dict[str, str] = {"value": "abort"}
+
+        def choose(value: str) -> None:
+            result["value"] = value
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+
+        continue_button = ttk.Button(
+            button_frame,
+            text="Continue",
+            command=lambda: choose("continue"),
+        )
+        continue_button.pack(side=tk.LEFT)
+
+        if retryable is not None:
+            retry_button = ttk.Button(
+                button_frame,
+                text="Retry Step",
+                command=lambda: choose("retry"),
+            )
+            retry_button.pack(side=tk.LEFT, padx=(10, 0))
+
+        ttk.Button(
+            button_frame,
+            text="Abort",
+            command=lambda: choose("abort"),
+        ).pack(side=tk.RIGHT)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose("abort"))
+        dialog.bind("<Escape>", lambda _event: choose("abort"))
+        continue_button.focus_set()
+
+        self.wait_window(dialog)
+        return result["value"]
+
     def abort_preflight(self) -> None:
         thread = self._preflight_thread
         if not thread:
             self.enable_run_preflight()
             self.disable_start_sandbox()
+            self._stop_elapsed_timer()
             return
 
         self._abort_event.set()
@@ -628,6 +834,7 @@ class SandboxLauncherGUI(tk.Tk):
         self.enable_run_preflight()
         self.disable_start_sandbox()
         self.append_log("Preflight run aborted.")
+        self._stop_elapsed_timer()
 
     def _terminate_sandbox_process(self) -> None:
         process = self._sandbox_process
