@@ -537,8 +537,23 @@ class SandboxLauncherGUI(tk.Tk):
         os.environ["SANDBOX_ENABLE_SELF_CODING"] = "1"
 
     def _preflight_step_registry_and_packages(self) -> None:
+        import prime_registry
+
+        logger = self._gui_logger
+        if logger is not None:
+            logger.info("Refreshing sandbox registry...")
+
+        try:
+            prime_registry.main()
+        except Exception:
+            if logger is not None:
+                logger.exception("Registry refresh failed")
+            raise
+        else:
+            if logger is not None:
+                logger.info("Registry refresh completed successfully.")
+
         python_exe = Path(sys.executable)
-        self._run_command([python_exe, str(REPO_ROOT / "prime_registry.py")])
         self._run_command([python_exe, "-m", "pip", "install", "-e", str(REPO_ROOT)])
         self._run_command([python_exe, "-m", "pip", "install", "jsonschema"])
 
