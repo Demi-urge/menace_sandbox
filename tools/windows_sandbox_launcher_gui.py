@@ -71,6 +71,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread: threading.Thread | None = None
         self._preflight_running = False
         self._preflight_successful = False
+        self._sandbox_thread: threading.Thread | None = None
+        self._sandbox_process: subprocess.Popen[str] | None = None
+        self._sandbox_running = False
         self.pause_event = threading.Event()
         self.abort_event = threading.Event()
         self.decision_queue: "queue.Queue[tuple[str, str | None, dict[str, object] | None]]" = queue.Queue()
@@ -175,9 +178,36 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self._preflight_thread.start()
 
-    def start_sandbox(self) -> None:  # pragma: no cover - placeholder hook
-        """Placeholder command that will be implemented in a future iteration."""
+    def start_sandbox(self) -> None:
+        """Launch the sandbox in a background worker thread."""
+        if self._sandbox_running:
+            if self._sandbox_thread and self._sandbox_thread.is_alive():
+                self.logger.info(
+                    "Sandbox launch already in progress; ignoring duplicate request."
+                )
+                return
+
+            self.logger.warning(
+                "Sandbox state indicated running without an active worker; resetting controls."
+            )
+            self._sandbox_running = False
+
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            self.logger.info(
+                "Sandbox launch already in progress; ignoring duplicate request."
+            )
+            return
+
         self.logger.info("Sandbox startup sequence initiated...")
+        self.run_preflight_button.configure(state="disabled")
+        self.start_sandbox_button.configure(state="disabled")
+        self._sandbox_running = True
+        self._sandbox_thread = threading.Thread(
+            target=self._launch_sandbox,
+            name="SandboxLauncher",
+            daemon=True,
+        )
+        self._sandbox_thread.start()
 
     def _execute_preflight(self) -> None:
         """Worker routine that performs preflight operations."""
@@ -500,10 +530,11 @@ class SandboxLauncherGUI(tk.Tk):
         """Re-enable UI controls and clear state after preflight finishes."""
         self._preflight_running = False
         self._preflight_thread = None
-        self.run_preflight_button.configure(state="normal")
-        self.start_sandbox_button.configure(
-            state="normal" if self._preflight_successful else "disabled"
-        )
+        if not self._sandbox_running:
+            self.run_preflight_button.configure(state="normal")
+            self.start_sandbox_button.configure(
+                state="normal" if self._preflight_successful else "disabled"
+            )
 
     def _process_log_queue(self) -> None:
         while True:
@@ -571,6 +602,131 @@ class SandboxLauncherGUI(tk.Tk):
                 "warning",
             ),
         )
+
+    def _launch_sandbox(self) -> None:
+        """Launch the sandbox process and stream its output into the log queue."""
+
+        command = [sys.executable, "-m", "start_autonomous_sandbox"]
+        self.logger.info("Executing sandbox command: %s", " ".join(command))
+
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.exception("Failed to start sandbox process: %s", exc)
+            self.after(
+                0,
+                lambda error=exc: self._handle_sandbox_exit(
+                    returncode=None, error=error
+                ),
+            )
+            return
+
+        self._sandbox_process = process
+
+        readers: list[threading.Thread] = []
+
+        def stream_reader(stream: Iterable[str] | None, severity: str) -> None:
+            if stream is None:
+                return
+            for raw_line in stream:
+                line = raw_line.rstrip("\r\n")
+                if severity == "info":
+                    self.logger.info("[sandbox] %s", line)
+                else:
+                    lowered = line.lower()
+                    if any(keyword in lowered for keyword in ("error", "failed", "exception")):
+                        self.logger.error("[sandbox] %s", line)
+                    else:
+                        self.logger.warning("[sandbox] %s", line)
+
+        for stream, severity in (
+            (process.stdout, "info"),
+            (process.stderr, "warning"),
+        ):
+            if stream is None:
+                continue
+            reader = threading.Thread(
+                target=stream_reader,
+                args=(stream, severity),
+                name=f"SandboxStream-{severity}",
+                daemon=True,
+            )
+            reader.start()
+            readers.append(reader)
+
+        returncode: int | None = None
+        error: Exception | None = None
+        try:
+            returncode = process.wait()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            error = exc
+            self.logger.exception("Sandbox process encountered an error: %s", exc)
+            try:
+                process.kill()
+            except Exception:
+                pass
+        finally:
+            for reader in readers:
+                reader.join(timeout=1)
+            try:
+                if process.stdout:
+                    process.stdout.close()
+                if process.stderr:
+                    process.stderr.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
+
+        self.after(
+            0,
+            lambda rc=returncode, err=error: self._handle_sandbox_exit(
+                returncode=rc, error=err
+            ),
+        )
+
+    def _handle_sandbox_exit(
+        self, *, returncode: int | None, error: Exception | None
+    ) -> None:
+        """Reset UI state after the sandbox process finishes."""
+
+        self._sandbox_running = False
+        self._sandbox_thread = None
+        self._sandbox_process = None
+
+        self.run_preflight_button.configure(state="normal")
+        self.start_sandbox_button.configure(
+            state="normal" if self._preflight_successful else "disabled"
+        )
+
+        if error is not None:
+            message = f"Sandbox failed to start: {error}"
+            self.logger.error(message)
+            messagebox.showerror("Sandbox launch failed", message)
+            return
+
+        if returncode is None:
+            self.logger.warning(
+                "Sandbox process exited with unknown status; controls re-enabled."
+            )
+            return
+
+        if returncode == 0:
+            self.logger.info("Sandbox process exited successfully.")
+        else:
+            message = (
+                f"Sandbox process exited with code {returncode}."
+                " Check logs for details."
+            )
+            self.logger.error(message)
+            messagebox.showerror("Sandbox exited", message)
 
 
 def _evaluate_health_snapshot(
