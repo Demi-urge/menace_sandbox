@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 import queue
+from dataclasses import dataclass, field
+from datetime import timedelta
+from pathlib import Path
+from time import perf_counter
+from typing import Any, Callable, List
+
 import tkinter as tk
 from tkinter import ttk
-from typing import List
-from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
 try:
@@ -38,12 +42,12 @@ _LOG_FORMATTER = logging.Formatter(
 )
 
 
-def _ensure_file_logging() -> None:
+def _ensure_file_logging() -> RotatingFileHandler:
     """Attach a rotating file handler for persistent GUI logs."""
 
     for handler in logger.handlers:
         if isinstance(handler, RotatingFileHandler):
-            return
+            return handler
 
     file_handler = RotatingFileHandler(
         LOG_FILE_PATH,
@@ -53,13 +57,27 @@ def _ensure_file_logging() -> None:
     )
     file_handler.setFormatter(_LOG_FORMATTER)
     logger.addHandler(file_handler)
+    return file_handler
 
 
-_ensure_file_logging()
+_FILE_HANDLER = _ensure_file_logging()
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+
+
+@dataclass
+class RetryContext:
+    """Runtime metadata describing how to retry a failed workflow step."""
+
+    description: str
+    executor: Callable[..., Any]
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+    def run(self) -> Any:
+        return self.executor(*self.args, **self.kwargs)
 
 
 class MenaceGUI(tk.Tk):
@@ -76,6 +94,10 @@ class MenaceGUI(tk.Tk):
         self.context_builder = context_builder
         self.log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._max_log_lines = 1000
+        self._max_debug_lines = 200
+        self._retry_context: RetryContext | None = None
+        self._is_paused = False
+        self._start_time = perf_counter()
         try:
             self.context_builder.refresh_db_weights()
         except Exception:  # pragma: no cover - log and disable prompts
@@ -98,7 +120,9 @@ class MenaceGUI(tk.Tk):
             self.conv_bot = None
         self.error_bot = ErrorBot(context_builder=self.context_builder)
         self._setup_widgets()
+        self._update_status_bar()
         self.after(100, self._poll_log_queue)
+        self.after(1000, self._update_elapsed_time)
 
     # ------------------------------------------------------------------
     def _setup_widgets(self) -> None:
@@ -172,6 +196,32 @@ class MenaceGUI(tk.Tk):
 
     # Activity Log -----------------------------------------------------
     def _init_log(self) -> None:
+        self.log_controls = ttk.Frame(self.log_frame)
+        self.log_controls.pack(fill="x", padx=5, pady=(5, 0))
+
+        self.pause_message_var = tk.StringVar(value="")
+        self.retry_btn = ttk.Button(
+            self.log_controls,
+            text="Retry Step",
+            command=self._retry_last_step,
+        )
+        self.retry_btn.pack(side="left")
+        self.retry_btn.pack_forget()
+
+        self.pause_message = ttk.Label(
+            self.log_controls, textvariable=self.pause_message_var
+        )
+        self.pause_message.pack(side="left", padx=(5, 0))
+
+        self.debug_toggle_var = tk.BooleanVar(value=False)
+        self.debug_toggle = ttk.Checkbutton(
+            self.log_controls,
+            text="Show Debug Details",
+            variable=self.debug_toggle_var,
+            command=self._toggle_debug_frame,
+        )
+        self.debug_toggle.pack(side="right")
+
         self.log_text = tk.Text(self.log_frame, state="disabled")
         self.log_text.pack(expand=True, fill="both", padx=5, pady=5)
         self.log_text.tag_configure("info", foreground="white")
@@ -180,9 +230,21 @@ class MenaceGUI(tk.Tk):
             "error", foreground="red", font=("TkDefaultFont", 10, "bold")
         )
 
+        self.debug_frame = ttk.Labelframe(
+            self.log_frame, text="Debug Details"
+        )
+        self.debug_text = tk.Text(
+            self.debug_frame, state="disabled", height=8, wrap="word"
+        )
+        self.debug_text.pack(expand=True, fill="both", padx=5, pady=5)
+
         self._queue_handler = GUIQueueHandler(self.log_queue)
         self._queue_handler.setFormatter(_LOG_FORMATTER)
         logger.addHandler(self._queue_handler)
+
+        self.status_var = tk.StringVar(value="")
+        self.status_bar = ttk.Label(self, textvariable=self.status_var, anchor="w")
+        self.status_bar.pack(fill="x", padx=5, pady=(0, 5))
 
     def _poll_log_queue(self) -> None:
         """Poll log records from worker threads and update the widget."""
@@ -203,9 +265,13 @@ class MenaceGUI(tk.Tk):
                 elif level == "warning":
                     tag = "warning"
                 self.log_text.insert(tk.END, message + "\n", tag)
+                if level in {"error", "critical"}:
+                    self._append_debug_message(message)
             self._trim_log()
             self.log_text.configure(state="disabled")
             self.log_text.see(tk.END)
+
+            self._persist_logs(drained)
 
         self.after(100, self._poll_log_queue)
 
@@ -215,6 +281,130 @@ class MenaceGUI(tk.Tk):
             return
         excess = lines - self._max_log_lines
         self.log_text.delete("1.0", f"{excess + 1}.0")
+
+    def _append_debug_message(self, message: str) -> None:
+        self.debug_text.configure(state="normal")
+        self.debug_text.insert(tk.END, message + "\n")
+        self._trim_debug_log()
+        self.debug_text.configure(state="disabled")
+        if self.debug_toggle_var.get():
+            self.debug_text.see(tk.END)
+
+    def _trim_debug_log(self) -> None:
+        lines = int(self.debug_text.index("end-1c").split(".")[0])
+        if lines <= self._max_debug_lines:
+            return
+        excess = lines - self._max_debug_lines
+        self.debug_text.delete("1.0", f"{excess + 1}.0")
+
+    def _toggle_debug_frame(self) -> None:
+        if self.debug_toggle_var.get():
+            self.debug_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))
+        else:
+            self.debug_frame.pack_forget()
+
+    def _persist_logs(self, drained: list[tuple[str, str]]) -> None:
+        if (
+            not drained
+            or _FILE_HANDLER is None
+            or _FILE_HANDLER in logger.handlers
+        ):
+            return
+        level_map = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+            "critical": logging.CRITICAL,
+        }
+        for level_name, message in drained:
+            log_level = level_map.get(level_name, logging.INFO)
+            record = logging.LogRecord(
+                name="menace_gui.display",
+                level=log_level,
+                pathname=__file__,
+                lineno=0,
+                msg=message,
+                args=(),
+                exc_info=None,
+            )
+            _FILE_HANDLER.emit(record)
+
+    def _update_elapsed_time(self) -> None:
+        self._update_status_bar()
+        self.after(1000, self._update_elapsed_time)
+
+    def _update_status_bar(self) -> None:
+        elapsed_seconds = int(perf_counter() - self._start_time)
+        elapsed = str(timedelta(seconds=elapsed_seconds))
+        state = "Paused" if self._is_paused else "Running"
+        message = self.pause_message_var.get()
+        if message:
+            status = f"Status: {state} • Elapsed: {elapsed} • {message}"
+        else:
+            status = f"Status: {state} • Elapsed: {elapsed}"
+        self.status_var.set(status)
+
+    def set_pause_state(
+        self,
+        paused: bool,
+        *,
+        message: str | None = None,
+        retry_context: RetryContext | None = None,
+    ) -> None:
+        self._is_paused = paused
+        if paused:
+            if retry_context is not None:
+                self._retry_context = retry_context
+            self.pause_message_var.set(message or (self._retry_context.description if self._retry_context else ""))
+            self.retry_btn.pack(side="left")
+            if self._retry_context is None:
+                self.retry_btn.state(["disabled"])
+            else:
+                self.retry_btn.state(["!disabled"])
+        else:
+            self.pause_message_var.set("")
+            self.retry_btn.pack_forget()
+            self._retry_context = None
+        self._update_status_bar()
+
+    def notify_failed_step(
+        self,
+        description: str,
+        *,
+        executor: Callable[..., Any] | None = None,
+        args: tuple[Any, ...] | None = None,
+        kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        context = None
+        if executor is not None:
+            context = RetryContext(
+                description=description,
+                executor=executor,
+                args=args or (),
+                kwargs=kwargs or {},
+            )
+        self.set_pause_state(True, message=description, retry_context=context)
+        logger.warning("paused after failure: %s", description)
+
+    def _retry_last_step(self) -> None:
+        if self._retry_context is None:
+            logger.warning("retry requested without available context")
+            return
+        ctx = self._retry_context
+        logger.info("retrying failed step: %s", ctx.description)
+        try:
+            ctx.run()
+        except Exception:  # pragma: no cover - operational safeguard
+            logger.exception("retry step failed: %s", ctx.description)
+            self._append_debug_message(
+                f"Retry failed for {ctx.description}. See log for details."
+            )
+            self._update_status_bar()
+            return
+        self.set_pause_state(False)
+        logger.info("retry succeeded: %s", ctx.description)
+        self._refresh_chains()
 
     # Statistics -------------------------------------------------------
     def _init_stats(self) -> None:
@@ -404,4 +594,4 @@ class GUIQueueHandler(logging.Handler):
         self._queue.put((level, message))
 
 
-__all__ = ["MenaceGUI"]
+__all__ = ["MenaceGUI", "RetryContext"]
