@@ -896,8 +896,8 @@ class SandboxLauncherGUI(tk.Tk):
         if self._drain_running:
             self._queue_after_id = self.after(100, self._drain_log_queue)
 
-    def _drain_log_queue(self) -> None:
-        if not self._drain_running:
+    def _drain_log_queue(self, *, force: bool = False) -> None:
+        if not force and not self._drain_running:
             return
 
         flushed = False
@@ -916,7 +916,8 @@ class SandboxLauncherGUI(tk.Tk):
             self.log_text.configure(state=tk.DISABLED)
             self.log_text.see(tk.END)
 
-        self._schedule_log_drain()
+        if self._drain_running:
+            self._schedule_log_drain()
 
     def _schedule_worker_poll(self) -> None:
         if self._drain_running and self._worker_after_id is None:
@@ -1058,10 +1059,29 @@ class SandboxLauncherGUI(tk.Tk):
             except queue.Full:
                 logger.error("Unable to report preflight failure; queue full")
 
+    def _join_thread(
+        self,
+        thread: Optional[threading.Thread],
+        *,
+        timeout: float,
+        name: str,
+    ) -> None:
+        if thread is None or not thread.is_alive():
+            return
+
+        thread.join(timeout)
+        if thread.is_alive():
+            logger.debug("Thread %s did not exit within %.1f seconds", name, timeout)
+
     def _on_close(self) -> None:
         self._drain_running = False
+        self.abort_event.set()
+        self.pause_event.clear()
         self._stop_elapsed_timer()
+
+        process = self._sandbox_process
         self._request_sandbox_stop(force=True)
+
         if self._queue_after_id is not None:
             try:
                 self.after_cancel(self._queue_after_id)
@@ -1075,6 +1095,38 @@ class SandboxLauncherGUI(tk.Tk):
             except tk.TclError:
                 pass
             self._worker_after_id = None
+
+        self._drain_log_queue(force=True)
+        self._drain_decision_queue()
+
+        self._join_thread(self._preflight_thread, timeout=5, name="PreflightThread")
+        self._preflight_thread = None
+
+        self._join_thread(self._sandbox_thread, timeout=5, name="SandboxLauncherThread")
+        self._sandbox_thread = None
+        self._join_thread(
+            self._sandbox_stdout_thread, timeout=2, name="SandboxStream[info]"
+        )
+        self._sandbox_stdout_thread = None
+        self._join_thread(
+            self._sandbox_stderr_thread, timeout=2, name="SandboxStream[error]"
+        )
+        self._sandbox_stderr_thread = None
+
+        if process and process.poll() is None:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Sandbox process did not exit after termination request; killing"
+                )
+                with contextlib.suppress(Exception):
+                    process.kill()
+            finally:
+                with contextlib.suppress(Exception):
+                    process.wait(timeout=2)
+
+        self._sandbox_process = None
 
         if self._file_listener is not None:
             self._file_listener.stop()
@@ -1090,6 +1142,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._file_log_queue = None
 
         logger.removeHandler(self._queue_handler)
+        with contextlib.suppress(Exception):
+            self._queue_handler.flush()
         self.destroy()
 
     # ------------------------------------------------------------------
