@@ -82,6 +82,8 @@ class SandboxLauncherGUI(tk.Tk):
         self.pause_event = PAUSE_EVENT
         self.abort_event = threading.Event()
         self._preflight_thread: threading.Thread | None = None
+        self._preflight_result: Dict[str, Any] | None = None
+        self._preflight_completion_handled = False
         self._pending_decision = False
         self._last_decision: DecisionPayload | None = None
         self._configure_root()
@@ -231,7 +233,9 @@ class SandboxLauncherGUI(tk.Tk):
         thread = self._preflight_thread
         if thread and thread.is_alive():
             thread.join(timeout=0.5)
-        self._on_preflight_complete()
+            if thread.is_alive():
+                return
+        self._on_preflight_complete(self._preflight_result, None)
 
     def _start_preflight(self) -> None:
         """Launch the preflight workflow on a background thread."""
@@ -244,8 +248,12 @@ class SandboxLauncherGUI(tk.Tk):
         self._pending_decision = False
         self._last_decision = None
         self._drain_decision_queue()
+        self._preflight_result = None
+        self._preflight_completion_handled = False
 
         self.preflight_button.configure(state="disabled")
+        if self.start_button.winfo_exists():
+            self.start_button.configure(state="disabled")
 
         self._preflight_thread = threading.Thread(
             target=self._run_preflight_worker,
@@ -263,6 +271,9 @@ class SandboxLauncherGUI(tk.Tk):
         if handler not in logger.handlers:
             logger.addHandler(handler)
         logger.propagate = False
+
+        result: Dict[str, Any] | None = None
+        error: BaseException | None = None
 
         try:
             logger.info("Starting sandbox preflight sequence")
@@ -284,20 +295,77 @@ class SandboxLauncherGUI(tk.Tk):
                     logger.warning("Preflight completed with outstanding issues: %s", failures)
                 else:
                     logger.info("Preflight completed")
-        except Exception:  # pragma: no cover - defensive logging
+        except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Preflight sequence encountered an unexpected error")
+            error = exc
         finally:
+            self._preflight_result = result
             if handler in logger.handlers:
                 logger.removeHandler(handler)
             logger.propagate = True
-            self.after(0, self._on_preflight_complete)
+            self.after(0, lambda: self._on_preflight_complete(result, error))
 
-    def _on_preflight_complete(self) -> None:
+    def _on_preflight_complete(
+        self,
+        result: Dict[str, Any] | None,
+        error: BaseException | None,
+    ) -> None:
         """Re-enable controls after the preflight run finishes."""
+
+        if self._preflight_completion_handled:
+            return
+
+        self._preflight_completion_handled = True
 
         if self.preflight_button.winfo_exists():
             self.preflight_button.configure(state="normal")
         self._preflight_thread = None
+
+        if not self.winfo_exists():
+            return
+
+        if error is not None:
+            if self.start_button.winfo_exists():
+                self.start_button.configure(state="disabled")
+            messagebox.showerror(
+                "Preflight Error",
+                f"Preflight encountered an unexpected error:\n\n{error}",
+                parent=self,
+            )
+            return
+
+        result = result or {}
+        aborted = bool(result.get("aborted"))
+        healthy = bool(result.get("healthy"))
+        failures = result.get("failures") or []
+
+        if healthy and not aborted:
+            if self.start_button.winfo_exists():
+                self.start_button.configure(state="normal")
+            messagebox.showinfo(
+                "Preflight Complete",
+                "Sandbox is healthy and ready to start.",
+                parent=self,
+            )
+            return
+
+        if self.start_button.winfo_exists():
+            self.start_button.configure(state="disabled")
+
+        if aborted:
+            messagebox.showinfo(
+                "Preflight Aborted",
+                "Preflight was aborted. You can rerun the checks when ready.",
+                parent=self,
+            )
+            return
+
+        failure_message = "\n".join(str(item) for item in failures) or "Unknown issues detected."
+        messagebox.showwarning(
+            "Preflight Issues Detected",
+            f"Sandbox health checks reported issues:\n\n{failure_message}\n\nPlease resolve and rerun preflight.",
+            parent=self,
+        )
 
     def _on_close(self) -> None:
         """Request shutdown of the worker thread before closing the GUI."""
