@@ -879,8 +879,20 @@ class SandboxLauncherGUI(tk.Tk):
                 )
 
 
+def main() -> None:
+    """Run the Windows sandbox launcher GUI."""
+
+    app = SandboxLauncherGUI()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+
+
 __all__ = [
     "SandboxLauncherGUI",
     "run_full_preflight",
     "_evaluate_health_snapshot",
+    "main",
 ]
