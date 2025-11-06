@@ -774,9 +774,22 @@ def _evaluate_health_snapshot(
     return (not failures, failures)
 
 
+def main() -> int:
+    """Launch the sandbox launcher GUI event loop."""
+
+    app = SandboxLauncherGUI()
+    app.mainloop()
+    return 0
+
+
 __all__ = [
     "SandboxLauncherGUI",
     "run_full_preflight",
     "_evaluate_health_snapshot",
+    "main",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution entry point
+    sys.exit(main())
 
