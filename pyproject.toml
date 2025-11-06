@@ -116,3 +116,5 @@ tools = "tools"
 [tool.poetry.scripts]
 mypy = "mypy:main"
 embedding-backfill = "scripts.backfill_embeddings:cli"
+sandbox-launcher = "tools.windows_sandbox_launcher_gui:main"
+windows-sandbox-launcher-gui = "tools.windows_sandbox_launcher_gui:main"
