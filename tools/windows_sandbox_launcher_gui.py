@@ -3,14 +3,226 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import shutil
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import messagebox
 from tkinter import ttk
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
+
+from auto_env_setup import ensure_env
+from bootstrap_self_coding import bootstrap_self_coding, purge_stale_files
+from neurosales.scripts import setup_heavy_deps
+from prime_registry import main as prime_registry_main
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+_LOCK_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("sandbox_data", "*.lock"),
+    ("sandbox_data", "*.lock.*"),
+    ("sandbox_data", "*.lock*"),
+    ("logs", "*.lock"),
+    ("logs", "*.lock.*"),
+    ("vector_service", "*.lock"),
+    ("vector_service", "*.lock.*"),
+)
+
+_STALE_DIRECTORIES: tuple[Path, ...] = (
+    _REPO_ROOT / "sandbox_data" / "tmp",
+    _REPO_ROOT / "sandbox_data" / "cache",
+)
+
+
+@contextmanager
+def _temporary_environment(overrides: dict[str, str]) -> Iterator[None]:
+    """Temporarily apply ``overrides`` to :data:`os.environ`."""
+
+    original: dict[str, Optional[str]] = {}
+    try:
+        for key, value in overrides.items():
+            original[key] = os.environ.get(key)
+            os.environ[key] = value
+        yield
+    finally:
+        for key, previous in original.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+
+@dataclass(frozen=True)
+class _PreflightStep:
+    """Descriptor for a preflight action executed by :func:`run_full_preflight`."""
+
+    name: str
+    failure_title: str
+    failure_message: str
+    runner: Callable[[], None]
+
+
+def _git_fetch_and_reset(logger: logging.Logger) -> None:
+    """Synchronise the working tree with the upstream repository."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError("Git executable not found on PATH")
+
+    logger.info("Fetching latest repository changes")
+    subprocess.run(
+        [git, "fetch", "--all", "--prune"],
+        cwd=_REPO_ROOT,
+        check=True,
+    )
+
+    branch_proc = subprocess.run(
+        [git, "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=_REPO_ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    branch = branch_proc.stdout.strip() or "HEAD"
+    target = "origin/HEAD" if branch == "HEAD" else f"origin/{branch}"
+
+    logger.info("Resetting working tree to %s", target)
+    subprocess.run([git, "reset", "--hard", target], cwd=_REPO_ROOT, check=True)
+    logger.info("Repository refresh completed successfully")
+
+
+def _purge_stale_state(logger: logging.Logger) -> None:
+    """Remove known stale files produced by previous sandbox runs."""
+
+    logger.info("Purging stale sandbox state")
+    purge_stale_files()
+    logger.info("Stale sandbox files removed")
+
+
+def _remove_lock_artifacts(logger: logging.Logger) -> None:
+    """Delete stale lock files and temporary directories."""
+
+    failures: list[str] = []
+    removed: list[Path] = []
+
+    for directory, pattern in _LOCK_PATTERNS:
+        base = _REPO_ROOT / directory
+        if not base.exists():
+            continue
+        for candidate in base.glob(pattern):
+            try:
+                if candidate.is_dir():
+                    shutil.rmtree(candidate)
+                else:
+                    candidate.unlink()
+                removed.append(candidate)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:  # pragma: no cover - surface via interception
+                failures.append(f"{candidate}: {exc}")
+
+    for directory in _STALE_DIRECTORIES:
+        if not directory.exists():
+            continue
+        try:
+            shutil.rmtree(directory)
+            removed.append(directory)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:  # pragma: no cover - surface via interception
+            failures.append(f"{directory}: {exc}")
+
+    for entry in removed:
+        try:
+            logger.info("Removed stale artefact %s", entry.relative_to(_REPO_ROOT))
+        except ValueError:  # pragma: no cover - defensive logging
+            logger.info("Removed stale artefact %s", entry)
+
+    if failures:
+        joined = "; ".join(failures)
+        raise RuntimeError(f"Failed to remove stale artefacts: {joined}")
+
+    logger.info("Lock artefact cleanup completed")
+
+
+def _prefetch_heavy_dependencies(logger: logging.Logger) -> None:
+    """Warm heavy dependency assets without installing additional packages."""
+
+    logger.info("Prefetching heavy dependency assets")
+    setup_heavy_deps.main(download_only=True)
+    logger.info("Heavy dependency prefetch finished")
+
+
+def _warm_shared_vector_service(logger: logging.Logger) -> None:
+    """Instantiate :class:`SharedVectorService` to prime embedding caches."""
+
+    logger.info("Initialising SharedVectorService")
+    from vector_service import SharedVectorService
+
+    service = SharedVectorService()
+    service.vectorise("text", {"text": "sandbox preflight warm-up"})
+    logger.info("SharedVectorService warm-up completed")
+
+
+def _ensure_environment(logger: logging.Logger) -> None:
+    """Generate or update the sandbox environment file with safe overrides."""
+
+    overrides = {
+        "MENACE_NON_INTERACTIVE": "1",
+        "MENACE_SAFE": "0",
+        "MENACE_SUPPRESS_PROMETHEUS_FALLBACK_NOTICE": "1",
+        "SANDBOX_DISABLE_CLEANUP": "1",
+    }
+    logger.info("Ensuring .env configuration with overrides")
+    with _temporary_environment(overrides):
+        ensure_env()
+    logger.info("Environment configuration verified")
+
+
+def _prime_self_coding_registry(logger: logging.Logger) -> None:
+    """Populate the bot registry cache for faster self-coding start-up."""
+
+    logger.info("Priming self-coding registry cache")
+    prime_registry_main()
+    logger.info("Self-coding registry primed successfully")
+
+
+def _run_pip_commands(logger: logging.Logger) -> None:
+    """Execute required ``pip install`` commands."""
+
+    commands: list[tuple[str, ...]] = [
+        (sys.executable, "-m", "pip", "install", "-r", str(_REPO_ROOT / "requirements.txt")),
+    ]
+
+    extras = _REPO_ROOT / "requirements-extra.txt"
+    if extras.exists():
+        commands.append(
+            (sys.executable, "-m", "pip", "install", "-r", str(extras))
+        )
+
+    for command in commands:
+        logger.info("Executing pip command: %s", " ".join(command))
+        subprocess.run(command, check=True)
+
+    logger.info("Pip dependency installation completed")
+
+
+def _bootstrap_ai_counter_bot(logger: logging.Logger) -> None:
+    """Trigger self-coding bootstrap for ``AICounterBot``."""
+
+    logger.info("Bootstrapping self-coding manager for AICounterBot")
+    bootstrap_self_coding("AICounterBot")
+    logger.info("AICounterBot bootstrap completed")
 
 
 def run_full_preflight(
@@ -24,48 +236,102 @@ def run_full_preflight(
 
     logger.info("starting Windows sandbox preflight routine")
 
-    def _validate_local_configuration() -> None:
-        logger.info("validating local configuration")
-
-    def _verify_dependency_availability() -> None:
-        logger.info("verifying dependency availability")
-
-    def _check_sandbox_integrity() -> None:
-        logger.info("checking sandbox artefact integrity")
-
-    steps: list[tuple[str, str, Callable[[], None]]] = [
-        (
-            "Configuration validation failed",
-            "The configuration validation step reported an error. Continue the preflight?",
-            _validate_local_configuration,
+    steps: list[_PreflightStep] = [
+        _PreflightStep(
+            name="Git repository refresh",
+            failure_title="Repository refresh failed",
+            failure_message=(
+                "Synchronising the repository with 'git fetch' and 'git reset' "
+                "did not complete successfully. Continue the preflight?"
+            ),
+            runner=lambda: _git_fetch_and_reset(logger),
         ),
-        (
-            "Dependency verification failed",
-            "Dependency verification did not complete successfully. Continue the preflight?",
-            _verify_dependency_availability,
+        _PreflightStep(
+            name="Stale file cleanup",
+            failure_title="Stale file cleanup failed",
+            failure_message=(
+                "Cleaning up stale sandbox state failed. Continue the preflight?"
+            ),
+            runner=lambda: _purge_stale_state(logger),
         ),
-        (
-            "Sandbox artefact check failed",
-            "Sandbox artefact integrity checks were not successful. Continue the preflight?",
-            _check_sandbox_integrity,
+        _PreflightStep(
+            name="Lock artefact removal",
+            failure_title="Lock artefact removal failed",
+            failure_message=(
+                "Removing stale lock files or directories failed. Continue the preflight?"
+            ),
+            runner=lambda: _remove_lock_artifacts(logger),
+        ),
+        _PreflightStep(
+            name="Heavy dependency prefetch",
+            failure_title="Heavy dependency prefetch failed",
+            failure_message=(
+                "Downloading heavy dependency assets failed. Continue the preflight?"
+            ),
+            runner=lambda: _prefetch_heavy_dependencies(logger),
+        ),
+        _PreflightStep(
+            name="SharedVectorService warm-up",
+            failure_title="SharedVectorService warm-up failed",
+            failure_message=(
+                "Initialising SharedVectorService did not succeed. Continue the preflight?"
+            ),
+            runner=lambda: _warm_shared_vector_service(logger),
+        ),
+        _PreflightStep(
+            name="Environment configuration",
+            failure_title="Environment configuration failed",
+            failure_message=(
+                "Ensuring the sandbox environment configuration failed. Continue the preflight?"
+            ),
+            runner=lambda: _ensure_environment(logger),
+        ),
+        _PreflightStep(
+            name="Self-coding registry priming",
+            failure_title="Registry priming failed",
+            failure_message=(
+                "Priming the self-coding registry failed. Continue the preflight?"
+            ),
+            runner=lambda: _prime_self_coding_registry(logger),
+        ),
+        _PreflightStep(
+            name="Pip dependency installation",
+            failure_title="Pip installation failed",
+            failure_message=(
+                "One of the pip installation commands failed. Continue the preflight?"
+            ),
+            runner=lambda: _run_pip_commands(logger),
+        ),
+        _PreflightStep(
+            name="AICounterBot bootstrap",
+            failure_title="AICounterBot bootstrap failed",
+            failure_message=(
+                "Bootstrapping the AICounterBot self-coding manager failed. Continue the preflight?"
+            ),
+            runner=lambda: _bootstrap_ai_counter_bot(logger),
         ),
     ]
 
-    for failure_title, failure_message, step in steps:
+    for step in steps:
         if abort_event.is_set():
             logger.info("preflight routine aborted before completing remaining steps")
             return
+
+        logger.info("Starting preflight step: %s", step.name)
         try:
-            step()
+            step.runner()
         except Exception:
-            logger.exception(failure_title)
+            logger.exception(step.failure_title)
             pause_event.set()
-            decision_queue.put((failure_title, failure_message))
+            decision_queue.put((step.failure_title, step.failure_message))
             while pause_event.is_set() and not abort_event.is_set():
                 time.sleep(0.1)
             if abort_event.is_set():
                 logger.info("preflight routine aborted during paused step")
                 return
+            logger.info("Resuming preflight after operator confirmation")
+        else:
+            logger.info("Preflight step succeeded: %s", step.name)
 
     logger.info("preflight routine completed successfully")
 
@@ -324,4 +590,4 @@ class SandboxLauncherGUI(tk.Tk):
                 break
 
 
-__all__ = ["SandboxLauncherGUI"]
+__all__ = ["SandboxLauncherGUI", "run_full_preflight"]
