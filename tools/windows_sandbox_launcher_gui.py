@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import logging
 import os
@@ -416,20 +417,27 @@ class SandboxLauncherGUI(tk.Tk):
         if pause_event is None or decision_queue is None:
             return
 
-        if pause_event.is_set():
+        prompts: list[tuple[str, str, dict[str, object] | None]] = []
+        while True:
             try:
-                title, message, context = decision_queue.get_nowait()
+                prompts.append(decision_queue.get_nowait())
             except queue.Empty:
-                return
+                break
 
-            exception_text = ""
+        if not prompts:
+            return
+
+        for title, message, context in prompts:
             if isinstance(context, dict):
                 self._latest_pause_context = context
                 exception_text = str(context.get("exception") or "").strip()
                 self._latest_pause_context_trace = self._format_pause_context_trace(
                     title=title, message=message, context=context
                 )
-                logger.debug("Preflight paused at step %s", context.get("step"))
+                step_name = str(context.get("step") or "unknown")
+            else:
+                exception_text = ""
+                step_name = "unknown"
 
             prompt_parts = [message]
             if exception_text:
@@ -442,11 +450,25 @@ class SandboxLauncherGUI(tk.Tk):
             self._pause_dialog_presented = True
 
             if decision:
-                pause_event.clear()
+                logger.info(
+                    "Operator opted to continue after preflight step '%s'.", step_name
+                )
                 if abort_event is not None:
                     abort_event.clear()
-            elif abort_event is not None:
-                abort_event.set()
+                pause_event.clear()
+                retry_button = getattr(self, "retry_button", None)
+                if retry_button is not None:
+                    with contextlib.suppress(Exception):
+                        retry_button.state(["disabled"])
+                        retry_button.grid_remove()
+            else:
+                logger.info(
+                    "Operator opted to abort preflight during step '%s'.", step_name
+                )
+                if abort_event is not None:
+                    abort_event.set()
+                pause_event.clear()
+
 
 
     def _initialise_file_logging(self) -> None:
@@ -752,6 +774,22 @@ class SandboxLauncherGUI(tk.Tk):
             self._finish_elapsed_timer("Preflight completed")
             return
 
+        if aborted:
+            self.pause_event.clear()
+            self.abort_event.set()
+
+            self.retry_button.state(["disabled"])
+            self.retry_button.grid_remove()
+            self.launch_button.state(["disabled"])
+
+            self._finish_elapsed_timer("Preflight aborted")
+            self._pause_dialog_presented = False
+
+            message = self._format_health_failure_message({**payload, "aborted": True})
+            logger.warning("Sandbox health verification aborted: %s", message)
+            messagebox.showwarning("Preflight aborted", message)
+            return
+
         if paused:
             self.launch_button.state(["disabled"])
             failed_index = payload.get("failed_index")
@@ -765,53 +803,6 @@ class SandboxLauncherGUI(tk.Tk):
             failed_step = payload.get("failed_step")
             if failed_step:
                 self._last_failed_step = str(failed_step)
-
-            resume_from = self._paused_step_index
-
-            if decision == "continue":
-                total_steps = len(_PREFLIGHT_STEPS)
-                if isinstance(resume_from, int):
-                    resume_index = resume_from + 1
-                else:
-                    start_index = payload.get("start_index")
-                    resume_index = int(start_index) if isinstance(start_index, int) else 0
-                resume_index = min(max(resume_index, 0), total_steps)
-
-                failed_name = payload.get("failed_step") or self._last_failed_step or "unknown"
-                logger.info(
-                    "Operator opted to continue preflight past step %s; resuming at index %s.",
-                    failed_name,
-                    resume_index,
-                )
-
-                self.run_button.state(["disabled"])
-                self.retry_button.state(["disabled"])
-                self.retry_button.grid_remove()
-                self._pause_dialog_presented = False
-                self._paused_step_index = None
-
-                if self._preflight_start_time is None:
-                    self._preflight_start_time = time.monotonic()
-                self._ensure_elapsed_timer_running()
-
-                self._start_preflight_thread(resume_index)
-                return
-
-            if aborted:
-                payload = {**payload, "aborted": True}
-                self.pause_event.clear()
-                self.abort_event.set()
-
-                self.retry_button.state(["disabled"])
-                self.retry_button.grid_remove()
-                self.launch_button.state(["disabled"])
-
-                self._finish_elapsed_timer("Preflight aborted")
-                self._pause_dialog_presented = False
-
-                message = self._format_health_failure_message(payload)
-                logger.warning("Sandbox health verification aborted: %s", message)
-                return
 
             self.retry_button.state(["!disabled"])
             self.retry_button.grid()
@@ -922,6 +913,19 @@ def _ensure_abort_not_requested(abort_event: threading.Event) -> bool:
     return True
 
 
+def _await_pause_resolution(
+    pause_event: threading.Event, abort_event: threading.Event, *, poll_interval: float = 0.1
+) -> str:
+    """Block until the pause has been resolved or an abort is requested."""
+
+    while True:
+        if abort_event.is_set():
+            return "abort"
+        if not pause_event.is_set():
+            return "resume"
+        abort_event.wait(poll_interval)
+
+
 def _run_step(
     step: _PreflightStep,
     *,
@@ -978,8 +982,10 @@ def run_full_preflight(
     if start_index < 0 or start_index > total_steps:
         raise ValueError(f"start_index {start_index} outside valid range 0..{total_steps}")
 
-    for index, step in enumerate(_PREFLIGHT_STEPS[start_index:], start=start_index):
-        if not _run_step(
+    index = start_index
+    while index < total_steps:
+        step = _PREFLIGHT_STEPS[index]
+        if _run_step(
             step,
             logger=logger,
             pause_event=pause_event,
@@ -987,14 +993,34 @@ def run_full_preflight(
             abort_event=abort_event,
             debug_queue=debug_queue,
         ):
-            result: dict[str, object] = {
-                "paused": pause_event.is_set(),
-                "failed_step": step.name,
-                "failed_index": index,
-            }
-            if abort_event.is_set():
-                result["aborted"] = True
-            return result
+            index += 1
+            continue
+
+        failure_info: dict[str, object] = {
+            "failed_step": step.name,
+            "failed_index": index,
+        }
+
+        if abort_event.is_set():
+            return {**failure_info, "aborted": True}
+
+        if pause_event.is_set():
+            logger.info(
+                "Preflight paused during step '%s'; awaiting operator decision.", step.name
+            )
+            resolution = _await_pause_resolution(pause_event, abort_event)
+            if abort_event.is_set() or resolution == "abort":
+                return {**failure_info, "aborted": True}
+            if pause_event.is_set():
+                return {**failure_info, "paused": True}
+
+            logger.info(
+                "Operator cleared pause after step '%s'. Continuing preflight.", step.name
+            )
+            index += 1
+            continue
+
+        return {**failure_info, "aborted": abort_event.is_set()}
 
     snapshot = _collect_sandbox_health(logger, pause_event, decision_queue, abort_event, debug_queue)
     healthy, failures = _evaluate_health_snapshot(snapshot, dependency_mode=dependency_mode)

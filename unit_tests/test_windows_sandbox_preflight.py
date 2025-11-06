@@ -510,12 +510,81 @@ class PreflightWorkerTests(unittest.TestCase):
             )
 
         self.assertEqual(calls, ["_git_sync"])
-        self.assertTrue(result.get("paused"))
         self.assertTrue(result.get("aborted"))
+        self.assertFalse(result.get("paused"))
         self.assertEqual(result.get("failed_step"), "_git_sync")
         self.assertTrue(self.abort_event.is_set())
         self.assertTrue(self.pause_event.is_set())
         self.pause_event.clear()
+
+    def test_run_full_preflight_resumes_after_pause_cleared(self) -> None:
+        calls: list[str] = []
+
+        def _failing_step(_logger) -> None:
+            calls.append("fail_step")
+            raise RuntimeError("step failed")
+
+        def _next_step(_logger) -> None:
+            calls.append("next_step")
+
+        failing = gui._PreflightStep(
+            name="_custom_fail",
+            start_message="start failing",
+            success_message="success failing",
+            failure_title="Failure",
+            failure_message="Failure occurred",
+            runner=_failing_step,
+        )
+        succeeding = gui._PreflightStep(
+            name="_custom_next",
+            start_message="start next",
+            success_message="success next",
+            failure_title="Next Failure",
+            failure_message="Next step failed",
+            runner=_next_step,
+        )
+
+        result_holder: dict[str, object] = {}
+
+        def _execute() -> None:
+            result_holder["result"] = gui.run_full_preflight(
+                logger=self.logger,
+                pause_event=self.pause_event,
+                decision_queue=self.decision_queue,
+                abort_event=self.abort_event,
+                debug_queue=self.debug_queue,
+            )
+
+        with mock.patch.object(gui, "_PREFLIGHT_STEPS", [failing, succeeding]), mock.patch.object(
+            gui, "_collect_sandbox_health", return_value={"status": "ok"}
+        ), mock.patch.object(
+            gui, "_evaluate_health_snapshot", return_value=(True, [])
+        ):
+            thread = threading.Thread(target=_execute, daemon=True)
+            thread.start()
+
+            deadline = time.time() + 2
+            while not self.pause_event.is_set() and time.time() < deadline:
+                time.sleep(0.01)
+
+            self.assertTrue(self.pause_event.is_set())
+            title, message, context = self.decision_queue.get_nowait()
+            self.assertIn("Failure", title)
+            self.assertIn("Failure occurred", message)
+            self.assertIsInstance(context, dict)
+            self.assertEqual(context.get("step"), "_custom_fail")
+
+            self.pause_event.clear()
+
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+
+        result = result_holder.get("result")
+        self.assertIsInstance(result, dict)
+        self.assertTrue(result.get("healthy"))
+        self.assertFalse(result.get("paused"))
+        self.assertFalse(result.get("aborted"))
+        self.assertEqual(calls, ["fail_step", "next_step"])
 
 
 class PreflightGuiDecisionTests(unittest.TestCase):
@@ -523,6 +592,7 @@ class PreflightGuiDecisionTests(unittest.TestCase):
         self.gui = gui.SandboxLauncherGUI.__new__(gui.SandboxLauncherGUI)
         self.gui.pause_event = threading.Event()
         self.gui.abort_event = threading.Event()
+        self.gui.decision_queue = queue.Queue()
         self.gui.run_button = types.SimpleNamespace(state=mock.Mock())
         self.gui.retry_button = types.SimpleNamespace(
             state=mock.Mock(),
@@ -530,6 +600,10 @@ class PreflightGuiDecisionTests(unittest.TestCase):
             grid_remove=mock.Mock(),
         )
         self.gui.launch_button = types.SimpleNamespace(state=mock.Mock())
+        self.gui.status_var = types.SimpleNamespace(set=mock.Mock())
+        self.gui.after = mock.Mock(return_value=None)
+        self.gui.after_cancel = mock.Mock()
+        self.gui.after_idle = mock.Mock()
         self.gui._start_preflight_thread = mock.Mock()
         self.gui._ensure_elapsed_timer_running = mock.Mock()
         self.gui._finish_elapsed_timer = mock.Mock()
@@ -539,82 +613,88 @@ class PreflightGuiDecisionTests(unittest.TestCase):
         self.gui._pause_dialog_presented = False
         self.gui._paused_step_index = None
         self.gui._last_failed_step = None
-        self.gui._latest_pause_context_trace = "context trace"
+        self.gui._latest_pause_context = None
+        self.gui._latest_pause_context_trace = None
         self.gui._pause_user_decision = None
 
-    def test_continue_decision_restarts_next_step(self) -> None:
-        payload = {
-            "paused": True,
-            "failed_index": 1,
-            "failed_step": "_purge_stale_files",
-            "start_index": 0,
-            "debug_traces": ["traceback"],
-        }
-        self.gui._pause_user_decision = "continue"
+    def test_handle_pause_prompt_continue_clears_pause(self) -> None:
+        context = {"step": "_git_sync", "exception": "boom"}
+        self.gui.pause_event.set()
+        self.gui.decision_queue.put(("Failure", "Something went wrong", context))
 
         with mock.patch.object(gui, "logger") as logger_mock, mock.patch.object(
-            gui.messagebox, "showwarning"
-        ) as warn_mock:
-            self.gui._handle_preflight_completion(payload)
+            gui.messagebox, "askyesno", return_value=True
+        ) as prompt_mock:
+            self.gui._handle_pause_prompt()
 
-        self.assertEqual(self.gui._start_preflight_thread.call_count, 1)
-        resume_index = self.gui._start_preflight_thread.call_args[0][0]
-        self.assertEqual(resume_index, 2)
-
-        self.assertGreaterEqual(len(self.gui.run_button.state.call_args_list), 2)
-        self.assertEqual(self.gui.run_button.state.call_args_list[0][0][0], ["!disabled"])
-        self.assertEqual(self.gui.run_button.state.call_args_list[-1][0][0], ["disabled"])
-
+        prompt_mock.assert_called_once()
+        self.assertFalse(self.gui.pause_event.is_set())
+        self.assertFalse(self.gui.abort_event.is_set())
+        self.assertEqual(self.gui._pause_user_decision, "continue")
+        self.assertTrue(self.gui._pause_dialog_presented)
+        self.assertIs(self.gui._latest_pause_context, context)
+        self.assertIsNotNone(self.gui._latest_pause_context_trace)
         self.gui.retry_button.state.assert_called_with(["disabled"])
         self.gui.retry_button.grid_remove.assert_called_once()
-        self.assertFalse(self.gui._pause_dialog_presented)
-        self.assertIsNone(self.gui._paused_step_index)
-        self.assertIsNone(self.gui._pause_user_decision)
-        self.assertIsNone(self.gui._latest_pause_context_trace)
-        self.gui._ensure_elapsed_timer_running.assert_called_once()
-        self.gui._finish_elapsed_timer.assert_not_called()
-        self.assertFalse(self.gui.abort_event.is_set())
-        self.assertFalse(self.gui.pause_event.is_set())
+        logger_mock.info.assert_called()
+        logged_messages = [call.args[0] for call in logger_mock.info.call_args_list]
+        self.assertTrue(any("continue" in message for message in logged_messages))
 
-        self.assertIn(mock.call(["traceback"]), self.gui._update_debug_panel.call_args_list)
-        self.assertIn(mock.call(["context trace"]), self.gui._update_debug_panel.call_args_list)
-        warn_mock.assert_not_called()
-
-        self.assertEqual(logger_mock.info.call_count, 1)
-        log_message = logger_mock.info.call_args[0][0]
-        self.assertIn("continue preflight", log_message)
-
-    def test_abort_decision_marks_run_aborted(self) -> None:
-        payload = {
-            "paused": True,
-            "failed_index": 0,
-            "failed_step": "_git_sync",
-            "start_index": 0,
-        }
-        self.gui._pause_user_decision = "abort"
+    def test_handle_pause_prompt_abort_sets_abort_event(self) -> None:
+        context = {"step": "_git_sync", "exception": "boom"}
         self.gui.pause_event.set()
+        self.gui.decision_queue.put(("Failure", "Something went wrong", context))
+
+        with mock.patch.object(gui, "logger") as logger_mock, mock.patch.object(
+            gui.messagebox, "askyesno", return_value=False
+        ) as prompt_mock:
+            self.gui._handle_pause_prompt()
+
+        prompt_mock.assert_called_once()
+        self.assertFalse(self.gui.pause_event.is_set())
+        self.assertTrue(self.gui.abort_event.is_set())
+        self.assertEqual(self.gui._pause_user_decision, "abort")
+        self.assertTrue(self.gui._pause_dialog_presented)
+        self.assertIs(self.gui._latest_pause_context, context)
+        logger_mock.info.assert_called()
+        logged_messages = [call.args[0] for call in logger_mock.info.call_args_list]
+        self.assertTrue(any("abort" in message for message in logged_messages))
+
+    def test_handle_preflight_completion_aborted_surfaces_warning(self) -> None:
+        payload = {"aborted": True, "failed_step": "_git_sync"}
+        self.gui._pause_user_decision = None
 
         with mock.patch.object(gui, "logger") as logger_mock, mock.patch.object(
             gui.messagebox, "showwarning"
-        ) as warn_mock:
+        ) as warning_mock:
             self.gui._handle_preflight_completion(payload)
 
         self.assertFalse(self.gui.pause_event.is_set())
         self.assertTrue(self.gui.abort_event.is_set())
-        self.assertEqual(self.gui.retry_button.state.call_args[0][0], ["disabled"])
+        self.gui.retry_button.state.assert_called_with(["disabled"])
         self.gui.retry_button.grid_remove.assert_called_once()
         self.gui.launch_button.state.assert_called_with(["disabled"])
-        self.assertIsNone(self.gui._pause_user_decision)
-        self.assertIsNone(self.gui._latest_pause_context_trace)
         self.gui._finish_elapsed_timer.assert_called_once_with("Preflight aborted")
-        self.gui._start_preflight_thread.assert_not_called()
-        self.gui._ensure_elapsed_timer_running.assert_not_called()
-        warn_mock.assert_not_called()
+        warning_mock.assert_called_once()
+        logger_mock.warning.assert_called()
+        self.assertTrue(any("aborted" in call.args[0] for call in logger_mock.warning.call_args_list))
 
-        self.assertEqual(self.gui._update_debug_panel.call_args_list, [mock.call(["context trace"])])
-        self.gui._format_health_failure_message.assert_called_once()
-        logger_mock.warning.assert_called_once()
-        self.assertIn("aborted", logger_mock.warning.call_args[0][0])
+    def test_handle_preflight_completion_paused_shows_retry_button(self) -> None:
+        payload = {"paused": True, "failed_index": 2, "failed_step": "_purge_stale_files"}
+        self.gui._pause_user_decision = None
+        self.gui._pause_dialog_presented = False
+
+        with mock.patch.object(gui, "logger") as logger_mock, mock.patch.object(
+            gui.messagebox, "showwarning"
+        ) as warning_mock:
+            self.gui._handle_preflight_completion(payload)
+
+        self.assertEqual(self.gui._paused_step_index, 2)
+        self.assertEqual(self.gui._last_failed_step, "_purge_stale_files")
+        self.gui.retry_button.state.assert_called_with(["!disabled"])
+        self.gui.retry_button.grid.assert_called_once()
+        warning_mock.assert_called_once()
+        logger_mock.warning.assert_called()
 
 
 
