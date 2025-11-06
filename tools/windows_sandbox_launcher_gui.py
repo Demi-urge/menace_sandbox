@@ -27,10 +27,10 @@ from sandbox_runner import bootstrap as sandbox_bootstrap
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-class _TkTextLogHandler(logging.Handler):
+class _GuiLogHandler(logging.Handler):
     """Forward log records into a Tkinter-safe queue."""
 
-    def __init__(self, log_queue: "queue.Queue[tuple[str, str]]") -> None:
+    def __init__(self, log_queue: "queue.Queue[tuple[int, str]]") -> None:
         super().__init__()
         self._queue = log_queue
         self.setFormatter(logging.Formatter("%(message)s"))
@@ -38,7 +38,7 @@ class _TkTextLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401 - logging API
         try:
             message = self.format(record)
-            self._queue.put((record.levelname, message))
+            self._queue.put((record.levelno, message))
         except Exception:  # noqa: BLE001 - logging API mandates broad handling
             self.handleError(record)
 
@@ -66,14 +66,24 @@ class SandboxLauncherGUI(tk.Tk):
         ] = queue.Queue()
         self._abort_event = threading.Event()
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
-        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
-        self._log_handler: _TkTextLogHandler | None = None
+        self._log_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+        self._log_handler: _GuiLogHandler | None = None
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
         self._last_health_snapshot: dict[str, Any] | None = None
         self._sandbox_process: subprocess.Popen[str] | None = None
         self._retry_requested = False
         self._elapsed_start: float | None = None
         self._elapsed_job: str | None = None
+
+        self.log_text.tag_configure("DEFAULT", foreground="white", background="#1e1e1e")
+        self.log_text.tag_configure("INFO", foreground="white", background="#1e1e1e")
+        self.log_text.tag_configure("WARNING", foreground="yellow", background="#1e1e1e")
+        self.log_text.tag_configure(
+            "ERROR", foreground="red", background="#1e1e1e", font=self._log_bold_font
+        )
+        self.log_text.tag_configure(
+            "CRITICAL", foreground="red", background="#1e1e1e", font=self._log_bold_font
+        )
 
         self._setup_logging()
 
@@ -109,11 +119,6 @@ class SandboxLauncherGUI(tk.Tk):
         base_font = tkfont.nametofont(self.log_text.cget("font"))
         self._log_bold_font = base_font.copy()
         self._log_bold_font.configure(weight="bold")
-        self.log_text.tag_configure("DEFAULT", foreground="white")
-        self.log_text.tag_configure("INFO", foreground="white")
-        self.log_text.tag_configure("WARNING", foreground="yellow")
-        self.log_text.tag_configure("ERROR", foreground="red", font=self._log_bold_font)
-        self.log_text.tag_configure("CRITICAL", foreground="red", font=self._log_bold_font)
 
         self.debug_container = ttk.Labelframe(status_frame, text="Debug Details")
         self.debug_text = scrolledtext.ScrolledText(
@@ -171,7 +176,7 @@ class SandboxLauncherGUI(tk.Tk):
             )
             logger.addHandler(file_handler)
 
-        self._log_handler = _TkTextLogHandler(self._log_queue)
+        self._log_handler = _GuiLogHandler(self._log_queue)
         logger.addHandler(self._log_handler)
         logger.propagate = False
         self._logger = logger
@@ -193,10 +198,17 @@ class SandboxLauncherGUI(tk.Tk):
         if hasattr(self, "_logger"):
             self._logger.log(level, message.rstrip("\n"))
 
-    def append_log(self, message: str) -> None:
-        """Backward-compatible helper for info-level logging."""
+    def append_log(
+        self, message: str, *, level: int = logging.INFO, log_to_file: bool = True
+    ) -> None:
+        """Append *message* to the log pane and optionally persist it."""
 
-        self.log_message(logging.INFO, message)
+        normalized = message.rstrip("\n")
+        if log_to_file:
+            self.log_message(level, normalized)
+            return
+
+        self._render_log_message(normalized, level)
 
     def clear_log(self) -> None:
         """Clear all log content."""
@@ -206,6 +218,35 @@ class SandboxLauncherGUI(tk.Tk):
             self.log_text.delete("1.0", tk.END)
         finally:
             self.log_text.configure(state=tk.DISABLED)
+
+    def _render_log_message(self, message: str, level: int) -> None:
+        """Render a message in the log widget according to *level*."""
+
+        tag = self._log_tag_for_level(level)
+        try:
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.insert(tk.END, message + "\n", tag)
+            self.log_text.see(tk.END)
+        except tk.TclError:
+            return
+        finally:
+            try:
+                self.log_text.configure(state=tk.DISABLED)
+            except tk.TclError:
+                pass
+
+    def _log_tag_for_level(self, level: int) -> str:
+        """Return the text tag representing *level*."""
+
+        if level >= logging.CRITICAL:
+            return "CRITICAL"
+        if level >= logging.ERROR:
+            return "ERROR"
+        if level >= logging.WARNING:
+            return "WARNING"
+        if level >= logging.INFO:
+            return "INFO"
+        return "DEFAULT"
 
     def _append_debug(self, message: str) -> None:
         """Append debug-oriented *message* to the debug pane and log file."""
@@ -285,30 +326,24 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.after(100, self._drain_ui_queue)
 
-    def _drain_log_queue(self) -> None:
-        """Render queued log messages into the text widget."""
+    def _process_log_queue(self) -> None:
+        """Flush queued log records into the text widget."""
 
         while True:
             try:
-                level_name, message = self._log_queue.get_nowait()
+                level, message = self._log_queue.get_nowait()
             except queue.Empty:
                 break
 
             try:
-                available_tags = set(self.log_text.tag_names())
-                tag = level_name if level_name in available_tags else "DEFAULT"
-                self.log_text.configure(state=tk.NORMAL)
-                self.log_text.insert(tk.END, message + "\n", tag)
-                self.log_text.see(tk.END)
-            except tk.TclError:
-                break
+                self.append_log(message, level=level, log_to_file=False)
             finally:
-                try:
-                    self.log_text.configure(state=tk.DISABLED)
-                except tk.TclError:
-                    pass
                 self._log_queue.task_done()
 
+    def _drain_log_queue(self) -> None:
+        """Render queued log messages into the text widget."""
+
+        self._process_log_queue()
         self.after(100, self._drain_log_queue)
 
     # ------------------------------------------------------------------
@@ -936,6 +971,7 @@ class SandboxLauncherGUI(tk.Tk):
             self._logger.removeHandler(self._log_handler)
             self._log_handler.close()
             self._log_handler = None
+        self._process_log_queue()
         super().destroy()
 
 
