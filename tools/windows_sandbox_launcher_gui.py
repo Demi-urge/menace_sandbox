@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import queue
+import threading
 import tkinter as tk
 from tkinter import font as tk_font
 from tkinter import ttk
+from typing import Callable
 
 
 class _QueueLogHandler(logging.Handler):
@@ -33,6 +36,14 @@ class _QueueLogHandler(logging.Handler):
 
 class SandboxLauncherGUI(tk.Tk):
     """Basic window shell for future sandbox launcher features."""
+
+    #: Candidate import paths for the Phase 5 controller.  Tests may patch this
+    #: list or :attr:`_phase5_controller_factory` to inject fakes.
+    PHASE5_CONTROLLER_PATHS: tuple[str, ...] = (
+        "phase5_sequence_controller.Phase5SequenceController",
+        "phase5.sequence_controller.Phase5SequenceController",
+        "sandbox_runner.phase5_sequence_controller.Phase5SequenceController",
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -102,13 +113,21 @@ class SandboxLauncherGUI(tk.Tk):
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
 
-        self.run_button = ttk.Button(button_frame, text="Run Preflight")
+        self.run_button = ttk.Button(
+            button_frame, text="Run Preflight", command=self._on_run_preflight
+        )
         self.run_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
         self.launch_button = ttk.Button(
             button_frame, text="Start Sandbox", state="disabled"
         )
         self.launch_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+        # Thread coordination state
+        self._worker_queue: queue.Queue[tuple[str, dict[str, object]]] = queue.Queue()
+        self._preflight_thread: threading.Thread | None = None
+        self._phase5_controller_factory: Callable[[], object] | None = None
+        self.after(100, self._process_worker_events)
 
     def _configure_log_tags(self) -> None:
         """Configure tag styles for log message severities."""
@@ -138,6 +157,105 @@ class SandboxLauncherGUI(tk.Tk):
             pass
 
         self.after(100, self._drain_log_queue)
+
+    # ------------------------------------------------------------------
+    # Preflight orchestration callbacks
+
+    def _on_run_preflight(self) -> None:  # pragma: no cover - UI interaction
+        """Handle *Run Preflight* clicks by spawning the worker thread."""
+
+        if self._preflight_thread is not None and self._preflight_thread.is_alive():
+            self.logger.info("Preflight already running; ignoring duplicate request.")
+            return
+
+        self.logger.info("Preflight requested. Preparing Phase 5 sequence controller.")
+        self._clear_log_view()
+        self.launch_button.state(["disabled"])
+        self.run_button.state(["disabled"])
+
+        self._preflight_thread = threading.Thread(
+            target=self._run_preflight_worker,
+            name="phase5-preflight",
+            daemon=True,
+        )
+        self._preflight_thread.start()
+
+    def _clear_log_view(self) -> None:
+        """Clear the on-screen log prior to a new run."""
+
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def _run_preflight_worker(self) -> None:
+        """Background worker that executes the Phase 5 preflight sequence."""
+
+        self.logger.info("Phase 5 preflight sequence starting.")
+        try:
+            controller = self._get_phase5_controller()
+            run_callable = getattr(controller, "run", None)
+            if callable(run_callable):
+                run_callable()
+            elif callable(getattr(controller, "__call__", None)):
+                controller()  # type: ignore[misc]
+            else:
+                raise RuntimeError(
+                    "Phase 5 sequence controller does not expose a runnable interface"
+                )
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            self.logger.exception("Preflight aborted due to error: %s", exc)
+            self._worker_queue.put(
+                ("preflight_complete", {"success": False, "error": str(exc)})
+            )
+        else:
+            self.logger.info("Phase 5 preflight sequence complete.")
+            self._worker_queue.put(("preflight_complete", {"success": True}))
+
+    def _get_phase5_controller(self) -> object:
+        """Resolve the Phase 5 controller using configured factories or imports."""
+
+        if self._phase5_controller_factory is not None:
+            return self._phase5_controller_factory()
+
+        for path in self.PHASE5_CONTROLLER_PATHS:
+            module_name, _, attr_name = path.rpartition(".")
+            if not module_name:
+                continue
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            controller = getattr(module, attr_name, None)
+            if controller is None:
+                continue
+            return controller()
+
+        raise RuntimeError("Phase 5 sequence controller is unavailable")
+
+    def _process_worker_events(self) -> None:  # pragma: no cover - UI loop side effect
+        """Drain worker notifications and update widget state on the main thread."""
+
+        try:
+            while True:
+                event, payload = self._worker_queue.get_nowait()
+                if event == "preflight_complete":
+                    self._handle_preflight_completion(payload)
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self._process_worker_events)
+
+    def _handle_preflight_completion(self, payload: dict[str, object]) -> None:
+        """Re-enable controls once the preflight worker finishes."""
+
+        self._preflight_thread = None
+        self.run_button.state(["!disabled"])
+
+        success = bool(payload.get("success"))
+        if success:
+            self.launch_button.state(["!disabled"])
+        else:
+            self.launch_button.state(["disabled"])
 
 
 __all__ = ["SandboxLauncherGUI"]
