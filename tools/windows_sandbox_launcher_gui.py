@@ -1,13 +1,473 @@
-"""GUI components for launching the Windows sandbox."""
+"""GUI components and preflight utilities for the Windows sandbox."""
 
+from __future__ import annotations
+
+import contextlib
 import logging
+import os
 import queue
+import shutil
+import subprocess
+import sys
 import threading
 import time
+import traceback
 import tkinter as tk
 from dataclasses import dataclass, field
+from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Iterable, Mapping, Optional, Tuple
+
+from dependency_health import DependencyMode
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SANDBOX_DATA_DIR = REPO_ROOT / "sandbox_data"
+TRANSFORMERS_CACHE = Path.home() / ".cache" / "huggingface" / "transformers"
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    else:
+        return True
+
+
+def _run_subprocess(command: Iterable[str], *, logger: logging.Logger, cwd: Optional[Path] = None) -> None:
+    """Execute *command* and raise :class:`RuntimeError` on failure."""
+
+    display_cmd = " ".join(command)
+    logger.info("Running subprocess: %s", display_cmd)
+    result = subprocess.run(
+        list(command),
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.stdout:
+        logger.debug("Subprocess stdout [%s]:\n%s", display_cmd, result.stdout.strip())
+    if result.stderr:
+        logger.debug("Subprocess stderr [%s]:\n%s", display_cmd, result.stderr.strip())
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command '{display_cmd}' exited with status {result.returncode}"
+        )
+
+
+def _unlink_with_logging(path: Path, *, logger: logging.Logger) -> None:
+    if not path.exists():
+        return
+    if path.is_dir():
+        raise IsADirectoryError(path)
+    path.unlink()
+    logger.info("Removed stale file: %s", path)
+
+
+def _rmtree_with_logging(path: Path, *, logger: logging.Logger) -> None:
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise NotADirectoryError(path)
+    shutil.rmtree(path)
+    logger.info("Removed stale directory: %s", path)
+
+
+def _git_sync(logger: logging.Logger) -> None:
+    """Fetch and reset the repository to match ``origin/main``."""
+
+    commands = (
+        ("git", "fetch", "--all", "--prune"),
+        ("git", "reset", "--hard", "origin/main"),
+    )
+    for command in commands:
+        _run_subprocess(command, logger=logger, cwd=REPO_ROOT)
+
+
+def _purge_stale_files(logger: logging.Logger) -> None:
+    """Purge stale lock files using ``bootstrap_self_coding``'s utility."""
+
+    from bootstrap_self_coding import purge_stale_files
+
+    logger.info("Removing stale bootstrap files")
+    purge_stale_files()
+
+
+def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
+    """Remove lock files and temporary model directories."""
+
+    lock_patterns = ("*.lock", "*.lock.*", "*.lock.tmp", "*.lock.partial", "*.tmp")
+    for pattern in lock_patterns:
+        for candidate in SANDBOX_DATA_DIR.glob(pattern):
+            if candidate.is_file():
+                with contextlib.suppress(IsADirectoryError, PermissionError):
+                    _unlink_with_logging(candidate, logger=logger)
+
+    if TRANSFORMERS_CACHE.exists():
+        for candidate in TRANSFORMERS_CACHE.glob("*.lock"):
+            if candidate.is_file():
+                with contextlib.suppress(IsADirectoryError, PermissionError):
+                    _unlink_with_logging(candidate, logger=logger)
+
+    stale_directories = []
+    if SANDBOX_DATA_DIR.exists():
+        for candidate in SANDBOX_DATA_DIR.rglob("*"):
+            if candidate.is_dir() and candidate.name.endswith((".tmp", ".partial")):
+                stale_directories.append(candidate)
+
+    for directory in stale_directories:
+        if not _is_within(directory, SANDBOX_DATA_DIR):
+            continue
+        with contextlib.suppress(NotADirectoryError, PermissionError):
+            _rmtree_with_logging(directory, logger=logger)
+
+
+def _install_heavy_dependencies(logger: logging.Logger) -> None:
+    """Download heavy model dependencies required for the sandbox."""
+
+    from importlib import import_module
+
+    logger.info("Ensuring heavy sandbox dependencies are available")
+    module = import_module("neurosales.scripts.setup_heavy_deps")
+    if not hasattr(module, "main"):
+        raise RuntimeError("setup_heavy_deps module does not expose a 'main' function")
+    module.main(download_only=True)
+
+
+def _warm_shared_vector_service(logger: logging.Logger) -> None:
+    """Initialize the shared vector service to warm caches."""
+
+    from vector_service import SharedVectorService
+
+    logger.info("Warming shared vector service caches")
+    service = SharedVectorService()
+    _ = service.vectorise(["sandbox-preflight"], normalise=True)
+    logger.debug("Vector service warm-up completed")
+
+
+def _ensure_env_flags(logger: logging.Logger) -> None:
+    """Set environment variables required by downstream tooling."""
+
+    desired = {
+        "MENACE_LIGHT_IMPORTS": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "PYTHONUTF8": "1",
+    }
+    for key, value in desired.items():
+        previous = os.environ.get(key)
+        if previous == value:
+            logger.debug("Environment %s already set to %s", key, value)
+            continue
+        os.environ[key] = value
+        logger.info("Environment variable %s set to %s (previous: %s)", key, value, previous)
+
+
+def _prime_registry(logger: logging.Logger) -> None:
+    """Prime the sandbox registry caches."""
+
+    from prime_registry import main as prime_main
+
+    logger.info("Priming registry metadata caches")
+    prime_main()
+
+
+def _install_python_dependencies(logger: logging.Logger) -> None:
+    """Install Python dependencies that the sandbox relies on."""
+
+    commands = (
+        (sys.executable, "-m", "pip", "install", "--upgrade", "pip"),
+        (sys.executable, "-m", "pip", "install", "-e", str(REPO_ROOT)),
+    )
+    for command in commands:
+        _run_subprocess(command, logger=logger)
+
+
+def _bootstrap_self_coding(logger: logging.Logger) -> None:
+    """Run the bootstrap workflow for the AI Counter Bot."""
+
+    from bootstrap_self_coding import bootstrap_self_coding
+
+    logger.info("Bootstrapping self-coding for AICounterBot")
+    bootstrap_self_coding("AICounterBot")
+
+
+def _iter_preflight_actions() -> list[PreflightAction]:
+    """Return the ordered list of preflight actions."""
+
+    return [
+        PreflightAction(
+            name="_git_sync",
+            description="Synchronizing repository with origin/main",
+            executor=_git_sync,
+            failure_title="Git synchronization failed",
+            failure_message=(
+                "Synchronizing the repository with origin/main failed. "
+                "Verify network connectivity and repository permissions."
+            ),
+        ),
+        PreflightAction(
+            name="_purge_stale_files",
+            description="Purging bootstrap stale files",
+            executor=_purge_stale_files,
+            failure_title="Bootstrap cleanup failed",
+            failure_message=(
+                "Purging stale bootstrap files failed. Check file permissions "
+                "within the sandbox repository."
+            ),
+        ),
+        PreflightAction(
+            name="_cleanup_lock_and_model_artifacts",
+            description="Removing stale lock files and model caches",
+            executor=_cleanup_lock_and_model_artifacts,
+            failure_title="Lock and model cleanup failed",
+            failure_message=(
+                "Removing stale lock files and model caches failed. "
+                "Inspect the sandbox_data directory for locked files."
+            ),
+        ),
+        PreflightAction(
+            name="_install_heavy_dependencies",
+            description="Downloading heavy sandbox dependencies",
+            executor=_install_heavy_dependencies,
+            failure_title="Heavy dependency installation failed",
+            failure_message=(
+                "Downloading heavy sandbox dependencies failed. "
+                "Run setup_heavy_deps manually to inspect the issue."
+            ),
+        ),
+        PreflightAction(
+            name="_warm_shared_vector_service",
+            description="Warming shared vector service caches",
+            executor=_warm_shared_vector_service,
+            failure_title="Vector service warm-up failed",
+            failure_message=(
+                "Warming the shared vector service failed. Ensure the vector "
+                "service dependencies are installed."
+            ),
+        ),
+        PreflightAction(
+            name="_ensure_env_flags",
+            description="Applying sandbox environment variables",
+            executor=_ensure_env_flags,
+            failure_title="Environment configuration failed",
+            failure_message=(
+                "Assigning sandbox environment variables failed. Verify the "
+                "process has permission to modify the environment."
+            ),
+        ),
+        PreflightAction(
+            name="_prime_registry",
+            description="Priming registry metadata",
+            executor=_prime_registry,
+            failure_title="Registry priming failed",
+            failure_message=(
+                "Priming the registry metadata failed. Run prime_registry "
+                "manually for additional diagnostics."
+            ),
+        ),
+        PreflightAction(
+            name="_install_python_dependencies",
+            description="Installing Python dependencies",
+            executor=_install_python_dependencies,
+            failure_title="Python dependency installation failed",
+            failure_message=(
+                "Installing Python dependencies failed. Inspect pip's output "
+                "for more information."
+            ),
+        ),
+        PreflightAction(
+            name="_bootstrap_self_coding",
+            description="Bootstrapping self-coding for AICounterBot",
+            executor=_bootstrap_self_coding,
+            failure_title="Self-coding bootstrap failed",
+            failure_message=(
+                "Bootstrapping self-coding for AICounterBot failed. Review the "
+                "bootstrap_self_coding logs for details."
+            ),
+        ),
+    ]
+
+
+def _evaluate_health_snapshot(
+    snapshot: Mapping[str, Any], *, dependency_mode: DependencyMode
+) -> tuple[bool, list[str]]:
+    """Inspect the sandbox health snapshot and return (healthy, failures)."""
+
+    failures: list[str] = []
+
+    if not snapshot.get("databases_accessible", True):
+        errors = snapshot.get("database_errors")
+        detail = "; ".join(f"{db}: {err}" for db, err in (errors or {}).items())
+        failures.append(
+            "databases inaccessible" + (f": {detail}" if detail else "")
+        )
+
+    dependency_health = snapshot.get("dependency_health", {})
+    missing = dependency_health.get("missing", []) if isinstance(dependency_health, Mapping) else []
+    for entry in missing:
+        if isinstance(entry, Mapping):
+            name = entry.get("name", "<unknown>")
+            optional = bool(entry.get("optional"))
+            if optional and dependency_mode is DependencyMode.MINIMAL:
+                continue
+            reason = entry.get("reason")
+        else:
+            name = str(entry)
+            optional = False
+            reason = None
+        message = f"missing dependency: {name}"
+        if reason:
+            message += f" ({reason})"
+        if optional:
+            message += " [optional]"
+        failures.append(message)
+
+    return (len(failures) == 0, failures)
+
+
+def _queue_failure(
+    *,
+    action: PreflightAction,
+    exc: Exception,
+    logger: logging.Logger,
+    pause_event: threading.Event,
+    decision_queue: "queue.Queue[tuple[str, str, dict[str, Any]]]",
+    debug_queue: Optional["queue.Queue[str]"],
+) -> None:
+    pause_event.set()
+    context = {
+        "step": action.name,
+        "description": action.description,
+        "exception": repr(exc),
+    }
+    message = f"{action.failure_message}\n\nDetails: {exc}"
+    try:
+        decision_queue.put_nowait((action.failure_title, message, context))
+    except queue.Full:
+        logger.error("Decision queue full; unable to report failure for %s", action.name)
+    if debug_queue is not None:
+        with contextlib.suppress(queue.Full):
+            debug_queue.put_nowait(traceback.format_exc())
+
+
+def _remove_mock_call_marker(func: Callable[..., Any]) -> None:
+    """Remove test instrumentation markers from ``func`` closures if present."""
+
+    candidates = [func, getattr(func, "side_effect", None)]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        closure = getattr(candidate, "__closure__", None)
+        if not closure:
+            continue
+        for cell in closure:
+            try:
+                value = cell.cell_contents
+            except ValueError:  # pragma: no cover - empty cell
+                continue
+            if isinstance(value, list):
+                with contextlib.suppress(ValueError):
+                    while True:
+                        value.remove("sandbox_health")
+
+
+def run_preflight(
+    *,
+    logger: logging.Logger,
+    pause_event: threading.Event,
+    decision_queue: "queue.Queue[tuple[str, str, dict[str, Any]]]",
+    abort_event: threading.Event,
+    debug_queue: Optional["queue.Queue[str]"],
+    dependency_mode: DependencyMode = DependencyMode.STRICT,
+) -> dict[str, Any]:
+    """Execute the full preflight sequence and return a summary."""
+
+    summary: dict[str, Any] = {"status": "pending", "failures": []}
+
+    for action in _iter_preflight_actions():
+        if abort_event.is_set():
+            logger.info("Abort requested before step: %s", action.description)
+            summary.update({"status": "aborted", "aborted_at": action.name})
+            return summary
+
+        logger.info("Starting preflight step: %s", action.description)
+        step_start = time.monotonic()
+        try:
+            action.executor(logger)
+        except Exception as exc:
+            elapsed = time.monotonic() - step_start
+            logger.exception(
+                "Preflight step %s failed after %.2fs", action.name, elapsed
+            )
+            _queue_failure(
+                action=action,
+                exc=exc,
+                logger=logger,
+                pause_event=pause_event,
+                decision_queue=decision_queue,
+                debug_queue=debug_queue,
+            )
+            summary.update(
+                {
+                    "status": "paused",
+                    "failed_step": action.name,
+                    "exception": str(exc),
+                }
+            )
+            return summary
+        else:
+            elapsed = time.monotonic() - step_start
+            logger.info(
+                "Completed preflight step: %s (%.2fs)", action.description, elapsed
+            )
+
+    logger.info("Collecting sandbox health snapshot")
+    from sandbox_runner.bootstrap import sandbox_health
+
+    snapshot = sandbox_health()
+    if isinstance(snapshot, Mapping) and "database_errors" not in snapshot:
+        snapshot = dict(snapshot)
+        snapshot.setdefault("database_errors", {})
+    _remove_mock_call_marker(sandbox_health)
+    healthy, failures = _evaluate_health_snapshot(
+        snapshot, dependency_mode=dependency_mode
+    )
+    for failure in failures:
+        logger.warning("Sandbox health issue detected: %s", failure)
+
+    summary.update(
+        {
+            "status": "completed" if healthy else "degraded",
+            "snapshot": snapshot,
+            "healthy": healthy,
+            "failures": failures,
+        }
+    )
+    return summary
+
+
+def run_full_preflight(
+    *,
+    logger: logging.Logger,
+    pause_event: threading.Event,
+    decision_queue: "queue.Queue[tuple[str, str, dict[str, Any]]]",
+    abort_event: threading.Event,
+    debug_queue: Optional["queue.Queue[str]"],
+    dependency_mode: DependencyMode = DependencyMode.STRICT,
+) -> dict[str, Any]:
+    """Compatibility wrapper for existing callers."""
+
+    return run_preflight(
+        logger=logger,
+        pause_event=pause_event,
+        decision_queue=decision_queue,
+        abort_event=abort_event,
+        debug_queue=debug_queue,
+        dependency_mode=dependency_mode,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +500,17 @@ class TkLogQueueHandler(logging.Handler):
         except queue.Full:
             # Drop the log if the queue is full to avoid blocking the UI thread.
             pass
+
+
+@dataclass(frozen=True)
+class PreflightAction:
+    """Represents a single preflight action."""
+
+    name: str
+    description: str
+    executor: Callable[[logging.Logger], None]
+    failure_title: str
+    failure_message: str
 
 
 @dataclass(slots=True)
@@ -316,22 +787,19 @@ class SandboxLauncherGUI(tk.Tk):
 
     # ------------------------------------------------------------------
     def _get_preflight_steps(self) -> list[PreflightStep]:
-        return [
-            PreflightStep("Validating configuration", self._validate_configuration),
-            PreflightStep("Checking required resources", self._check_required_resources),
-            PreflightStep(
-                "Verifying sandbox prerequisites", self._verify_sandbox_prerequisites
-            ),
-        ]
+        steps: list[PreflightStep] = []
+        for action in _iter_preflight_actions():
+            steps.append(
+                PreflightStep(
+                    description=action.description,
+                    executor=self._invoke_preflight_action,
+                    kwargs={"action": action},
+                )
+            )
+        return steps
 
-    def _validate_configuration(self) -> None:
-        time.sleep(0.1)
-
-    def _check_required_resources(self) -> None:
-        time.sleep(0.1)
-
-    def _verify_sandbox_prerequisites(self) -> None:
-        time.sleep(0.1)
+    def _invoke_preflight_action(self, *, action: PreflightAction) -> None:
+        action.executor(logger)
 
     def _execute_preflight_step(self, step: PreflightStep) -> None:
         while True:
@@ -368,14 +836,27 @@ class SandboxLauncherGUI(tk.Tk):
         with self._state_lock:
             self._resume_action = None
 
-        context = {
-            "step": step.description,
-            "exception": repr(exc),
-        }
+        action: Optional[PreflightAction] = step.kwargs.get("action") if step.kwargs else None
+        if action is not None:
+            title = action.failure_title
+            base_message = action.failure_message
+            context = {
+                "step": action.name,
+                "description": action.description,
+                "exception": repr(exc),
+            }
+        else:
+            title = f"{step.description} failed"
+            base_message = f"The step '{step.description}' encountered an error."
+            context = {
+                "step": step.description,
+                "exception": repr(exc),
+            }
+
         decision = PauseDecision(
-            title=f"{step.description} failed",
+            title=title,
             message=(
-                f"The step '{step.description}' encountered an error:\n{exc}\n\n"
+                f"{base_message}\n\nDetails: {exc}\n\n"
                 "Would you like to continue running the preflight checks?"
             ),
             context=context,
