@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import List
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 try:
     from vector_service.context_builder import ContextBuilder
@@ -24,6 +25,37 @@ from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .scope_utils import Scope, build_scope_clause, apply_scope
+
+
+LOG_FILE_PATH = Path(__file__).with_name("menace_gui_logs.txt")
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+_LOG_FORMATTER = logging.Formatter(
+    "%(asctime)s — %(levelname)s — %(name)s — %(message)s"
+)
+
+
+def _ensure_file_logging() -> None:
+    """Attach a rotating file handler for persistent GUI logs."""
+
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            return
+
+    file_handler = RotatingFileHandler(
+        LOG_FILE_PATH,
+        maxBytes=1_048_576,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(_LOG_FORMATTER)
+    logger.addHandler(file_handler)
+
+
+_ensure_file_logging()
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -42,9 +74,8 @@ class MenaceGUI(tk.Tk):
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         self.context_builder = context_builder
-        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._max_log_lines = 1000
-        self._log_file_path = Path(__file__).with_name("menace_gui_logs.txt")
         try:
             self.context_builder.refresh_db_weights()
         except Exception:  # pragma: no cover - log and disable prompts
@@ -67,6 +98,7 @@ class MenaceGUI(tk.Tk):
             self.conv_bot = None
         self.error_bot = ErrorBot(context_builder=self.context_builder)
         self._setup_widgets()
+        self.after(100, self._poll_log_queue)
 
     # ------------------------------------------------------------------
     def _setup_widgets(self) -> None:
@@ -147,14 +179,10 @@ class MenaceGUI(tk.Tk):
         self.log_text.tag_configure(
             "error", foreground="red", font=("TkDefaultFont", 10, "bold")
         )
-        handler = _TkTextHandler(self._log_queue)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s — %(levelname)s — %(message)s")
-        )
-        self._logger = logging.getLogger(__name__)
-        self._logger.addHandler(handler)
-        self._logger.setLevel(logging.INFO)
-        self.after(100, self._poll_log_queue)
+
+        self._queue_handler = GUIQueueHandler(self.log_queue)
+        self._queue_handler.setFormatter(_LOG_FORMATTER)
+        logger.addHandler(self._queue_handler)
 
     def _poll_log_queue(self) -> None:
         """Poll log records from worker threads and update the widget."""
@@ -162,23 +190,22 @@ class MenaceGUI(tk.Tk):
         drained: list[tuple[str, str]] = []
         try:
             while True:
-                drained.append(self._log_queue.get_nowait())
+                drained.append(self.log_queue.get_nowait())
         except queue.Empty:
             pass
 
         if drained:
             self.log_text.configure(state="normal")
-            for tag, message in drained:
+            for level, message in drained:
+                tag = "info"
+                if level in {"error", "critical"}:
+                    tag = "error"
+                elif level == "warning":
+                    tag = "warning"
                 self.log_text.insert(tk.END, message + "\n", tag)
             self._trim_log()
             self.log_text.configure(state="disabled")
             self.log_text.see(tk.END)
-            try:
-                with self._log_file_path.open("a", encoding="utf-8") as fh:
-                    for _, message in drained:
-                        fh.write(message + "\n")
-            except OSError:
-                pass
 
         self.after(100, self._poll_log_queue)
 
@@ -359,13 +386,8 @@ class MenaceGUI(tk.Tk):
         ]
 
 
-class _TkTextHandler(logging.Handler):
-    """Queue-based handler that hands Tk log rendering off to the UI thread."""
-
-    _LEVEL_TAGS: tuple[tuple[int, str], ...] = (
-        (logging.ERROR, "error"),
-        (logging.WARNING, "warning"),
-    )
+class GUIQueueHandler(logging.Handler):
+    """Queue-based handler that passes log records to the Tk main loop."""
 
     def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
         super().__init__()
@@ -378,12 +400,8 @@ class _TkTextHandler(logging.Handler):
             self.handleError(record)
             return
 
-        tag = "info"
-        for level, mapped_tag in self._LEVEL_TAGS:
-            if record.levelno >= level:
-                tag = mapped_tag
-                break
-        self._queue.put((tag, message))
+        level = record.levelname.lower()
+        self._queue.put((level, message))
 
 
 __all__ = ["MenaceGUI"]
