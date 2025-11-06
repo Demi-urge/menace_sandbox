@@ -17,12 +17,13 @@ from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import messagebox
 from tkinter import ttk
-from typing import Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from auto_env_setup import ensure_env
 from bootstrap_self_coding import bootstrap_self_coding, purge_stale_files
 from neurosales.scripts import setup_heavy_deps
 from prime_registry import main as prime_registry_main
+from dependency_health import DependencyMode, resolve_dependency_mode
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -336,6 +337,80 @@ def run_full_preflight(
     logger.info("preflight routine completed successfully")
 
 
+def _dependency_failure_messages(
+    dependency_health: Mapping[str, Any] | None,
+    *,
+    dependency_mode: DependencyMode,
+) -> list[str]:
+    """Return user-facing failure reasons derived from dependency metadata."""
+
+    if not isinstance(dependency_health, Mapping):
+        return []
+
+    missing: Sequence[Mapping[str, Any]] = tuple(
+        item
+        for item in dependency_health.get("missing", [])
+        if isinstance(item, Mapping)
+    )
+
+    if not missing:
+        return []
+
+    required = [item for item in missing if not item.get("optional", False)]
+    optional = [item for item in missing if item.get("optional", False)]
+
+    failures: list[str] = []
+    if required:
+        failures.append(
+            "missing required dependencies: "
+            + ", ".join(sorted(str(item.get("name", "unknown")) for item in required))
+        )
+    if dependency_mode is not DependencyMode.MINIMAL and optional:
+        failures.append(
+            "missing optional dependencies in strict mode: "
+            + ", ".join(sorted(str(item.get("name", "unknown")) for item in optional))
+        )
+    return failures
+
+
+def _evaluate_health_snapshot(
+    health: Mapping[str, Any],
+    *,
+    dependency_mode: DependencyMode | None = None,
+) -> tuple[bool, list[str]]:
+    """Evaluate sandbox health metadata and return success flag and failures."""
+
+    mode = dependency_mode or resolve_dependency_mode()
+    failures: list[str] = []
+
+    if not health.get("databases_accessible", True):
+        db_errors = health.get("database_errors")
+        if isinstance(db_errors, Mapping) and db_errors:
+            details = ", ".join(
+                f"{name}: {error}" for name, error in sorted(db_errors.items())
+            )
+            failures.append(f"databases inaccessible ({details})")
+        else:
+            failures.append("databases inaccessible")
+
+    failures.extend(
+        _dependency_failure_messages(
+            health.get("dependency_health"),
+            dependency_mode=mode,
+        )
+    )
+
+    return not failures, failures
+
+
+def _collect_sandbox_health() -> Mapping[str, Any]:
+    """Return the current sandbox health snapshot."""
+
+    from sandbox_runner import bootstrap as sandbox_bootstrap
+
+    return sandbox_bootstrap.sandbox_health()
+
+
 class _LogQueueHandler(logging.Handler):
     """Forward log records from worker threads to a :class:`queue.Queue`."""
 
@@ -382,6 +457,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._abort_event = threading.Event()
         self._awaiting_decision = False
         self._max_log_lines = 1000
+        self._health_snapshot: Optional[Mapping[str, Any]] = None
+        self._health_failures: list[str] = []
 
         self._create_widgets()
         self._configure_layout()
@@ -547,6 +624,8 @@ class SandboxLauncherGUI(tk.Tk):
         self.run_preflight_button.configure(state="normal")
         if self._abort_event.is_set():
             self._handle_abort_cleanup()
+        else:
+            self._handle_post_preflight_completion()
 
     def on_close(self) -> None:
         """Handle application shutdown."""
@@ -580,6 +659,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._pause_event.clear()
         self._flush_decision_queue()
         self.start_sandbox_button.configure(state="disabled")
+        self._health_snapshot = None
+        self._health_failures = []
         self._logger.info("preflight routine cancelled by user")
 
     def _flush_decision_queue(self) -> None:
@@ -588,6 +669,51 @@ class SandboxLauncherGUI(tk.Tk):
                 self._decision_queue.get_nowait()
             except queue.Empty:
                 break
+
+    def _handle_post_preflight_completion(self) -> None:
+        """Run sandbox health checks and update UI state accordingly."""
+
+        try:
+            health = _collect_sandbox_health()
+        except Exception:
+            self.start_sandbox_button.configure(state="disabled")
+            self._health_snapshot = None
+            self._health_failures = []
+            self._logger.exception("sandbox health check failed")
+            messagebox.showwarning(
+                title="Sandbox health check failed",
+                message=(
+                    "An unexpected error occurred while checking sandbox health.\n\n"
+                    "Review the logs for details and rerun the preflight when ready."
+                ),
+            )
+            return
+
+        healthy, failures = _evaluate_health_snapshot(
+            health, dependency_mode=resolve_dependency_mode()
+        )
+        self._health_snapshot = health
+        self._health_failures = failures
+
+        if healthy:
+            self.start_sandbox_button.configure(state="normal")
+            self._logger.info(
+                "sandbox health check passed; Start Sandbox button enabled"
+            )
+            return
+
+        self.start_sandbox_button.configure(state="disabled")
+        summary = "; ".join(failures) if failures else "unknown issues"
+        self._logger.warning("sandbox health check reported issues: %s", summary)
+        details = "\n".join(f"• {failure}" for failure in failures) or "Unknown issues"
+        messagebox.showwarning(
+            title="Sandbox health check failed",
+            message=(
+                "The sandbox health check detected issues:\n\n"
+                f"{details}\n\n"
+                "Address the reported problems and rerun the preflight to retry."
+            ),
+        )
 
 
 __all__ = ["SandboxLauncherGUI", "run_full_preflight"]
