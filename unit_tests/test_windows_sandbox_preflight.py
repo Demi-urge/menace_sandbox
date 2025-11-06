@@ -129,11 +129,12 @@ class PreflightWorkerTests(unittest.TestCase):
         patchers = [
             self._patch_step("_git_sync", calls),
             self._patch_step("_purge_stale_files", calls),
-            self._patch_step("_delete_lock_files", calls),
+            self._patch_step("_cleanup_lock_and_model_artifacts", calls),
+            self._patch_step("_install_heavy_dependencies", calls),
             self._patch_step("_warm_shared_vector_service", calls),
             self._patch_step("_ensure_env_flags", calls),
             self._patch_step("_prime_registry", calls),
-            self._patch_step("_install_dependencies", calls),
+            self._patch_step("_install_python_dependencies", calls),
             self._patch_step("_bootstrap_self_coding", calls),
             mock.patch(
                 "sandbox_runner.bootstrap.sandbox_health",
@@ -161,11 +162,12 @@ class PreflightWorkerTests(unittest.TestCase):
             [
                 "_git_sync",
                 "_purge_stale_files",
-                "_delete_lock_files",
+                "_cleanup_lock_and_model_artifacts",
+                "_install_heavy_dependencies",
                 "_warm_shared_vector_service",
                 "_ensure_env_flags",
                 "_prime_registry",
-                "_install_dependencies",
+                "_install_python_dependencies",
                 "_bootstrap_self_coding",
             ],
         )
@@ -189,11 +191,16 @@ class PreflightWorkerTests(unittest.TestCase):
         patchers = [
             self._patch_step("_git_sync", calls),
             self._patch_step("_purge_stale_files", calls),
-            self._patch_step("_delete_lock_files", calls, side_effect=failing_error),
+            self._patch_step(
+                "_cleanup_lock_and_model_artifacts",
+                calls,
+                side_effect=failing_error,
+            ),
             self._patch_step("_warm_shared_vector_service", calls),
             self._patch_step("_ensure_env_flags", calls),
             self._patch_step("_prime_registry", calls),
-            self._patch_step("_install_dependencies", calls),
+            self._patch_step("_install_heavy_dependencies", calls),
+            self._patch_step("_install_python_dependencies", calls),
             self._patch_step("_bootstrap_self_coding", calls),
             mock.patch(
                 "sandbox_runner.bootstrap.sandbox_health",
@@ -229,10 +236,10 @@ class PreflightWorkerTests(unittest.TestCase):
             self.assertTrue(self.pause_event.is_set())
             self.assertFalse(self.decision_queue.empty())
             title, message, context = self.decision_queue.get_nowait()
-            self.assertIn("Lock artefact removal failed", title)
-            self.assertIn("Removing stale lock files", message)
+            self.assertIn("Lock and model cleanup failed", title)
+            self.assertIn("Removing stale lock files and model caches", message)
             self.assertIsInstance(context, dict)
-            self.assertEqual(context.get("step"), "_delete_lock_files")
+            self.assertEqual(context.get("step"), "_cleanup_lock_and_model_artifacts")
             self.assertIn("lock cleanup failed", context.get("exception", ""))
 
             self.pause_event.clear()
@@ -244,7 +251,7 @@ class PreflightWorkerTests(unittest.TestCase):
             [
                 "_git_sync",
                 "_purge_stale_files",
-                "_delete_lock_files",
+                "_cleanup_lock_and_model_artifacts",
             ],
         )
         self.assertFalse(self.abort_event.is_set())
@@ -258,7 +265,11 @@ class PreflightWorkerTests(unittest.TestCase):
         patchers = [
             self._patch_step("_git_sync", calls),
             self._patch_step("_purge_stale_files", calls),
-            self._patch_step("_delete_lock_files", calls, side_effect=failing_error),
+            self._patch_step(
+                "_cleanup_lock_and_model_artifacts",
+                calls,
+                side_effect=failing_error,
+            ),
         ]
 
         with contextlib.ExitStack() as stack:

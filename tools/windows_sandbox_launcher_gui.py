@@ -6,9 +6,11 @@ import logging
 import os
 import pathlib
 import queue
+import shutil
 import subprocess
+import sys
 import threading
-from typing import Any, Callable, Dict, Iterable, Tuple
+from typing import Any, Callable, Dict, Iterable, Sequence, Tuple
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -319,12 +321,37 @@ class SandboxLauncherGUI(tk.Tk):
 _STEP_DEFINITIONS: list[tuple[str, str, str]] = [
     ("_git_sync", "Synchronising sandbox repository", "Repository sync failed"),
     ("_purge_stale_files", "Purging stale artefacts", "Stale artefact purge failed"),
-    ("_delete_lock_files", "Removing stale lock files", "Lock artefact removal failed"),
-    ("_warm_shared_vector_service", "Priming shared vector service", "Vector service warmup failed"),
-    ("_ensure_env_flags", "Ensuring environment flags", "Environment configuration failed"),
+    (
+        "_cleanup_lock_and_model_artifacts",
+        "Removing stale lock files and model caches",
+        "Lock and model cleanup failed",
+    ),
+    (
+        "_install_heavy_dependencies",
+        "Downloading heavy dependencies",
+        "Heavy dependency installation failed",
+    ),
+    (
+        "_warm_shared_vector_service",
+        "Priming shared vector service",
+        "Vector service warmup failed",
+    ),
+    (
+        "_ensure_env_flags",
+        "Ensuring environment flags",
+        "Environment configuration failed",
+    ),
     ("_prime_registry", "Priming registry cache", "Registry priming failed"),
-    ("_install_dependencies", "Installing heavy dependencies", "Dependency installation failed"),
-    ("_bootstrap_self_coding", "Bootstrapping self-coding subsystem", "Self-coding bootstrap failed"),
+    (
+        "_install_python_dependencies",
+        "Installing sandbox Python dependencies",
+        "Python dependency installation failed",
+    ),
+    (
+        "_bootstrap_self_coding",
+        "Bootstrapping self-coding subsystem",
+        "Self-coding bootstrap failed",
+    ),
 ]
 
 
@@ -433,17 +460,10 @@ def _git_sync(logger: logging.Logger) -> None:
         logger.info("Skipping Git sync; repository not found at %s", repo_path)
         return
 
-    try:
-        subprocess.run(
-            ["git", "-C", str(repo_path), "status"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("git executable not available") from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"git status failed: {exc.stderr.decode().strip()}") from exc
+    logger.info("Fetching latest changes from origin")
+    _run_subprocess(logger, ["git", "fetch", "origin"], cwd=repo_path)
+    logger.info("Resetting repository to origin/main")
+    _run_subprocess(logger, ["git", "reset", "--hard", "origin/main"], cwd=repo_path)
 
 
 def _purge_stale_files(logger: logging.Logger) -> None:
@@ -455,29 +475,22 @@ def _purge_stale_files(logger: logging.Logger) -> None:
     bootstrap_self_coding.purge_stale_files()
 
 
-def _delete_lock_files(logger: logging.Logger) -> None:
-    """Delete stale lock files from the sandbox data directory."""
+def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
+    """Delete stale lock files and incomplete model cache directories."""
 
-    data_dir = os.environ.get("SANDBOX_DATA_DIR")
-    if not data_dir:
-        logger.info("SANDBOX_DATA_DIR not set; skipping lock cleanup")
-        return
+    sandbox_removed = _delete_matching_files(
+        logger,
+        _resolve_directory(os.environ.get("SANDBOX_DATA_DIR"), default="sandbox_data"),
+        "*.lock",
+    )
+    logger.info("Removed %d sandbox lock files", sandbox_removed)
 
-    base = pathlib.Path(data_dir)
-    if not base.exists():
-        logger.info("Sandbox data directory %s does not exist", base)
-        return
+    hf_transformers_dir = pathlib.Path.home() / ".cache" / "huggingface" / "transformers"
+    hf_removed = _delete_matching_files(logger, hf_transformers_dir, "*.lock")
+    logger.info("Removed %d Hugging Face lock files", hf_removed)
 
-    removed = 0
-    for lock_file in base.glob("**/*.lock"):
-        try:
-            lock_file.unlink()
-        except FileNotFoundError:  # pragma: no cover - race condition guard
-            continue
-        else:
-            removed += 1
-
-    logger.info("Removed %d stale lock files", removed)
+    stale_removed = _delete_stale_model_directories(logger)
+    logger.info("Removed %d stale model directories", stale_removed)
 
 
 def _warm_shared_vector_service(logger: logging.Logger) -> None:
@@ -488,7 +501,7 @@ def _warm_shared_vector_service(logger: logging.Logger) -> None:
         return
 
     service = SharedVectorService()
-    service.vectorise("sanity check")
+    logger.info("Shared vector service initialised: %s", type(service).__name__)
 
 
 def _ensure_env_flags(logger: logging.Logger) -> None:
@@ -498,6 +511,10 @@ def _ensure_env_flags(logger: logging.Logger) -> None:
         logger.info("auto_env_setup unavailable; skipping environment validation")
         return
     auto_env_setup.ensure_env()
+    os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+    os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+    os.environ.setdefault("SELF_TEST_RECURSIVE_ISOLATED", "1")
+    os.environ.setdefault("MENACE_ENVIRONMENT", "sandbox")
 
 
 def _prime_registry(logger: logging.Logger) -> None:
@@ -509,7 +526,21 @@ def _prime_registry(logger: logging.Logger) -> None:
     prime_registry.main()
 
 
-def _install_dependencies(logger: logging.Logger) -> None:
+def _install_python_dependencies(logger: logging.Logger) -> None:
+    """Install sandbox Python dependencies using pip."""
+
+    project_root = pathlib.Path(__file__).resolve().parent.parent
+    logger.info("Installing project in editable mode via pip")
+    _run_subprocess(
+        logger,
+        [sys.executable, "-m", "pip", "install", "-e", str(project_root)],
+    )
+
+    logger.info("Ensuring jsonschema is available")
+    _run_subprocess(logger, [sys.executable, "-m", "pip", "install", "jsonschema"])
+
+
+def _install_heavy_dependencies(logger: logging.Logger) -> None:
     """Install optional heavyweight dependencies if accessible."""
 
     try:
@@ -527,7 +558,123 @@ def _bootstrap_self_coding(logger: logging.Logger) -> None:
     if bootstrap_self_coding is None:
         logger.info("bootstrap_self_coding module unavailable; skipping bootstrap")
         return
-    bootstrap_self_coding.bootstrap_self_coding()
+    bootstrap_self_coding.bootstrap_self_coding("AICounterBot")
+
+
+def _resolve_directory(path: str | None, *, default: str) -> pathlib.Path:
+    """Return a resolved directory path, falling back to *default* when needed."""
+
+    candidate = pathlib.Path(path) if path else pathlib.Path(default)
+    return candidate.expanduser().resolve()
+
+
+def _delete_matching_files(logger: logging.Logger, base_dir: pathlib.Path, pattern: str) -> int:
+    """Remove files matching *pattern* inside *base_dir*, returning the count removed."""
+
+    if not base_dir.exists():
+        logger.info("Directory %s does not exist; skipping file pattern %s", base_dir, pattern)
+        return 0
+
+    removed = 0
+    for candidate in base_dir.glob(pattern):
+        if not candidate.is_file():
+            continue
+        try:
+            candidate.unlink()
+        except FileNotFoundError:  # pragma: no cover - race condition guard
+            continue
+        except OSError as exc:
+            logger.warning("Failed to remove file %s: %s", candidate, exc)
+        else:
+            removed += 1
+    return removed
+
+
+def _delete_stale_model_directories(logger: logging.Logger) -> int:
+    """Remove incomplete model cache directories from known locations."""
+
+    suffixes = (".tmp", ".partial", ".incomplete")
+    removed = 0
+
+    candidates = [
+        _resolve_directory(os.environ.get("SANDBOX_DATA_DIR"), default="sandbox_data") / "models",
+        pathlib.Path.home() / ".cache" / "huggingface" / "hub",
+        pathlib.Path.home() / ".cache" / "huggingface" / "transformers",
+    ]
+
+    for base_dir in candidates:
+        if not base_dir.exists():
+            continue
+        for path in base_dir.glob("*"):
+            if not path.is_dir():
+                continue
+            if not _is_stale_model_directory(path, suffixes=suffixes):
+                continue
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:  # pragma: no cover - race condition guard
+                continue
+            except OSError as exc:
+                logger.warning("Failed to remove model directory %s: %s", path, exc)
+            else:
+                removed += 1
+    return removed
+
+
+def _is_stale_model_directory(path: pathlib.Path, *, suffixes: Sequence[str]) -> bool:
+    """Return ``True`` when *path* appears to be a stale model cache directory."""
+
+    name = path.name.lower()
+    if any(name.endswith(suffix) for suffix in suffixes):
+        return True
+    marker_files = {"download.tmp", "partial", "incomplete"}
+    return any((path / marker).exists() for marker in marker_files)
+
+
+def _run_subprocess(
+    logger: logging.Logger,
+    args: Sequence[str],
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run *args* capturing output for logging and raise on failure."""
+
+    try:
+        completed = subprocess.run(
+            list(args),
+            cwd=cwd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - defensive guard
+        raise RuntimeError(f"Executable not found for command: {args[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        message = stderr or stdout or str(exc)
+        raise RuntimeError(f"Command {' '.join(args)} failed: {message}") from exc
+
+    _log_command_output(logger, args, completed.stdout, stream="stdout")
+    _log_command_output(logger, args, completed.stderr, stream="stderr")
+    return completed
+
+
+def _log_command_output(
+    logger: logging.Logger,
+    args: Sequence[str],
+    output: str,
+    *,
+    stream: str,
+) -> None:
+    """Emit command output to *logger* line-by-line for GUI consumption."""
+
+    if not output:
+        return
+    command = " ".join(args)
+    for line in output.strip().splitlines():
+        logger.info("[%s %s] %s", stream, command, line)
 
 
 __all__ = [
