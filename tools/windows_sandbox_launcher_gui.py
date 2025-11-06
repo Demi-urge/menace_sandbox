@@ -12,7 +12,7 @@ import sys
 import threading
 import traceback
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import font, messagebox, ttk
 from typing import Any
@@ -583,9 +583,12 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _run_preflight(self) -> None:
         """Execute the preflight process in a background thread."""
-        success = False
+        preflight_success = False
+        health_ok = False
+        health_failures: list[str] = []
         try:
             LOGGER.info("event=preflight status=started")
+            dependency_mode = resolve_dependency_mode()
             debug_queue: "queue.Queue[str]" = queue.Queue()
             result = run_full_preflight(
                 logger=LOGGER,
@@ -593,13 +596,14 @@ class SandboxLauncherGUI(tk.Tk):
                 decision_queue=DECISION_QUEUE,
                 abort_event=self._abort_event,
                 debug_queue=debug_queue,
+                dependency_mode=dependency_mode,
             )
             aborted = bool(result.get("aborted"))
             failures = result.get("failures") or []
             failed_step = result.get("failed_step")
 
             if result.get("healthy") and not aborted and not failed_step:
-                success = True
+                preflight_success = True
                 LOGGER.info("event=preflight status=completed result=success")
             else:
                 if aborted:
@@ -608,8 +612,42 @@ class SandboxLauncherGUI(tk.Tk):
                     LOGGER.warning(
                         "event=preflight status=failed step=%s", failed_step
                     )
-                for failure in failures:
-                    LOGGER.error("event=preflight failure=%s", failure)
+            for failure in failures:
+                LOGGER.error("event=preflight failure=%s", failure)
+
+            if preflight_success:
+                try:
+                    LOGGER.info(
+                        "event=preflight status=health_verification action=start"
+                    )
+                    from sandbox_runner import bootstrap as bootstrap_module
+
+                    health_snapshot = bootstrap_module.sandbox_health()
+                    LOGGER.info(
+                        "event=preflight status=health_snapshot details=%s",
+                        health_snapshot,
+                    )
+                    health_ok, health_failures = _evaluate_health_snapshot(
+                        health_snapshot,
+                        dependency_mode=dependency_mode,
+                    )
+                    if health_ok:
+                        LOGGER.info(
+                            "event=preflight status=health_verification result=healthy"
+                        )
+                    else:
+                        LOGGER.warning(
+                            "event=preflight status=health_verification result=unhealthy issues=%s",
+                            health_failures,
+                        )
+                except Exception:
+                    LOGGER.exception(
+                        "event=preflight status=health_verification result=error"
+                    )
+                    health_failures = [
+                        "The sandbox health check raised an exception. See logs for details.",
+                    ]
+                    health_ok = False
 
             while not debug_queue.empty():
                 detail = debug_queue.get_nowait()
@@ -618,7 +656,13 @@ class SandboxLauncherGUI(tk.Tk):
             LOGGER.exception("event=preflight status=failed")
         finally:
             try:
-                self.after(0, self._on_preflight_finished, success)
+                self.after(
+                    0,
+                    self._on_preflight_finished,
+                    preflight_success,
+                    health_ok,
+                    tuple(health_failures),
+                )
             except tk.TclError:
                 # GUI was likely closed before the callback could be scheduled.
                 LOGGER.debug("event=preflight status=cleanup action=after_failed")
@@ -634,15 +678,33 @@ class SandboxLauncherGUI(tk.Tk):
             except queue.Empty:
                 break
 
-    def _on_preflight_finished(self, success: bool) -> None:
+    def _on_preflight_finished(
+        self,
+        preflight_success: bool,
+        health_ok: bool,
+        health_failures: Sequence[str] | None = None,
+    ) -> None:
         """Handle GUI state updates when the preflight thread completes."""
         self._is_preflight_running = False
         self._preflight_thread = None
         self.preflight_button.state(["!disabled"])
-        if success:
+        if preflight_success and health_ok:
             self.start_button.state(["!disabled"])
         else:
             self.start_button.state(["disabled"])
+            if preflight_success and not health_ok:
+                issues = "\n".join(health_failures or ()) or (
+                    "Sandbox health checks reported issues. "
+                    "See the application log for additional details."
+                )
+                LOGGER.warning(
+                    "event=preflight status=health_warning issues=%s",
+                    issues,
+                )
+                messagebox.showwarning(
+                    "Sandbox health check failed",
+                    "Sandbox health checks reported issues:\n\n" + issues,
+                )
 
 
 __all__ = [

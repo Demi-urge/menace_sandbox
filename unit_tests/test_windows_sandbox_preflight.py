@@ -141,6 +141,7 @@ class PreflightWorkerTests(unittest.TestCase):
                 side_effect=lambda: calls.append("sandbox_health")
                 or {
                     "databases_accessible": True,
+                    "database_errors": {},
                     "dependency_health": {"missing": []},
                 },
             ),
@@ -157,20 +158,19 @@ class PreflightWorkerTests(unittest.TestCase):
                 debug_queue=self.debug_queue,
             )
 
-        self.assertEqual(
-            calls,
-            [
-                "_git_sync",
-                "_purge_stale_files",
-                "_cleanup_lock_and_model_artifacts",
-                "_install_heavy_dependencies",
-                "_warm_shared_vector_service",
-                "_ensure_env_flags",
-                "_prime_registry",
-                "_install_python_dependencies",
-                "_bootstrap_self_coding",
-            ],
-        )
+        expected_steps = [
+            "_git_sync",
+            "_purge_stale_files",
+            "_cleanup_lock_and_model_artifacts",
+            "_install_heavy_dependencies",
+            "_warm_shared_vector_service",
+            "_ensure_env_flags",
+            "_prime_registry",
+            "_install_python_dependencies",
+            "_bootstrap_self_coding",
+        ]
+        self.assertEqual(calls[: len(expected_steps)], expected_steps)
+        self.assertEqual(calls[len(expected_steps):], ["sandbox_health"])
         self.assertIsInstance(result, dict)
         self.assertIn("snapshot", result)
         self.assertEqual(
