@@ -19,6 +19,7 @@ from tkinter import messagebox, ttk
 from typing import IO, Any, Callable, Iterable, Mapping, Optional, Tuple
 
 from dependency_health import DependencyMode
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SANDBOX_DATA_DIR = REPO_ROOT / "sandbox_data"
@@ -594,15 +595,24 @@ class SandboxLauncherGUI(tk.Tk):
         logger.addHandler(self._queue_handler)
         logger.propagate = False
 
+        self._file_log_queue: Optional["queue.Queue[logging.LogRecord]"] = None
+        self._file_queue_handler: Optional[QueueHandler] = None
+        self._file_handler: Optional[RotatingFileHandler] = None
+        self._file_listener: Optional[QueueListener] = None
+
         self._queue_after_id: Optional[int] = None
         self._worker_after_id: Optional[int] = None
         self._preflight_thread: Optional[threading.Thread] = None
         self._preflight_start_time: Optional[float] = None
+        self._elapsed_timer_after_id: Optional[int] = None
         self._drain_running = True
         self._state_lock = threading.Lock()
         self._resume_action: Optional[str] = None
         self._current_pause: Optional[PauseDecision] = None
         self._awaiting_user_decision = False
+        self._retry_callback: Optional[Callable[[], None]] = None
+        self._latest_debug_details = "No debug details captured."
+        self._debug_panel_visible = False
         self._sandbox_thread: Optional[threading.Thread] = None
         self._sandbox_process: Optional[subprocess.Popen[str]] = None
         self._sandbox_stdout_thread: Optional[threading.Thread] = None
@@ -619,6 +629,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._build_notebook()
         self._build_controls()
         self._schedule_log_drain()
+        self._initialise_file_logging()
 
     def _build_notebook(self) -> None:
         """Create the notebook and status log tab."""
@@ -626,18 +637,38 @@ class SandboxLauncherGUI(tk.Tk):
         self.notebook = ttk.Notebook(self)
 
         status_frame = ttk.Frame(self.notebook)
-        status_frame.rowconfigure(0, weight=1)
+        status_frame.rowconfigure(1, weight=1)
         status_frame.columnconfigure(0, weight=1)
 
+        toggle_frame = ttk.Frame(status_frame)
+        toggle_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        toggle_frame.columnconfigure(0, weight=1)
+
+        self.debug_toggle_var = tk.BooleanVar(value=False)
+        self.debug_toggle = ttk.Checkbutton(
+            toggle_frame,
+            text="Show Debug Details",
+            variable=self.debug_toggle_var,
+            command=self._toggle_debug_panel,
+        )
+        self.debug_toggle.grid(row=0, column=0, sticky="w")
+
+        self.status_paned = ttk.Panedwindow(status_frame, orient=tk.VERTICAL)
+        self.status_paned.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        log_container = ttk.Frame(self.status_paned)
+        log_container.rowconfigure(0, weight=1)
+        log_container.columnconfigure(0, weight=1)
+
         self.log_text = tk.Text(
-            status_frame,
+            log_container,
             wrap="word",
             state="disabled",
             background="#1e1e1e",
             foreground="#ffffff",
             relief="flat",
         )
-        self.log_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        self.log_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         self.log_text.tag_configure("debug", foreground="#bfbfbf")
         self.log_text.tag_configure("info", foreground="#ffffff")
         self.log_text.tag_configure("warning", foreground="#ffd700")
@@ -648,8 +679,25 @@ class SandboxLauncherGUI(tk.Tk):
             "critical", foreground="#ff0000", font=("TkDefaultFont", 10, "bold")
         )
 
+        self.status_paned.add(log_container, weight=3)
+
+        self.debug_frame = ttk.Labelframe(self.status_paned, text="Debug Details")
+        self.debug_frame.rowconfigure(0, weight=1)
+        self.debug_frame.columnconfigure(0, weight=1)
+
+        self.debug_text = tk.Text(
+            self.debug_frame,
+            wrap="word",
+            state="disabled",
+            height=8,
+            relief="flat",
+        )
+        self.debug_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
         self.notebook.add(status_frame, text="Status")
         self.notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        self._set_debug_details(self._latest_debug_details)
 
     def _build_controls(self) -> None:
         """Create the control buttons below the notebook."""
@@ -716,11 +764,125 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_banner.configure(foreground=color)
         self.status_banner_var.set(text)
 
+    def _initialise_file_logging(self) -> None:
+        if self._file_listener is not None:
+            return
+
+        log_path = REPO_ROOT / "menace_gui_logs.txt"
+        try:
+            file_queue: "queue.Queue[logging.LogRecord]" = queue.Queue()
+            file_handler = RotatingFileHandler(
+                log_path,
+                maxBytes=1_048_576,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            file_queue_handler = QueueHandler(file_queue)
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Unable to configure file logging handler for GUI events"
+            )
+            return
+
+        logger.addHandler(file_queue_handler)
+        listener = QueueListener(file_queue, file_handler)
+        try:
+            listener.start()
+        except Exception:  # pragma: no cover - defensive logging
+            logger.removeHandler(file_queue_handler)
+            with contextlib.suppress(Exception):
+                file_handler.close()
+            logger.exception(
+                "Unable to start file logging listener for GUI events"
+            )
+            return
+
+        self._file_log_queue = file_queue
+        self._file_queue_handler = file_queue_handler
+        self._file_handler = file_handler
+        self._file_listener = listener
+
     def _update_elapsed_time(self, elapsed: Optional[float]) -> None:
         if elapsed is None:
             self.elapsed_time_var.set("Elapsed: --")
         else:
             self.elapsed_time_var.set(f"Elapsed: {elapsed:.2f} seconds")
+
+    def _start_elapsed_timer(self) -> None:
+        self._stop_elapsed_timer()
+        self._refresh_elapsed_time()
+
+    def _refresh_elapsed_time(self) -> None:
+        self._elapsed_timer_after_id = None
+        if self._preflight_start_time is None:
+            self._update_elapsed_time(None)
+            return
+
+        elapsed = max(0.0, time.time() - self._preflight_start_time)
+        self._update_elapsed_time(elapsed)
+        try:
+            self._elapsed_timer_after_id = self.after(200, self._refresh_elapsed_time)
+        except tk.TclError:  # pragma: no cover - widget shutting down
+            self._elapsed_timer_after_id = None
+
+    def _stop_elapsed_timer(self) -> None:
+        if self._elapsed_timer_after_id is not None:
+            try:
+                self.after_cancel(self._elapsed_timer_after_id)
+            except tk.TclError:  # pragma: no cover - widget shutting down
+                pass
+            finally:
+                self._elapsed_timer_after_id = None
+
+    def _toggle_debug_panel(self) -> None:
+        if not hasattr(self, "status_paned"):
+            return
+
+        show_panel = bool(self.debug_toggle_var.get())
+        if show_panel and not self._debug_panel_visible:
+            self.status_paned.add(self.debug_frame, weight=1)
+            self._debug_panel_visible = True
+            self._set_debug_details(self._latest_debug_details)
+        elif not show_panel and self._debug_panel_visible:
+            self.status_paned.forget(self.debug_frame)
+            self._debug_panel_visible = False
+
+    def _set_debug_details(self, text: str) -> None:
+        self._latest_debug_details = text or "No debug details captured."
+        if not hasattr(self, "debug_text"):
+            return
+
+        self.debug_text.configure(state=tk.NORMAL)
+        self.debug_text.delete("1.0", tk.END)
+        self.debug_text.insert("1.0", self._latest_debug_details)
+        self.debug_text.configure(state=tk.DISABLED)
+
+    def _reset_debug_panel(self) -> None:
+        self._set_debug_details("No debug details captured.")
+        if self._debug_panel_visible:
+            self.debug_toggle_var.set(False)
+            self._toggle_debug_panel()
+
+    def _format_pause_debug_details(self, decision: PauseDecision) -> str:
+        description = (
+            decision.context.get("description")
+            or decision.context.get("step")
+            or decision.step.description
+        )
+        exception_repr = decision.context.get("exception", "Unknown error")
+        lines = [
+            f"Step: {description}",
+            f"Exception: {exception_repr}",
+        ]
+
+        trace_text = decision.context.get("traceback")
+        if trace_text:
+            lines.extend(["", "Stack trace:", trace_text])
+
+        return "\n".join(lines)
 
     def _enqueue_log(self, tag: str, message: str) -> None:
         if not message.endswith("\n"):
@@ -783,6 +945,7 @@ class SandboxLauncherGUI(tk.Tk):
         if self._preflight_start_time is not None:
             elapsed_value = time.time() - self._preflight_start_time
             duration_msg = f" (completed in {elapsed_value:.2f} seconds)"
+        self._stop_elapsed_timer()
         self._preflight_start_time = None
         self._update_elapsed_time(elapsed_value)
 
@@ -853,7 +1016,8 @@ class SandboxLauncherGUI(tk.Tk):
         self.stop_sandbox_button.configure(state=tk.DISABLED)
         self._preflight_start_time = time.time()
         self._set_status_banner("Running preflight checks…", severity="info")
-        self._update_elapsed_time(None)
+        self._start_elapsed_timer()
+        self._reset_debug_panel()
         self.pause_event.clear()
         self.abort_event.clear()
         self._clear_pause_ui()
@@ -896,6 +1060,7 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _on_close(self) -> None:
         self._drain_running = False
+        self._stop_elapsed_timer()
         self._request_sandbox_stop(force=True)
         if self._queue_after_id is not None:
             try:
@@ -910,6 +1075,19 @@ class SandboxLauncherGUI(tk.Tk):
             except tk.TclError:
                 pass
             self._worker_after_id = None
+
+        if self._file_listener is not None:
+            self._file_listener.stop()
+        if self._file_queue_handler is not None:
+            logger.removeHandler(self._file_queue_handler)
+            self._file_queue_handler = None
+        if self._file_handler is not None:
+            with contextlib.suppress(Exception):
+                self._file_handler.flush()
+                self._file_handler.close()
+            self._file_handler = None
+        self._file_listener = None
+        self._file_log_queue = None
 
         logger.removeHandler(self._queue_handler)
         self.destroy()
@@ -1182,6 +1360,8 @@ class SandboxLauncherGUI(tk.Tk):
                 "exception": repr(exc),
             }
 
+        context["traceback"] = traceback.format_exc()
+
         decision = PauseDecision(
             title=title,
             message=(
@@ -1191,6 +1371,8 @@ class SandboxLauncherGUI(tk.Tk):
             context=context,
             step=step,
         )
+
+        self._retry_callback = lambda: self._resume_from_pause("retry")
 
         try:
             self.decision_queue.put_nowait(decision)
@@ -1249,18 +1431,38 @@ class SandboxLauncherGUI(tk.Tk):
         if not self.pause_event.is_set() or self._current_pause is None:
             return
 
-        logger.info("User requested retry for step: %s", self._current_pause.step.description)
-        self._resume_from_pause("retry")
+        if self._retry_callback is None:
+            logger.debug("Retry requested but no retry callback is available")
+            return
+
+        logger.info(
+            "User requested retry for step: %s",
+            self._current_pause.step.description,
+        )
+        callback = self._retry_callback
+        self.retry_step_button.configure(state=tk.DISABLED)
+        callback()
 
     def _show_pause_ui(self, decision: PauseDecision) -> None:
-        self.retry_step_button.configure(state=tk.NORMAL)
-        self.retry_step_button.grid()
+        if self.pause_event.is_set() and self._retry_callback is not None:
+            self.retry_step_button.configure(state=tk.NORMAL)
+            self.retry_step_button.grid()
+        else:
+            self.retry_step_button.configure(state=tk.DISABLED)
+            self.retry_step_button.grid()
+
+        debug_details = self._format_pause_debug_details(decision)
+        self._set_debug_details(debug_details)
+        if debug_details and not self._debug_panel_visible:
+            self.debug_toggle_var.set(True)
+            self._toggle_debug_panel()
 
         logger.error("Preflight paused: %s", decision.context.get("exception", ""))
 
     def _clear_pause_ui(self) -> None:
         self.retry_step_button.configure(state=tk.DISABLED)
         self.retry_step_button.grid_remove()
+        self._retry_callback = None
 
     def _drain_decision_queue(self) -> None:
         while True:
