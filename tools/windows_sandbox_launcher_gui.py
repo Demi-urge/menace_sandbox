@@ -932,3 +932,13 @@ class SandboxLauncherGUI(tk.Tk):
         self.retry_button.configure(state=previous_states.get("retry", "disabled"))
         self._button_states_before_launch = None
 
+
+def main() -> None:
+    """Launch the sandbox GUI."""
+
+    SandboxLauncherGUI().mainloop()
+
+
+if __name__ == "__main__":
+    SandboxLauncherGUI().mainloop()
+
