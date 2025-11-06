@@ -874,4 +874,20 @@ class SandboxLauncherGUI(tk.Tk):
         )
 
 
-__all__ = ["SandboxLauncherGUI", "run_full_preflight"]
+def main(argv: Optional[Sequence[str]] | None = None) -> int:
+    """Launch the sandbox GUI application."""
+
+    # ``argv`` is accepted for compatibility with ``python -m`` execution but is
+    # currently unused.
+    _ = argv
+
+    gui = SandboxLauncherGUI()
+    gui.mainloop()
+    return 0
+
+
+__all__ = ["SandboxLauncherGUI", "run_full_preflight", "main"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
