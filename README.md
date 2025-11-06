@@ -8,14 +8,14 @@ See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required envi
 
 1. Start the interface with `python -m tools.windows_sandbox_launcher_gui` from the repository root.
 2. Click **Run Preflight** to execute the preparation sequence (repository sync, stale-file cleanup, dependency installation, registry priming, and self-coding bootstrap).
-3. Review the live status feed and optional debug panel. If every check passes, the banner switches to a success state and the **Start Sandbox** button becomes available.
+3. Review the live status feed, elapsed-time banner, and optional debug panel. If every check passes, the banner switches to a success state and the **Start Sandbox** button becomes available.
 4. Launch the sandbox by selecting **Start Sandbox**, then stop it with **Stop Sandbox** when finished.
 
-The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the failure message in a modal prompt while capturing traceback details in the debug panel. You can choose to continue, abort, or use **Retry Step** to rerun only the failing action once you have addressed the underlying issue.
+The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the failure message in a modal prompt while capturing traceback details in the debug panel. When a pause occurs, the **Retry Step** control becomes available so you can rerun only the failing action without restarting from the beginning. You can also kick off a fresh run with **Run Preflight** after resolving the root cause.
 
 ### Logging and troubleshooting
 
-All GUI events stream into the on-screen log with severity-based colouring, and detailed tracebacks are written to `menace_gui_logs.txt` with log rotation so long sessions remain reviewable. Toggle **Show Debug Details** to inspect the latest captured diagnostics when a step pauses; clearing the pause or resuming preflight hides the retry controls until the next failure.
+All GUI events stream into the on-screen log with severity-based colouring, and detailed tracebacks are written to `menace_gui_logs.txt` with log rotation so long sessions remain reviewable. Set `MENACE_GUI_LOG_PATH` to customise the log destination if you want the rotating files elsewhere. Toggle **Show Debug Details** to inspect the latest captured diagnostics when a step pauses; clearing the pause or resuming preflight hides the retry controls until the next failure while the elapsed-time banner continues counting until the run succeeds or is aborted.
 
 ### Testing checklist and smoke coverage
 
