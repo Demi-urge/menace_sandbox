@@ -658,14 +658,55 @@ class SandboxLauncherGUI(tk.Tk):
             self.start_button.config(state="disabled")
             return
 
-        if result.get("healthy"):
+        preflight_healthy = bool(result.get("healthy"))
+        if preflight_healthy:
             self.logger.info("Preflight completed successfully.")
-            self.start_button.config(state="normal")
         else:
             self.logger.warning("Preflight completed with issues.")
             for failure in result.get("failures", []):
                 self.logger.warning(failure)
+
+        try:
+            snapshot = sandbox_bootstrap.sandbox_health()
+        except Exception as exc:  # pragma: no cover - defensive UI handling
+            self.logger.exception("Sandbox health verification failed: %s", exc)
+            messagebox.showwarning(
+                title="Sandbox Health Check Failed",
+                message=(
+                    "Unable to verify sandbox health.\n\n"
+                    f"Details: {exc}"
+                ),
+            )
             self.start_button.config(state="disabled")
+            return
+
+        healthy, failures = _evaluate_health_snapshot(
+            snapshot, dependency_mode=DependencyMode.STRICT
+        )
+
+        if healthy and preflight_healthy:
+            self.logger.info("Sandbox health verification succeeded.")
+            self.start_button.config(state="normal")
+            return
+
+        self.start_button.config(state="disabled")
+        if healthy:
+            self.logger.info(
+                "Sandbox health verification succeeded, but preflight reported issues."
+            )
+            return
+
+        self.logger.warning("Sandbox health check reported issues.")
+        for failure in failures:
+            self.logger.warning(failure)
+        issues = "\n".join(f"- {failure}" for failure in failures) or "Unknown issues"
+        messagebox.showwarning(
+            title="Sandbox Health Issues Detected",
+            message=(
+                "The sandbox environment reported health issues:\n\n"
+                f"{issues}"
+            ),
+        )
 
     @staticmethod
     def _drain_queue(target_queue: queue.Queue) -> None:
