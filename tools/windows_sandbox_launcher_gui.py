@@ -5,12 +5,18 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 import tkinter as tk
-from tkinter import font, ttk
+from collections.abc import Callable
+from tkinter import font, messagebox, ttk
 
 
 LOGGER = logging.getLogger(__name__)
 LOG_QUEUE: "queue.Queue[tuple[str, str]]" = queue.Queue()
+PAUSE_EVENT = threading.Event()
+DECISION_QUEUE: "queue.Queue[tuple[str, str]]" = queue.Queue()
+
+_StepCallable = Callable[[], None]
 
 
 class QueueLoggingHandler(logging.Handler):
@@ -42,6 +48,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._is_preflight_running = False
         self._preflight_thread: threading.Thread | None = None
+        self._abort_event = threading.Event()
 
         self._log_handler = QueueLoggingHandler(LOG_QUEUE)
         self._log_handler.setFormatter(
@@ -126,6 +133,7 @@ class SandboxLauncherGUI(tk.Tk):
             self.status_text.tag_configure(tag, **options)
 
     def _on_close(self) -> None:
+        self._abort_preflight()
         if self._poll_after_id is not None:
             try:
                 self.after_cancel(self._poll_after_id)
@@ -145,6 +153,31 @@ class SandboxLauncherGUI(tk.Tk):
                 self._insert_message(level, message)
         except queue.Empty:
             pass
+
+        if PAUSE_EVENT.is_set():
+            prompts: list[tuple[str, str]] = []
+            try:
+                while True:
+                    prompts.append(DECISION_QUEUE.get_nowait())
+            except queue.Empty:
+                pass
+
+            for title, message in prompts:
+                should_continue = messagebox.askyesno(
+                    title=title,
+                    message=message,
+                )
+                if should_continue:
+                    LOGGER.info(
+                        "event=preflight status=user_action action=continue"
+                    )
+                    PAUSE_EVENT.clear()
+                else:
+                    LOGGER.info(
+                        "event=preflight status=user_action action=abort"
+                    )
+                    self._abort_preflight()
+                    break
         finally:
             if self.winfo_exists():
                 self._poll_after_id = self.after(100, self._poll_log_queue)
@@ -171,6 +204,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._is_preflight_running = True
         self.preflight_button.state(["disabled"])
         self.start_button.state(["disabled"])
+        self._abort_event.clear()
+        PAUSE_EVENT.clear()
+        self._drain_decision_queue()
 
         self._preflight_thread = threading.Thread(
             target=self._run_preflight,
@@ -187,13 +223,22 @@ class SandboxLauncherGUI(tk.Tk):
         success = False
         try:
             LOGGER.info("event=preflight status=started")
-            LOGGER.info(
-                "event=preflight status=running step=validate_environment"
-            )
-            # Placeholder for actual preflight logic
-            LOGGER.info("event=preflight status=running step=collect_metadata")
-            success = True
-            LOGGER.info("event=preflight status=completed result=success")
+            for step_name, step_callable in self._preflight_steps():
+                if self._abort_event.is_set():
+                    LOGGER.info("event=preflight status=aborted")
+                    break
+
+                LOGGER.info(
+                    "event=preflight status=running step=%s", step_name
+                )
+                if not self._execute_step(step_name, step_callable):
+                    break
+            else:
+                if not self._abort_event.is_set():
+                    success = True
+                    LOGGER.info(
+                        "event=preflight status=completed result=success"
+                    )
         except Exception:
             LOGGER.exception("event=preflight status=failed")
         finally:
@@ -202,6 +247,58 @@ class SandboxLauncherGUI(tk.Tk):
             except tk.TclError:
                 # GUI was likely closed before the callback could be scheduled.
                 LOGGER.debug("event=preflight status=cleanup action=after_failed")
+
+    def _preflight_steps(self) -> list[tuple[str, _StepCallable]]:
+        return [
+            ("validate_environment", self._validate_environment),
+            ("collect_metadata", self._collect_metadata),
+        ]
+
+    def _execute_step(
+        self, step_name: str, step_callable: _StepCallable
+    ) -> bool:
+        while not self._abort_event.is_set():
+            try:
+                step_callable()
+                return True
+            except Exception as exc:  # pragma: no cover - runtime safety
+                LOGGER.exception(
+                    "event=preflight status=paused step=%s", step_name
+                )
+                self._handle_step_failure(step_name, exc)
+                if self._abort_event.is_set():
+                    return False
+        return False
+
+    def _handle_step_failure(self, step_name: str, exc: Exception) -> None:
+        title = "Preflight paused"
+        message = (
+            f"Step '{step_name}' failed with error: {exc}\n\n"
+            "Would you like to retry the step? Selecting No will abort the preflight."
+        )
+        DECISION_QUEUE.put((title, message))
+        PAUSE_EVENT.set()
+        while PAUSE_EVENT.is_set() and not self._abort_event.wait(0.1):
+            time.sleep(0.1)
+
+    def _validate_environment(self) -> None:
+        # Placeholder for actual preflight validation logic
+        LOGGER.debug("event=preflight detail=validate_environment")
+
+    def _collect_metadata(self) -> None:
+        # Placeholder for metadata collection logic
+        LOGGER.debug("event=preflight detail=collect_metadata")
+
+    def _abort_preflight(self) -> None:
+        self._abort_event.set()
+        PAUSE_EVENT.clear()
+
+    def _drain_decision_queue(self) -> None:
+        while True:
+            try:
+                DECISION_QUEUE.get_nowait()
+            except queue.Empty:
+                break
 
     def _on_preflight_finished(self, success: bool) -> None:
         """Handle GUI state updates when the preflight thread completes."""
