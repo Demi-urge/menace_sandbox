@@ -210,21 +210,31 @@ class MenaceGUI(tk.Tk):
         )
         self.debug_toggle.pack(side="right")
 
-        self.log_text = tk.Text(self.log_frame, state="disabled")
-        self.log_text.pack(expand=True, fill="both", padx=5, pady=5)
+        self.log_paned = ttk.PanedWindow(
+            self.log_frame, orient=tk.VERTICAL
+        )
+        self.log_paned.pack(expand=True, fill="both", padx=5, pady=5)
+
+        self._log_container = ttk.Frame(self.log_paned)
+        self._log_container.columnconfigure(0, weight=1)
+        self._log_container.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(self._log_container, state="disabled")
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        self.log_paned.add(self._log_container, weight=4)
         self.log_text.tag_configure("info", foreground="white")
         self.log_text.tag_configure("warning", foreground="yellow")
         self.log_text.tag_configure(
             "error", foreground="red", font=("TkDefaultFont", 10, "bold")
         )
 
-        self.debug_frame = ttk.Labelframe(
-            self.log_frame, text="Debug Details"
-        )
+        self.debug_frame = ttk.Labelframe(self.log_paned, text="Debug Details")
+        self.debug_frame.columnconfigure(0, weight=1)
+        self.debug_frame.rowconfigure(0, weight=1)
         self.debug_text = tk.Text(
             self.debug_frame, state="disabled", height=8, wrap="word"
         )
-        self.debug_text.pack(expand=True, fill="both", padx=5, pady=5)
+        self.debug_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self._debug_visible = False
 
         self._queue_handler = TkTextHandler(
             log_queue=self.log_queue,
@@ -233,9 +243,18 @@ class MenaceGUI(tk.Tk):
         self._queue_handler.setFormatter(_LOG_FORMATTER)
         logger.addHandler(self._queue_handler)
 
-        self.status_var = tk.StringVar(value="")
-        self.status_bar = ttk.Label(self, textvariable=self.status_var, anchor="w")
+        self.status_bar = ttk.Frame(self)
         self.status_bar.pack(fill="x", padx=5, pady=(0, 5))
+        self.status_message_var = tk.StringVar(value="")
+        self.elapsed_var = tk.StringVar(value="Elapsed: 0:00:00")
+        self.status_message_label = ttk.Label(
+            self.status_bar, textvariable=self.status_message_var, anchor="w"
+        )
+        self.status_message_label.pack(side="left", expand=True, fill="x")
+        self.elapsed_label = ttk.Label(
+            self.status_bar, textvariable=self.elapsed_var, anchor="e"
+        )
+        self.elapsed_label.pack(side="right")
 
     def _poll_log_queue(self) -> None:
         """Poll log records from worker threads and update the widget."""
@@ -283,9 +302,13 @@ class MenaceGUI(tk.Tk):
 
     def _toggle_debug_frame(self) -> None:
         if self.debug_toggle_var.get():
-            self.debug_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))
-        else:
-            self.debug_frame.pack_forget()
+            if not self._debug_visible:
+                self.log_paned.add(self.debug_frame, weight=1)
+                self._debug_visible = True
+                self.debug_text.see(tk.END)
+        elif self._debug_visible:
+            self.log_paned.forget(self.debug_frame)
+            self._debug_visible = False
 
     def _update_elapsed_time(self) -> None:
         self._update_status_bar()
@@ -294,13 +317,15 @@ class MenaceGUI(tk.Tk):
     def _update_status_bar(self) -> None:
         elapsed_seconds = int(perf_counter() - self._start_time)
         elapsed = str(timedelta(seconds=elapsed_seconds))
+        self.elapsed_var.set(f"Elapsed: {elapsed}")
+
         state = "Paused" if self._is_paused else "Running"
         message = self.pause_message_var.get()
         if message:
-            status = f"Status: {state} • Elapsed: {elapsed} • {message}"
+            status = f"Status: {state} — {message}"
         else:
-            status = f"Status: {state} • Elapsed: {elapsed}"
-        self.status_var.set(status)
+            status = f"Status: {state}"
+        self.status_message_var.set(status)
 
     def set_pause_state(
         self,
