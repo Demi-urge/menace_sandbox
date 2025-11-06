@@ -15,8 +15,9 @@ import tkinter.font as tkfont
 import tkinter.messagebox as messagebox
 from pathlib import Path
 from tkinter import ttk
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping, Sequence
 
+from dependency_health import DependencyMode, current_dependency_mode
 from menace_sandbox.auto_env_setup import ensure_env
 from menace_sandbox.bootstrap_self_coding import (
     bootstrap_self_coding,
@@ -26,6 +27,7 @@ from menace_sandbox.lock_utils import is_lock_stale
 from menace_sandbox.vector_service.vectorizer import SharedVectorService
 from neurosales.scripts import setup_heavy_deps
 from prime_registry import main as prime_registry_main
+from sandbox_runner.bootstrap import sandbox_health
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +70,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._preflight_thread: threading.Thread | None = None
         self._preflight_running = False
+        self._preflight_successful = False
         self.pause_event = threading.Event()
         self.abort_event = threading.Event()
         self.decision_queue: "queue.Queue[tuple[str, str | None, dict[str, object] | None]]" = queue.Queue()
@@ -153,6 +156,8 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         self.run_preflight_button.configure(state="disabled")
+        self.start_sandbox_button.configure(state="disabled")
+        self._preflight_successful = False
         self.pause_event.clear()
         self.abort_event.clear()
         while not self.decision_queue.empty():
@@ -254,7 +259,11 @@ class SandboxLauncherGUI(tk.Tk):
                 self.logger.info(success_message)
                 if not self._await_resume(title):
                     return
+            if self.abort_event.is_set():
+                self.logger.info("Preflight aborted after completing queued steps.")
+                return
             self.logger.info("Preflight checks complete.")
+            self._run_post_preflight_health_check()
         except Exception as exc:  # pragma: no cover - defensive logging
             self.logger.exception("Preflight checks failed: %s", exc)
         finally:
@@ -436,11 +445,65 @@ class SandboxLauncherGUI(tk.Tk):
         if result.stderr:
             self.logger.info("%s stderr:\n%s", cmd_display, result.stderr.strip())
 
+    def _run_post_preflight_health_check(self) -> None:
+        try:
+            snapshot = sandbox_health()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.exception("Sandbox health check failed: %s", exc)
+            self._preflight_successful = False
+            self.after(
+                0,
+                lambda message=f"Sandbox health check failed: {exc}": self._notify_health_failure(
+                    [message]
+                ),
+            )
+            return
+
+        dependency_mode = current_dependency_mode()
+        healthy, failures = _evaluate_health_snapshot(
+            snapshot, dependency_mode=dependency_mode
+        )
+        if healthy:
+            self.logger.info(
+                "Sandbox health check succeeded; 'Start Sandbox' is now available."
+            )
+            self._preflight_successful = True
+            self.after(0, self._handle_health_success)
+            return
+
+        summary = "; ".join(failures) if failures else "unknown issues"
+        self.logger.warning(
+            "Sandbox health check reported issues: %s", summary
+        )
+        self._preflight_successful = False
+        self.after(0, lambda details=list(failures): self._notify_health_failure(details))
+
+    def _handle_health_success(self) -> None:
+        self.start_sandbox_button.configure(state="normal")
+        self._append_status(
+            "Sandbox health check succeeded. You may start the sandbox.\n"
+        )
+
+    def _notify_health_failure(self, failures: Sequence[str]) -> None:
+        message_lines = [
+            "Sandbox health issues detected."
+        ]
+        if failures:
+            message_lines.append("")
+            message_lines.extend(f"- {failure}" for failure in failures)
+        message = "\n".join(message_lines)
+        messagebox.showwarning("Sandbox health check", message)
+        self._append_status(f"{message}\n", "warning")
+        self.start_sandbox_button.configure(state="disabled")
+
     def _reset_preflight_state(self) -> None:
         """Re-enable UI controls and clear state after preflight finishes."""
         self._preflight_running = False
         self._preflight_thread = None
         self.run_preflight_button.configure(state="normal")
+        self.start_sandbox_button.configure(
+            state="normal" if self._preflight_successful else "disabled"
+        )
 
     def _process_log_queue(self) -> None:
         while True:
@@ -510,4 +573,70 @@ class SandboxLauncherGUI(tk.Tk):
         )
 
 
-__all__ = ["SandboxLauncherGUI"]
+def _evaluate_health_snapshot(
+    snapshot: Mapping[str, object], *, dependency_mode: DependencyMode
+) -> tuple[bool, list[str]]:
+    """Return whether ``snapshot`` indicates a healthy sandbox and any failures."""
+
+    failures: list[str] = []
+
+    databases_accessible = bool(snapshot.get("databases_accessible", True))
+    if not databases_accessible:
+        raw_errors = snapshot.get("database_errors")
+        if isinstance(raw_errors, Mapping) and raw_errors:
+            detail = ", ".join(f"{name}: {error}" for name, error in raw_errors.items())
+        else:
+            detail = "unknown error"
+        failures.append(f"Sandbox databases inaccessible ({detail})")
+
+    dependency_info = snapshot.get("dependency_health")
+    missing_entries: Sequence[object] = ()
+    if isinstance(dependency_info, Mapping):
+        raw_missing = dependency_info.get("missing")
+        if isinstance(raw_missing, Sequence) and not isinstance(raw_missing, (str, bytes)):
+            missing_entries = raw_missing
+
+    dependency_failures: list[str] = []
+    for entry in missing_entries:
+        optional = False
+        description = "unknown dependency"
+        category: str | None = None
+        reason: str | None = None
+
+        if isinstance(entry, Mapping):
+            description = str(
+                entry.get("name")
+                or entry.get("description")
+                or entry.get("reason")
+                or description
+            )
+            optional = bool(entry.get("optional", False))
+            category_value = entry.get("category")
+            if category_value:
+                category = str(category_value)
+            reason_value = entry.get("reason") or entry.get("description")
+            if reason_value:
+                reason = str(reason_value)
+        else:
+            description = str(entry)
+
+        if optional and dependency_mode is not DependencyMode.STRICT:
+            continue
+
+        parts = [description]
+        extra_bits = [value for value in (category, reason) if value]
+        if optional:
+            extra_bits.append("optional")
+        if extra_bits:
+            parts.append(f"({'; '.join(extra_bits)})")
+        dependency_failures.append(" ".join(parts))
+
+    if dependency_failures:
+        failures.append(
+            "Missing dependencies: " + ", ".join(sorted(set(dependency_failures)))
+        )
+
+    return not failures, failures
+
+
+__all__ = ["SandboxLauncherGUI", "_evaluate_health_snapshot"]
