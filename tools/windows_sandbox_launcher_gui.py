@@ -795,4 +795,15 @@ def _evaluate_health_snapshot(
     return not failures, failures
 
 
-__all__ = ["SandboxLauncherGUI", "_evaluate_health_snapshot"]
+def main() -> None:
+    """Launch the sandbox GUI event loop."""
+
+    app = SandboxLauncherGUI()
+    app.mainloop()
+
+
+__all__ = ["SandboxLauncherGUI", "_evaluate_health_snapshot", "main"]
+
+
+if __name__ == "__main__":
+    main()
