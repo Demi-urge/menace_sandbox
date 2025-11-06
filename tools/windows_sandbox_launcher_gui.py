@@ -1269,3 +1269,14 @@ class SandboxLauncherGUI(tk.Tk):
             except queue.Empty:
                 break
 
+
+def main() -> None:
+    """Instantiate and run the sandbox launcher GUI."""
+
+    app = SandboxLauncherGUI()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+

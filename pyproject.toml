@@ -107,7 +107,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["*", "tools", "tools.*"]
+include = ["*", "tools", "tools.*", "tools.windows_sandbox_launcher_gui"]
 
 [tool.setuptools.package-dir]
 tools = "tools"
