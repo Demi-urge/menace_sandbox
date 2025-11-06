@@ -20,10 +20,27 @@ import tkinter as tk
 from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
+from tkinter import font as tkfont
 
 from sandbox_runner import bootstrap as sandbox_bootstrap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class _TkTextLogHandler(logging.Handler):
+    """Forward log records into a Tkinter-safe queue."""
+
+    def __init__(self, log_queue: "queue.Queue[tuple[str, str]]") -> None:
+        super().__init__()
+        self._queue = log_queue
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401 - logging API
+        try:
+            message = self.format(record)
+            self._queue.put((record.levelname, message))
+        except Exception:  # noqa: BLE001 - logging API mandates broad handling
+            self.handleError(record)
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -49,6 +66,8 @@ class SandboxLauncherGUI(tk.Tk):
         ] = queue.Queue()
         self._abort_event = threading.Event()
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._log_handler: _TkTextLogHandler | None = None
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
         self._last_health_snapshot: dict[str, Any] | None = None
         self._sandbox_process: subprocess.Popen[str] | None = None
@@ -56,7 +75,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._elapsed_start: float | None = None
         self._elapsed_job: str | None = None
 
-        self._setup_file_logging()
+        self._setup_logging()
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
         self.start_sandbox_button.configure(command=self._on_start_sandbox)
@@ -65,6 +84,7 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.after(100, self._process_decisions)
         self.after(100, self._drain_ui_queue)
+        self.after(100, self._drain_log_queue)
 
     def _create_widgets(self) -> None:
         main_frame = ttk.Frame(self)
@@ -85,6 +105,15 @@ class SandboxLauncherGUI(tk.Tk):
             wrap=tk.WORD,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
+        self.log_text.configure(background="#1e1e1e", foreground="white", insertbackground="white")
+        base_font = tkfont.nametofont(self.log_text.cget("font"))
+        self._log_bold_font = base_font.copy()
+        self._log_bold_font.configure(weight="bold")
+        self.log_text.tag_configure("DEFAULT", foreground="white")
+        self.log_text.tag_configure("INFO", foreground="white")
+        self.log_text.tag_configure("WARNING", foreground="yellow")
+        self.log_text.tag_configure("ERROR", foreground="red", font=self._log_bold_font)
+        self.log_text.tag_configure("CRITICAL", foreground="red", font=self._log_bold_font)
 
         self.debug_container = ttk.Labelframe(status_frame, text="Debug Details")
         self.debug_text = scrolledtext.ScrolledText(
@@ -120,29 +149,30 @@ class SandboxLauncherGUI(tk.Tk):
         self.elapsed_label = ttk.Label(button_frame, textvariable=self._elapsed_var)
         self.elapsed_label.pack(side=tk.RIGHT)
 
-    def _setup_file_logging(self) -> None:
-        """Configure file-based logging with rotation support."""
+    def _setup_logging(self) -> None:
+        """Configure logging to both file storage and the GUI widget."""
 
         logger = logging.getLogger("menace.sandbox.launcher")
-        if logger.handlers:
-            self._logger = logger
-            return
-
         logger.setLevel(logging.INFO)
+
         log_dir = REPO_ROOT / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "sandbox_launcher.log"
 
-        handler = RotatingFileHandler(
-            log_file,
-            maxBytes=1_000_000,
-            backupCount=5,
-            encoding="utf-8",
-        )
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        )
-        logger.addHandler(handler)
+        if not any(isinstance(handler, RotatingFileHandler) for handler in logger.handlers):
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=1_000_000,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+            )
+            logger.addHandler(file_handler)
+
+        self._log_handler = _TkTextLogHandler(self._log_queue)
+        logger.addHandler(self._log_handler)
         logger.propagate = False
         self._logger = logger
 
@@ -157,19 +187,16 @@ class SandboxLauncherGUI(tk.Tk):
     # ------------------------------------------------------------------
     # Log helpers
     # ------------------------------------------------------------------
-    def append_log(self, message: str) -> None:
-        """Append a message to the log area."""
+    def log_message(self, level: int, message: str) -> None:
+        """Emit *message* at *level* through the configured logger."""
 
         if hasattr(self, "_logger"):
-            self._logger.info(message.rstrip("\n"))
-        self.log_text.configure(state=tk.NORMAL)
-        try:
-            self.log_text.insert(tk.END, message)
-            if not message.endswith("\n"):
-                self.log_text.insert(tk.END, "\n")
-            self.log_text.see(tk.END)
-        finally:
-            self.log_text.configure(state=tk.DISABLED)
+            self._logger.log(level, message.rstrip("\n"))
+
+    def append_log(self, message: str) -> None:
+        """Backward-compatible helper for info-level logging."""
+
+        self.log_message(logging.INFO, message)
 
     def clear_log(self) -> None:
         """Clear all log content."""
@@ -199,10 +226,10 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._ui_queue.put(callback)
 
-    def _log_async(self, message: str) -> None:
-        """Append *message* to the log from background threads."""
+    def _log_async(self, message: str, level: int = logging.INFO) -> None:
+        """Emit *message* from background threads via the logger."""
 
-        self._submit_to_ui(lambda message=message: self.append_log(message))
+        self.log_message(level, message)
 
     def _on_toggle_debug(self) -> None:
         """Update the debug panel visibility."""
@@ -257,6 +284,32 @@ class SandboxLauncherGUI(tk.Tk):
                 self._ui_queue.task_done()
 
         self.after(100, self._drain_ui_queue)
+
+    def _drain_log_queue(self) -> None:
+        """Render queued log messages into the text widget."""
+
+        while True:
+            try:
+                level_name, message = self._log_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            try:
+                available_tags = set(self.log_text.tag_names())
+                tag = level_name if level_name in available_tags else "DEFAULT"
+                self.log_text.configure(state=tk.NORMAL)
+                self.log_text.insert(tk.END, message + "\n", tag)
+                self.log_text.see(tk.END)
+            except tk.TclError:
+                break
+            finally:
+                try:
+                    self.log_text.configure(state=tk.DISABLED)
+                except tk.TclError:
+                    pass
+                self._log_queue.task_done()
+
+        self.after(100, self._drain_log_queue)
 
     # ------------------------------------------------------------------
     # Button state helpers
@@ -435,7 +488,7 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _on_run_preflight(self) -> None:
         if self._preflight_thread and self._preflight_thread.is_alive():
-            self.append_log("Preflight is already running.")
+            self.log_message(logging.WARNING, "Preflight is already running.")
             return
 
         self.disable_run_preflight()
@@ -446,7 +499,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._clear_decision_queue()
         self._start_elapsed_timer()
 
-        self.append_log("Starting preflight checks...")
+        self.log_message(logging.INFO, "Starting preflight checks...")
 
         self._preflight_thread = threading.Thread(
             target=self._run_preflight_flow,
@@ -459,13 +512,13 @@ class SandboxLauncherGUI(tk.Tk):
     # ------------------------------------------------------------------
     def _on_start_sandbox(self) -> None:
         if self._sandbox_thread and self._sandbox_thread.is_alive():
-            self.append_log("Sandbox process is already running.")
+            self.log_message(logging.WARNING, "Sandbox process is already running.")
             return
 
         self.disable_run_preflight()
         self.disable_start_sandbox()
 
-        self.append_log("Launching sandbox...")
+        self.log_message(logging.INFO, "Launching sandbox...")
 
         self._sandbox_thread = threading.Thread(
             target=self._launch_sandbox_process,
@@ -490,7 +543,7 @@ class SandboxLauncherGUI(tk.Tk):
                 text=True,
             )
         except Exception as exc:  # noqa: BLE001 - direct user feedback
-            self._log_async(f"Failed to launch sandbox: {exc}")
+            self._log_async(f"Failed to launch sandbox: {exc}", level=logging.ERROR)
             self._submit_to_ui(self._on_sandbox_finished)
             return
 
@@ -511,20 +564,21 @@ class SandboxLauncherGUI(tk.Tk):
         self._sandbox_thread = None
 
         if retcode is None:
-            self.append_log("Sandbox process did not start.")
+            self.log_message(logging.ERROR, "Sandbox process did not start.")
         else:
-            self.append_log(f"Sandbox process exited with code {retcode}.")
+            level = logging.INFO if retcode == 0 else logging.ERROR
+            self.log_message(level, f"Sandbox process exited with code {retcode}.")
 
         self.enable_run_preflight()
 
         health_ok, health_issues = self._run_post_preflight_health_check()
         if health_ok:
-            self.append_log("Sandbox health check passed.")
+            self.log_message(logging.INFO, "Sandbox health check passed.")
             self.enable_start_sandbox()
         else:
-            self.append_log("Sandbox health check reported issues.")
+            self.log_message(logging.WARNING, "Sandbox health check reported issues.")
             for issue in health_issues:
-                self.append_log(f"- {issue}")
+                self.log_message(logging.WARNING, f"- {issue}")
             self.disable_start_sandbox()
 
     def _run_preflight_flow(self) -> None:
@@ -535,7 +589,9 @@ class SandboxLauncherGUI(tk.Tk):
 
         if not steps:
             self._submit_to_ui(
-                lambda: self.append_log("No preflight steps have been configured.")
+                lambda: self.log_message(
+                    logging.WARNING, "No preflight steps have been configured."
+                )
             )
 
         for title, step in steps:
@@ -543,8 +599,8 @@ class SandboxLauncherGUI(tk.Tk):
                 break
 
             self._submit_to_ui(
-                lambda title=title: self.append_log(
-                    f"Running preflight step: {title}"
+                lambda title=title: self.log_message(
+                    logging.INFO, f"Running preflight step: {title}"
                 )
             )
 
@@ -557,8 +613,9 @@ class SandboxLauncherGUI(tk.Tk):
                             "Error during preflight step '%s'", title
                         )
                     self._submit_to_ui(
-                        lambda title=title, exc=exc: self.append_log(
-                            f"Error during preflight step '{title}': {exc}"
+                        lambda title=title, exc=exc: self.log_message(
+                            logging.ERROR,
+                            f"Error during preflight step '{title}': {exc}",
                         )
                     )
                     stack = traceback.format_exc()
@@ -595,8 +652,9 @@ class SandboxLauncherGUI(tk.Tk):
 
                 else:
                     self._submit_to_ui(
-                        lambda title=title: self.append_log(
-                            f"Preflight step '{title}' completed successfully."
+                        lambda title=title: self.log_message(
+                            logging.INFO,
+                            f"Preflight step '{title}' completed successfully.",
                         )
                     )
                     self._wait_for_pause_to_clear()
@@ -620,7 +678,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _on_preflight_aborted(self) -> None:
         """Handle UI updates when the preflight flow is aborted."""
 
-        self.append_log("Preflight run was aborted.")
+        self.log_message(logging.WARNING, "Preflight run was aborted.")
         self._stop_elapsed_timer()
 
     def _on_preflight_finished(
@@ -632,23 +690,25 @@ class SandboxLauncherGUI(tk.Tk):
         health_ok, health_issues = self._run_post_preflight_health_check()
 
         if success:
-            self.append_log("Preflight completed successfully.")
+            self.log_message(logging.INFO, "Preflight completed successfully.")
         else:
             for title, exc in errors:
-                self.append_log(f"Step '{title}' encountered an issue: {exc}")
+                self.log_message(
+                    logging.ERROR, f"Step '{title}' encountered an issue: {exc}"
+                )
 
-            self.append_log("Preflight completed with issues.")
+            self.log_message(logging.WARNING, "Preflight completed with issues.")
             self.disable_start_sandbox()
 
         if success and health_ok:
-            self.append_log("Sandbox health check passed.")
+            self.log_message(logging.INFO, "Sandbox health check passed.")
             self.enable_start_sandbox()
             return
 
         if success:
-            self.append_log("Sandbox health check reported issues.")
+            self.log_message(logging.WARNING, "Sandbox health check reported issues.")
             for issue in health_issues:
-                self.append_log(f"- {issue}")
+                self.log_message(logging.WARNING, f"- {issue}")
 
             issues_text = "\n".join(f"- {issue}" for issue in health_issues) or "No additional details available."
             messagebox.showwarning(
@@ -744,19 +804,21 @@ class SandboxLauncherGUI(tk.Tk):
                 pass
             else:
                 if title:
-                    self.append_log(f"Decision required: {title}")
+                    self.log_message(logging.INFO, f"Decision required: {title}")
                 choice = self._show_pause_dialog(title or "Continue?", message, retryable)
                 self._decision_queue.task_done()
                 if choice == "continue":
-                    self.append_log("User elected to continue preflight.")
+                    self.log_message(logging.INFO, "User elected to continue preflight.")
                     self._retry_requested = False
                     self._pause_event.clear()
                 elif choice == "retry" and retryable is not None:
-                    self.append_log("User elected to retry the preflight step.")
+                    self.log_message(
+                        logging.INFO, "User elected to retry the preflight step."
+                    )
                     self._retry_requested = True
                     self._pause_event.clear()
                 else:
-                    self.append_log("User elected to abort preflight.")
+                    self.log_message(logging.WARNING, "User elected to abort preflight.")
                     self._abort_event.set()
                     self.abort_preflight()
 
@@ -824,16 +886,18 @@ class SandboxLauncherGUI(tk.Tk):
         self._abort_event.set()
         self._pause_event.clear()
         self._clear_decision_queue()
-        self.append_log("Stopping preflight run...")
+        self.log_message(logging.INFO, "Stopping preflight run...")
 
         thread.join(timeout=5.0)
         if thread.is_alive():
-            self.append_log("Warning: preflight thread did not finish within timeout.")
+            self.log_message(
+                logging.WARNING, "Warning: preflight thread did not finish within timeout."
+            )
 
         self._preflight_thread = None
         self.enable_run_preflight()
         self.disable_start_sandbox()
-        self.append_log("Preflight run aborted.")
+        self.log_message(logging.WARNING, "Preflight run aborted.")
         self._stop_elapsed_timer()
 
     def _terminate_sandbox_process(self) -> None:
@@ -847,7 +911,7 @@ class SandboxLauncherGUI(tk.Tk):
             try:
                 process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                self._log_async("Killing sandbox process...")
+                self._log_async("Killing sandbox process...", level=logging.WARNING)
                 process.kill()
                 process.wait()
 
@@ -859,13 +923,19 @@ class SandboxLauncherGUI(tk.Tk):
 
         thread.join(timeout=5.0)
         if thread.is_alive():
-            self.append_log(f"Warning: {name} did not finish within timeout.")
+            self.log_message(
+                logging.WARNING, f"Warning: {name} did not finish within timeout."
+            )
 
     def _on_close(self) -> None:
         self.abort_preflight()
         self._terminate_sandbox_process()
         self._join_thread(self._sandbox_thread, "sandbox thread")
         self._join_thread(self._preflight_thread, "preflight thread")
+        if hasattr(self, "_logger") and self._log_handler is not None:
+            self._logger.removeHandler(self._log_handler)
+            self._log_handler.close()
+            self._log_handler = None
         super().destroy()
 
 
