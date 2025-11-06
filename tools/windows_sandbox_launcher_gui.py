@@ -36,6 +36,7 @@ class SandboxLauncherGUI(tk.Tk):
 
     def _initialize_state(self) -> None:
         self._preflight_thread: threading.Thread | None = None
+        self._sandbox_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
         self._decision_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._abort_event = threading.Event()
@@ -44,6 +45,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._last_health_snapshot: dict[str, Any] | None = None
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
+        self.start_sandbox_button.configure(command=self._on_start_sandbox)
 
         self.after(100, self._process_decisions)
         self.after(100, self._drain_ui_queue)
@@ -331,6 +333,74 @@ class SandboxLauncherGUI(tk.Tk):
             daemon=True,
         )
         self._preflight_thread.start()
+
+    # ------------------------------------------------------------------
+    # Sandbox process management
+    # ------------------------------------------------------------------
+    def _on_start_sandbox(self) -> None:
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            self.append_log("Sandbox process is already running.")
+            return
+
+        self.disable_run_preflight()
+        self.disable_start_sandbox()
+
+        self.append_log("Launching sandbox...")
+
+        self._sandbox_thread = threading.Thread(
+            target=self._launch_sandbox_process,
+            daemon=True,
+        )
+        self._sandbox_thread.start()
+
+    def _launch_sandbox_process(self) -> None:
+        command = [
+            sys.executable,
+            "-m",
+            "menace_sandbox.start_autonomous_sandbox",
+        ]
+        display = " ".join(shlex.quote(str(part)) for part in command)
+        self._log_async(f"$ {display}")
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - direct user feedback
+            self._log_async(f"Failed to launch sandbox: {exc}")
+            self._submit_to_ui(self._on_sandbox_finished)
+            return
+
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                self._log_async(line.rstrip("\n"))
+
+        retcode = process.wait()
+        self._submit_to_ui(lambda retcode=retcode: self._on_sandbox_finished(retcode))
+
+    def _on_sandbox_finished(self, retcode: int | None = None) -> None:
+        self._sandbox_thread = None
+
+        if retcode is None:
+            self.append_log("Sandbox process did not start.")
+        else:
+            self.append_log(f"Sandbox process exited with code {retcode}.")
+
+        self.enable_run_preflight()
+
+        health_ok, health_issues = self._run_post_preflight_health_check()
+        if health_ok:
+            self.append_log("Sandbox health check passed.")
+            self.enable_start_sandbox()
+        else:
+            self.append_log("Sandbox health check reported issues.")
+            for issue in health_issues:
+                self.append_log(f"- {issue}")
+            self.disable_start_sandbox()
 
     def _run_preflight_flow(self) -> None:
         errors: list[tuple[str, Exception]] = []
