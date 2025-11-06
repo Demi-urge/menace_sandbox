@@ -6,6 +6,7 @@ import threading
 import time
 import types
 import unittest
+from typing import Optional
 from unittest import mock
 
 from dependency_health import DependencyMode
@@ -108,9 +109,10 @@ class PreflightWorkerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.logger = DummyLogger()
         self.pause_event = threading.Event()
-        self.decision_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.decision_queue: "queue.Queue[tuple[str, str, Optional[dict[str, object]]]]" = (
+            queue.Queue()
+        )
         self.abort_event = threading.Event()
-        self.retry_event = threading.Event()
         self.debug_queue: "queue.Queue[str]" = queue.Queue()
 
     def _patch_step(self, name: str, calls: list[str], *, side_effect=None):
@@ -151,7 +153,6 @@ class PreflightWorkerTests(unittest.TestCase):
                 pause_event=self.pause_event,
                 decision_queue=self.decision_queue,
                 abort_event=self.abort_event,
-                retry_event=self.retry_event,
                 debug_queue=self.debug_queue,
             )
 
@@ -166,10 +167,18 @@ class PreflightWorkerTests(unittest.TestCase):
                 "_prime_registry",
                 "_install_dependencies",
                 "_bootstrap_self_coding",
-                "sandbox_health",
             ],
         )
         self.assertIsInstance(result, dict)
+        self.assertIn("snapshot", result)
+        self.assertEqual(
+            result["snapshot"],
+            {
+                "databases_accessible": True,
+                "database_errors": {},
+                "dependency_health": {"missing": []},
+            },
+        )
         self.assertFalse(self.pause_event.is_set())
         self.assertTrue(self.decision_queue.empty())
 
@@ -207,7 +216,6 @@ class PreflightWorkerTests(unittest.TestCase):
                     "pause_event": self.pause_event,
                     "decision_queue": self.decision_queue,
                     "abort_event": self.abort_event,
-                    "retry_event": self.retry_event,
                     "debug_queue": self.debug_queue,
                 },
                 daemon=True,
@@ -220,9 +228,12 @@ class PreflightWorkerTests(unittest.TestCase):
 
             self.assertTrue(self.pause_event.is_set())
             self.assertFalse(self.decision_queue.empty())
-            title, message = self.decision_queue.get_nowait()
+            title, message, context = self.decision_queue.get_nowait()
             self.assertIn("Lock artefact removal failed", title)
             self.assertIn("Removing stale lock files", message)
+            self.assertIsInstance(context, dict)
+            self.assertEqual(context.get("step"), "_delete_lock_files")
+            self.assertIn("lock cleanup failed", context.get("exception", ""))
 
             self.pause_event.clear()
             thread.join(timeout=2)
@@ -234,78 +245,11 @@ class PreflightWorkerTests(unittest.TestCase):
                 "_git_sync",
                 "_purge_stale_files",
                 "_delete_lock_files",
-                "_warm_shared_vector_service",
-                "_ensure_env_flags",
-                "_prime_registry",
-                "_install_dependencies",
-                "_bootstrap_self_coding",
-                "sandbox_health",
             ],
         )
         self.assertFalse(self.abort_event.is_set())
         self.assertFalse(self.debug_queue.empty())
         self.assertIn("lock cleanup failed", self.debug_queue.get_nowait())
-
-    def test_retry_event_retries_failed_step(self) -> None:
-        calls: list[str] = []
-        attempts = {"count": 0}
-
-        patchers = [
-            self._patch_step("_git_sync", calls),
-            self._patch_step("_purge_stale_files", calls),
-            mock.patch.object(
-                gui,
-                "_delete_lock_files",
-                side_effect=lambda _logger: self._retryable_step(calls, attempts),
-            ),
-            self._patch_step("_warm_shared_vector_service", calls),
-            self._patch_step("_ensure_env_flags", calls),
-            self._patch_step("_prime_registry", calls),
-            self._patch_step("_install_dependencies", calls),
-            self._patch_step("_bootstrap_self_coding", calls),
-        ]
-
-        with contextlib.ExitStack() as stack:
-            for patcher in patchers:
-                stack.enter_context(patcher)
-
-            thread = threading.Thread(
-                target=gui.run_full_preflight,
-                kwargs={
-                    "logger": self.logger,
-                    "pause_event": self.pause_event,
-                    "decision_queue": self.decision_queue,
-                    "abort_event": self.abort_event,
-                    "retry_event": self.retry_event,
-                    "debug_queue": self.debug_queue,
-                },
-                daemon=True,
-            )
-            thread.start()
-
-            deadline = time.time() + 2
-            while not self.pause_event.is_set() and time.time() < deadline:
-                time.sleep(0.01)
-
-            self.assertTrue(self.pause_event.is_set())
-            self.assertFalse(self.decision_queue.empty())
-
-            self.retry_event.set()
-
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
-
-        self.assertEqual(calls.count("_delete_lock_files"), 2)
-        self.assertFalse(self.abort_event.is_set())
-        self.assertFalse(self.pause_event.is_set())
-
-    def _retryable_step(
-        self, calls: list[str], attempts: dict[str, int]
-    ) -> None:
-        calls.append("_delete_lock_files")
-        if attempts["count"] == 0:
-            attempts["count"] += 1
-            raise RuntimeError("retry me")
 
     def test_abort_event_short_circuits_execution(self) -> None:
         calls: list[str] = []
@@ -321,6 +265,8 @@ class PreflightWorkerTests(unittest.TestCase):
             for patcher in patchers:
                 stack.enter_context(patcher)
 
+            self.abort_event.set()
+
             thread = threading.Thread(
                 target=gui.run_full_preflight,
                 kwargs={
@@ -328,7 +274,6 @@ class PreflightWorkerTests(unittest.TestCase):
                     "pause_event": self.pause_event,
                     "decision_queue": self.decision_queue,
                     "abort_event": self.abort_event,
-                    "retry_event": self.retry_event,
                     "debug_queue": self.debug_queue,
                 },
                 daemon=True,
@@ -339,20 +284,15 @@ class PreflightWorkerTests(unittest.TestCase):
             while not self.pause_event.is_set() and time.time() < deadline:
                 time.sleep(0.01)
 
-            self.abort_event.set()
-            self.pause_event.clear()
             thread.join(timeout=2)
             self.assertFalse(thread.is_alive())
 
         self.assertEqual(
             calls,
-            [
-                "_git_sync",
-                "_purge_stale_files",
-                "_delete_lock_files",
-            ],
+            [],
         )
         self.assertTrue(self.abort_event.is_set())
+        self.assertTrue(self.decision_queue.empty())
 
 
 class HealthEvaluationTests(unittest.TestCase):
