@@ -1105,21 +1105,52 @@ def _run_command(
 def _git_sync(logger: logging.Logger) -> None:
     logger.info("Ensuring repository is synchronised with origin.")
 
-    logger.info("Fetching updates from origin.")
-    _run_command(logger, ["git", "fetch", "origin"], cwd=REPO_ROOT)
-    logger.info("Fetch from origin completed.")
+    commands = (
+        ("git fetch origin", ["git", "fetch", "origin"]),
+        ("git reset --hard origin/main", ["git", "reset", "--hard", "origin/main"]),
+    )
 
-    logger.info("Resetting repository to origin/main.")
-    _run_command(logger, ["git", "reset", "--hard", "origin/main"], cwd=REPO_ROOT)
-    logger.info("Repository reset to origin/main.")
+    for description, command in commands:
+        logger.info("Running %s", description)
+        try:
+            result = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stdout:
+                logger.error("%s stdout: %s", description, exc.stdout.strip())
+            if exc.stderr:
+                logger.error("%s stderr: %s", description, exc.stderr.strip())
+            raise RuntimeError(
+                f"Command '{description}' failed with exit code {exc.returncode}"
+            ) from exc
+
+        if result.stdout:
+            logger.info("%s stdout: %s", description, result.stdout.strip())
+        if result.stderr:
+            logger.warning("%s stderr: %s", description, result.stderr.strip())
+
+    logger.info("Repository reset to origin/main completed.")
 
 
 def _purge_stale_files(logger: logging.Logger) -> None:
     logger.info("Purging stale files and caches.")
 
-    from bootstrap_self_coding import _iter_cleanup_targets, purge_stale_files
+    module = importlib.import_module("bootstrap_self_coding")
+    purge_stale_files = getattr(module, "purge_stale_files")
 
-    tracked_candidates = tuple(_iter_cleanup_targets())
+    iter_cleanup = getattr(module, "_iter_cleanup_targets", None)
+    tracked_candidates: tuple[object, ...] = ()
+    if callable(iter_cleanup):
+        try:
+            tracked_candidates = tuple(iter_cleanup())
+        except Exception:  # pragma: no cover - tracking is best effort
+            tracked_candidates = ()
+
     before_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
 
     purge_stale_files()
@@ -1127,43 +1158,50 @@ def _purge_stale_files(logger: logging.Logger) -> None:
     after_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
     removed = max(before_count - after_count, 0)
 
-    if removed:
-        logger.info("Purged %d stale sandbox artefacts.", removed)
-    else:
-        logger.info("No stale sandbox artefacts required removal.")
+    logger.info("Removed %d known stale sandbox artefacts.", removed)
 
 
 def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
     logger.info("Removing stale lock files and model caches.")
 
-    removed_files = 0
-    removed_directories = 0
+    removed_files: list[Path] = []
+    removed_directories: list[Path] = []
 
-    def _remove_path(path: Path) -> None:
-        nonlocal removed_files, removed_directories
+    def _remove_file(path: Path) -> None:
         try:
-            if path.is_dir():
-                shutil.rmtree(path)
-                removed_directories += 1
-            else:
-                path.unlink()
-                removed_files += 1
-            logger.info("Removed stale artefact: %s", path)
+            path.unlink()
+            removed_files.append(path)
+            logger.info("Removed stale file: %s", path)
         except FileNotFoundError:
-            return
+            logger.debug("Stale file already absent: %s", path)
         except OSError as exc:
-            raise RuntimeError(f"Failed to remove artefact {path}: {exc}") from exc
+            logger.warning("Failed to delete stale file %s: %s", path, exc)
+
+    def _remove_directory(path: Path) -> None:
+        try:
+            shutil.rmtree(path)
+            removed_directories.append(path)
+            logger.info("Removed stale directory: %s", path)
+        except FileNotFoundError:
+            logger.debug("Stale directory already absent: %s", path)
+        except OSError as exc:
+            logger.warning("Failed to delete stale directory %s: %s", path, exc)
 
     sandbox_lock_dir = REPO_ROOT / "sandbox_data"
-    if sandbox_lock_dir.exists():
-        for candidate in sandbox_lock_dir.glob("*.lock*"):
-            _remove_path(candidate)
+    for pattern in ("*.lock", "*.lock.tmp"):
+        for candidate in sandbox_lock_dir.glob(pattern):
+            if candidate.is_file():
+                _remove_file(candidate)
+            elif candidate.is_dir():
+                _remove_directory(candidate)
 
     hf_cache = Path.home() / ".cache" / "huggingface" / "transformers"
     if hf_cache.exists():
-        for candidate in hf_cache.rglob("*"):
-            if candidate.is_file() and ".lock" in candidate.name:
-                _remove_path(candidate)
+        for lock_file in hf_cache.rglob("*.lock"):
+            if lock_file.is_file():
+                _remove_file(lock_file)
+            elif lock_file.is_dir():
+                _remove_directory(lock_file)
 
         directories = sorted(
             (path for path in hf_cache.rglob("*") if path.is_dir()),
@@ -1171,20 +1209,24 @@ def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
             reverse=True,
         )
         for directory in directories:
-            name = directory.name.lower()
-            if name.endswith(".incomplete") or name.endswith(".tmp"):
-                _remove_path(directory)
-                continue
             try:
-                if not any(directory.iterdir()):
-                    _remove_path(directory)
+                contents = list(directory.iterdir())
             except FileNotFoundError:
                 continue
+            if not contents:
+                _remove_directory(directory)
+                continue
+            if all(child.suffix == ".lock" for child in contents if child.is_file()):
+                for child in contents:
+                    if child.is_file():
+                        _remove_file(child)
+                if not any(directory.iterdir()):
+                    _remove_directory(directory)
 
     logger.info(
-        "Removed %d stale files and %d stale directories.",
-        removed_files,
-        removed_directories,
+        "Lock cleanup removed %d files and %d directories.",
+        len(removed_files),
+        len(removed_directories),
     )
 
 
@@ -1196,7 +1238,24 @@ def _install_heavy_dependencies(logger: logging.Logger) -> None:
     except ImportError as exc:  # pragma: no cover - import guard
         raise RuntimeError("neurosales heavy dependency installer is unavailable") from exc
 
-    setup_heavy_deps.main(download_only=True)
+    run = getattr(setup_heavy_deps, "run", None)
+    if not callable(run):
+        logger.debug("setup_heavy_deps.run unavailable; attempting main()")
+        run = None
+
+    if run is not None:
+        result = run(download_only=True, logger=logger)
+    else:
+        setup_heavy_deps.main(download_only=True)
+        result = None
+
+    if result is not None:
+        if getattr(result, "packages_skipped_reason", None):
+            logger.info("Heavy dependency packages skipped: %s", result.packages_skipped_reason)
+        if getattr(result, "embeddings_error", None):
+            raise RuntimeError(f"Heavy dependency setup failed: {result.embeddings_error}")
+        if not getattr(result, "embeddings_prefetched", False):
+            raise RuntimeError("Heavy dependency setup did not prefetch embeddings as expected.")
 
     logger.info("Heavy dependency setup completed in download-only mode.")
 
@@ -1212,40 +1271,29 @@ def _warm_shared_vector_service(logger: logging.Logger) -> None:
     service = SharedVectorService()
     vectorise = getattr(service, "vectorise", None)
     if callable(vectorise):
-        try:
-            vectorise("text", {"text": "warmup"})
-        except Exception:  # pragma: no cover - warmup best effort
-            logger.debug("Vector service warmup call failed; continuing", exc_info=True)
+        logger.info("Priming shared vector service caches.")
+        vectorise("warmup probe")
 
-    logger.info("Shared vector service initialised.")
+    logger.info("Shared vector service initialised and ready.")
 
 
 def _ensure_env_flags(logger: logging.Logger) -> None:
     logger.info("Ensuring environment flags are set for sandbox run.")
 
-    from auto_env_setup import ensure_env
+    auto_env_setup = importlib.import_module("auto_env_setup")
+    auto_env_setup.ensure_env()
 
-    env_path = REPO_ROOT / ".env"
-    ensure_env(str(env_path))
-    os.environ["SANDBOX_ENABLE_BOOTSTRAP"] = "1"
-    os.environ["SANDBOX_ENABLE_SELF_CODING"] = "1"
-
-    logger.info(
-        "Sandbox environment flags enforced: SANDBOX_ENABLE_BOOTSTRAP=%s, SANDBOX_ENABLE_SELF_CODING=%s",
-        os.environ["SANDBOX_ENABLE_BOOTSTRAP"],
-        os.environ["SANDBOX_ENABLE_SELF_CODING"],
-    )
+    for var in ("SANDBOX_ENABLE_BOOTSTRAP", "SANDBOX_ENABLE_SELF_CODING"):
+        previous = os.environ.get(var)
+        os.environ[var] = "1"
+        logger.info("Environment flag %s updated: %r -> '1'", var, previous)
 
 
 def _prime_registry(logger: logging.Logger) -> None:
     logger.info("Priming the registry for sandbox resources.")
 
-    try:
-        from prime_registry import main as prime_registry_main
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise RuntimeError("prime_registry module is unavailable") from exc
-
-    prime_registry_main()
+    prime_registry = importlib.import_module("prime_registry")
+    prime_registry.main()
 
     logger.info("Registry primed successfully.")
 
@@ -1253,16 +1301,34 @@ def _prime_registry(logger: logging.Logger) -> None:
 def _install_python_dependencies(logger: logging.Logger) -> None:
     logger.info("Ensuring Python dependencies are installed.")
 
-    _run_command(
-        logger,
-        [sys.executable, "-m", "pip", "install", "-e", "."],
-        cwd=REPO_ROOT,
+    commands = (
+        ("pip install -e .", [sys.executable, "-m", "pip", "install", "-e", "."]),
+        ("pip install jsonschema", [sys.executable, "-m", "pip", "install", "jsonschema"]),
     )
-    _run_command(
-        logger,
-        [sys.executable, "-m", "pip", "install", "jsonschema"],
-        cwd=REPO_ROOT,
-    )
+
+    for description, command in commands:
+        logger.info("Running %s", description)
+        try:
+            result = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stdout:
+                logger.error("%s stdout: %s", description, exc.stdout.strip())
+            if exc.stderr:
+                logger.error("%s stderr: %s", description, exc.stderr.strip())
+            raise RuntimeError(
+                f"Command '{description}' failed with exit code {exc.returncode}"
+            ) from exc
+
+        if result.stdout:
+            logger.info("%s stdout: %s", description, result.stdout.strip())
+        if result.stderr:
+            logger.warning("%s stderr: %s", description, result.stderr.strip())
 
     logger.info("Python dependency installation complete.")
 
@@ -1270,14 +1336,12 @@ def _install_python_dependencies(logger: logging.Logger) -> None:
 def _bootstrap_self_coding(logger: logging.Logger) -> None:
     logger.info("Bootstrapping self-coding components.")
 
-    try:
-        from bootstrap_self_coding import bootstrap_self_coding as run_bootstrap
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise RuntimeError("bootstrap_self_coding module is unavailable") from exc
+    module = importlib.import_module("bootstrap_self_coding")
+    run_bootstrap = getattr(module, "bootstrap_self_coding")
 
+    logger.info("Invoking bootstrap_self_coding for AICounterBot.")
     run_bootstrap("AICounterBot")
-
-    logger.info("Self-coding bootstrap invoked for AICounterBot.")
+    logger.info("Self-coding bootstrap completed for AICounterBot.")
 
 
 _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
