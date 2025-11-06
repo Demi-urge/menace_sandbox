@@ -5,20 +5,67 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import messagebox
 from tkinter import ttk
-from typing import Optional
+from typing import Callable, Optional
 
 
-def run_full_preflight(*, logger: logging.Logger) -> None:
+def run_full_preflight(
+    *,
+    logger: logging.Logger,
+    pause_event: threading.Event,
+    decision_queue: queue.Queue[tuple[str, str]],
+    abort_event: threading.Event,
+) -> None:
     """Execute the sandbox preflight checks using *logger* for progress."""
 
     logger.info("starting Windows sandbox preflight routine")
 
-    logger.info("validating local configuration")
-    logger.info("verifying dependency availability")
-    logger.info("checking sandbox artefact integrity")
+    def _validate_local_configuration() -> None:
+        logger.info("validating local configuration")
+
+    def _verify_dependency_availability() -> None:
+        logger.info("verifying dependency availability")
+
+    def _check_sandbox_integrity() -> None:
+        logger.info("checking sandbox artefact integrity")
+
+    steps: list[tuple[str, str, Callable[[], None]]] = [
+        (
+            "Configuration validation failed",
+            "The configuration validation step reported an error. Continue the preflight?",
+            _validate_local_configuration,
+        ),
+        (
+            "Dependency verification failed",
+            "Dependency verification did not complete successfully. Continue the preflight?",
+            _verify_dependency_availability,
+        ),
+        (
+            "Sandbox artefact check failed",
+            "Sandbox artefact integrity checks were not successful. Continue the preflight?",
+            _check_sandbox_integrity,
+        ),
+    ]
+
+    for failure_title, failure_message, step in steps:
+        if abort_event.is_set():
+            logger.info("preflight routine aborted before completing remaining steps")
+            return
+        try:
+            step()
+        except Exception:
+            logger.exception(failure_title)
+            pause_event.set()
+            decision_queue.put((failure_title, failure_message))
+            while pause_event.is_set() and not abort_event.is_set():
+                time.sleep(0.1)
+            if abort_event.is_set():
+                logger.info("preflight routine aborted during paused step")
+                return
 
     logger.info("preflight routine completed successfully")
 
@@ -61,9 +108,13 @@ class SandboxLauncherGUI(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._decision_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._log_handler: Optional[_LogQueueHandler] = None
         self._logger = logging.getLogger(__name__ + ".preflight")
         self._preflight_thread: Optional[threading.Thread] = None
+        self._pause_event = threading.Event()
+        self._abort_event = threading.Event()
+        self._awaiting_decision = False
         self._max_log_lines = 1000
 
         self._create_widgets()
@@ -185,6 +236,9 @@ class SandboxLauncherGUI(tk.Tk):
         if self._preflight_thread and self._preflight_thread.is_alive():
             return
 
+        self._abort_event.clear()
+        self._pause_event.clear()
+        self._flush_decision_queue()
         self.run_preflight_button.configure(state="disabled")
         self._logger.info("launching preflight worker")
 
@@ -202,22 +256,31 @@ class SandboxLauncherGUI(tk.Tk):
         """Invoke the preflight routine while reporting via the shared logger."""
 
         try:
-            run_full_preflight(logger=self._logger)
+            run_full_preflight(
+                logger=self._logger,
+                pause_event=self._pause_event,
+                decision_queue=self._decision_queue,
+                abort_event=self._abort_event,
+            )
         except Exception:  # pragma: no cover - log and propagate to UI
             self._logger.exception("preflight routine failed")
         else:
-            self._logger.info("preflight worker completed")
+            if not self._abort_event.is_set():
+                self._logger.info("preflight worker completed")
 
     def _monitor_preflight_worker(self) -> None:
         """Re-enable UI controls once the worker thread terminates."""
 
         thread = self._preflight_thread
         if thread and thread.is_alive():
+            self._handle_worker_pause()
             self.after(100, self._monitor_preflight_worker)
             return
 
         self._preflight_thread = None
         self.run_preflight_button.configure(state="normal")
+        if self._abort_event.is_set():
+            self._handle_abort_cleanup()
 
     def on_close(self) -> None:
         """Handle application shutdown."""
@@ -225,6 +288,40 @@ class SandboxLauncherGUI(tk.Tk):
         if self._log_handler is not None:
             self._logger.removeHandler(self._log_handler)
         self.destroy()
+
+    def _handle_worker_pause(self) -> None:
+        if not self._pause_event.is_set() or self._awaiting_decision:
+            return
+
+        try:
+            title, message = self._decision_queue.get_nowait()
+        except queue.Empty:
+            return
+
+        self._awaiting_decision = True
+        should_continue = messagebox.askyesno(title=title, message=message)
+        if should_continue:
+            self._logger.info("user opted to continue after pause")
+            self._pause_event.clear()
+        else:
+            self._logger.info("user requested preflight cancellation")
+            self._abort_event.set()
+            self._pause_event.clear()
+        self._awaiting_decision = False
+
+    def _handle_abort_cleanup(self) -> None:
+        self._abort_event.clear()
+        self._pause_event.clear()
+        self._flush_decision_queue()
+        self.start_sandbox_button.configure(state="disabled")
+        self._logger.info("preflight routine cancelled by user")
+
+    def _flush_decision_queue(self) -> None:
+        while True:
+            try:
+                self._decision_queue.get_nowait()
+            except queue.Empty:
+                break
 
 
 __all__ = ["SandboxLauncherGUI"]
