@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -12,7 +13,6 @@ from typing import Any, Callable, List
 
 import tkinter as tk
 from tkinter import ttk
-from logging.handlers import RotatingFileHandler
 
 try:
     from vector_service.context_builder import ContextBuilder
@@ -40,27 +40,6 @@ logger.propagate = False
 _LOG_FORMATTER = logging.Formatter(
     "%(asctime)s — %(levelname)s — %(name)s — %(message)s"
 )
-
-
-def _ensure_file_logging() -> RotatingFileHandler:
-    """Attach a rotating file handler for persistent GUI logs."""
-
-    for handler in logger.handlers:
-        if isinstance(handler, RotatingFileHandler):
-            return handler
-
-    file_handler = RotatingFileHandler(
-        LOG_FILE_PATH,
-        maxBytes=1_048_576,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(_LOG_FORMATTER)
-    logger.addHandler(file_handler)
-    return file_handler
-
-
-_FILE_HANDLER = _ensure_file_logging()
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -80,6 +59,15 @@ class RetryContext:
         return self.executor(*self.args, **self.kwargs)
 
 
+@dataclass(slots=True)
+class QueuedLogMessage:
+    """Payload placed onto the Tk log queue for thread-safe updates."""
+
+    level: str
+    text: str
+    tk_tag: str
+
+
 class MenaceGUI(tk.Tk):
     """Main application window with navigation tabs."""
 
@@ -92,7 +80,7 @@ class MenaceGUI(tk.Tk):
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         self.context_builder = context_builder
-        self.log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.log_queue: queue.Queue[QueuedLogMessage] = queue.Queue()
         self._max_log_lines = 1000
         self._max_debug_lines = 200
         self._retry_context: RetryContext | None = None
@@ -238,7 +226,10 @@ class MenaceGUI(tk.Tk):
         )
         self.debug_text.pack(expand=True, fill="both", padx=5, pady=5)
 
-        self._queue_handler = GUIQueueHandler(self.log_queue)
+        self._queue_handler = TkTextHandler(
+            log_queue=self.log_queue,
+            persist_path=LOG_FILE_PATH,
+        )
         self._queue_handler.setFormatter(_LOG_FORMATTER)
         logger.addHandler(self._queue_handler)
 
@@ -249,7 +240,7 @@ class MenaceGUI(tk.Tk):
     def _poll_log_queue(self) -> None:
         """Poll log records from worker threads and update the widget."""
 
-        drained: list[tuple[str, str]] = []
+        drained: list[QueuedLogMessage] = []
         try:
             while True:
                 drained.append(self.log_queue.get_nowait())
@@ -258,20 +249,13 @@ class MenaceGUI(tk.Tk):
 
         if drained:
             self.log_text.configure(state="normal")
-            for level, message in drained:
-                tag = "info"
-                if level in {"error", "critical"}:
-                    tag = "error"
-                elif level == "warning":
-                    tag = "warning"
-                self.log_text.insert(tk.END, message + "\n", tag)
-                if level in {"error", "critical"}:
-                    self._append_debug_message(message)
+            for message in drained:
+                self.log_text.insert(tk.END, message.text + "\n", message.tk_tag)
+                if message.level in {"error", "critical"}:
+                    self._append_debug_message(message.text)
             self._trim_log()
             self.log_text.configure(state="disabled")
             self.log_text.see(tk.END)
-
-            self._persist_logs(drained)
 
         self.after(100, self._poll_log_queue)
 
@@ -302,33 +286,6 @@ class MenaceGUI(tk.Tk):
             self.debug_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))
         else:
             self.debug_frame.pack_forget()
-
-    def _persist_logs(self, drained: list[tuple[str, str]]) -> None:
-        if (
-            not drained
-            or _FILE_HANDLER is None
-            or _FILE_HANDLER in logger.handlers
-        ):
-            return
-        level_map = {
-            "debug": logging.DEBUG,
-            "info": logging.INFO,
-            "warning": logging.WARNING,
-            "error": logging.ERROR,
-            "critical": logging.CRITICAL,
-        }
-        for level_name, message in drained:
-            log_level = level_map.get(level_name, logging.INFO)
-            record = logging.LogRecord(
-                name="menace_gui.display",
-                level=log_level,
-                pathname=__file__,
-                lineno=0,
-                msg=message,
-                args=(),
-                exc_info=None,
-            )
-            _FILE_HANDLER.emit(record)
 
     def _update_elapsed_time(self) -> None:
         self._update_status_bar()
@@ -576,22 +533,46 @@ class MenaceGUI(tk.Tk):
         ]
 
 
-class GUIQueueHandler(logging.Handler):
-    """Queue-based handler that passes log records to the Tk main loop."""
+class TkTextHandler(logging.Handler):
+    """Queue-based handler that defers Tk updates to the main thread."""
 
-    def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        *,
+        log_queue: queue.Queue[QueuedLogMessage],
+        persist_path: Path | None = None,
+    ) -> None:
         super().__init__()
         self._queue = log_queue
+        self._persist_path = persist_path
+        self._persist_lock = threading.Lock()
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            message = self.format(record)
+            message_text = self.format(record)
         except Exception:
             self.handleError(record)
             return
 
         level = record.levelname.lower()
-        self._queue.put((level, message))
+        if level in {"error", "critical"}:
+            tag = "error"
+        elif level == "warning":
+            tag = "warning"
+        else:
+            tag = "info"
+
+        payload = QueuedLogMessage(level=level, text=message_text, tk_tag=tag)
+        self._queue.put(payload)
+
+        if self._persist_path is not None:
+            try:
+                with self._persist_lock:
+                    self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+                    with self._persist_path.open("a", encoding="utf-8") as fh:
+                        fh.write(message_text + "\n")
+            except Exception:
+                self.handleError(record)
 
 
 __all__ = ["MenaceGUI", "RetryContext"]
