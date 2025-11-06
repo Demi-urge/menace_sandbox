@@ -374,6 +374,28 @@ def _remove_mock_call_marker(func: Callable[..., Any]) -> None:
                         value.remove("sandbox_health")
 
 
+def _collect_sandbox_health_snapshot(
+    *, dependency_mode: DependencyMode = DependencyMode.STRICT
+) -> dict[str, Any]:
+    """Return sandbox health metadata and evaluation results."""
+
+    from sandbox_runner.bootstrap import sandbox_health
+
+    snapshot: Mapping[str, Any] | dict[str, Any] = sandbox_health()
+    if isinstance(snapshot, Mapping) and "database_errors" not in snapshot:
+        snapshot = dict(snapshot)
+        snapshot.setdefault("database_errors", {})
+    _remove_mock_call_marker(sandbox_health)
+    healthy, failures = _evaluate_health_snapshot(
+        snapshot, dependency_mode=dependency_mode
+    )
+    return {
+        "healthy": healthy,
+        "snapshot": snapshot,
+        "failures": failures,
+    }
+
+
 def run_preflight(
     *,
     logger: logging.Logger,
@@ -545,6 +567,12 @@ class SandboxLauncherGUI(tk.Tk):
 
     WINDOW_TITLE = "Windows Sandbox Launcher"
     WINDOW_GEOMETRY = "800x600"
+    STATUS_COLORS = {
+        "info": "#2563eb",
+        "success": "#047857",
+        "warning": "#b45309",
+        "error": "#b91c1c",
+    }
 
     def __init__(self) -> None:
         super().__init__()
@@ -555,7 +583,7 @@ class SandboxLauncherGUI(tk.Tk):
         self.resizable(width=True, height=True)
 
         self.log_queue: "queue.Queue[Tuple[str, str]]" = queue.Queue()
-        self.worker_queue: "queue.Queue[Tuple[str, Optional[str]]]" = queue.Queue()
+        self.worker_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
         self.decision_queue: "queue.Queue[PauseDecision]" = queue.Queue()
         self.pause_event = threading.Event()
         self.abort_event = threading.Event()
@@ -625,19 +653,36 @@ class SandboxLauncherGUI(tk.Tk):
         controls_frame.columnconfigure(1, weight=1)
         controls_frame.columnconfigure(2, weight=0)
 
+        self.status_banner_var = tk.StringVar(value="Preflight not started")
+        self.status_banner = ttk.Label(
+            controls_frame,
+            textvariable=self.status_banner_var,
+            anchor="w",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.status_banner.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+
+        self.elapsed_time_var = tk.StringVar(value="Elapsed: --")
+        self.elapsed_time_label = ttk.Label(
+            controls_frame,
+            textvariable=self.elapsed_time_var,
+            anchor="e",
+        )
+        self.elapsed_time_label.grid(row=1, column=0, columnspan=3, sticky="e", pady=(0, 6))
+
         self.run_preflight_button = ttk.Button(
             controls_frame,
             text="Run Preflight",
             command=self._on_run_preflight,
         )
-        self.run_preflight_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        self.run_preflight_button.grid(row=2, column=0, sticky="ew", padx=(0, 5))
 
         self.start_sandbox_button = ttk.Button(
             controls_frame,
             text="Start Sandbox",
             state=tk.DISABLED,
         )
-        self.start_sandbox_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        self.start_sandbox_button.grid(row=2, column=1, sticky="ew", padx=(5, 0))
 
         self.retry_step_button = ttk.Button(
             controls_frame,
@@ -645,8 +690,21 @@ class SandboxLauncherGUI(tk.Tk):
             state=tk.DISABLED,
             command=self._on_retry_step,
         )
-        self.retry_step_button.grid(row=0, column=2, sticky="ew", padx=(5, 0))
+        self.retry_step_button.grid(row=2, column=2, sticky="ew", padx=(5, 0))
         self.retry_step_button.grid_remove()
+
+        self._set_status_banner("Preflight not started", severity="info")
+
+    def _set_status_banner(self, text: str, *, severity: str = "info") -> None:
+        color = self.STATUS_COLORS.get(severity, self.STATUS_COLORS["info"])
+        self.status_banner.configure(foreground=color)
+        self.status_banner_var.set(text)
+
+    def _update_elapsed_time(self, elapsed: Optional[float]) -> None:
+        if elapsed is None:
+            self.elapsed_time_var.set("Elapsed: --")
+        else:
+            self.elapsed_time_var.set(f"Elapsed: {elapsed:.2f} seconds")
 
     def _schedule_log_drain(self) -> None:
         if self._drain_running:
@@ -688,7 +746,7 @@ class SandboxLauncherGUI(tk.Tk):
             self._process_pause_decision()
 
         try:
-            status, message = self.worker_queue.get_nowait()
+            status, payload = self.worker_queue.get_nowait()
         except queue.Empty:
             if self._preflight_thread and self._preflight_thread.is_alive():
                 self._schedule_worker_poll()
@@ -697,23 +755,60 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread = None
 
         duration_msg = ""
+        elapsed_value: Optional[float] = None
         if self._preflight_start_time is not None:
-            elapsed = time.time() - self._preflight_start_time
-            duration_msg = f" (completed in {elapsed:.2f} seconds)"
+            elapsed_value = time.time() - self._preflight_start_time
+            duration_msg = f" (completed in {elapsed_value:.2f} seconds)"
         self._preflight_start_time = None
+        self._update_elapsed_time(elapsed_value)
 
         if status == "success":
-            logger.info("Preflight completed successfully%s", duration_msg)
-            self.start_sandbox_button.configure(state=tk.NORMAL)
+            result: Mapping[str, Any] = payload if isinstance(payload, Mapping) else {}
+            healthy = bool(result.get("healthy"))
+            failures = result.get("failures")
+            if isinstance(failures, Iterable) and not isinstance(failures, (str, bytes)):
+                failure_messages = [str(entry) for entry in failures]
+            else:
+                failure_messages = []
+
+            if healthy:
+                logger.info("Preflight completed successfully%s", duration_msg)
+                self._set_status_banner(
+                    "Sandbox health verified. You may start the sandbox.",
+                    severity="success",
+                )
+                self.start_sandbox_button.configure(state=tk.NORMAL)
+            else:
+                logger.warning("Sandbox health degraded%s", duration_msg)
+                for failure in failure_messages:
+                    logger.warning("Sandbox health issue detected: %s", failure)
+
+                self._set_status_banner(
+                    "Sandbox health check reported issues. Review warnings.",
+                    severity="warning",
+                )
+                self.start_sandbox_button.configure(state=tk.DISABLED)
+
+                details = "\n".join(f"• {failure}" for failure in failure_messages)
+                warning_message = "The sandbox health check reported issues."
+                if details:
+                    warning_message += f"\n\n{details}"
+                messagebox.showwarning(
+                    "Sandbox health degraded",
+                    warning_message,
+                    parent=self,
+                )
         elif status == "aborted":
             logger.info("Preflight aborted by user%s", duration_msg)
             self.start_sandbox_button.configure(state=tk.DISABLED)
+            self._set_status_banner("Preflight aborted by user", severity="info")
         else:
-            if message:
-                logger.error("Preflight failed: %s", message)
+            if payload:
+                logger.error("Preflight failed: %s", payload)
             else:
                 logger.error("Preflight failed%s", duration_msg)
             self.start_sandbox_button.configure(state=tk.DISABLED)
+            self._set_status_banner("Preflight failed", severity="error")
 
         self._clear_pause_ui()
         self.pause_event.clear()
@@ -728,6 +823,8 @@ class SandboxLauncherGUI(tk.Tk):
         self.run_preflight_button.configure(state=tk.DISABLED)
         self.start_sandbox_button.configure(state=tk.DISABLED)
         self._preflight_start_time = time.time()
+        self._set_status_banner("Running preflight checks…", severity="info")
+        self._update_elapsed_time(None)
         self.pause_event.clear()
         self.abort_event.clear()
         self._clear_pause_ui()
@@ -750,8 +847,10 @@ class SandboxLauncherGUI(tk.Tk):
             for step in self._get_preflight_steps():
                 self._execute_preflight_step(step)
 
+            summary = _collect_sandbox_health_snapshot()
+
             try:
-                self.worker_queue.put_nowait(("success", None))
+                self.worker_queue.put_nowait(("success", summary))
             except queue.Full:
                 logger.error("Unable to report preflight completion; queue full")
         except _PreflightAborted as aborted:
