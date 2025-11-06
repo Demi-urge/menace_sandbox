@@ -1,7 +1,29 @@
 """GUI for launching Windows sandbox operations."""
 
+from __future__ import annotations
+
+import logging
+import queue
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
+
+
+class TextWidgetQueueHandler(logging.Handler):
+    """Logging handler that places formatted log messages onto a queue."""
+
+    def __init__(self, log_queue: "queue.Queue[tuple[str, str]]") -> None:
+        super().__init__()
+        self.log_queue = log_queue
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+            if not message.endswith("\n"):
+                message = f"{message}\n"
+            self.log_queue.put((record.levelname.lower(), message))
+        except Exception:  # pragma: no cover - rely on logging's default handling
+            self.handleError(record)
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -12,8 +34,16 @@ class SandboxLauncherGUI(tk.Tk):
         self.title("Windows Sandbox Launcher")
         self.geometry("600x400")
 
+        self.log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.logger = logging.getLogger("windows_sandbox_launcher_gui")
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+
         self._build_notebook()
         self._build_controls()
+        self._configure_logging()
+
+        self._process_log_queue()
 
     def _build_notebook(self) -> None:
         self.notebook = ttk.Notebook(self)
@@ -21,7 +51,12 @@ class SandboxLauncherGUI(tk.Tk):
         self.status_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.status_tab, text="Status")
 
-        self.status_text = tk.Text(self.status_tab, wrap="word", state="disabled")
+        self.status_text = tk.Text(
+            self.status_tab,
+            wrap="word",
+            state="disabled",
+            background="#1e1e1e",
+        )
         self.status_text.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(10, 0))
@@ -45,17 +80,45 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self.start_sandbox_button.pack(side="left")
 
+    def _configure_logging(self) -> None:
+        default_font = tkfont.nametofont("TkDefaultFont")
+
+        self.status_text.tag_config("info", foreground="white", font=default_font)
+        self.status_text.tag_config("warning", foreground="yellow", font=default_font)
+
+        error_font = default_font.copy()
+        error_font.configure(weight="bold")
+        self.status_text.tag_config("error", foreground="red", font=error_font)
+        self._error_font = error_font
+
+        queue_handler = TextWidgetQueueHandler(self.log_queue)
+        queue_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        self.logger.addHandler(queue_handler)
+        self._queue_handler = queue_handler
+
     def run_preflight(self) -> None:  # pragma: no cover - placeholder hook
         """Placeholder command that will be implemented in a future iteration."""
-        self._append_status("Preflight checks initiated...\n")
+        self.logger.info("Preflight checks initiated...")
 
     def start_sandbox(self) -> None:  # pragma: no cover - placeholder hook
         """Placeholder command that will be implemented in a future iteration."""
-        self._append_status("Sandbox startup sequence initiated...\n")
+        self.logger.info("Sandbox startup sequence initiated...")
 
-    def _append_status(self, message: str) -> None:
+    def _process_log_queue(self) -> None:
+        while True:
+            try:
+                tag, message = self.log_queue.get_nowait()
+            except queue.Empty:
+                break
+            else:
+                self._append_status(message, tag)
+        self.after(100, self._process_log_queue)
+
+    def _append_status(self, message: str, tag: str = "info") -> None:
         self.status_text.configure(state="normal")
-        self.status_text.insert("end", message)
+        self.status_text.insert("end", message, (tag,))
         self.status_text.configure(state="disabled")
         self.status_text.see("end")
 
