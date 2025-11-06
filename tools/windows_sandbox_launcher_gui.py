@@ -774,10 +774,30 @@ class SandboxLauncherGUI(tk.Tk):
         self._elapsed_var.set(message)
 
     def _on_close(self) -> None:
+        LOGGER.info("event=gui status=closing")
         self._abort_preflight()
         self._terminate_sandbox_process()
-        if self._sandbox_thread and self._sandbox_thread.is_alive():
-            self._sandbox_thread.join(timeout=1)
+
+        preflight_thread = self._preflight_thread
+        if preflight_thread and preflight_thread.is_alive():
+            LOGGER.info("event=gui status=waiting thread=preflight")
+            preflight_thread.join(timeout=5)
+            if preflight_thread.is_alive():
+                LOGGER.warning("event=gui status=thread_still_running thread=preflight")
+            else:
+                self._preflight_thread = None
+
+        sandbox_thread = self._sandbox_thread
+        if sandbox_thread and sandbox_thread.is_alive():
+            LOGGER.info("event=gui status=waiting thread=sandbox")
+            sandbox_thread.join(timeout=5)
+            if sandbox_thread.is_alive():
+                LOGGER.warning("event=gui status=thread_still_running thread=sandbox")
+            else:
+                self._sandbox_thread = None
+
+        self._stop_elapsed_timer()
+
         if self._poll_after_id is not None:
             try:
                 self.after_cancel(self._poll_after_id)
@@ -786,11 +806,25 @@ class SandboxLauncherGUI(tk.Tk):
             finally:
                 self._poll_after_id = None
 
-        LOGGER.removeHandler(self._log_handler)
-        self._log_handler.close()
-        LOGGER.removeHandler(self._file_handler)
-        self._file_handler.close()
-        self.destroy()
+        self._drain_decision_queue()
+        self._drain_log_queue()
+        self._persist_final_state()
+
+        for handler in (self._log_handler, self._file_handler):
+            try:
+                handler.flush()
+            except Exception:  # pragma: no cover - defensive cleanup
+                LOGGER.debug("event=gui status=cleanup action=handler_flush_failed")
+            finally:
+                try:
+                    LOGGER.removeHandler(handler)
+                finally:
+                    handler.close()
+
+        try:
+            self.destroy()
+        except tk.TclError:
+            LOGGER.debug("event=gui status=cleanup action=destroy_failed")
 
     def _poll_log_queue(self) -> None:
         try:
@@ -1156,6 +1190,21 @@ class SandboxLauncherGUI(tk.Tk):
                 DECISION_QUEUE.get_nowait()
             except queue.Empty:
                 break
+
+    def _drain_log_queue(self) -> None:
+        while True:
+            try:
+                LOG_QUEUE.get_nowait()
+            except queue.Empty:
+                break
+
+    def _persist_final_state(self) -> None:
+        """Flush state that should survive the GUI shutdown."""
+
+        try:
+            self._file_handler.flush()
+        except Exception:  # pragma: no cover - defensive cleanup
+            LOGGER.debug("event=gui status=cleanup action=file_handler_flush_failed")
 
     def _on_preflight_finished(
         self,
