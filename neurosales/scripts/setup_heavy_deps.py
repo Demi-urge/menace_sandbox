@@ -146,16 +146,18 @@ def run(download_only: bool = False, logger=None) -> SetupHeavyDepsResult:
     )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Setup heavy dependencies")
-    parser.add_argument(
-        "--download-only",
-        action="store_true",
-        help="Only download embedding weights without installing packages",
-    )
-    args = parser.parse_args()
+def main(download_only: bool | None = None) -> None:
+    if download_only is None:
+        parser = argparse.ArgumentParser(description="Setup heavy dependencies")
+        parser.add_argument(
+            "--download-only",
+            action="store_true",
+            help="Only download embedding weights without installing packages",
+        )
+        args = parser.parse_args()
+        download_only = args.download_only
 
-    run(download_only=args.download_only)
+    run(download_only=download_only)
 
 
 if __name__ == "__main__":

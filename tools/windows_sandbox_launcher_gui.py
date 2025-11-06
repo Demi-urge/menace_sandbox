@@ -496,26 +496,30 @@ class SandboxLauncherGUI(tk.Tk):
                     self._remove_directory(stale_dir)
 
     def _preflight_step_heavy_dependencies(self) -> None:
-        module = importlib.import_module("neurosales.scripts.setup_heavy_deps")
-        runner = getattr(module, "run", None)
-        if callable(runner):
-            runner(download_only=True)
-            return
+        logger = self._gui_logger
+        if logger is not None:
+            logger.info("Preparing heavy dependencies in download-only mode...")
 
-        main = getattr(module, "main", None)
-        if callable(main):
-            original_argv = sys.argv
-            try:
-                sys.argv = [str(Path(module.__file__)), "--download-only"]
-                main()
-            finally:
-                sys.argv = original_argv
-            return
+        try:
+            module = importlib.import_module("neurosales.scripts.setup_heavy_deps")
 
-        python_exe = Path(sys.executable)
-        self._run_command(
-            [python_exe, "-m", "neurosales.scripts.setup_heavy_deps", "--download-only"]
-        )
+            main = getattr(module, "main", None)
+            if callable(main):
+                main(download_only=True)
+            else:
+                runner = getattr(module, "run", None)
+                if not callable(runner):
+                    raise RuntimeError(
+                        "setup_heavy_deps module does not expose a callable 'main' or 'run'"
+                    )
+                runner(download_only=True)
+        except Exception:
+            if logger is not None:
+                logger.exception("Heavy dependency preparation failed")
+            raise
+        else:
+            if logger is not None:
+                logger.info("Heavy dependency preparation finished successfully")
 
     def _preflight_step_warm_caches(self) -> None:
         from vector_service.vectorizer import SharedVectorService
