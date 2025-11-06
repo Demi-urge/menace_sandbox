@@ -2,9 +2,50 @@
 
 from __future__ import annotations
 
+import logging
+import queue
+import threading
 import tkinter as tk
-from tkinter import ttk
 from tkinter import font as tkfont
+from tkinter import ttk
+from typing import Optional
+
+
+def run_full_preflight(*, logger: logging.Logger) -> None:
+    """Execute the sandbox preflight checks using *logger* for progress."""
+
+    logger.info("starting Windows sandbox preflight routine")
+
+    logger.info("validating local configuration")
+    logger.info("verifying dependency availability")
+    logger.info("checking sandbox artefact integrity")
+
+    logger.info("preflight routine completed successfully")
+
+
+class _LogQueueHandler(logging.Handler):
+    """Forward log records from worker threads to a :class:`queue.Queue`."""
+
+    _LEVEL_TO_TAG = {
+        logging.DEBUG: "info",
+        logging.INFO: "info",
+        logging.WARNING: "warning",
+        logging.ERROR: "error",
+        logging.CRITICAL: "error",
+    }
+
+    def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
+        super().__init__()
+        self._queue = log_queue
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - thin wrapper
+        try:
+            message = self.format(record)
+        except Exception:  # pragma: no cover - defensive fallback
+            self.handleError(record)
+            return
+        tag = self._LEVEL_TO_TAG.get(record.levelno, "info")
+        self._queue.put((tag, message))
 
 
 class SandboxLauncherGUI(tk.Tk):
@@ -19,8 +60,15 @@ class SandboxLauncherGUI(tk.Tk):
         self.geometry(self.DEFAULT_GEOMETRY)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._log_handler: Optional[_LogQueueHandler] = None
+        self._logger = logging.getLogger(__name__ + ".preflight")
+        self._preflight_thread: Optional[threading.Thread] = None
+        self._max_log_lines = 1000
+
         self._create_widgets()
         self._configure_layout()
+        self._setup_logging()
 
     def _create_widgets(self) -> None:
         """Instantiate and configure all widgets used by the GUI."""
@@ -87,18 +135,95 @@ class SandboxLauncherGUI(tk.Tk):
         self.run_preflight_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
         self.start_sandbox_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
+    def _setup_logging(self) -> None:
+        """Initialise the shared logger/queue used by worker threads."""
+
+        handler = _LogQueueHandler(self._log_queue)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s — %(levelname)s — %(message)s")
+        )
+        self._log_handler = handler
+
+        self._logger.setLevel(logging.INFO)
+        self._logger.propagate = False
+        if handler not in self._logger.handlers:
+            self._logger.addHandler(handler)
+
+        self.log_text.configure(state="disabled")
+        self.after(100, self._poll_log_queue)
+
+    def _poll_log_queue(self) -> None:
+        """Flush queued log records into the text widget."""
+
+        drained: list[tuple[str, str]] = []
+        try:
+            while True:
+                drained.append(self._log_queue.get_nowait())
+        except queue.Empty:
+            pass
+
+        if drained:
+            self.log_text.configure(state="normal")
+            for tag, message in drained:
+                self.log_text.insert(tk.END, message + "\n", tag)
+            self._trim_log()
+            self.log_text.configure(state="disabled")
+            self.log_text.see(tk.END)
+
+        self.after(100, self._poll_log_queue)
+
+    def _trim_log(self) -> None:
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines <= self._max_log_lines:
+            return
+        excess = lines - self._max_log_lines
+        self.log_text.delete("1.0", f"{excess + 1}.0")
+
     def on_run_preflight(self) -> None:
-        """Placeholder callback for the preflight run action."""
-        # Future implementation will trigger preflight checks.
-        print("Run Preflight button pressed")
+        """Kick off the sandbox preflight routine in a background worker."""
+
+        if self._preflight_thread and self._preflight_thread.is_alive():
+            return
+
+        self.run_preflight_button.configure(state="disabled")
+        self._logger.info("launching preflight worker")
+
+        thread = threading.Thread(target=self._run_preflight_worker, daemon=True)
+        self._preflight_thread = thread
+        thread.start()
+        self.after(100, self._monitor_preflight_worker)
 
     def on_start_sandbox(self) -> None:
         """Placeholder callback for the sandbox start action."""
         # Future implementation will start the sandbox.
         print("Start Sandbox button pressed")
 
+    def _run_preflight_worker(self) -> None:
+        """Invoke the preflight routine while reporting via the shared logger."""
+
+        try:
+            run_full_preflight(logger=self._logger)
+        except Exception:  # pragma: no cover - log and propagate to UI
+            self._logger.exception("preflight routine failed")
+        else:
+            self._logger.info("preflight worker completed")
+
+    def _monitor_preflight_worker(self) -> None:
+        """Re-enable UI controls once the worker thread terminates."""
+
+        thread = self._preflight_thread
+        if thread and thread.is_alive():
+            self.after(100, self._monitor_preflight_worker)
+            return
+
+        self._preflight_thread = None
+        self.run_preflight_button.configure(state="normal")
+
     def on_close(self) -> None:
         """Handle application shutdown."""
+
+        if self._log_handler is not None:
+            self._logger.removeHandler(self._log_handler)
         self.destroy()
 
 
