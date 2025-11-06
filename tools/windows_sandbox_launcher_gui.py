@@ -9,9 +9,10 @@ import sys
 import threading
 import time
 import traceback
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, TextIO
 
 import tkinter as tk
 from tkinter import font as tk_font
@@ -112,6 +113,8 @@ class SandboxLauncherGUI(tk.Tk):
         # Worker thread coordination
         self._worker_queue: "queue.Queue[tuple[str, dict[str, object]]]" = queue.Queue()
         self._preflight_thread: threading.Thread | None = None
+        self._sandbox_thread: threading.Thread | None = None
+        self._sandbox_process: subprocess.Popen[str] | None = None
 
         # Build UI layout
         self._build_layout()
@@ -161,7 +164,10 @@ class SandboxLauncherGUI(tk.Tk):
         self.run_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
         self.launch_button = ttk.Button(
-            button_frame, text="Start Sandbox", state=tk.DISABLED
+            button_frame,
+            text="Start Sandbox",
+            command=self._on_launch_sandbox,
+            state=tk.DISABLED,
         )
         self.launch_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
@@ -294,12 +300,104 @@ class SandboxLauncherGUI(tk.Tk):
 
         self._worker_queue.put(("preflight_complete", payload))
 
+    def _on_launch_sandbox(self) -> None:  # pragma: no cover - UI interaction
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            logger.info("Sandbox launch already running; ignoring duplicate request.")
+            return
+
+        logger.info("Sandbox launch requested. Preparing process execution.")
+        self.run_button.state(["disabled"])
+        self.launch_button.state(["disabled"])
+        self._initialise_file_logging()
+
+        self._sandbox_thread = threading.Thread(
+            target=self._run_sandbox_worker,
+            name="sandbox-launch",
+            daemon=True,
+        )
+        self._sandbox_thread.start()
+
+    def _run_sandbox_worker(self) -> None:
+        command = [sys.executable, "-m", "start_autonomous_sandbox"]
+        logger.info("Starting sandbox process: %s", " ".join(command))
+
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(REPO_ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.exception("Failed to launch sandbox process: %s", exc)
+            self._worker_queue.put(
+                (
+                    "sandbox_complete",
+                    {"returncode": None, "error": str(exc)},
+                )
+            )
+            return
+
+        self._sandbox_process = process
+
+        def _pipe_reader(stream: TextIO | None, severity: str) -> None:
+            if stream is None:
+                return
+
+            with stream:
+                for line in iter(stream.readline, ""):
+                    message = line.rstrip()
+                    if not message:
+                        continue
+
+                    if severity == "stdout":
+                        logger.info("[sandbox stdout] %s", message)
+                    else:
+                        logger.error("[sandbox stderr] %s", message)
+
+        readers: list[threading.Thread] = []
+        for pipe, severity in (
+            (process.stdout, "stdout"),
+            (process.stderr, "stderr"),
+        ):
+            reader = threading.Thread(
+                target=_pipe_reader,
+                args=(pipe, severity),
+                name=f"sandbox-{severity}",
+                daemon=True,
+            )
+            reader.start()
+            readers.append(reader)
+
+        returncode: int | None = None
+        error_message: str | None = None
+        try:
+            returncode = process.wait()
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            error_message = str(exc)
+            logger.exception("Sandbox process wait failed: %s", exc)
+        finally:
+            self._sandbox_process = None
+
+        for reader in readers:
+            reader.join(timeout=1)
+
+        payload: dict[str, object] = {"returncode": returncode}
+        if error_message is not None:
+            payload["error"] = error_message
+
+        self._worker_queue.put(("sandbox_complete", payload))
+
     def _process_worker_events(self) -> None:  # pragma: no cover - UI loop side effect
         try:
             while True:
                 event, payload = self._worker_queue.get_nowait()
                 if event == "preflight_complete":
                     self._handle_preflight_completion(payload)
+                elif event == "sandbox_complete":
+                    self._handle_sandbox_completion(payload)
         except queue.Empty:
             pass
         finally:
@@ -325,6 +423,39 @@ class SandboxLauncherGUI(tk.Tk):
         message = self._format_health_failure_message(payload)
         logger.warning("Sandbox health verification failed: %s", message)
         messagebox.showwarning("Sandbox health issue detected", message)
+
+    def _handle_sandbox_completion(self, payload: dict[str, object]) -> None:
+        self._sandbox_thread = None
+        self._sandbox_process = None
+
+        self.run_button.state(["!disabled"])
+        self.launch_button.state(["!disabled"])
+
+        error = payload.get("error")
+        if error:
+            message = str(error)
+            logger.error("Sandbox execution failed: %s", message)
+            messagebox.showerror("Sandbox launch failed", message)
+            return
+
+        returncode = payload.get("returncode")
+        if returncode is None:
+            logger.error("Sandbox exited with an unknown status.")
+            messagebox.showerror(
+                "Sandbox launch failed",
+                "Sandbox exited with an unknown status.",
+            )
+            return
+
+        if int(returncode) == 0:
+            logger.info("Sandbox exited successfully with code 0.")
+            return
+
+        logger.error("Sandbox exited with code %s.", returncode)
+        messagebox.showerror(
+            "Sandbox exited with errors",
+            f"Sandbox exited with code {returncode}.",
+        )
 
     def _format_health_failure_message(self, payload: dict[str, object]) -> str:
         error = payload.get("error")
