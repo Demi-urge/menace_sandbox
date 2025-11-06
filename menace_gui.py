@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import tkinter as tk
 from tkinter import ttk
 from typing import List
@@ -41,6 +42,8 @@ class MenaceGUI(tk.Tk):
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         self.context_builder = context_builder
+        self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._log_file_path = Path(__file__).with_name("menace_gui_logs.txt")
         try:
             self.context_builder.refresh_db_weights()
         except Exception:  # pragma: no cover - log and disable prompts
@@ -138,8 +141,39 @@ class MenaceGUI(tk.Tk):
     def _init_log(self) -> None:
         self.log_text = tk.Text(self.log_frame, state="disabled")
         self.log_text.pack(expand=True, fill="both", padx=5, pady=5)
-        handler = _TkHandler(self.log_text)
+        self.log_text.tag_configure("info", foreground="white")
+        self.log_text.tag_configure("warning", foreground="yellow")
+        self.log_text.tag_configure(
+            "error", foreground="red", font=("TkDefaultFont", 10, "bold")
+        )
+        handler = _TkHandler(self._log_queue)
         logging.getLogger().addHandler(handler)
+        self.after(100, self._poll_log_queue)
+
+    def _poll_log_queue(self) -> None:
+        """Poll log records from worker threads and update the widget."""
+
+        drained: list[tuple[str, str]] = []
+        try:
+            while True:
+                drained.append(self._log_queue.get_nowait())
+        except queue.Empty:
+            pass
+
+        if drained:
+            self.log_text.configure(state="normal")
+            for tag, message in drained:
+                self.log_text.insert(tk.END, message + "\n", tag)
+            self.log_text.configure(state="disabled")
+            self.log_text.see(tk.END)
+            try:
+                with self._log_file_path.open("a", encoding="utf-8") as fh:
+                    for _, message in drained:
+                        fh.write(message + "\n")
+            except OSError:
+                pass
+
+        self.after(100, self._poll_log_queue)
 
     # Statistics -------------------------------------------------------
     def _init_stats(self) -> None:
@@ -312,17 +346,21 @@ class MenaceGUI(tk.Tk):
 
 
 class _TkHandler(logging.Handler):
-    """Log handler that writes to a Tk Text widget."""
+    """Log handler that writes records into a queue for Tk processing."""
 
-    def __init__(self, widget: tk.Text) -> None:
+    def __init__(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
         super().__init__()
-        self.widget = widget
+        self._queue = log_queue
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        self.widget.configure(state="normal")
-        self.widget.insert(tk.END, msg + "\n")
-        self.widget.configure(state="disabled")
+        if record.levelno >= logging.ERROR:
+            tag = "error"
+        elif record.levelno >= logging.WARNING:
+            tag = "warning"
+        else:
+            tag = "info"
+        self._queue.put((tag, msg))
 
 
 __all__ = ["MenaceGUI"]
