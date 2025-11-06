@@ -8,11 +8,10 @@ import pathlib
 import queue
 import subprocess
 import threading
-import time
 from typing import Any, Callable, Dict, Iterable, Tuple
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 try:  # pragma: no cover - optional runtime dependency
     from dependency_health import DependencyMode
@@ -45,6 +44,13 @@ except Exception:  # pragma: no cover - fallback if module missing
     SharedVectorService = None  # type: ignore
 
 
+DecisionPayload = tuple[str, str, dict[str, Any] | None]
+
+
+PAUSE_EVENT = threading.Event()
+DECISION_QUEUE: "queue.Queue[DecisionPayload]" = queue.Queue()
+
+
 class TextWidgetHandler(logging.Handler):
     """Logging handler that forwards records to a queue for the GUI log display."""
 
@@ -69,12 +75,13 @@ class SandboxLauncherGUI(tk.Tk):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.log_queue: "queue.Queue[Tuple[str, str]]" = queue.Queue()
-        self.decision_queue: "queue.Queue[Tuple[str, str]]" = queue.Queue()
+        self.decision_queue = DECISION_QUEUE
         self.debug_queue: "queue.Queue[str]" = queue.Queue()
-        self.pause_event = threading.Event()
+        self.pause_event = PAUSE_EVENT
         self.abort_event = threading.Event()
-        self.retry_event = threading.Event()
         self._preflight_thread: threading.Thread | None = None
+        self._pending_decision = False
+        self._last_decision: DecisionPayload | None = None
         self._configure_root()
         self._build_widgets()
         self._configure_log_tags()
@@ -157,6 +164,7 @@ class SandboxLauncherGUI(tk.Tk):
             else:
                 self._append_log_message(level, message)
 
+        self._process_decisions()
         self.after(100, self._drain_log_queue)
 
     def _append_log_message(self, level: str, message: str) -> None:
@@ -168,6 +176,61 @@ class SandboxLauncherGUI(tk.Tk):
         self.log_text.configure(state="disabled")
         self.log_text.see("end")
 
+    def _drain_decision_queue(self) -> None:
+        while True:
+            try:
+                self.decision_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _process_decisions(self) -> None:
+        if not self.pause_event.is_set():
+            self._pending_decision = False
+            self._last_decision = None
+            return
+
+        while True:
+            try:
+                payload = self.decision_queue.get_nowait()
+            except queue.Empty:
+                break
+            else:
+                self._last_decision = payload
+
+        if self._pending_decision:
+            return
+
+        payload = self._last_decision
+        if payload is None:
+            return
+
+        title, message, context = payload
+        extra = None
+        if context:
+            extra = context.get("exception") or context.get("details")
+            if extra and extra not in message:
+                message = f"{message}\n\nDetails: {extra}"
+
+        self._pending_decision = True
+        try:
+            should_continue = messagebox.askyesno(title, message, parent=self)
+        finally:
+            self._pending_decision = False
+
+        self._last_decision = None
+
+        if should_continue:
+            self.pause_event.clear()
+            return
+
+        self.abort_event.set()
+        self.pause_event.clear()
+
+        thread = self._preflight_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=0.5)
+        self._on_preflight_complete()
+
     def _start_preflight(self) -> None:
         """Launch the preflight workflow on a background thread."""
 
@@ -175,8 +238,10 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         self.abort_event.clear()
-        self.retry_event.clear()
         self.pause_event.clear()
+        self._pending_decision = False
+        self._last_decision = None
+        self._drain_decision_queue()
 
         self.preflight_button.configure(state="disabled")
 
@@ -204,7 +269,6 @@ class SandboxLauncherGUI(tk.Tk):
                 pause_event=self.pause_event,
                 decision_queue=self.decision_queue,
                 abort_event=self.abort_event,
-                retry_event=self.retry_event,
                 debug_queue=self.debug_queue,
             )
 
@@ -267,17 +331,19 @@ _STEP_DEFINITIONS: list[tuple[str, str, str]] = [
 def run_full_preflight(
     *,
     logger: logging.Logger,
-    pause_event: threading.Event,
-    decision_queue: "queue.Queue[Tuple[str, str]]",
-    abort_event: threading.Event,
-    retry_event: threading.Event,
-    debug_queue: "queue.Queue[str]",
+    pause_event: threading.Event | None = None,
+    decision_queue: "queue.Queue[DecisionPayload]" | None = None,
+    abort_event: threading.Event | None = None,
+    debug_queue: "queue.Queue[str]" | None = None,
     dependency_mode: "DependencyMode" = DependencyMode.STRICT,
 ) -> Dict[str, Any]:
     """Execute the full sandbox preflight sequence."""
 
+    pause_event = pause_event or PAUSE_EVENT
+    decision_queue = decision_queue or DECISION_QUEUE
+    abort_event = abort_event or threading.Event()
+
     pause_event.clear()
-    retry_event.clear()
 
     for func_name, action, failure_title in _STEP_DEFINITIONS:
         if abort_event.is_set():
@@ -287,42 +353,27 @@ def run_full_preflight(
         logger.info("Starting step: %s", action)
         func: Callable[[logging.Logger], None] = globals()[func_name]
 
-        while True:
-            retry_requested = False
-            try:
-                func(logger)
-            except Exception as exc:  # pragma: no cover - exercised via unit tests
-                logger.exception("Step '%s' failed", action)
+        try:
+            func(logger)
+        except Exception as exc:  # pragma: no cover - exercised via unit tests
+            logger.exception("Step '%s' failed", action)
+            if debug_queue is not None:
                 debug_queue.put(str(exc))
-                pause_event.set()
-                decision_queue.put((failure_title, f"{action}\n\n{exc}"))
-
-                while True:
-                    if abort_event.is_set():
-                        logger.warning("Abort requested while paused after '%s'", action)
-                        return {"aborted": True, "healthy": False, "failures": [failure_title]}
-                    if retry_event.is_set():
-                        logger.info("Retrying step: %s", action)
-                        retry_event.clear()
-                        pause_event.clear()
-                        retry_requested = True
-                        break
-                    if not pause_event.is_set():
-                        logger.info("Continuing after failure of step: %s", action)
-                        break
-                    time.sleep(0.1)
-
-                if retry_requested:
-                    continue
-
-                if pause_event.is_set():
-                    # Retry requested, continue loop to re-run the step.
-                    continue
-                break
-            else:
-                pause_event.clear()
-                logger.info("Completed step: %s", action)
-                break
+            payload: DecisionPayload = (
+                failure_title,
+                f"{action}\n\n{exc}",
+                {
+                    "step": func_name,
+                    "action": action,
+                    "exception": repr(exc),
+                },
+            )
+            pause_event.set()
+            decision_queue.put(payload)
+            return {"aborted": False, "healthy": False, "failures": [failure_title]}
+        else:
+            pause_event.clear()
+            logger.info("Completed step: %s", action)
 
     if abort_event.is_set():
         logger.info("Abort requested before health evaluation; stopping")
@@ -338,6 +389,7 @@ def run_full_preflight(
     else:
         logger.warning("Sandbox health check reported issues: %s", failures)
 
+    pause_event.clear()
     return {"healthy": healthy, "failures": failures, "snapshot": snapshot}
 
 
