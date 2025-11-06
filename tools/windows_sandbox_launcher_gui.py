@@ -185,7 +185,14 @@ class SandboxLauncherGUI(tk.Tk):
         log_container.columnconfigure(0, weight=1)
         log_container.rowconfigure(0, weight=1)
 
-        self.log_text = tk.Text(log_container, wrap="word", state=tk.DISABLED)
+        self.log_text = tk.Text(
+            log_container,
+            wrap="word",
+            state=tk.DISABLED,
+            bg="#1e1e1e",
+            fg="#ffffff",
+            insertbackground="#ffffff",
+        )
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(log_container, orient="vertical", command=self.log_text.yview)
@@ -266,9 +273,13 @@ class SandboxLauncherGUI(tk.Tk):
         bold_font = default_font.copy()
         bold_font.configure(weight="bold")
 
-        self.log_text.tag_configure("info", foreground="#1b5e20")
-        self.log_text.tag_configure("warning", foreground="#e65100", font=bold_font)
-        self.log_text.tag_configure("error", foreground="#b71c1c", font=bold_font)
+        self.log_text.tag_configure("info", foreground="#ffffff")
+        self.log_text.tag_configure(
+            "warning", foreground="#ffeb3b", font=bold_font
+        )
+        self.log_text.tag_configure(
+            "error", foreground="#ff1744", font=bold_font
+        )
 
     def _toggle_debug_panel(self) -> None:  # pragma: no cover - UI interaction
         self._set_debug_visible(not self._debug_visible)
