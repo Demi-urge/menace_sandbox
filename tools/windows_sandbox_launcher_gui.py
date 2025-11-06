@@ -929,4 +929,16 @@ __all__ = [
     "TextWidgetHandler",
     "run_full_preflight",
     "_evaluate_health_snapshot",
+    "main",
 ]
+
+
+def main() -> None:
+    """Launch the sandbox GUI application."""
+
+    app = SandboxLauncherGUI()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
