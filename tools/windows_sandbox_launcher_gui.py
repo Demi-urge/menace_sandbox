@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as _dt
 import importlib
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import queue
 import shutil
@@ -17,6 +18,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Sequence
+import traceback
 
 from dependency_health import DependencyMode, resolve_dependency_mode
 
@@ -62,6 +64,13 @@ class SandboxLauncherGUI(tk.Tk):
         self._install_logging()
         self.after(100, self._drain_log_queue)
 
+        self._timer_start: _dt.datetime | None = None
+        self._timer_job: str | None = None
+        self._active_phase: str | None = None
+        self._pending_decision: tuple[str, str] | None = None
+        self._decision_dialog_shown = False
+        self._debug_visible = False
+
     # region setup helpers
     def _configure_icon(self) -> None:
         """Configure the window icon if an ``.ico`` file is available."""
@@ -93,6 +102,33 @@ class SandboxLauncherGUI(tk.Tk):
         if self._queue_handler not in logger.handlers:
             logger.addHandler(self._queue_handler)
 
+        log_path_setting = os.environ.get("SANDBOX_GUI_LOG_PATH")
+        if log_path_setting:
+            log_path = Path(log_path_setting).expanduser()
+        else:
+            log_path = (REPO_ROOT / "logs" / "sandbox_gui.log").expanduser()
+
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            logger.warning("Unable to create sandbox GUI log directory", exc_info=True)
+        else:
+            file_handler = RotatingFileHandler(
+                log_path,
+                maxBytes=1_048_576,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            if file_handler not in logger.handlers:
+                logger.addHandler(file_handler)
+            logger.info("Writing sandbox GUI logs to %s", log_path)
+
     def _configure_weights(self) -> None:
         """Apply grid weights to keep the layout responsive."""
 
@@ -106,24 +142,62 @@ class SandboxLauncherGUI(tk.Tk):
         self._control_frame.columnconfigure(0, weight=1)
         self._control_frame.columnconfigure(1, weight=1)
         self._control_frame.columnconfigure(2, weight=0)
+        self._control_frame.columnconfigure(3, weight=0)
     # endregion setup helpers
 
     # region widget builders
     def _create_status_view(self, parent: ttk.Frame) -> None:
         """Create the status log view with scrollbars."""
 
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        paned = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        paned.grid(row=0, column=0, sticky=tk.NSEW)
+
+        status_container = ttk.Frame(paned)
+        debug_container = ttk.Frame(paned)
+
         self._status_text = tk.Text(
-            parent,
+            status_container,
             state=tk.DISABLED,
             wrap=tk.WORD,
             height=20,
             relief=tk.FLAT,
         )
-        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self._status_text.yview)
-        self._status_text.configure(yscrollcommand=scrollbar.set)
+        status_scrollbar = ttk.Scrollbar(
+            status_container, orient=tk.VERTICAL, command=self._status_text.yview
+        )
+        self._status_text.configure(yscrollcommand=status_scrollbar.set)
 
         self._status_text.grid(row=0, column=0, sticky=tk.NSEW)
-        scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        status_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        status_container.columnconfigure(0, weight=1)
+        status_container.rowconfigure(0, weight=1)
+
+        self._debug_text = tk.Text(
+            debug_container,
+            state=tk.DISABLED,
+            wrap=tk.NONE,
+            height=10,
+            relief=tk.FLAT,
+        )
+        debug_scrollbar = ttk.Scrollbar(
+            debug_container, orient=tk.VERTICAL, command=self._debug_text.yview
+        )
+        self._debug_text.configure(yscrollcommand=debug_scrollbar.set)
+
+        self._debug_text.grid(row=0, column=0, sticky=tk.NSEW)
+        debug_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        debug_container.columnconfigure(0, weight=1)
+        debug_container.rowconfigure(0, weight=1)
+
+        paned.add(status_container, weight=3)
+        paned.add(debug_container, weight=1)
+        paned.paneconfigure(debug_container, hide=True)
+
+        self._log_paned = paned
+        self._debug_container = debug_container
 
         for tag, colour in {
             "info": "#0b5394",
@@ -163,9 +237,34 @@ class SandboxLauncherGUI(tk.Tk):
         retry_step.grid(row=0, column=2, padx=(6, 0), sticky=tk.EW)
         retry_step.grid_remove()
 
+        debug_toggle = ttk.Button(
+            parent,
+            text="Show Debug",
+            style="Sandbox.TButton",
+            command=self._toggle_debug_panel,
+        )
+        debug_toggle.grid(row=0, column=3, padx=(6, 0), sticky=tk.EW)
+
+        self._elapsed_var = tk.StringVar(value="Elapsed: 00:00:00")
+        elapsed_label = ttk.Label(parent, textvariable=self._elapsed_var)
+        elapsed_label.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(6, 0))
+
+        abort_preflight = ttk.Button(
+            parent,
+            text="Abort Preflight",
+            style="Sandbox.TButton",
+            command=self._on_abort_preflight,
+            state=tk.DISABLED,
+        )
+        abort_preflight.grid(row=1, column=3, padx=(6, 0), sticky=tk.EW)
+        abort_preflight.grid_remove()
+
         self._run_preflight_btn = run_preflight
         self._start_sandbox_btn = start_sandbox
         self._retry_step_btn = retry_step
+        self._debug_toggle_btn = debug_toggle
+        self._elapsed_label = elapsed_label
+        self._abort_preflight_btn = abort_preflight
     # endregion widget builders
 
     # region public API
@@ -209,8 +308,14 @@ class SandboxLauncherGUI(tk.Tk):
         self.preflight_abort.clear()
         self.retry_event.clear()
         self.pause_event.clear()
+        self._pending_decision = None
+        self._decision_dialog_shown = False
+        self._abort_preflight_btn.configure(state=tk.NORMAL)
+        self._abort_preflight_btn.grid()
+        self._retry_step_btn.grid_remove()
 
         self.log_message("Running preflight checks...", "info")
+        self._start_timer("preflight")
 
         self.preflight_thread = threading.Thread(
             target=self._execute_preflight,
@@ -226,6 +331,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._run_preflight_btn.configure(state=tk.DISABLED)
         self._start_sandbox_btn.configure(state=tk.DISABLED)
         self.log_message("Starting sandbox...", "info")
+        self._start_timer("sandbox")
 
         self.sandbox_thread = threading.Thread(
             target=self._launch_sandbox,
@@ -286,6 +392,7 @@ class SandboxLauncherGUI(tk.Tk):
         self.sandbox_thread = None
         self._run_preflight_btn.configure(state=tk.NORMAL)
         self._start_sandbox_btn.configure(state=tk.DISABLED)
+        self._stop_timer()
 
     def _execute_preflight(self) -> None:
         """Run the Phase 5 preflight orchestration on a worker thread."""
@@ -362,6 +469,9 @@ class SandboxLauncherGUI(tk.Tk):
             self._start_sandbox_btn.configure(state=tk.NORMAL)
         else:
             self._start_sandbox_btn.configure(state=tk.DISABLED)
+        self._abort_preflight_btn.configure(state=tk.DISABLED)
+        self._abort_preflight_btn.grid_remove()
+        self._stop_timer()
 
     def _drain_log_queue(self) -> None:
         """Drain queued log records and append them to the status view."""
@@ -375,32 +485,10 @@ class SandboxLauncherGUI(tk.Tk):
             self.log_message(message, tag)
             drained = True
 
-        if self.pause_event.is_set():
-            self._retry_step_btn.configure(state=tk.NORMAL)
-            self._retry_step_btn.grid()
-            try:
-                title, message = self.decision_queue.get_nowait()
-            except queue.Empty:
-                pass
-            else:
-                should_retry = messagebox.askyesno(title, message)
-                if should_retry:
-                    self.pause_event.clear()
-                    self.log_queue.put(("Continuing…", "info"))
-                    self.retry_event.set()
-                    self._retry_step_btn.configure(state=tk.DISABLED)
-                    self._retry_step_btn.grid_remove()
-                else:
-                    self.preflight_abort.set()
-                    self.log_queue.put(("Preflight aborted by user.", "warning"))
-                    self._retry_step_btn.configure(state=tk.DISABLED)
-                    self._retry_step_btn.grid_remove()
-                    self.after(0, self._on_preflight_done, False)
-        else:
-            self._retry_step_btn.configure(state=tk.DISABLED)
-            self._retry_step_btn.grid_remove()
+        debug_drained = self._drain_debug_queue()
+        prompt_activity = self._process_decision_prompts()
 
-        delay = 100 if drained else 250
+        delay = 100 if drained or debug_drained or prompt_activity else 250
         self.after(delay, self._drain_log_queue)
 
     def _on_retry_step(self) -> None:  # pragma: no cover - GUI callback
@@ -409,9 +497,138 @@ class SandboxLauncherGUI(tk.Tk):
 
         self.pause_event.clear()
         self.retry_event.set()
-        self.log_queue.put(("Continuing…", "info"))
+        self.log_queue.put(("Retrying step…", "info"))
         self._retry_step_btn.configure(state=tk.DISABLED)
         self._retry_step_btn.grid_remove()
+        self._pending_decision = None
+        self._decision_dialog_shown = False
+
+    def _on_abort_preflight(self) -> None:  # pragma: no cover - GUI callback
+        if not (self.preflight_thread and self.preflight_thread.is_alive()):
+            return
+
+        self.preflight_abort.set()
+        self.pause_event.clear()
+        self.retry_event.clear()
+        self.log_queue.put(("Preflight abort requested. Waiting for cleanup…", "warning"))
+        self._abort_preflight_btn.configure(state=tk.DISABLED)
+        self._retry_step_btn.configure(state=tk.DISABLED)
+        self._retry_step_btn.grid_remove()
+        self._pending_decision = None
+        self._decision_dialog_shown = False
+
+    def _process_decision_prompts(self) -> bool:
+        """Handle decision prompts originating from the worker thread."""
+
+        activity = False
+        if self.pause_event.is_set():
+            self._retry_step_btn.configure(state=tk.NORMAL)
+            self._retry_step_btn.grid()
+            if self._pending_decision is None:
+                try:
+                    self._pending_decision = self.decision_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                else:
+                    self._decision_dialog_shown = False
+            if self._pending_decision and not self._decision_dialog_shown:
+                title, message = self._pending_decision
+                messagebox.showerror(title, message)
+                self._append_debug_message(message)
+                self._decision_dialog_shown = True
+                activity = True
+        else:
+            if self._pending_decision is not None:
+                self._pending_decision = None
+                self._decision_dialog_shown = False
+                activity = True
+            self._retry_step_btn.configure(state=tk.DISABLED)
+            self._retry_step_btn.grid_remove()
+        return activity
+
+    def _drain_debug_queue(self) -> bool:
+        """Drain debug log records destined for the debug text widget."""
+
+        drained = False
+        while True:
+            try:
+                message = self.debug_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._append_debug_message(message)
+            drained = True
+        return drained
+
+    def _append_debug_message(self, message: str) -> None:
+        """Append *message* to the debug text widget."""
+
+        timestamp = _dt.datetime.now().strftime("%H:%M:%S")
+        self._debug_text.configure(state=tk.NORMAL)
+        self._debug_text.insert(tk.END, f"[{timestamp}] {message.strip()}\n")
+        self._debug_text.see(tk.END)
+        self._debug_text.configure(state=tk.DISABLED)
+
+    def _toggle_debug_panel(self) -> None:  # pragma: no cover - GUI callback
+        self._debug_visible = not self._debug_visible
+        if self._debug_visible:
+            self._log_paned.paneconfigure(self._debug_container, hide=False)
+            self._debug_toggle_btn.configure(text="Hide Debug")
+        else:
+            self._log_paned.paneconfigure(self._debug_container, hide=True)
+            self._debug_toggle_btn.configure(text="Show Debug")
+
+    def _start_timer(self, phase: str) -> None:
+        """Start (or restart) the elapsed time timer for *phase*."""
+
+        if self._timer_job is not None:
+            self.after_cancel(self._timer_job)
+            self._timer_job = None
+
+        self._active_phase = phase
+        self._timer_start = _dt.datetime.now()
+        self._set_elapsed_label(0, phase)
+        self._timer_job = self.after(1000, self._update_elapsed_label)
+
+    def _stop_timer(self, *, reset: bool = False) -> None:
+        """Stop the elapsed timer, optionally resetting the label."""
+
+        if self._timer_job is not None:
+            self.after_cancel(self._timer_job)
+            self._timer_job = None
+
+        phase = self._active_phase
+        if self._timer_start is not None and not reset and phase is not None:
+            total_seconds = int((_dt.datetime.now() - self._timer_start).total_seconds())
+            self._set_elapsed_label(total_seconds, phase)
+        elif reset:
+            self._set_elapsed_label(0, None)
+
+        self._timer_start = None
+        self._active_phase = None
+
+    def _update_elapsed_label(self) -> None:
+        """Update the elapsed time label and reschedule the callback."""
+
+        if self._timer_start is None or self._active_phase is None:
+            self._timer_job = None
+            return
+
+        total_seconds = int((_dt.datetime.now() - self._timer_start).total_seconds())
+        self._set_elapsed_label(total_seconds, self._active_phase)
+        self._timer_job = self.after(1000, self._update_elapsed_label)
+
+    def _set_elapsed_label(self, total_seconds: int, phase: str | None) -> None:
+        """Set the elapsed label text for the provided *phase*."""
+
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        formatted = f"{hours:02}:{minutes:02}:{seconds:02}"
+        prefix_map = {
+            "preflight": "Preflight Elapsed",
+            "sandbox": "Sandbox Elapsed",
+        }
+        prefix = prefix_map.get(phase, "Elapsed")
+        self._elapsed_var.set(f"{prefix}: {formatted}")
     # endregion callbacks
 
 
@@ -464,7 +681,7 @@ class _PreflightWorker:
                 runner = getattr(sys.modules[__name__], step.runner_name)
             except AttributeError as exc:  # pragma: no cover - defensive guard
                 self._logger.exception("Runner %s is not available", step.runner_name)
-                self._debug_queue.put(str(exc))
+                self._debug_queue.put(traceback.format_exc())
                 break
             if not callable(runner):  # pragma: no cover - defensive guard
                 self._logger.error("Runner %s is not callable", step.runner_name)
@@ -528,7 +745,7 @@ class _PreflightWorker:
                 action()
             except Exception as exc:  # pragma: no cover - logged via GUI
                 self._logger.exception("%s failed", label)
-                self._debug_queue.put(str(exc))
+                self._debug_queue.put(traceback.format_exc())
                 self._pause_event.set()
                 self._decision_queue.put(
                     (
