@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from typing import Any, Callable, Dict, Iterable, Sequence, Tuple
+from typing import IO, Any, Callable, Dict, Iterable, Sequence, Tuple
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -86,6 +86,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_completion_handled = False
         self._pending_decision = False
         self._last_decision: DecisionPayload | None = None
+        self._sandbox_thread: threading.Thread | None = None
+        self._sandbox_process: subprocess.Popen[str] | None = None
+        self._sandbox_cancel_event = threading.Event()
         self._configure_root()
         self._build_widgets()
         self._configure_log_tags()
@@ -136,14 +139,23 @@ class SandboxLauncherGUI(tk.Tk):
 
         controls = ttk.Frame(container)
         controls.grid(row=1, column=0, pady=(10, 0), sticky="ew")
-        controls.columnconfigure((0, 1), weight=1)
+        controls.columnconfigure((0, 1, 2), weight=1)
 
         self.preflight_button = ttk.Button(controls, text="Run Preflight")
         self.preflight_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
         self.preflight_button.configure(command=self._start_preflight)
 
         self.start_button = ttk.Button(controls, text="Start Sandbox", state="disabled")
-        self.start_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        self.start_button.grid(row=0, column=1, padx=5, sticky="ew")
+        self.start_button.configure(command=self._start_sandbox)
+
+        self.cancel_button = ttk.Button(
+            controls,
+            text="Cancel Sandbox",
+            state="disabled",
+            command=self._cancel_sandbox,
+        )
+        self.cancel_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
 
     def _configure_log_tags(self) -> None:
         """Configure styled tags used for log rendering."""
@@ -151,6 +163,8 @@ class SandboxLauncherGUI(tk.Tk):
         self.log_text.tag_configure("info", foreground="white")
         self.log_text.tag_configure("warning", foreground="yellow")
         self.log_text.tag_configure("error", foreground="red", font=("TkDefaultFont", 9, "bold"))
+        self.log_text.tag_configure("stdout", foreground="#8be9fd")
+        self.log_text.tag_configure("stderr", foreground="#ff79c6")
 
     def _schedule_log_drain(self) -> None:
         """Schedule periodic draining of the log queue on the Tkinter thread."""
@@ -174,7 +188,7 @@ class SandboxLauncherGUI(tk.Tk):
     def _append_log_message(self, level: str, message: str) -> None:
         """Append a formatted log message to the text widget with auto-scroll."""
 
-        tag = level if level in {"info", "warning", "error"} else "info"
+        tag = level if level in {"info", "warning", "error", "stdout", "stderr"} else "info"
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{message}\n", (tag,))
         self.log_text.configure(state="disabled")
@@ -262,6 +276,130 @@ class SandboxLauncherGUI(tk.Tk):
         )
         self._preflight_thread.start()
 
+    def _start_sandbox(self) -> None:
+        """Launch the autonomous sandbox as a background subprocess."""
+
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            return
+
+        self._sandbox_cancel_event.clear()
+
+        if self.preflight_button.winfo_exists():
+            self.preflight_button.configure(state="disabled")
+        if self.start_button.winfo_exists():
+            self.start_button.configure(state="disabled")
+        if self.cancel_button.winfo_exists():
+            self.cancel_button.configure(state="normal")
+
+        self.log_queue.put_nowait(("info", "Launching autonomous sandbox..."))
+
+        self._sandbox_thread = threading.Thread(
+            target=self._run_sandbox_process,
+            name="sandbox-runner",
+            daemon=True,
+        )
+        self._sandbox_thread.start()
+
+    def _cancel_sandbox(self) -> None:
+        """Request termination of the running sandbox process."""
+
+        if self._sandbox_process is None:
+            return
+
+        if self._sandbox_cancel_event.is_set():
+            return
+
+        self._sandbox_cancel_event.set()
+        self.log_queue.put_nowait(("warning", "Cancellation requested; stopping sandbox."))
+
+        process = self._sandbox_process
+        if process.poll() is not None:
+            return
+
+        try:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.log_queue.put_nowait(("error", f"Failed to cancel sandbox cleanly: {exc}"))
+
+    def _run_sandbox_process(self) -> None:
+        """Execute the sandbox launcher and report output to the GUI."""
+
+        command = [
+            sys.executable,
+            "-c",
+            "import start_autonomous_sandbox as sas; sas.main([])",
+        ]
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.log_queue.put_nowait(("error", f"Failed to launch sandbox: {exc}"))
+            self.after(0, lambda: self._on_sandbox_complete(None))
+            return
+
+        self._sandbox_process = process
+
+        streams: list[tuple[IO[str], str]] = []
+        if process.stdout is not None:
+            streams.append((process.stdout, "stdout"))
+        if process.stderr is not None:
+            streams.append((process.stderr, "stderr"))
+
+        stream_threads = [
+            threading.Thread(
+                target=self._stream_output,
+                args=(pipe, tag),
+                name=f"sandbox-{tag}",
+                daemon=True,
+            )
+            for pipe, tag in streams
+        ]
+
+        for thread in stream_threads:
+            thread.start()
+
+        exit_code: int | None = None
+        try:
+            exit_code = process.wait()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.log_queue.put_nowait(("error", f"Sandbox process wait failed: {exc}"))
+        finally:
+            for pipe, _ in streams:
+                try:
+                    pipe.close()
+                except Exception:  # pragma: no cover - defensive guard
+                    pass
+
+        for thread in stream_threads:
+            thread.join(timeout=0.1)
+
+        self.after(0, lambda ec=exit_code: self._on_sandbox_complete(ec))
+
+    def _stream_output(self, pipe: IO[str], tag: str) -> None:
+        """Forward process output to the GUI log queue with the given *tag*."""
+
+        try:
+            for line in iter(pipe.readline, ""):
+                text = line.rstrip()
+                if not text:
+                    continue
+                self.log_queue.put_nowait((tag, f"[{tag}] {text}"))
+        finally:
+            try:
+                pipe.close()
+            except Exception:  # pragma: no cover - defensive guard
+                pass
+
     def _run_preflight_worker(self) -> None:
         """Execute the preflight controller and report progress to the GUI."""
 
@@ -320,6 +458,9 @@ class SandboxLauncherGUI(tk.Tk):
         if self.preflight_button.winfo_exists():
             self.preflight_button.configure(state="normal")
         self._preflight_thread = None
+
+        if self._sandbox_thread and not self._sandbox_thread.is_alive():
+            self._sandbox_thread = None
 
         if not self.winfo_exists():
             return
@@ -383,7 +524,45 @@ class SandboxLauncherGUI(tk.Tk):
             self.abort_event.set()
             self.pause_event.clear()
             thread.join(timeout=1)
+        if self._sandbox_process and self._sandbox_process.poll() is None:
+            try:
+                self._sandbox_process.terminate()
+            except Exception:  # pragma: no cover - defensive guard
+                pass
+        if self._sandbox_thread and self._sandbox_thread.is_alive():
+            self._sandbox_thread.join(timeout=1)
         super().destroy()
+
+    def _on_sandbox_complete(self, exit_code: int | None) -> None:
+        """Handle completion of the sandbox process and restore controls."""
+
+        was_cancelled = self._sandbox_cancel_event.is_set()
+
+        self._sandbox_thread = None
+        self._sandbox_process = None
+        self._sandbox_cancel_event.clear()
+
+        if self.cancel_button.winfo_exists():
+            self.cancel_button.configure(state="disabled")
+        if self.preflight_button.winfo_exists():
+            self.preflight_button.configure(state="normal")
+        if self.start_button.winfo_exists():
+            self.start_button.configure(state="normal")
+
+        if exit_code is None:
+            level = "error"
+            message = "Sandbox process ended unexpectedly."
+        elif was_cancelled:
+            level = "warning"
+            message = "Sandbox execution cancelled by operator."
+        elif exit_code == 0:
+            level = "info"
+            message = "Sandbox process exited successfully (code 0)."
+        else:
+            level = "error"
+            message = f"Sandbox process exited with code {exit_code}."
+
+        self.log_queue.put_nowait((level, message))
 
 
 _STEP_DEFINITIONS: list[tuple[str, str, str]] = [
