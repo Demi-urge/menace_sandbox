@@ -11,12 +11,14 @@ import threading
 import time
 import sys
 from pathlib import Path
-from typing import Callable, Iterable, Sequence, Tuple
+from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple
 
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
+
+from sandbox_runner import bootstrap as sandbox_bootstrap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,6 +41,7 @@ class SandboxLauncherGUI(tk.Tk):
         self._abort_event = threading.Event()
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._preflight_steps: list[tuple[str, Callable[[], None]]] = []
+        self._last_health_snapshot: dict[str, Any] | None = None
 
         self.run_preflight_button.configure(command=self._on_run_preflight)
 
@@ -398,16 +401,112 @@ class SandboxLauncherGUI(tk.Tk):
     ) -> None:
         self.enable_run_preflight()
 
+        health_ok, health_issues = self._run_post_preflight_health_check()
+
         if success:
             self.append_log("Preflight completed successfully.")
+        else:
+            for title, exc in errors:
+                self.append_log(f"Step '{title}' encountered an issue: {exc}")
+
+            self.append_log("Preflight completed with issues.")
+            self.disable_start_sandbox()
+
+        if success and health_ok:
+            self.append_log("Sandbox health check passed.")
             self.enable_start_sandbox()
             return
 
-        for title, exc in errors:
-            self.append_log(f"Step '{title}' encountered an issue: {exc}")
+        if success:
+            self.append_log("Sandbox health check reported issues.")
+            for issue in health_issues:
+                self.append_log(f"- {issue}")
 
-        self.append_log("Preflight completed with issues.")
+            issues_text = "\n".join(f"- {issue}" for issue in health_issues) or "No additional details available."
+            messagebox.showwarning(
+                "Sandbox health issues",
+                "Sandbox health check reported issues:\n\n" + issues_text,
+            )
+
+        if not success:
+            return
+
         self.disable_start_sandbox()
+
+    def _run_post_preflight_health_check(self) -> tuple[bool, list[str]]:
+        """Execute the sandbox health probe and store the latest snapshot."""
+
+        health_issues: list[str] = []
+        try:
+            snapshot = sandbox_bootstrap.sandbox_health()
+        except Exception as exc:  # noqa: BLE001 - provide direct feedback
+            snapshot = {"error": str(exc)}
+            health_issues.append(f"Health check failed: {exc}")
+            healthy = False
+        else:
+            healthy, health_issues = self._evaluate_health_snapshot(snapshot)
+
+        self._last_health_snapshot = snapshot
+        return healthy, health_issues
+
+    def _evaluate_health_snapshot(
+        self, health: Mapping[str, Any]
+    ) -> tuple[bool, list[str]]:
+        """Inspect *health* and return a success flag alongside issues."""
+
+        issues: list[str] = []
+
+        if not health.get("self_improvement_thread_alive", True):
+            issues.append("Self-improvement thread is not running.")
+
+        if not health.get("databases_accessible", True):
+            db_errors = health.get("database_errors")
+            if isinstance(db_errors, Mapping) and db_errors:
+                details = ", ".join(
+                    f"{name}: {error}" for name, error in sorted(db_errors.items())
+                )
+                issues.append(f"Databases inaccessible ({details}).")
+            else:
+                issues.append("Databases inaccessible.")
+
+        if not health.get("stub_generator_initialized", True):
+            issues.append("Stub generator is not initialised.")
+
+        dependency_info = health.get("dependency_health")
+        if isinstance(dependency_info, Mapping):
+            missing_entries = [
+                item
+                for item in dependency_info.get("missing", [])
+                if isinstance(item, Mapping)
+            ]
+            if missing_entries:
+                required = [
+                    item for item in missing_entries if not item.get("optional", False)
+                ]
+                optional = [
+                    item for item in missing_entries if item.get("optional", False)
+                ]
+                if required:
+                    issues.append(
+                        "Missing required dependencies: "
+                        + ", ".join(
+                            sorted(str(item.get("name", "unknown")) for item in required)
+                        )
+                    )
+                if optional:
+                    issues.append(
+                        "Missing optional dependencies: "
+                        + ", ".join(
+                            sorted(str(item.get("name", "unknown")) for item in optional)
+                        )
+                    )
+
+        return not issues, issues
+
+    def get_last_health_snapshot(self) -> dict[str, Any] | None:
+        """Return the most recent sandbox health data."""
+
+        return self._last_health_snapshot
 
     def _process_decisions(self) -> None:
         if self._pause_event.is_set():
