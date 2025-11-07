@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -9,7 +10,61 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Sequence
 import importlib
 
-from vector_service import EmbeddableDBMixin
+logger = logging.getLogger(__name__)
+
+try:
+    from menace_sandbox.embeddable_db_mixin import (
+        EmbeddableDBMixin as _DirectEmbeddableDBMixin,
+    )
+except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+    try:
+        from embeddable_db_mixin import (
+            EmbeddableDBMixin as _DirectEmbeddableDBMixin,
+        )
+    except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+        _DirectEmbeddableDBMixin = None
+
+try:  # pragma: no cover - prefer vector_service when fully available
+    from vector_service import EmbeddableDBMixin as _VectorEmbeddableDBMixin
+except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
+    _VectorEmbeddableDBMixin = None
+
+if _DirectEmbeddableDBMixin is not None and (
+    _VectorEmbeddableDBMixin is None
+    or getattr(_VectorEmbeddableDBMixin, "__init__", object.__init__) is object.__init__
+):
+    if _VectorEmbeddableDBMixin is not None:
+        logger.debug(
+            "vector_service provided stub EmbeddableDBMixin; using direct import instead"
+        )
+    EmbeddableDBMixin = _DirectEmbeddableDBMixin
+elif _VectorEmbeddableDBMixin is not None:
+    EmbeddableDBMixin = _VectorEmbeddableDBMixin
+else:
+    logger.debug("vector_service module unavailable; using stub EmbeddableDBMixin")
+
+    class _StubEmbeddableDBMixin:  # type: ignore
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._embeddings: dict[str, dict[str, Any]] = {}
+
+        def add_embedding(
+            self,
+            record_id: Any,
+            record: Any,
+            kind: str,
+            *,
+            source_id: str | None = None,
+        ) -> None:
+            self._embeddings[str(record_id)] = {
+                "record": record,
+                "kind": kind,
+                "source_id": source_id or "",
+            }
+
+        def vector(self, record: Any) -> List[float] | None:  # pragma: no cover - stub
+            return None
+
+    EmbeddableDBMixin = _StubEmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause
 
