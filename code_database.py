@@ -397,6 +397,7 @@ class CodeDB(EmbeddableDBMixin):
                 index_path=index_path,
                 metadata_path=meta_path,
                 backend="annoy",
+                event_bus=event_bus,
             )
         except TypeError as exc:
             # ``object.__init__`` does not accept keyword arguments which can
