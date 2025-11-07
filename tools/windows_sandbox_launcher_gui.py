@@ -1234,17 +1234,6 @@ def run_full_preflight(
             debug_queue=debug_queue,
         )
 
-        if abort_event.is_set():
-            failure_info = {"failed_step": step.name, "failed_index": index}
-            return {**failure_info, "aborted": True}
-
-        if ran:
-            index += 1
-            if abort_event.is_set():
-                failure_info = {"failed_step": step.name, "failed_index": index - 1}
-                return {**failure_info, "aborted": True}
-            continue
-
         failure_info: dict[str, object] = {
             "failed_step": step.name,
             "failed_index": index,
@@ -1267,6 +1256,16 @@ def run_full_preflight(
                 "Operator cleared pause after step '%s'. Continuing preflight.", step.name
             )
             index += 1
+            continue
+
+        if ran:
+            index += 1
+            if abort_event.is_set():
+                return {
+                    "failed_step": step.name,
+                    "failed_index": index - 1,
+                    "aborted": True,
+                }
             continue
 
         return {**failure_info, "aborted": abort_event.is_set()}
