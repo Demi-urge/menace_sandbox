@@ -410,6 +410,9 @@ class SandboxLauncherGUI(tk.Tk):
                     updated = True
 
                 self.log_text.insert(tk.END, message, level)
+
+                if level in {"warning", "error"}:
+                    self._handle_log_pause(level=level, message=message)
         except queue.Empty:
             pass
         finally:
@@ -419,6 +422,22 @@ class SandboxLauncherGUI(tk.Tk):
             self._drain_running = False
             self._schedule_log_drain()
         self._handle_pause_prompt()
+
+    def _handle_log_pause(self, *, level: str, message: str) -> None:
+        pause_event = self.__dict__.get("pause_event")
+        decision_queue = self.__dict__.get("decision_queue")
+
+        if pause_event is None or decision_queue is None:
+            return
+
+        if pause_event.is_set():
+            return
+
+        pause_event.set()
+
+        title = "Warning log detected" if level == "warning" else "Error log detected"
+        context = {"step": "log-monitor", "exception": message, "level": level}
+        decision_queue.put((title, message, context))
 
     def _clear_pause_dialog_handles(self) -> None:
         self._pause_dialog_window = None
@@ -598,7 +617,7 @@ class SandboxLauncherGUI(tk.Tk):
             if abort_event is not None:
                 abort_event.clear()
             pause_event.clear()
-            retry_button = getattr(self, "retry_button", None)
+            retry_button = self.__dict__.get("retry_button")
             if retry_button is not None:
                 with contextlib.suppress(Exception):
                     retry_button.state(["disabled"])
