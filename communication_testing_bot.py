@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, List, Tuple, Literal
+from typing import Callable, Iterable, List, Tuple, Literal, TYPE_CHECKING, cast
 import asyncio
 import tempfile
 
@@ -23,12 +23,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from .bot_testing_bot import BotTestingBot
 from .mirror_bot import MirrorBot
 from .comm_testing_config import SETTINGS
 from .logging_utils import get_logger
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only import
+    from .bot_testing_bot import BotTestingBot
 
 
 def _default_db_path() -> Path:
@@ -221,9 +224,18 @@ class CommTestDB:
 class CommunicationTestingBot:
     """Bot that runs communication tests and mirror benchmarks."""
 
-    def __init__(self, db: CommTestDB | None = None) -> None:
+    def __init__(
+        self,
+        db: CommTestDB | None = None,
+        tester: "BotTestingBot | None" = None,
+    ) -> None:
         self.db = db or CommTestDB()
-        self.tester = BotTestingBot()
+        if tester is None:
+            from .bot_testing_bot import BotTestingBot as _BotTestingBot
+
+            tester = _BotTestingBot()
+        assert tester is not None
+        self.tester = cast("BotTestingBot", tester)
         self.logger = get_logger("CommTester")
 
     def functional_tests(self, modules: Iterable[str]) -> List[CommTestResult]:
