@@ -13,10 +13,22 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable
 
-from . import config_discovery as cd
-from .secrets_manager import SecretsManager
-from .vault_secret_provider import VaultSecretProvider
-from .dynamic_path_router import resolve_path
+if __package__ in {None, ""}:
+    # Support running as a standalone script by ensuring the package root is importable.
+    package_root = Path(__file__).resolve().parent
+    package_parent = str(package_root.parent)
+    if package_parent not in sys.path:
+        sys.path.insert(0, package_parent)
+
+    import menace_sandbox.config_discovery as cd
+    from menace_sandbox.secrets_manager import SecretsManager
+    from menace_sandbox.vault_secret_provider import VaultSecretProvider
+    from menace_sandbox.dynamic_path_router import resolve_path
+else:
+    from . import config_discovery as cd
+    from .secrets_manager import SecretsManager
+    from .vault_secret_provider import VaultSecretProvider
+    from .dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
