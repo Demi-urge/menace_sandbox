@@ -140,10 +140,14 @@ class SandboxLauncherGUI(tk.Tk):
         self._latest_pause_context_trace: str | None = None
         self._pause_user_decision: str | None = None
         self._resume_after_pause = False
+        self._abort_after_pause = False
         self._debug_visible = False
         self._preflight_start_time: float | None = None
         self._elapsed_job: str | None = None
         self._pause_dialog_presented = False
+        self._pause_dialog_window: tk.Toplevel | None = None
+        self._pause_dialog_message_var: tk.StringVar | None = None
+        self._pause_dialog_step_name: str | None = None
         self.status_var = tk.StringVar(value="Preflight idle")
 
         configured_path = log_file_path or os.environ.get(LOG_FILE_ENV) or LOG_FILE_PATH
@@ -416,6 +420,98 @@ class SandboxLauncherGUI(tk.Tk):
             self._schedule_log_drain()
         self._handle_pause_prompt()
 
+    def _clear_pause_dialog_handles(self) -> None:
+        self._pause_dialog_window = None
+        self._pause_dialog_message_var = None
+        self._pause_dialog_step_name = None
+
+    def _update_pause_dialog(
+        self, *, title: str, message: str, step_name: str | None
+    ) -> None:
+        window = self._pause_dialog_window
+        message_var = self._pause_dialog_message_var
+        if window is None or message_var is None:
+            return
+
+        with contextlib.suppress(Exception):
+            if title:
+                window.title(title)
+        message_var.set(message)
+        self._pause_dialog_step_name = step_name
+
+    def _prompt_pause_decision(
+        self, *, title: str, message: str, step_name: str | None
+    ) -> str:
+        """Present a modal pause dialog and return the operator decision."""
+
+        decision_var = tk.StringVar(value="abort")
+        window = tk.Toplevel(self)
+        window.title(title or "Preflight paused")
+        window.transient(self)
+        window.resizable(False, False)
+
+        container = ttk.Frame(window, padding=20)
+        container.pack(fill="both", expand=True)
+
+        message_var = tk.StringVar(value=message)
+        self._pause_dialog_window = window
+        self._pause_dialog_message_var = message_var
+        self._pause_dialog_step_name = step_name
+
+        label = ttk.Label(
+            container,
+            textvariable=message_var,
+            wraplength=480,
+            justify=tk.LEFT,
+            anchor="w",
+        )
+        label.pack(fill="both", expand=True)
+
+        button_frame = ttk.Frame(container)
+        button_frame.pack(fill="x", expand=False, pady=(15, 0))
+
+        def _record_decision(decision: str) -> None:
+            decision_var.set(decision)
+            try:
+                window.grab_release()
+            except tk.TclError:
+                pass
+            window.destroy()
+
+        abort_button = ttk.Button(
+            button_frame,
+            text="Abort",
+            command=lambda: _record_decision("abort"),
+        )
+        abort_button.pack(side=tk.RIGHT, padx=(5, 0))
+
+        continue_button = ttk.Button(
+            button_frame,
+            text="Continue",
+            command=lambda: _record_decision("continue"),
+        )
+        continue_button.pack(side=tk.RIGHT)
+
+        window.protocol("WM_DELETE_WINDOW", lambda: _record_decision("abort"))
+        window.bind("<Escape>", lambda *_: _record_decision("abort"))
+        window.bind("<Return>", lambda *_: _record_decision("continue"))
+
+        window.lift()
+        with contextlib.suppress(tk.TclError):
+            window.focus_force()
+            continue_button.focus_set()
+            window.grab_set()
+
+        try:
+            window.wait_window()
+        finally:
+            with contextlib.suppress(tk.TclError):
+                window.grab_release()
+            self._clear_pause_dialog_handles()
+
+        decision = decision_var.get() or "abort"
+        return decision
+
     def _format_pause_context_trace(
         self,
         *,
@@ -457,17 +553,6 @@ class SandboxLauncherGUI(tk.Tk):
         if not prompts:
             return
 
-        # When a pause dialog is already visible, ignore additional prompts but retain
-        # the most recent context for debugging purposes.
-        if self._pause_dialog_presented:
-            for title, message, context in prompts:
-                if isinstance(context, dict):
-                    self._latest_pause_context = context
-                    self._latest_pause_context_trace = self._format_pause_context_trace(
-                        title=title, message=message, context=context
-                    )
-            return
-
         title, message, context = prompts[-1]
 
         exception_text = ""
@@ -486,15 +571,30 @@ class SandboxLauncherGUI(tk.Tk):
         prompt_parts.append("Do you want to continue with the next step?")
         prompt = "\n\n".join(part for part in prompt_parts if part)
 
-        decision = messagebox.askyesno(title=title, message=prompt)
-        self._pause_user_decision = "continue" if decision else "abort"
-        self._pause_dialog_presented = True
+        if self._pause_dialog_presented:
+            self._update_pause_dialog(title=title, message=prompt, step_name=step_name)
+            return
 
-        if decision:
-            logger.info(
-                "Operator opted to continue after preflight step '%s'.", step_name
+        self._pause_dialog_presented = True
+        try:
+            decision = self._prompt_pause_decision(
+                title=title, message=prompt, step_name=step_name
             )
+        finally:
+            self._pause_dialog_presented = False
+
+        self._pause_user_decision = decision
+        decision_continue = decision == "continue"
+        decision_abort = decision == "abort"
+
+        if decision_continue:
             self._resume_after_pause = True
+            self._abort_after_pause = False
+            with contextlib.suppress(Exception):
+                logger.info(
+                    "Operator selected 'Continue' after preflight step '%s'.",
+                    step_name,
+                )
             if abort_event is not None:
                 abort_event.clear()
             pause_event.clear()
@@ -503,13 +603,35 @@ class SandboxLauncherGUI(tk.Tk):
                 with contextlib.suppress(Exception):
                     retry_button.state(["disabled"])
                     retry_button.grid_remove()
-        else:
-            logger.info(
-                "Operator opted to abort preflight during step '%s'.", step_name
-            )
+        elif decision_abort:
             self._resume_after_pause = False
+            self._abort_after_pause = True
+            with contextlib.suppress(Exception):
+                logger.info(
+                    "Operator selected 'Abort' during preflight step '%s'.",
+                    step_name,
+                )
             if abort_event is not None:
                 abort_event.set()
+        else:
+            with contextlib.suppress(Exception):
+                logger.warning(
+                    "Unhandled pause dialog decision '%s' for step '%s'. Treating as abort.",
+                    decision,
+                    step_name,
+                )
+            self._resume_after_pause = False
+            self._abort_after_pause = True
+            if abort_event is not None:
+                abort_event.set()
+
+        with contextlib.suppress(Exception):
+            logger.debug(
+                "Pause decision recorded: decision=%s, resume=%s, abort=%s",
+                decision,
+                self._resume_after_pause,
+                self._abort_after_pause,
+            )
 
 
 
@@ -590,7 +712,9 @@ class SandboxLauncherGUI(tk.Tk):
         self._latest_pause_context_trace = None
         self._pause_user_decision = None
         self._resume_after_pause = False
+        self._abort_after_pause = False
         self._pause_dialog_presented = False
+        self._clear_pause_dialog_handles()
 
         self._clear_debug_panel()
 
@@ -623,6 +747,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._paused_step_index = None
         self._pause_dialog_presented = False
         self._resume_after_pause = False
+        self._abort_after_pause = False
+        self._clear_pause_dialog_handles()
 
         self._start_preflight_thread(resume_index)
 
@@ -782,6 +908,8 @@ class SandboxLauncherGUI(tk.Tk):
         self._preflight_thread = None
         self.run_button.state(["!disabled"])
 
+        self._clear_pause_dialog_handles()
+
         decision = self._pause_user_decision
         self._pause_user_decision = None
 
@@ -797,7 +925,13 @@ class SandboxLauncherGUI(tk.Tk):
 
         success = bool(payload.get("success"))
         paused = bool(payload.get("paused"))
-        aborted = bool(payload.get("aborted")) or decision == "abort"
+        aborted_payload = bool(payload.get("aborted"))
+        aborted = (
+            aborted_payload
+            or decision == "abort"
+            or self._abort_after_pause
+            or self.abort_event.is_set()
+        )
         error_message = payload.get("error")
 
         if success:
@@ -805,6 +939,8 @@ class SandboxLauncherGUI(tk.Tk):
             self.abort_event.clear()
             self._paused_step_index = None
             self._pause_dialog_presented = False
+            self._resume_after_pause = False
+            self._abort_after_pause = False
             self.retry_button.state(["disabled"])
             self.retry_button.grid_remove()
 
@@ -821,6 +957,8 @@ class SandboxLauncherGUI(tk.Tk):
         if aborted:
             self.pause_event.clear()
             self.abort_event.set()
+            self._resume_after_pause = False
+            self._abort_after_pause = False
 
             self.retry_button.state(["disabled"])
             self.retry_button.grid_remove()
@@ -830,8 +968,8 @@ class SandboxLauncherGUI(tk.Tk):
             self._pause_dialog_presented = False
 
             message = self._format_health_failure_message({**payload, "aborted": True})
-            logger.warning("Sandbox health verification aborted: %s", message)
-            messagebox.showwarning("Preflight aborted", message)
+            logger.error("Sandbox health verification aborted: %s", message)
+            messagebox.showerror("Preflight aborted", message)
             return
 
         if paused:
@@ -849,25 +987,10 @@ class SandboxLauncherGUI(tk.Tk):
                 self._last_failed_step = str(failed_step)
 
             resume_requested = bool(self._resume_after_pause)
-            abort_requested = self.abort_event.is_set() or (
-                self._pause_user_decision == "abort"
-            )
-
-            if abort_requested and not resume_requested:
-                self.retry_button.state(["disabled"])
-                self.retry_button.grid_remove()
-                self.launch_button.state(["disabled"])
-
-                self._finish_elapsed_timer("Preflight aborted")
-                self._pause_dialog_presented = False
-
-                message = self._format_health_failure_message({**payload, "aborted": True})
-                logger.warning("Sandbox health verification aborted: %s", message)
-                messagebox.showwarning("Preflight aborted", message)
-                return
 
             if resume_requested:
                 self._resume_after_pause = False
+                self._abort_after_pause = False
                 self.retry_button.state(["disabled"])
                 self.retry_button.grid_remove()
                 self.run_button.state(["disabled"])
@@ -894,6 +1017,10 @@ class SandboxLauncherGUI(tk.Tk):
                 self.after_idle(_resume)
                 self._pause_dialog_presented = False
                 self._refresh_elapsed_timer()
+                logger.info(
+                    "Automatically resuming preflight from step index %s after operator continue.",
+                    next_index,
+                )
                 return
 
             self.retry_button.state(["!disabled"])
@@ -911,9 +1038,11 @@ class SandboxLauncherGUI(tk.Tk):
         self.retry_button.state(["disabled"])
         self.retry_button.grid_remove()
 
-        prefix = "Preflight aborted" if aborted else "Preflight finished"
+        prefix = "Preflight aborted" if aborted_payload else "Preflight finished"
         self._finish_elapsed_timer(prefix)
         self._pause_dialog_presented = False
+        self._resume_after_pause = False
+        self._abort_after_pause = False
 
         message = self._format_health_failure_message(payload)
         if error_message:
@@ -1077,15 +1206,24 @@ def run_full_preflight(
     index = start_index
     while index < total_steps:
         step = _PREFLIGHT_STEPS[index]
-        if _run_step(
+        ran = _run_step(
             step,
             logger=logger,
             pause_event=pause_event,
             decision_queue=decision_queue,
             abort_event=abort_event,
             debug_queue=debug_queue,
-        ):
+        )
+
+        if abort_event.is_set():
+            failure_info = {"failed_step": step.name, "failed_index": index}
+            return {**failure_info, "aborted": True}
+
+        if ran:
             index += 1
+            if abort_event.is_set():
+                failure_info = {"failed_step": step.name, "failed_index": index - 1}
+                return {**failure_info, "aborted": True}
             continue
 
         failure_info: dict[str, object] = {

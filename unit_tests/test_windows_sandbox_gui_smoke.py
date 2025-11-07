@@ -61,6 +61,13 @@ def _make_stub_instance() -> gui.SandboxLauncherGUI:
     inst._file_handler = None
     inst._file_listener = None
     inst._log_file_path = gui.LOG_FILE_PATH
+    inst._pause_dialog_window = None
+    inst._pause_dialog_message_var = None
+    inst._pause_dialog_step_name = None
+    inst._pause_dialog_presented = False
+    inst._resume_after_pause = False
+    inst._abort_after_pause = False
+    inst._pause_user_decision = None
     return inst
 
 
@@ -134,23 +141,26 @@ def test_handle_pause_prompt_prompts_continue(monkeypatch: pytest.MonkeyPatch) -
 
     captured: dict[str, str] = {}
 
-    def _fake_askyesno(*, title: str, message: str) -> bool:
+    def _fake_prompt(*, title: str, message: str, step_name: str | None) -> str:
         captured["title"] = title
         captured["message"] = message
-        return True
+        captured["step_name"] = step_name or ""
+        return "continue"
 
-    monkeypatch.setattr(gui.messagebox, "askyesno", _fake_askyesno)
+    monkeypatch.setattr(inst, "_prompt_pause_decision", _fake_prompt)
 
     inst._handle_pause_prompt()
 
     assert inst._pause_user_decision == "continue"
     assert inst._resume_after_pause is True
+    assert inst._abort_after_pause is False
     assert not inst.pause_event.is_set()
     assert not inst.abort_event.is_set()
     assert inst._latest_pause_context == context
     assert inst._latest_pause_context_trace
     assert "Details" in captured["message"]
     assert "boom" in captured["message"]
+    assert captured["step_name"] == "demo"
 
 
 def test_handle_pause_prompt_prompts_abort(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,12 +172,13 @@ def test_handle_pause_prompt_prompts_abort(monkeypatch: pytest.MonkeyPatch) -> N
     context = {"step": "demo", "exception": "explosion"}
     inst.decision_queue.put(("Failure", "Step failed", context))
 
-    monkeypatch.setattr(gui.messagebox, "askyesno", lambda **_: False)
+    monkeypatch.setattr(inst, "_prompt_pause_decision", lambda **_: "abort")
 
     inst._handle_pause_prompt()
 
     assert inst._pause_user_decision == "abort"
     assert inst._resume_after_pause is False
+    assert inst._abort_after_pause is True
     assert inst.pause_event.is_set()
     assert inst.abort_event.is_set()
     assert inst._latest_pause_context == context
