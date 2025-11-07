@@ -24,12 +24,17 @@ import tempfile
 import urllib.error
 import urllib.request
 
-import torch
-from transformers import AutoModel, AutoTokenizer
+try:  # pragma: no cover - optional heavy dependency
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    torch = None  # type: ignore[assignment]
+    AutoModel = None  # type: ignore[assignment]
+    AutoTokenizer = None  # type: ignore[assignment]
 
 from dynamic_path_router import resolve_path
 
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 from .registry import load_handlers
 from .vector_store import VectorStore, get_default_vector_store
 
@@ -85,6 +90,8 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     """Load the bundled fallback embedding model."""
 
     global _LOCAL_TOKENIZER, _LOCAL_MODEL
+    if AutoTokenizer is None or AutoModel is None or torch is None:
+        raise RuntimeError("local embedding model dependencies unavailable")
     if _LOCAL_TOKENIZER is None or _LOCAL_MODEL is None:
         if not _BUNDLED_MODEL.exists():
             raise FileNotFoundError(
@@ -103,6 +110,8 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
 def _local_embed(text: str) -> List[float]:
     """Return an embedding using the bundled model."""
 
+    if torch is None:
+        raise RuntimeError("local embedding model dependencies unavailable")
     tokenizer, model = _load_local_model()
     inputs = tokenizer([text], padding=True, truncation=True, return_tensors="pt")
     with torch.no_grad():
@@ -141,13 +150,36 @@ class SharedVectorService:
             has_vector_store=self.vector_store is not None,
         )
 
-    def _encode_text(self, text: str) -> List[float]:
+    def _ensure_text_embedder(self) -> SentenceTransformer | None:
+        """Initialise ``self.text_embedder`` if possible."""
+
         if self.text_embedder is not None:
-            _trace("shared_vector_service.encode_text.embedder", source="governed")
-            vec = governed_embed(text, self.text_embedder)
-            if vec is None:
+            return self.text_embedder
+        if SentenceTransformer is None:
+            return None
+        _trace("shared_vector_service.embedder.resolve.start")
+        embedder = get_embedder()
+        if embedder is None:
+            _trace("shared_vector_service.embedder.resolve.failed")
+            return None
+        self.text_embedder = embedder
+        _trace("shared_vector_service.embedder.resolve.success")
+        return embedder
+
+    def _encode_text(self, text: str) -> List[float]:
+        embedder = self._ensure_text_embedder()
+        embedder_available = embedder is not None
+        if embedder_available or SentenceTransformer is not None:
+            _trace(
+                "shared_vector_service.encode_text.embedder",
+                source="governed",
+                embedder_available=embedder_available,
+            )
+            vec = governed_embed(text, embedder)
+            if vec is not None:
+                return [float(x) for x in vec]
+            if embedder_available:
                 raise RuntimeError("embedding failed")
-            return [float(x) for x in vec]
         if SentenceTransformer is None:
             # SentenceTransformer not installed: load bundled model
             _trace("shared_vector_service.encode_text.embedder", source="local_fallback")
