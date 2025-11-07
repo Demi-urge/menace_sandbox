@@ -257,6 +257,18 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
 
         def __init__(self, *args: object, **kwargs: object) -> None:
             self._embeddings_enabled = False
+            self.event_bus = kwargs.get("event_bus")
+
+            try:
+                mro = type(self).__mro__
+                next_cls = mro[mro.index(_FallbackEmbeddableDBMixin) + 1]
+            except (ValueError, IndexError):
+                next_cls = None
+
+            if next_cls in {None, object}:
+                super().__init__()
+            else:
+                super().__init__(*args, **kwargs)
 
         def backfill_embeddings(self) -> list[object]:  # pragma: no cover - simple stub
             return []
@@ -328,7 +340,19 @@ else:
     else:  # pragma: no cover - degrade when mixin unavailable
 
         class EmbeddableDBMixin:  # type: ignore
-            pass
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.event_bus = kwargs.get("event_bus")
+
+                try:
+                    mro = type(self).__mro__
+                    next_cls = mro[mro.index(EmbeddableDBMixin) + 1]
+                except (ValueError, IndexError):
+                    next_cls = None
+
+                if next_cls in {None, object}:
+                    super().__init__()
+                else:
+                    super().__init__(*args, **kwargs)
 
     if hasattr(_embeddable_db_module, "safe_super_init"):
         safe_super_init = _embeddable_db_module.safe_super_init  # type: ignore[attr-defined]
