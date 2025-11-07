@@ -84,7 +84,7 @@ class EnhancementVectorizer:
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._model = SentenceTransformer("all-MiniLM-L6-v2")
+                self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             emb = governed_embed(desc, self._model) or []
             vec.extend(float(x) for x in emb)
         return vec

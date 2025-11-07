@@ -144,7 +144,7 @@ def run(download_only: bool = False, logger=None) -> SetupHeavyDepsResult:
 
         login(token=token)
         _log("Prefetching embedding model weights...", logger)
-        SentenceTransformer("all-MiniLM-L6-v2")
+        SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
         embeddings_prefetched = True
     except Exception as exc:  # pragma: no cover - optional dependency
         embeddings_error = f"Could not load SentenceTransformer: {exc}"

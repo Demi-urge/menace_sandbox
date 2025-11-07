@@ -70,7 +70,7 @@ class VectorDB:
             from huggingface_hub import login
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
+            self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             dim = self._model.get_sentence_embedding_dimension()
             self._index = faiss.IndexFlatL2(dim)
         self._pinecone = PineconeLogger(

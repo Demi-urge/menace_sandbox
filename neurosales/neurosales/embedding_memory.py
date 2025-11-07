@@ -39,7 +39,7 @@ class EmbeddingConversationMemory:
 
     max_messages: int = 5
     ttl_seconds: Optional[int] = None
-    model_name: str = "all-MiniLM-L6-v2"
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     _messages: deque[EmbeddedMessage] = field(default_factory=deque, init=False)
     _model: Optional[SentenceTransformer] = field(default=None, init=False)
     _index: Optional[faiss.Index] = field(default=None, init=False)

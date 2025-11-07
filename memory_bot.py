@@ -98,7 +98,7 @@ class VectorMemoryStorage(MemoryStorage):
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+                self.embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             except Exception:
                 self.embedder = None
         else:

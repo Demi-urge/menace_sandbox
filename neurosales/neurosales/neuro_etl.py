@@ -113,7 +113,7 @@ class InMemoryFaiss:
             import os
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             dim = self.model.get_sentence_embedding_dimension()
             self.index = faiss.IndexFlatL2(dim)
         else:  # pragma: no cover - heavy deps missing
