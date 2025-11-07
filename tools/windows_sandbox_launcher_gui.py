@@ -1198,27 +1198,7 @@ def _git_sync(logger: logging.Logger) -> None:
 
     for description, command in commands:
         logger.info("Running %s", description)
-        try:
-            result = subprocess.run(
-                command,
-                cwd=REPO_ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            if exc.stdout:
-                logger.error("%s stdout: %s", description, exc.stdout.strip())
-            if exc.stderr:
-                logger.error("%s stderr: %s", description, exc.stderr.strip())
-            raise RuntimeError(
-                f"Command '{description}' failed with exit code {exc.returncode}"
-            ) from exc
-
-        if result.stdout:
-            logger.info("%s stdout: %s", description, result.stdout.strip())
-        if result.stderr:
-            logger.warning("%s stderr: %s", description, result.stderr.strip())
+        _run_command(logger, command, cwd=REPO_ROOT)
 
     logger.info("Repository reset to origin/main completed.")
 
@@ -1226,8 +1206,15 @@ def _git_sync(logger: logging.Logger) -> None:
 def _purge_stale_files(logger: logging.Logger) -> None:
     logger.info("Purging stale files and caches.")
 
-    module = importlib.import_module("bootstrap_self_coding")
-    purge_stale_files = getattr(module, "purge_stale_files")
+    try:
+        module = importlib.import_module("bootstrap_self_coding")
+    except ImportError as exc:
+        logger.warning("Unable to import bootstrap_self_coding for cleanup: %s", exc)
+        raise
+
+    purge_stale_files = getattr(module, "purge_stale_files", None)
+    if not callable(purge_stale_files):
+        raise RuntimeError("bootstrap_self_coding.purge_stale_files is unavailable")
 
     iter_cleanup = getattr(module, "_iter_cleanup_targets", None)
     tracked_candidates: tuple[object, ...] = ()
@@ -1239,7 +1226,11 @@ def _purge_stale_files(logger: logging.Logger) -> None:
 
     before_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
 
-    purge_stale_files()
+    try:
+        purge_stale_files()
+    except Exception as exc:
+        logger.warning("Stale file purge failed: %s", exc)
+        raise
 
     after_count = sum(1 for candidate in tracked_candidates if _path_exists(candidate))
     removed = max(before_count - after_count, 0)
@@ -1261,7 +1252,7 @@ def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
         except FileNotFoundError:
             logger.debug("Stale file already absent: %s", path)
         except OSError as exc:
-            logger.warning("Failed to delete stale file %s: %s", path, exc)
+            raise RuntimeError(f"Failed to delete stale file {path}: {exc}") from exc
 
     def _remove_directory(path: Path) -> None:
         try:
@@ -1271,15 +1262,15 @@ def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
         except FileNotFoundError:
             logger.debug("Stale directory already absent: %s", path)
         except OSError as exc:
-            logger.warning("Failed to delete stale directory %s: %s", path, exc)
+            raise RuntimeError(f"Failed to delete stale directory {path}: {exc}") from exc
 
     sandbox_lock_dir = REPO_ROOT / "sandbox_data"
-    for pattern in ("*.lock", "*.lock.tmp"):
-        for candidate in sandbox_lock_dir.glob(pattern):
-            if candidate.is_file():
-                _remove_file(candidate)
-            elif candidate.is_dir():
-                _remove_directory(candidate)
+    if sandbox_lock_dir.exists():
+        for lock_file in sandbox_lock_dir.glob("*.lock"):
+            if lock_file.is_file():
+                _remove_file(lock_file)
+            elif lock_file.is_dir():
+                _remove_directory(lock_file)
 
     hf_cache = Path.home() / ".cache" / "huggingface" / "transformers"
     if hf_cache.exists():
@@ -1289,25 +1280,30 @@ def _cleanup_lock_and_model_artifacts(logger: logging.Logger) -> None:
             elif lock_file.is_dir():
                 _remove_directory(lock_file)
 
-        directories = sorted(
-            (path for path in hf_cache.rglob("*") if path.is_dir()),
-            key=lambda p: len(p.parts),
-            reverse=True,
-        )
-        for directory in directories:
+    partial_roots = [sandbox_lock_dir, hf_cache]
+    partial_directories: set[Path] = set()
+    for root in partial_roots:
+        if not root or not root.exists():
+            continue
+        for directory in root.rglob("*"):
+            if not directory.is_dir():
+                continue
+            if directory.name.endswith(".incomplete"):
+                partial_directories.add(directory)
+                continue
             try:
                 contents = list(directory.iterdir())
             except FileNotFoundError:
                 continue
-            if not contents:
-                _remove_directory(directory)
-                continue
-            if all(child.suffix == ".lock" for child in contents if child.is_file()):
-                for child in contents:
-                    if child.is_file():
-                        _remove_file(child)
-                if not any(directory.iterdir()):
-                    _remove_directory(directory)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Unable to inspect directory {directory}: {exc}"
+                ) from exc
+            if any(".tmp" in child.name for child in contents):
+                partial_directories.add(directory)
+
+    for directory in sorted(partial_directories, key=lambda p: len(p.parts), reverse=True):
+        _remove_directory(directory)
 
     logger.info(
         "Lock cleanup removed %d files and %d directories.",
@@ -1325,23 +1321,22 @@ def _install_heavy_dependencies(logger: logging.Logger) -> None:
         raise RuntimeError("neurosales heavy dependency installer is unavailable") from exc
 
     run = getattr(setup_heavy_deps, "run", None)
-    if not callable(run):
-        logger.debug("setup_heavy_deps.run unavailable; attempting main()")
-        run = None
-
-    if run is not None:
+    if callable(run):
         result = run(download_only=True, logger=logger)
     else:
+        logger.debug("setup_heavy_deps.run unavailable; using main() entry point")
         setup_heavy_deps.main(download_only=True)
         result = None
 
     if result is not None:
-        if getattr(result, "packages_skipped_reason", None):
-            logger.info("Heavy dependency packages skipped: %s", result.packages_skipped_reason)
-        if getattr(result, "embeddings_error", None):
-            raise RuntimeError(f"Heavy dependency setup failed: {result.embeddings_error}")
+        skipped = getattr(result, "packages_skipped_reason", None)
+        if skipped:
+            logger.info("Heavy dependency packages skipped: %s", skipped)
+        embeddings_error = getattr(result, "embeddings_error", None)
+        if embeddings_error:
+            raise RuntimeError(f"Heavy dependency setup failed: {embeddings_error}")
         if not getattr(result, "embeddings_prefetched", False):
-            raise RuntimeError("Heavy dependency setup did not prefetch embeddings as expected.")
+            logger.warning("Embedding weights were not prefetched during heavy dependency setup.")
 
     logger.info("Heavy dependency setup completed in download-only mode.")
 
@@ -1355,10 +1350,18 @@ def _warm_shared_vector_service(logger: logging.Logger) -> None:
         raise RuntimeError("SharedVectorService could not be imported") from exc
 
     service = SharedVectorService()
-    vectorise = getattr(service, "vectorise", None)
-    if callable(vectorise):
-        logger.info("Priming shared vector service caches.")
-        vectorise("warmup probe")
+    try:
+        vectorise = getattr(service, "vectorise", None)
+        if callable(vectorise):
+            logger.info("Priming shared vector service caches.")
+            vectorise("text", {"text": "warmup probe"})
+    finally:
+        closer = getattr(service, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:  # pragma: no cover - best effort shutdown
+                logger.warning("Shared vector service close failed: %s", exc)
 
     logger.info("Shared vector service initialised and ready.")
 
@@ -1371,8 +1374,11 @@ def _ensure_env_flags(logger: logging.Logger) -> None:
 
     for var in ("SANDBOX_ENABLE_BOOTSTRAP", "SANDBOX_ENABLE_SELF_CODING"):
         previous = os.environ.get(var)
-        os.environ[var] = "1"
-        logger.info("Environment flag %s updated: %r -> '1'", var, previous)
+        if previous != "1":
+            logger.info("Setting %s to '1' (previous: %r)", var, previous)
+            os.environ[var] = "1"
+        else:
+            logger.debug("Environment flag %s already set to '1'", var)
 
 
 def _prime_registry(logger: logging.Logger) -> None:
@@ -1395,26 +1401,49 @@ def _install_python_dependencies(logger: logging.Logger) -> None:
     for description, command in commands:
         logger.info("Running %s", description)
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=REPO_ROOT,
-                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
+                bufsize=1,
             )
-        except subprocess.CalledProcessError as exc:
-            if exc.stdout:
-                logger.error("%s stdout: %s", description, exc.stdout.strip())
-            if exc.stderr:
-                logger.error("%s stderr: %s", description, exc.stderr.strip())
-            raise RuntimeError(
-                f"Command '{description}' failed with exit code {exc.returncode}"
-            ) from exc
+        except OSError as exc:
+            raise RuntimeError(f"Failed to launch '{description}': {exc}") from exc
 
-        if result.stdout:
-            logger.info("%s stdout: %s", description, result.stdout.strip())
-        if result.stderr:
-            logger.warning("%s stderr: %s", description, result.stderr.strip())
+        def _log_stream(stream: TextIO | None, level: int, prefix: str) -> None:
+            if stream is None:
+                return
+            with stream:
+                for line in iter(stream.readline, ""):
+                    message = line.rstrip()
+                    if message:
+                        logger.log(level, "%s %s", prefix, message)
+
+        stdout_thread = threading.Thread(
+            target=_log_stream,
+            args=(process.stdout, logging.INFO, "[stdout]"),
+            name=f"pip-stdout-{description}",
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_log_stream,
+            args=(process.stderr, logging.WARNING, "[stderr]"),
+            name=f"pip-stderr-{description}",
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        returncode = process.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+        if returncode != 0:
+            raise RuntimeError(
+                f"Command '{description}' failed with exit code {returncode}"
+            )
 
     logger.info("Python dependency installation complete.")
 
@@ -1423,7 +1452,9 @@ def _bootstrap_self_coding(logger: logging.Logger) -> None:
     logger.info("Bootstrapping self-coding components.")
 
     module = importlib.import_module("bootstrap_self_coding")
-    run_bootstrap = getattr(module, "bootstrap_self_coding")
+    run_bootstrap = getattr(module, "bootstrap_self_coding", None)
+    if not callable(run_bootstrap):
+        raise RuntimeError("bootstrap_self_coding.bootstrap_self_coding is unavailable")
 
     logger.info("Invoking bootstrap_self_coding for AICounterBot.")
     run_bootstrap("AICounterBot")
