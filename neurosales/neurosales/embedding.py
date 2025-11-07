@@ -24,7 +24,7 @@ def get_model() -> SentenceTransformer | None:
         import os
 
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        _MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
     return _MODEL
 
 

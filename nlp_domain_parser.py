@@ -62,7 +62,7 @@ def load_model() -> str:
     """Initialise the NLP model and return the chosen method.
 
     The function first attempts to load the SBERT model
-    ``"all-MiniLM-L6-v2"``.  If sentence-transformers is unavailable or the
+    ``"sentence-transformers/all-MiniLM-L6-v2"``.  If sentence-transformers is unavailable or the
     model cannot be loaded, a fallback TF–IDF vectoriser is created instead.
     """
 

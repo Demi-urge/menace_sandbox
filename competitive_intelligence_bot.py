@@ -144,7 +144,7 @@ _SENTIMENT_WEIGHTS: Dict[str, float] = _parse_env_dict(
 
 # Configurable embedding model and detection parameters
 _EMBED_MODEL = os.getenv(
-    "CI_EMBED_MODEL", _CFG.get("embedding_model", "all-MiniLM-L6-v2")
+    "CI_EMBED_MODEL", _CFG.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
 )
 
 

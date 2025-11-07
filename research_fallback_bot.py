@@ -78,7 +78,7 @@ class ResearchFallbackBot:
                     from huggingface_hub import login
 
                     login(token=token)
-                    self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+                    self.embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
                 except Exception:  # pragma: no cover - runtime download issues
                     logger.warning(
                         "Hugging Face login failed; disabling fallback embeddings",
