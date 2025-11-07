@@ -392,8 +392,7 @@ class CodeDB(EmbeddableDBMixin):
             else resolve_path(".") / "code_embeddings.index"
         )
         meta_path = index_path.with_suffix(".json")
-        EmbeddableDBMixin.__init__(
-            self,
+        super().__init__(
             index_path=index_path,
             metadata_path=meta_path,
             backend="annoy",
