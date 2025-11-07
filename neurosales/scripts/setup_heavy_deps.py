@@ -48,7 +48,19 @@ def _load_ensure_playwright() -> typing.Callable[[], bool]:
     return _missing_playwright_check
 
 
-ensure_playwright_browsers = _load_ensure_playwright()
+_ensure_playwright_impl: typing.Optional[typing.Callable[[], bool]] = None
+
+
+def ensure_playwright_browsers() -> bool:
+    """Verify Playwright browser availability with lazy module loading."""
+
+    global _ensure_playwright_impl
+    if _ensure_playwright_impl is None:
+        _ensure_playwright_impl = _load_ensure_playwright()
+    try:
+        return bool(_ensure_playwright_impl())
+    except Exception:  # pragma: no cover - verification best effort
+        return False
 
 load_dotenv()
 
@@ -119,11 +131,18 @@ def run(download_only: bool = False, logger=None) -> SetupHeavyDepsResult:
         _log(packages_skipped_reason, logger)
 
     try:
-        from sentence_transformers import SentenceTransformer
-        from huggingface_hub import login
         import os
 
-        login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
+        token = os.getenv("HUGGINGFACE_API_TOKEN")
+        if not token:
+            raise RuntimeError(
+                "HUGGINGFACE_API_TOKEN is not set; cannot prefetch embedding weights"
+            )
+
+        from sentence_transformers import SentenceTransformer
+        from huggingface_hub import login
+
+        login(token=token)
         _log("Prefetching embedding model weights...", logger)
         SentenceTransformer("all-MiniLM-L6-v2")
         embeddings_prefetched = True
