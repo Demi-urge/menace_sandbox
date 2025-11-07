@@ -392,11 +392,26 @@ class CodeDB(EmbeddableDBMixin):
             else resolve_path(".") / "code_embeddings.index"
         )
         meta_path = index_path.with_suffix(".json")
-        super().__init__(
-            index_path=index_path,
-            metadata_path=meta_path,
-            backend="annoy",
-        )
+        try:
+            super().__init__(
+                index_path=index_path,
+                metadata_path=meta_path,
+                backend="annoy",
+            )
+        except TypeError as exc:
+            # ``object.__init__`` does not accept keyword arguments which can
+            # happen when the mixin is not first in the MRO.  Fall back to
+            # calling the mixin directly so environments with a different
+            # inheritance order still initialise embeddings correctly.
+            if "object.__init__" not in str(exc):
+                raise
+            EmbeddableDBMixin.__init__(
+                self,
+                index_path=index_path,
+                metadata_path=meta_path,
+                backend="annoy",
+                event_bus=event_bus,
+            )
 
     @contextmanager
     def _connect(self) -> Iterator[Any]:
