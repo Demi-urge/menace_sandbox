@@ -1299,11 +1299,14 @@ def _run_command(
 ) -> subprocess.CompletedProcess[str]:
     """Execute *command* capturing output and surfacing errors uniformly."""
 
-    logger.debug("Executing command: %s", " ".join(command))
+    execution_cwd = Path(cwd) if cwd is not None else REPO_ROOT
+    logger.debug(
+        "Executing command: %s (cwd=%s)", " ".join(command), execution_cwd
+    )
     try:
         result = subprocess.run(
             command,
-            cwd=cwd,
+            cwd=os.fspath(execution_cwd),
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
