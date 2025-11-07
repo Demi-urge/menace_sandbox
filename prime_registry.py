@@ -120,6 +120,7 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         "tests",
         "unit_tests",
         "docs",
+        "sandbox_data",
         ".git",
         ".hg",
         ".svn",
@@ -157,6 +158,10 @@ def _iter_bot_modules(root: Path) -> list[Path]:
         # warnings and, on some systems, a noticeable slowdown while the parser
         # churns through the VCS metadata.  Filtering out anything under a VCS
         # directory keeps the discovery focused on actual source modules.
+        # ``sandbox_data`` holds runtime checkpoints and other ephemeral
+        # artefacts that can contain partially written Python files.  Skipping
+        # the directory prevents ``ast.parse`` warnings when stale checkpoints
+        # include content such as leading-zero literals.
         if any(part in ignore or part.startswith("test") for part in parts):
             continue
         if any(part.startswith(".") for part in parts):
