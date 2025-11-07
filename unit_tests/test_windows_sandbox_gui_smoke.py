@@ -2,6 +2,7 @@
 
 import queue
 import threading
+import time
 from unittest import mock
 
 import pytest
@@ -183,3 +184,114 @@ def test_handle_pause_prompt_prompts_abort(monkeypatch: pytest.MonkeyPatch) -> N
     assert inst.abort_event.is_set()
     assert inst._latest_pause_context == context
     assert inst._latest_pause_context_trace
+
+
+def test_run_full_preflight_waits_for_warning_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    pause_event = threading.Event()
+    abort_event = threading.Event()
+    decision_queue: queue.Queue[tuple[str, str, dict[str, object] | None]] = queue.Queue()
+
+    class _PauseAwareLogger:
+        def __init__(self) -> None:
+            self.records: list[tuple[str, str]] = []
+
+        def info(self, message: str, *args: object) -> None:
+            if args:
+                message = message % args
+            self.records.append(("info", message))
+
+        def warning(self, message: str, *args: object) -> None:
+            if args:
+                message = message % args
+            self.records.append(("warning", message))
+            pause_event.set()
+            decision_queue.put(
+                (
+                    "Warning log detected",
+                    message,
+                    {"step": "log-monitor", "exception": message, "level": "warning"},
+                )
+            )
+
+        def exception(self, message: str, *args: object) -> None:
+            if args:
+                message = message % args
+            self.records.append(("exception", message))
+
+    step_one_started = threading.Event()
+    step_two_started = threading.Event()
+
+    def _warning_step(logger: _PauseAwareLogger) -> None:
+        step_one_started.set()
+        logger.warning("Potential issue encountered during preflight.")
+
+    def _followup_step(logger: _PauseAwareLogger) -> None:
+        step_two_started.set()
+
+    monkeypatch.setattr(
+        gui,
+        "_PREFLIGHT_STEPS",
+        (
+            gui._PreflightStep(
+                name="_test_warning_step",
+                start_message="Starting warning step",
+                success_message="Finished warning step",
+                failure_title="warning-step",
+                failure_message="warning-step",
+                runner=_warning_step,
+            ),
+            gui._PreflightStep(
+                name="_test_followup_step",
+                start_message="Starting follow-up step",
+                success_message="Finished follow-up step",
+                failure_title="followup-step",
+                failure_message="followup-step",
+                runner=_followup_step,
+            ),
+        ),
+    )
+    monkeypatch.setattr(gui, "_collect_sandbox_health", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(
+        gui,
+        "_evaluate_health_snapshot",
+        lambda snapshot, dependency_mode=None: (True, []),
+    )
+
+    logger = _PauseAwareLogger()
+    results: dict[str, object] = {}
+
+    def _run_worker() -> None:
+        results["result"] = gui.run_full_preflight(
+            logger=logger,
+            pause_event=pause_event,
+            decision_queue=decision_queue,
+            abort_event=abort_event,
+            debug_queue=None,
+            dependency_mode=gui.DependencyMode.MINIMAL,
+        )
+
+    worker = threading.Thread(target=_run_worker)
+    worker.start()
+
+    assert step_one_started.wait(timeout=1.0)
+
+    time.sleep(0.05)
+
+    assert pause_event.is_set()
+    assert not step_two_started.is_set()
+    assert worker.is_alive()
+
+    title, message, context = decision_queue.get(timeout=1.0)
+    assert title == "Warning log detected"
+    assert context == {
+        "step": "log-monitor",
+        "exception": message,
+        "level": "warning",
+    }
+
+    pause_event.clear()
+
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+    assert step_two_started.is_set()
+    assert results["result"] == {"snapshot": {"ok": True}, "healthy": True, "failures": []}
