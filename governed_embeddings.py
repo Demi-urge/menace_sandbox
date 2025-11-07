@@ -172,7 +172,7 @@ logger = logging.getLogger(__name__)
 _EMBEDDER: SentenceTransformer | None = None
 _EMBEDDER_LOCK: SandboxLockType | None = None
 _EMBEDDER_THREAD_LOCK = threading.RLock()
-_MODEL_NAME = "all-MiniLM-L6-v2"
+_MODEL_NAME = _MODEL_ID
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
 _MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
 _SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "30"))
@@ -610,11 +610,11 @@ def _cache_base() -> Optional[Path]:
     return default if default.exists() else None
 
 
-def _cached_model_path(cache_dir: Path, model_name: str) -> Path:
-    """Return the expected cache path for ``model_name`` within ``cache_dir``."""
+def _cached_model_path(cache_dir: Path, model_id: str) -> Path:
+    """Return the expected cache path for ``model_id`` within ``cache_dir``."""
 
-    safe_name = model_name.replace("/", "--")
-    return cache_dir / "hub" / f"models--sentence-transformers--{safe_name}"
+    safe_name = model_id.replace("/", "--")
+    return cache_dir / "hub" / f"models--{safe_name}"
 
 
 def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
