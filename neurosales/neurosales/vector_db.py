@@ -17,7 +17,10 @@ except Exception:  # pragma: no cover - optional heavy deps
     np = None  # type: ignore
 
 from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+)
 try:
     from compliance.license_fingerprint import check as license_check
 except Exception:  # pragma: no cover - optional dependency
@@ -70,7 +73,7 @@ class VectorDB:
             from huggingface_hub import login
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self._model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
             dim = self._model.get_sentence_embedding_dimension()
             self._index = faiss.IndexFlatL2(dim)
         self._pinecone = PineconeLogger(

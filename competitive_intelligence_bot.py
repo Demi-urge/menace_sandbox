@@ -22,7 +22,11 @@ from .retry_utils import with_retry
 from security.secret_redactor import redact
 import license_detector
 from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed, get_embedder
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+    get_embedder,
+)
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 registry = BotRegistry()
@@ -144,7 +148,8 @@ _SENTIMENT_WEIGHTS: Dict[str, float] = _parse_env_dict(
 
 # Configurable embedding model and detection parameters
 _EMBED_MODEL = os.getenv(
-    "CI_EMBED_MODEL", _CFG.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
+    "CI_EMBED_MODEL",
+    _CFG.get("embedding_model", DEFAULT_SENTENCE_TRANSFORMER_MODEL),
 )
 
 

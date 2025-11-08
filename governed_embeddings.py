@@ -138,7 +138,23 @@ else:  # pragma: no cover - at runtime we either have the real class or ``Any``
 
 model: "SentenceTransformer | None"
 
-_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def canonical_model_id(model_name: str | None) -> str:
+    """Return a canonical ``SentenceTransformer`` repo identifier."""
+
+    name = (model_name or "").strip()
+    if not name:
+        return DEFAULT_SENTENCE_TRANSFORMER_MODEL
+    if "/" not in name:
+        return f"sentence-transformers/{name}"
+    if name.lower().startswith("sentence-transformers/"):
+        return name
+    return name
+
+
+_MODEL_ID = canonical_model_id(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
 
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer
@@ -1721,4 +1737,10 @@ def embedder_diagnostics() -> dict[str, Any]:
     return diagnostics
 
 
-__all__ = ["governed_embed", "get_embedder", "embedder_diagnostics"]
+__all__ = [
+    "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
+    "canonical_model_id",
+    "governed_embed",
+    "get_embedder",
+    "embedder_diagnostics",
+]

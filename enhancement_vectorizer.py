@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
 
-from governed_embeddings import governed_embed
+from governed_embeddings import DEFAULT_SENTENCE_TRANSFORMER_MODEL, governed_embed
 from vector_utils import persist_embedding
 
 try:  # pragma: no cover - optional dependency
@@ -84,7 +84,7 @@ class EnhancementVectorizer:
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                self._model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
             emb = governed_embed(desc, self._model) or []
             vec.extend(float(x) for x in emb)
         return vec

@@ -38,7 +38,7 @@ from .proxy_manager import get_proxy
 from security.secret_redactor import redact
 from license_detector import detect as detect_license
 from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed
+from governed_embeddings import DEFAULT_SENTENCE_TRANSFORMER_MODEL, governed_embed
 
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class ResearchFallbackBot:
                     from huggingface_hub import login
 
                     login(token=token)
-                    self.embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                    self.embedder = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
                 except Exception:  # pragma: no cover - runtime download issues
                     logger.warning(
                         "Hugging Face login failed; disabling fallback embeddings",

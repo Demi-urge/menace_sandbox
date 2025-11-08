@@ -15,7 +15,11 @@ import ast
 import io
 import tokenize
 
-from governed_embeddings import governed_embed, get_embedder
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+    get_embedder,
+)
 try:  # pragma: no cover - optional heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
 except Exception:  # pragma: no cover - allow running without dependency
@@ -32,7 +36,7 @@ except Exception:  # pragma: no cover - minimal fallback returning zeros
 class IntentVectorizer:
     """Extract docstrings, names and comments from Python modules."""
 
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL
 
     def __post_init__(self) -> None:
         self._embedder: SentenceTransformer | None = None

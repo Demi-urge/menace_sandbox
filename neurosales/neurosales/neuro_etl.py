@@ -49,7 +49,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     def redact(text: str):  # type: ignore
         return text
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+)
 from .influence_graph import InfluenceGraph
 
 logger = logging.getLogger(__name__)
@@ -113,7 +116,7 @@ class InMemoryFaiss:
             import os
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self.model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
             dim = self.model.get_sentence_embedding_dimension()
             self.index = faiss.IndexFlatL2(dim)
         else:  # pragma: no cover - heavy deps missing

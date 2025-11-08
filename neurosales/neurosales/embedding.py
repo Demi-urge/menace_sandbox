@@ -7,7 +7,10 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
 
 import logging
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+)
 from analysis.semantic_diff_filter import find_semantic_risks
 from security.secret_redactor import redact
 
@@ -24,7 +27,7 @@ def get_model() -> SentenceTransformer | None:
         import os
 
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        _MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        _MODEL = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
     return _MODEL
 
 
