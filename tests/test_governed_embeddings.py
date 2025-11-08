@@ -172,6 +172,82 @@ def test_get_embedder_configures_hf_timeouts(monkeypatch):
     assert os.environ["HF_HUB_DOWNLOAD_RETRIES"] == "2"
 
 
+def test_resolve_local_snapshot_requires_metadata(tmp_path):
+    model_cache = tmp_path / "cache"
+    snapshots = model_cache / "snapshots"
+
+    valid_snapshot = snapshots / "valid"
+    valid_snapshot.mkdir(parents=True)
+    (valid_snapshot / "config.json").write_text("{}")
+    (valid_snapshot / "modules.json").write_text("{}")
+
+    incomplete_snapshot = snapshots / "incomplete"
+    incomplete_snapshot.mkdir()
+    (incomplete_snapshot / "config.json").write_text("{}")
+
+    resolved = governed_embeddings._resolve_local_snapshot(model_cache)
+    assert resolved == valid_snapshot
+
+
+def test_resolve_local_snapshot_accepts_sentence_bert_config(tmp_path):
+    model_cache = tmp_path / "cache"
+    snapshots = model_cache / "snapshots"
+
+    legacy_snapshot = snapshots / "legacy"
+    legacy_snapshot.mkdir(parents=True)
+    (legacy_snapshot / "config.json").write_text("{}")
+    (legacy_snapshot / "modules.json").write_text("{}")
+
+    modern_snapshot = snapshots / "modern"
+    modern_snapshot.mkdir()
+    (modern_snapshot / "config.json").write_text("{}")
+    (modern_snapshot / "sentence_bert_config.json").write_text("{}")
+
+    resolved = governed_embeddings._resolve_local_snapshot(model_cache)
+    assert resolved == modern_snapshot
+
+
+def test_get_embedder_prefers_hub_when_snapshot_incomplete(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRANSFORMERS_CACHE", str(tmp_path))
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "model", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_CONFIGURED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_SETTINGS", {})
+    monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *a, **k: None)
+
+    model_cache = governed_embeddings._cached_model_path(tmp_path, governed_embeddings._MODEL_NAME)
+    incomplete_snapshot = model_cache / "snapshots" / "incomplete"
+    incomplete_snapshot.mkdir(parents=True)
+    (incomplete_snapshot / "config.json").write_text("{}")
+    blobs_dir = model_cache / "blobs"
+    blobs_dir.mkdir(parents=True)
+    (blobs_dir / "dummy.bin").write_bytes(b"0")
+    refs_dir = model_cache / "refs"
+    refs_dir.mkdir(parents=True)
+    (refs_dir / "main").write_text("deadbeef")
+
+    captured = {}
+
+    class DummySentenceTransformer:
+        def __init__(self, name: str, **kwargs):
+            captured["name"] = name
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", DummySentenceTransformer)
+
+    embedder = governed_embeddings.get_embedder()
+    assert isinstance(embedder, DummySentenceTransformer)
+    assert captured["name"] == governed_embeddings._MODEL_ID
+    assert not captured["kwargs"].get("local_files_only")
+
+
 def test_initialise_embedder_wait_capped(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
@@ -346,6 +422,7 @@ def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
     snapshot_dir = cache_root / "snapshots" / "abc123"
     snapshot_dir.mkdir(parents=True)
     (snapshot_dir / "config.json").write_text("{}")
+    (snapshot_dir / "modules.json").write_text("{}")
 
     monkeypatch.setenv("HF_HOME", str(tmp_path))
     monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *_: None)
