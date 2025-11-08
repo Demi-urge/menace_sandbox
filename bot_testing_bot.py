@@ -15,58 +15,227 @@ import uuid
 import traceback
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, List, Optional, get_args, get_origin, Union, Callable
+from typing import Any, Callable, List, Optional, TYPE_CHECKING, Union, get_args, get_origin
 import hashlib
 import time
 
 from .bot_testing_config import BotTestingSettings
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
-from .threshold_service import ThresholdService
-from .code_database import CodeDB
-from .gpt_memory import GPTMemoryManager
-from .self_coding_thresholds import get_thresholds
-from vector_service.context_builder import ContextBuilder
-from typing import TYPE_CHECKING
-from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_registry import BotRegistry
+    from .self_coding_manager import SelfCodingManager
+    from .self_coding_engine import SelfCodingEngine
+    from .model_automation_pipeline import ModelAutomationPipeline
+    from .shared_evolution_orchestrator import EvolutionOrchestrator
+    from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
 
 logger = logging.getLogger("BotTester")
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+_MANAGER_LOCK = threading.RLock()
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator = get_orchestrator("BotTestingBot", data_bot, engine)
-_th = get_thresholds("BotTestingBot")
-persist_sc_thresholds(
-    "BotTestingBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "BotTestingBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-    threshold_service=ThresholdService(),
-)
+
+def _import_relative(name: str):
+    """Import ``name`` relative to this package without eager evaluation."""
+
+    base = __package__ or __name__.rpartition(".")[0]
+    module_name = f"{base}.{name}" if base else name
+    return importlib.import_module(module_name)
+
+
+def _get_module_attr(module: Any, attr: str, module_name: str) -> Any:
+    """Return ``attr`` from ``module`` re-importing fallbacks if required."""
+
+    target = getattr(module, attr, None)
+    if target is not None:
+        return target
+
+    for prefix in ("menace_sandbox", "menace"):
+        try:
+            candidate = importlib.import_module(f"{prefix}.{module_name}")
+        except Exception:  # pragma: no cover - fallback best effort
+            continue
+        fallback = getattr(candidate, attr, None)
+        if fallback is not None:
+            return fallback
+
+    raise AttributeError(f"module {module_name!r} has no attribute {attr!r}")
+
+
+@lru_cache(maxsize=1)
+def _get_registry() -> "BotRegistry":
+    from .bot_registry import BotRegistry
+
+    return BotRegistry()
+
+
+@lru_cache(maxsize=1)
+def _get_data_bot() -> DataBot:
+    return DataBot(start_server=False)
+
+
+@lru_cache(maxsize=1)
+def _get_context_builder() -> "ContextBuilder":
+    return create_context_builder()
+
+
+@lru_cache(maxsize=1)
+def _get_engine() -> "SelfCodingEngine":
+    code_db_module = _import_relative("code_database")
+    memory_module = _import_relative("gpt_memory")
+    engine_module = _import_relative("self_coding_engine")
+
+    engine_cls = _get_module_attr(engine_module, "SelfCodingEngine", "self_coding_engine")
+    code_db_cls = _get_module_attr(code_db_module, "CodeDB", "code_database")
+    memory_cls = _get_module_attr(memory_module, "GPTMemoryManager", "gpt_memory")
+
+    return engine_cls(  # type: ignore[call-arg]
+        code_db_cls(),
+        memory_cls(),
+        context_builder=_get_context_builder(),
+    )
+
+
+@lru_cache(maxsize=1)
+def _get_pipeline() -> "ModelAutomationPipeline":
+    pipeline_module = _import_relative("model_automation_pipeline")
+
+    pipeline_cls = _get_module_attr(
+        pipeline_module,
+        "ModelAutomationPipeline",
+        "model_automation_pipeline",
+    )
+
+    return pipeline_cls(context_builder=_get_context_builder())  # type: ignore[call-arg]
+
+
+@lru_cache(maxsize=1)
+def _get_evolution_orchestrator() -> "EvolutionOrchestrator":
+    orchestrator_module = _import_relative("shared_evolution_orchestrator")
+
+    get_orchestrator = _get_module_attr(
+        orchestrator_module,
+        "get_orchestrator",
+        "shared_evolution_orchestrator",
+    )
+
+    return get_orchestrator(  # type: ignore[call-arg]
+        "BotTestingBot",
+        _get_data_bot(),
+        _get_engine(),
+    )
+
+
+def _ensure_real_manager() -> "SelfCodingManager":
+    with _MANAGER_LOCK:
+        if getattr(_ensure_real_manager, "_instance", None) is not None:
+            return _ensure_real_manager._instance  # type: ignore[attr-defined]
+
+        manager_module = _import_relative("self_coding_manager")
+        thresholds_module = _import_relative("self_coding_thresholds")
+        threshold_service_module = _import_relative("threshold_service")
+
+        get_thresholds = _get_module_attr(
+            thresholds_module,
+            "get_thresholds",
+            "self_coding_thresholds",
+        )
+        thresholds = get_thresholds("BotTestingBot")
+        persist_sc_thresholds(
+            "BotTestingBot",
+            roi_drop=thresholds.roi_drop,
+            error_increase=thresholds.error_increase,
+            test_failure_increase=thresholds.test_failure_increase,
+        )
+        internalize_coding_bot = _get_module_attr(
+            manager_module,
+            "internalize_coding_bot",
+            "self_coding_manager",
+        )
+        threshold_service_cls = _get_module_attr(
+            threshold_service_module,
+            "ThresholdService",
+            "threshold_service",
+        )
+        manager = internalize_coding_bot(  # type: ignore[call-arg]
+            "BotTestingBot",
+            _get_engine(),
+            _get_pipeline(),
+            data_bot=_get_data_bot(),
+            bot_registry=_get_registry(),
+            evolution_orchestrator=_get_evolution_orchestrator(),
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+            threshold_service=threshold_service_cls(),
+        )
+        _ensure_real_manager._instance = manager  # type: ignore[attr-defined]
+        return manager
+
+
+_get_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+
+class _DeferredManager:
+    """Lightweight proxy deferring heavy manager bootstrap until needed."""
+
+    def __init__(self, factory: Callable[[], "SelfCodingManager"]) -> None:
+        self._factory = factory
+        self._manager: "SelfCodingManager | None" = None
+        self._pending_register: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self._lock = threading.RLock()
+        self.bot_registry = _get_registry()
+        self.data_bot = _get_data_bot()
+
+    def _ensure(self) -> "SelfCodingManager":
+        manager = self._manager
+        if manager is not None:
+            return manager
+
+        pending: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        with self._lock:
+            manager = self._manager
+            if manager is None:
+                manager = self._factory()
+                self._manager = manager
+                pending = self._pending_register[:]
+                self._pending_register.clear()
+
+        if pending:
+            for args, kwargs in pending:
+                try:
+                    manager.register(*args, **kwargs)
+                except Exception:  # pragma: no cover - registration best effort
+                    manager.logger.exception(
+                        "deferred manager registration failed for %s", args[0] if args else ""
+                    )
+
+        return manager
+
+    def register(self, *args: Any, **kwargs: Any) -> Any:
+        if self._manager is None:
+            with self._lock:
+                if self._manager is None:
+                    self._pending_register.append((args, kwargs))
+                    return None
+        return self._ensure().register(*args, **kwargs)
+
+    def ensure(self) -> "SelfCodingManager":
+        return self._ensure()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._ensure(), item)
+
+
+_MANAGER_PROXY = _DeferredManager(_ensure_real_manager)
 
 # Allow users to register custom randomizers for specific types
 CUSTOM_GENERATORS: dict[type[Any], Callable[[], Any]] = {}
@@ -228,7 +397,11 @@ class TestingLogDB:
         ]
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+@self_coding_managed(
+    bot_registry=_get_registry,
+    data_bot=_get_data_bot,
+    manager=_MANAGER_PROXY,
+)
 class BotTestingBot:
     """Run unit and basic integration tests for bots."""
 
@@ -272,6 +445,7 @@ class BotTestingBot:
             self.logger.warning("Faker not installed; randomized testing disabled")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = DataBot()
+        _MANAGER_PROXY.ensure()
 
     def _random_arg(self, param: inspect.Parameter) -> Any:
         ann = param.annotation
