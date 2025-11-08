@@ -17,4 +17,4 @@ app.conf.update(
 app.autodiscover_tasks(["menace_sandbox"])
 
 # OR just directly import
-import menace_sandbox.menace_tasks  # noqa: E402,F401  # ensure task registration
+from menace_sandbox.menace_tasks import ping  # noqa: E402,F401  # ensure task registration
