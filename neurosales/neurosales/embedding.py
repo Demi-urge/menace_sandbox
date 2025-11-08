@@ -9,6 +9,7 @@ except Exception:  # pragma: no cover - optional heavy deps
 import logging
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
 )
 from analysis.semantic_diff_filter import find_semantic_risks
@@ -27,7 +28,10 @@ def get_model() -> SentenceTransformer | None:
         import os
 
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        _MODEL = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
+        _MODEL = SentenceTransformer(
+            DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+            device=SENTENCE_TRANSFORMER_DEVICE,
+        )
     return _MODEL
 
 

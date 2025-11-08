@@ -28,6 +28,7 @@ from compliance.license_fingerprint import check as license_check
 from security.secret_redactor import redact
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
 )
 from .engagement_graph import pagerank, shortest_path
@@ -72,7 +73,10 @@ class PsychologicalGraph:
             from huggingface_hub import login
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self._model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
+            self._model = SentenceTransformer(
+                DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+                device=SENTENCE_TRANSFORMER_DEVICE,
+            )
             dim = self._model.get_sentence_embedding_dimension()
             self._index = faiss.IndexFlatL2(dim)
         

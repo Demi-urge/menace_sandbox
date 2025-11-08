@@ -21,6 +21,7 @@ from sklearn.multiclass import OneVsRestClassifier
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
 )
 try:
@@ -65,7 +66,10 @@ class IntentClassifier:
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._sbert = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
+                self._sbert = SentenceTransformer(
+                    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+                    device=SENTENCE_TRANSFORMER_DEVICE,
+                )
             except Exception:
                 self.backend = "tfidf"
         if self.backend == "use" and hub is not None:

@@ -116,6 +116,9 @@ try:
         "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
         _DEFAULT_MODEL_NAME,
     )
+    _SENTENCE_TRANSFORMER_DEVICE = getattr(
+        _governed_embeddings, "SENTENCE_TRANSFORMER_DEVICE", "cpu"
+    )
     _canonical_model_id_fn = getattr(
         _governed_embeddings,
         "canonical_model_id",
@@ -123,6 +126,7 @@ try:
     )
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     governed_embed = lambda text, model=None: []  # type: ignore
+    _SENTENCE_TRANSFORMER_DEVICE = "cpu"
 
 try:
     _chunking = load_internal("chunking")
@@ -428,7 +432,9 @@ class EmbeddableDBMixin:
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
             model_name = _normalise_model_name(self.model_name)
             self.model_name = model_name
-            self._model = SentenceTransformer(model_name)
+            self._model = SentenceTransformer(
+                model_name, device=_SENTENCE_TRANSFORMER_DEVICE
+            )
         return self._model
 
     def encode_text(self, text: str) -> List[float]:

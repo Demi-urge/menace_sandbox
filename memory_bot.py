@@ -23,7 +23,11 @@ try:
 except Exception:  # pragma: no cover - fallback for legacy path
     from secret_redactor import redact_secrets  # type: ignore
 
-from governed_embeddings import DEFAULT_SENTENCE_TRANSFORMER_MODEL, governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
+    governed_embed,
+)
 
 try:  # optional dependency for embeddings
     from sentence_transformers import SentenceTransformer
@@ -98,7 +102,10 @@ class VectorMemoryStorage(MemoryStorage):
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self.embedder = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
+                self.embedder = SentenceTransformer(
+                    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+                    device=SENTENCE_TRANSFORMER_DEVICE,
+                )
             except Exception:
                 self.embedder = None
         else:
