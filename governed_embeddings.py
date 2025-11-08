@@ -666,10 +666,24 @@ def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
         logger.debug("failed to scan snapshot directory %s: %s", snapshots_root, exc)
         return None
 
+    metadata_candidates = ("modules.json", "sentence_bert_config.json")
+
     for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
         config = path / "config.json"
         try:
-            if config.exists():
+            if not config.exists():
+                continue
+
+            has_metadata = False
+            for name in metadata_candidates:
+                meta_path = path / name
+                try:
+                    if meta_path.exists():
+                        has_metadata = True
+                        break
+                except FileNotFoundError:
+                    continue
+            if has_metadata:
                 return path
         except FileNotFoundError:
             continue
@@ -1416,7 +1430,8 @@ def _load_embedder() -> SentenceTransformer | None:
             "0",
             "false",
         }
-        prefer_cached = snapshot_path is not None or cache_has_refs or cache_has_blobs
+        prefer_cached = snapshot_path is not None
+        partial_cache = cache_has_refs or cache_has_blobs
         if offline_env or force_local or prefer_cached:
             local_kwargs["local_files_only"] = True
             _trace(
@@ -1425,6 +1440,7 @@ def _load_embedder() -> SentenceTransformer | None:
                 force_local=bool(force_local),
                 snapshot=bool(snapshot_path),
                 prefer_cached=prefer_cached,
+                partial_cache=partial_cache,
             )
             if prefer_cached and not offline_env and not force_local:
                 logger.info(
@@ -1436,6 +1452,12 @@ def _load_embedder() -> SentenceTransformer | None:
                         "has_blobs": cache_has_blobs,
                     },
                 )
+        elif partial_cache:
+            _trace(
+                "load.partial_cache.detected",
+                has_refs=cache_has_refs,
+                has_blobs=cache_has_blobs,
+            )
 
         if snapshot_path is not None:
             try:
