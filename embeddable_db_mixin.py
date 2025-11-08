@@ -12,6 +12,8 @@ Subclasses must provide a ``self.conn`` database connection and override
 :meth:`iter_records` yielding ``(record_id, record, kind)`` tuples.
 """
 
+from __future__ import annotations
+
 _DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -24,8 +26,6 @@ def _normalise_model_name(model_name: str | None) -> str:
     if "/" not in name:
         return f"sentence-transformers/{name}"
     return name
-
-from __future__ import annotations
 
 import importlib.util
 import sys
