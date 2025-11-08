@@ -1,4 +1,4 @@
-from .celery_app import app
+from menace_sandbox.celery_app import app
 
 
 @app.task

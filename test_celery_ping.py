@@ -1,4 +1,4 @@
-from menace_tasks import ping
+from menace_sandbox.menace_tasks import ping
 
 
 if __name__ == "__main__":
