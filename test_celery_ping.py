@@ -1,9 +1,4 @@
-from celery_app import app
-
-
-@app.task
-def ping():
-    return "pong"
+from menace_tasks import ping
 
 
 if __name__ == "__main__":
