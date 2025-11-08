@@ -53,7 +53,7 @@ def test_embed_text_skips_on_semantic_risk(monkeypatch):
     emb._MODEL = None
 
     class DummyModel:
-        def __init__(self, name: str) -> None:
+        def __init__(self, name: str, *args, **kwargs) -> None:
             pass
 
         def get_sentence_embedding_dimension(self) -> int:

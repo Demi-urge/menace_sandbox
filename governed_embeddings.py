@@ -168,6 +168,29 @@ else:
     # by ``_load_embedder`` when embeddings are actually required.
     model = None
 
+
+def _resolve_sentence_transformer_device() -> str:
+    """Return the preferred device for ``SentenceTransformer`` instances."""
+
+    env_device = os.getenv("SENTENCE_TRANSFORMER_DEVICE", "").strip()
+    if env_device:
+        return env_device
+
+    if torch is not None:
+        try:
+            if torch.cuda.is_available():  # type: ignore[attr-defined]
+                return "cuda"
+        except Exception:  # pragma: no cover - defensive
+            pass
+        try:
+            mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
+            if mps_backend is not None and mps_backend.is_available():  # type: ignore[call-arg]
+                return "mps"
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    return "cpu"
+
 try:  # pragma: no cover - lightweight fallback dependencies
     import torch
     from transformers import AutoModel, AutoTokenizer
@@ -189,6 +212,7 @@ _EMBEDDER: SentenceTransformer | None = None
 _EMBEDDER_LOCK: SandboxLockType | None = None
 _EMBEDDER_THREAD_LOCK = threading.RLock()
 _MODEL_NAME = _MODEL_ID
+SENTENCE_TRANSFORMER_DEVICE = _resolve_sentence_transformer_device()
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
 _MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
 _SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "30"))
@@ -1465,8 +1489,12 @@ def _load_embedder() -> SentenceTransformer | None:
                     "loading sentence transformer from cached snapshot",
                     extra={"model": _MODEL_NAME, "snapshot": str(snapshot_path)},
                 )
+                snapshot_kwargs: dict[str, object] = {"local_files_only": True}
+                device = SENTENCE_TRANSFORMER_DEVICE
+                if device:
+                    snapshot_kwargs.setdefault("device", device)
                 model = SentenceTransformer(
-                    str(snapshot_path), local_files_only=True
+                    str(snapshot_path), **snapshot_kwargs
                 )
                 duration = time.perf_counter() - start
                 logger.info(
@@ -1515,6 +1543,8 @@ def _load_embedder() -> SentenceTransformer | None:
             local_only=bool(local_kwargs.get("local_files_only", False)),
         )
         _ensure_hf_timeouts()
+        if SENTENCE_TRANSFORMER_DEVICE and "device" not in local_kwargs:
+            local_kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
         model = SentenceTransformer(_MODEL_ID, **local_kwargs)
         duration = time.perf_counter() - start
         logger.info(
@@ -1762,6 +1792,7 @@ def embedder_diagnostics() -> dict[str, Any]:
 __all__ = [
     "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
     "canonical_model_id",
+    "SENTENCE_TRANSFORMER_DEVICE",
     "governed_embed",
     "get_embedder",
     "embedder_diagnostics",

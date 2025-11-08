@@ -40,7 +40,7 @@ def test_license_skip(monkeypatch):
 
 def test_semantic_alerts(monkeypatch):
     class DummyModel:
-        def __init__(self, name: str) -> None:
+        def __init__(self, name: str, *args, **kwargs) -> None:
             pass
 
         def get_sentence_embedding_dimension(self) -> int:

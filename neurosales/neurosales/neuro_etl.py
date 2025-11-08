@@ -51,6 +51,7 @@ except Exception:  # pragma: no cover - optional dependency
         return text
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
 )
 from .influence_graph import InfluenceGraph
@@ -116,7 +117,10 @@ class InMemoryFaiss:
             import os
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self.model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
+            self.model = SentenceTransformer(
+                DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+                device=SENTENCE_TRANSFORMER_DEVICE,
+            )
             dim = self.model.get_sentence_embedding_dimension()
             self.index = faiss.IndexFlatL2(dim)
         else:  # pragma: no cover - heavy deps missing

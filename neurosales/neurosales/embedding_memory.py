@@ -21,6 +21,7 @@ from security.secret_redactor import redact
 import logging
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    SENTENCE_TRANSFORMER_DEVICE,
     canonical_model_id,
     governed_embed,
 )
@@ -56,7 +57,10 @@ class EmbeddingConversationMemory:
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         model_name = canonical_model_id(self.model_name)
         self.model_name = model_name
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(
+            model_name,
+            device=SENTENCE_TRANSFORMER_DEVICE,
+        )
         dim = self._model.get_sentence_embedding_dimension()
         self._index = faiss.IndexFlatL2(dim)
 
