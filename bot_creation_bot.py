@@ -20,7 +20,6 @@ from .data_bot import DataBot, MetricsDB, persist_sc_thresholds
 from .bot_registry import BotRegistry
 from .bot_planning_bot import BotPlanningBot, PlanningTask
 from .bot_development_bot import BotDevelopmentBot, BotSpec
-from .bot_testing_bot import BotTestingBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .code_database import CodeRecord
 from .error_bot import ErrorBot
@@ -66,6 +65,7 @@ def _load_model_automation_pipeline() -> "Type[ModelAutomationPipeline] | None":
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_testing_bot import BotTestingBot
     from .evolution_orchestrator import EvolutionOrchestrator
     from .shared.pipeline_base import ModelAutomationPipeline
 from datetime import datetime
@@ -97,6 +97,7 @@ engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_cont
 
 _pipeline_cls: "Type[ModelAutomationPipeline] | None" = None
 _pipeline_instance: "ModelAutomationPipeline | None" = None
+_bot_testing_cls: "Type[BotTestingBot] | None" = None
 
 
 def _get_pipeline_cls() -> "Type[ModelAutomationPipeline] | None":
@@ -224,7 +225,7 @@ class BotCreationBot(AdminBotBase):
         self.developer = developer or BotDevelopmentBot(
             context_builder=self.context_builder, db_steward=self.db_router
         )
-        self.tester = tester or BotTestingBot()
+        self.tester = tester or _create_default_tester()
         self.deployer = deployer or DeploymentBot()
         self.error_bot = error_bot or ErrorBot(context_builder=self.context_builder)
         self.scaler = scaler or ScalabilityAssessmentBot()
@@ -1109,6 +1110,33 @@ class BotCreationBot(AdminBotBase):
             expense=0.0,
         )
         return ids
+
+
+def _get_bot_testing_cls() -> "Type[BotTestingBot]":
+    """Import :class:`BotTestingBot` lazily to avoid circular imports."""
+
+    global _bot_testing_cls
+    if _bot_testing_cls is not None:
+        return _bot_testing_cls
+
+    from .bot_testing_bot import BotTestingBot as _BotTestingBot
+
+    _bot_testing_cls = _BotTestingBot
+    return _bot_testing_cls
+
+
+def _create_default_tester() -> "BotTestingBot":
+    """Return a default tester instance without a module level import."""
+
+    return _get_bot_testing_cls()()
+
+
+def __getattr__(name: str) -> object:  # pragma: no cover - compatibility shim
+    """Expose lazily imported dependencies while preserving legacy access patterns."""
+
+    if name == "BotTestingBot":
+        return _get_bot_testing_cls()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = ["CreationConfig", "BotCreationBot"]
