@@ -23,6 +23,7 @@ except RuntimeError:
 app = Celery(
     "menace_sandbox",
     broker=os.getenv("CELERY_BROKER_URL", "memory://"),
+    include=("menace_sandbox.menace_tasks",),
 )
 app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "cache+memory://")
 
@@ -33,11 +34,11 @@ app.conf.update(
     task_track_started=True,
 )
 
-# ⬇️ This line is crucial
+# ⬇️ This line allows auto-discovery of any additional task modules inside the
+# package without eagerly importing them at module load time. The explicit
+# ``include`` directive above ensures that the ``menace_tasks`` module is loaded
+# when the Celery app initialises, preventing circular import issues.
 app.autodiscover_tasks(["menace_sandbox"])
-
-# OR just directly import
-from menace_sandbox.menace_tasks import ping  # noqa: E402,F401  # ensure task registration
 
 
 if __name__ == "__main__":
