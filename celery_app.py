@@ -1,10 +1,12 @@
+import os
+
 from celery import Celery
 
 app = Celery(
-    "menace",
-    broker="amqp://guest:guest@localhost:5672//",
-    backend="rpc://",
+    "menace_sandbox",
+    broker=os.getenv("CELERY_BROKER_URL", "memory://"),
 )
+app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "cache+memory://")
 
 # Config
 app.conf.update(
