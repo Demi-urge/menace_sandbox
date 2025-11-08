@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import time
 import threading
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING, Type
 import argparse
 import importlib
 import platform
@@ -92,7 +92,6 @@ else:
 
         sandbox_runner._run_sandbox = _fallback_run_sandbox  # type: ignore
 from menace.bot_development_bot import BotDevelopmentBot  # noqa: E402
-from menace.bot_testing_bot import BotTestingBot  # noqa: E402
 from menace.chatgpt_enhancement_bot import ChatGPTEnhancementBot  # noqa: E402
 from menace.chatgpt_prediction_bot import ChatGPTPredictionBot  # noqa: E402
 from menace.chatgpt_research_bot import ChatGPTResearchBot  # noqa: E402
@@ -136,6 +135,25 @@ from menace.self_learning_service import main as learning_service_main  # noqa: 
 from menace.self_service_override import SelfServiceOverride  # noqa: E402
 from menace.resource_allocation_optimizer import ROIDB  # noqa: E402
 from menace.data_bot import MetricsDB  # noqa: E402
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from menace.bot_testing_bot import BotTestingBot
+
+
+_BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
+
+
+def get_bot_testing_bot_class() -> Type["BotTestingBot"]:
+    """Return :class:`BotTestingBot` without importing it eagerly."""
+
+    global _BOT_TESTING_CLS
+    if _BOT_TESTING_CLS is not None:
+        return _BOT_TESTING_CLS
+
+    from menace.bot_testing_bot import BotTestingBot as _BotTestingBot
+
+    _BOT_TESTING_CLS = _BotTestingBot
+    return _BOT_TESTING_CLS
 
 
 def _parse_map(value: str) -> dict[str, str]:
@@ -389,7 +407,7 @@ def _init_unused_bots() -> None:
 
     bot_classes = [
         _wrap(BotDevelopmentBot, context_builder=builder),
-        BotTestingBot,
+        get_bot_testing_bot_class(),
         _wrap(ChatGPTEnhancementBot, client, context_builder=builder),
         _wrap(ChatGPTPredictionBot, client=client, context_builder=builder),
         _wrap(ChatGPTResearchBot, builder, client),
