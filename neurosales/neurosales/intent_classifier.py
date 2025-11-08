@@ -19,7 +19,10 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
 from analysis.semantic_diff_filter import find_semantic_risks
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+)
 try:
     from compliance.license_fingerprint import check as license_check
 except Exception:  # pragma: no cover - optional dependency
@@ -62,7 +65,7 @@ class IntentClassifier:
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._sbert = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                self._sbert = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
             except Exception:
                 self.backend = "tfidf"
         if self.backend == "use" and hub is not None:

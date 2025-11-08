@@ -15,11 +15,14 @@ Subclasses must provide a ``self.conn`` database connection and override
 from __future__ import annotations
 
 _DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_canonical_model_id_fn: "Callable[[str | None], str] | None" = None
 
 
 def _normalise_model_name(model_name: str | None) -> str:
     """Return ``model_name`` with the canonical SentenceTransformer prefix."""
 
+    if _canonical_model_id_fn is not None:
+        return _canonical_model_id_fn(model_name)
     name = (model_name or "").strip()
     if not name:
         return _DEFAULT_MODEL_NAME
@@ -87,7 +90,7 @@ else:  # pragma: no cover - full environment
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
-from typing import Any, Dict, Iterator, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Sequence, Tuple
 import hashlib
 import json
 import logging
@@ -108,6 +111,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 try:
     _governed_embeddings = load_internal("governed_embeddings")
     governed_embed = _governed_embeddings.governed_embed
+    _DEFAULT_MODEL_NAME = getattr(
+        _governed_embeddings,
+        "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
+        _DEFAULT_MODEL_NAME,
+    )
+    _canonical_model_id_fn = getattr(
+        _governed_embeddings,
+        "canonical_model_id",
+        None,
+    )
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     governed_embed = lambda text, model=None: []  # type: ignore
 
@@ -356,7 +369,7 @@ class EmbeddableDBMixin:
         *super_args: Any,
         index_path: str | Path = "embeddings.ann",
         metadata_path: str | Path = "embeddings.json",
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        model_name: str = _DEFAULT_MODEL_NAME,
         embedding_version: int = 1,
         backend: str = "annoy",
         event_bus: Any | None = None,

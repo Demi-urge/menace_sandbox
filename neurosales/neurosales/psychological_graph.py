@@ -26,7 +26,10 @@ except Exception:  # pragma: no cover - optional heavy deps
 from analysis.semantic_diff_filter import find_semantic_risks
 from compliance.license_fingerprint import check as license_check
 from security.secret_redactor import redact
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    governed_embed,
+)
 from .engagement_graph import pagerank, shortest_path
 
 logger = logging.getLogger(__name__)
@@ -69,7 +72,7 @@ class PsychologicalGraph:
             from huggingface_hub import login
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self._model = SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
             dim = self._model.get_sentence_embedding_dimension()
             self._index = faiss.IndexFlatL2(dim)
         

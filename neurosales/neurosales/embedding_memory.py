@@ -19,7 +19,11 @@ from compliance.license_fingerprint import check as license_check
 from analysis.semantic_diff_filter import find_semantic_risks
 from security.secret_redactor import redact
 import logging
-from governed_embeddings import governed_embed
+from governed_embeddings import (
+    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    canonical_model_id,
+    governed_embed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,7 @@ class EmbeddingConversationMemory:
 
     max_messages: int = 5
     ttl_seconds: Optional[int] = None
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL
     _messages: deque[EmbeddedMessage] = field(default_factory=deque, init=False)
     _model: Optional[SentenceTransformer] = field(default=None, init=False)
     _index: Optional[faiss.Index] = field(default=None, init=False)
@@ -50,11 +54,7 @@ class EmbeddingConversationMemory:
         from huggingface_hub import login
 
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        model_name = (self.model_name or "").strip()
-        if not model_name:
-            model_name = "sentence-transformers/all-MiniLM-L6-v2"
-        elif "/" not in model_name:
-            model_name = f"sentence-transformers/{model_name}"
+        model_name = canonical_model_id(self.model_name)
         self.model_name = model_name
         self._model = SentenceTransformer(model_name)
         dim = self._model.get_sentence_embedding_dimension()

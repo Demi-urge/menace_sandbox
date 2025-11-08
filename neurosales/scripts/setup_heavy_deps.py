@@ -6,6 +6,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import typing
+
+from governed_embeddings import DEFAULT_SENTENCE_TRANSFORMER_MODEL
 try:  # pragma: no cover - optional dependency in minimal envs
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - degrade gracefully for tests
@@ -144,7 +146,7 @@ def run(download_only: bool = False, logger=None) -> SetupHeavyDepsResult:
 
         login(token=token)
         _log("Prefetching embedding model weights...", logger)
-        SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        SentenceTransformer(DEFAULT_SENTENCE_TRANSFORMER_MODEL)
         embeddings_prefetched = True
     except Exception as exc:  # pragma: no cover - optional dependency
         embeddings_error = f"Could not load SentenceTransformer: {exc}"
