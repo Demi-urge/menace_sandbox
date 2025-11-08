@@ -4,13 +4,37 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Dict, Iterable, TYPE_CHECKING, Type
 
 from .bot_development_bot import BotDevelopmentBot, BotSpec
-from .bot_testing_bot import BotTestingBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .scalability_assessment_bot import ScalabilityAssessmentBot, TaskInfo
 from vector_service.context_builder import ContextBuilder
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_testing_bot import BotTestingBot
+
+
+_BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
+
+
+def _get_bot_testing_bot_class() -> Type["BotTestingBot"]:
+    """Return the :class:`BotTestingBot` type without importing eagerly."""
+
+    global _BOT_TESTING_CLS
+    if _BOT_TESTING_CLS is not None:
+        return _BOT_TESTING_CLS
+
+    from .bot_testing_bot import BotTestingBot as _BotTestingBot
+
+    _BOT_TESTING_CLS = _BotTestingBot
+    return _BOT_TESTING_CLS
+
+
+def _create_default_tester() -> "BotTestingBot":
+    """Instantiate :class:`BotTestingBot` lazily."""
+
+    return _get_bot_testing_bot_class()()
 
 
 @dataclass
@@ -29,7 +53,7 @@ class ScalabilityPipeline:
         *,
         context_builder: ContextBuilder,
         developer: BotDevelopmentBot | None = None,
-        tester: BotTestingBot | None = None,
+        tester: "BotTestingBot" | None = None,
         scaler: ScalabilityAssessmentBot | None = None,
         deployer: DeploymentBot | None = None,
         max_iters: int = 3,
@@ -40,7 +64,7 @@ class ScalabilityPipeline:
         self.developer = developer or BotDevelopmentBot(
             context_builder=self.context_builder
         )
-        self.tester = tester or BotTestingBot()
+        self.tester = tester or _create_default_tester()
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.deployer = deployer or DeploymentBot()
         self.max_iters = max_iters

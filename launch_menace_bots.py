@@ -16,6 +16,7 @@ import ast
 import logging
 import os
 import uuid
+from typing import TYPE_CHECKING, Type
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -42,8 +43,32 @@ from menace.error_bot import ErrorDB  # noqa: E402
 from menace.error_logger import ErrorLogger  # noqa: E402
 from menace.knowledge_graph import KnowledgeGraph  # noqa: E402
 from menace.task_handoff_bot import TaskInfo  # noqa: E402
-from menace.bot_testing_bot import BotTestingBot  # noqa: E402
 from menace.deployment_bot import DeploymentBot, DeploymentSpec  # noqa: E402
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from menace.bot_testing_bot import BotTestingBot
+
+
+_BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
+
+
+def _get_bot_testing_bot_class() -> Type["BotTestingBot"]:
+    """Return :class:`BotTestingBot` lazily to avoid circular imports."""
+
+    global _BOT_TESTING_CLS
+    if _BOT_TESTING_CLS is not None:
+        return _BOT_TESTING_CLS
+
+    from menace.bot_testing_bot import BotTestingBot as _BotTestingBot
+
+    _BOT_TESTING_CLS = _BotTestingBot
+    return _BOT_TESTING_CLS
+
+
+def _create_tester() -> "BotTestingBot":
+    """Instantiate :class:`BotTestingBot` without a module level import."""
+
+    return _get_bot_testing_bot_class()()
 
 
 def _extract_functions(code: str) -> list[str]:
@@ -127,7 +152,7 @@ def debug_and_deploy(
     context_builder.refresh_db_weights()
     engine = SelfCodingEngine(code_db, memory_mgr, context_builder=context_builder)
     error_db = ErrorDB(router=GLOBAL_ROUTER)
-    tester = BotTestingBot()
+    tester = _create_tester()
     # instantiate telemetry logger for completeness
     try:
         _ = ErrorLogger(

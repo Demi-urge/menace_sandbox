@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List
 import json
 import sys
 import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Type, List
 
 from .ipo_bot import IPOBot, ExecutionPlan
 try:
@@ -13,11 +13,35 @@ except ImportError:  # pragma: no cover - fallback when helper missing
     from vector_service.context_builder import ContextBuilder  # type: ignore
 
 from .bot_development_bot import BotDevelopmentBot, BotSpec
-from .bot_testing_bot import BotTestingBot
 from .scalability_assessment_bot import ScalabilityAssessmentBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .task_handoff_bot import TaskHandoffBot, TaskInfo
 from .research_aggregator_bot import ResearchAggregatorBot
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .bot_testing_bot import BotTestingBot
+
+
+_BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
+
+
+def _get_bot_testing_bot_class() -> Type["BotTestingBot"]:
+    """Return :class:`BotTestingBot` without importing at module import time."""
+
+    global _BOT_TESTING_CLS
+    if _BOT_TESTING_CLS is not None:
+        return _BOT_TESTING_CLS
+
+    from .bot_testing_bot import BotTestingBot as _BotTestingBot
+
+    _BOT_TESTING_CLS = _BotTestingBot
+    return _BOT_TESTING_CLS
+
+
+def _create_default_tester() -> "BotTestingBot":
+    """Instantiate :class:`BotTestingBot` lazily."""
+
+    return _get_bot_testing_bot_class()()
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +74,7 @@ class IPOImplementationPipeline:
         self.developer = developer or BotDevelopmentBot(
             context_builder=context_builder
         )
-        self.tester = tester or BotTestingBot()
+        self.tester = tester or _create_default_tester()
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.deployer = deployer or DeploymentBot()
         self.handoff = handoff
