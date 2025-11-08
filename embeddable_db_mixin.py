@@ -12,6 +12,19 @@ Subclasses must provide a ``self.conn`` database connection and override
 :meth:`iter_records` yielding ``(record_id, record, kind)`` tuples.
 """
 
+_DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def _normalise_model_name(model_name: str | None) -> str:
+    """Return ``model_name`` with the canonical SentenceTransformer prefix."""
+
+    name = (model_name or "").strip()
+    if not name:
+        return _DEFAULT_MODEL_NAME
+    if "/" not in name:
+        return f"sentence-transformers/{name}"
+    return name
+
 from __future__ import annotations
 
 import importlib.util
@@ -374,7 +387,7 @@ class EmbeddableDBMixin:
             metadata_path = index_path.with_suffix(".json")
         self.index_path = index_path
         self.metadata_path = metadata_path
-        self.model_name = model_name
+        self.model_name = _normalise_model_name(model_name)
         self.embedding_version = embedding_version
         self.backend = backend
 
@@ -400,7 +413,9 @@ class EmbeddableDBMixin:
             import os
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self._model = SentenceTransformer(self.model_name)
+            model_name = _normalise_model_name(self.model_name)
+            self.model_name = model_name
+            self._model = SentenceTransformer(model_name)
         return self._model
 
     def encode_text(self, text: str) -> List[float]:

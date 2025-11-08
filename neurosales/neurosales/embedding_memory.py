@@ -50,7 +50,13 @@ class EmbeddingConversationMemory:
         from huggingface_hub import login
 
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-        self._model = SentenceTransformer(self.model_name)
+        model_name = (self.model_name or "").strip()
+        if not model_name:
+            model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        elif "/" not in model_name:
+            model_name = f"sentence-transformers/{model_name}"
+        self.model_name = model_name
+        self._model = SentenceTransformer(model_name)
         dim = self._model.get_sentence_embedding_dimension()
         self._index = faiss.IndexFlatL2(dim)
 
