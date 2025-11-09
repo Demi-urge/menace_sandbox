@@ -2100,45 +2100,70 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
         orchestrator = _load_evolution_orchestrator()
         registry_obj = _get_registry()
         data_bot_obj = _get_data_bot()
-        try:
-            manager_local = internalize_coding_bot(
-                "CapitalManagementBot",
-                _get_engine(),
-                pipeline,
-                data_bot=data_bot_obj,
-                bot_registry=registry_obj,
-                evolution_orchestrator=orchestrator,
-                threshold_service=ThresholdService(),
-                roi_threshold=thresholds.roi_drop,
-                error_threshold=thresholds.error_increase,
-                test_failure_threshold=thresholds.test_failure_increase,
+
+        manager_local: SelfCodingManager | _DisabledSelfCodingManager | None
+        manager_local = None
+        if orchestrator is None:
+            logger.info(
+                "EvolutionOrchestrator missing for CapitalManagementBot; using disabled self-coding manager",
             )
-        except Exception as exc:  # pragma: no cover - degraded bootstrap
-            if _quick_fix_bootstrap_failed(exc):
-                logger.warning(
-                    "QuickFixEngine unavailable for CapitalManagementBot; disabling self-coding: %s",
-                    exc,
+            try:
+                manager_local = _DisabledSelfCodingManager(
+                    bot_registry=registry_obj, data_bot=data_bot_obj
                 )
-                try:
-                    manager_local = _DisabledSelfCodingManager(
-                        bot_registry=registry_obj, data_bot=data_bot_obj
-                    )
-                except Exception:  # pragma: no cover - best effort fallback
-                    logger.warning(
-                        "failed to instantiate disabled self-coding manager for CapitalManagementBot",
-                        exc_info=True,
-                    )
-                    if retry:
-                        _schedule_manager_retry()
-                    return
-            else:
+            except Exception:  # pragma: no cover - best effort fallback
                 logger.warning(
-                    "failed to initialise self-coding manager for CapitalManagementBot: %s",
-                    exc,
+                    "failed to instantiate disabled self-coding manager for CapitalManagementBot",
+                    exc_info=True,
                 )
                 if retry:
                     _schedule_manager_retry()
                 return
+        else:
+            try:
+                manager_local = internalize_coding_bot(
+                    "CapitalManagementBot",
+                    _get_engine(),
+                    pipeline,
+                    data_bot=data_bot_obj,
+                    bot_registry=registry_obj,
+                    evolution_orchestrator=orchestrator,
+                    threshold_service=ThresholdService(),
+                    roi_threshold=thresholds.roi_drop,
+                    error_threshold=thresholds.error_increase,
+                    test_failure_threshold=thresholds.test_failure_increase,
+                )
+            except Exception as exc:  # pragma: no cover - degraded bootstrap
+                if _quick_fix_bootstrap_failed(exc):
+                    logger.warning(
+                        "QuickFixEngine unavailable for CapitalManagementBot; disabling self-coding: %s",
+                        exc,
+                    )
+                    try:
+                        manager_local = _DisabledSelfCodingManager(
+                            bot_registry=registry_obj, data_bot=data_bot_obj
+                        )
+                    except Exception:  # pragma: no cover - best effort fallback
+                        logger.warning(
+                            "failed to instantiate disabled self-coding manager for CapitalManagementBot",
+                            exc_info=True,
+                        )
+                        if retry:
+                            _schedule_manager_retry()
+                        return
+                else:
+                    logger.warning(
+                        "failed to initialise self-coding manager for CapitalManagementBot: %s",
+                        exc,
+                    )
+                    if retry:
+                        _schedule_manager_retry()
+                    return
+
+        if manager_local is None:
+            if retry:
+                _schedule_manager_retry()
+            return
         manager = manager_local
         if _manager_retry_timer is not None:
             try:
