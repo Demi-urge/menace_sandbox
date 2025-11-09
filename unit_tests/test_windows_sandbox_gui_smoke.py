@@ -78,8 +78,13 @@ def test_is_harmless_log_matches_known_warnings() -> None:
         "application configured broker URL 'memory://' is not usable."
     )
     harmless_error = "Memory transport does not support event consuming"
+    harmless_variant = (
+        "2025-11-09 21:13:39,663 - WARNING - Using broker from config (embedded)"
+        " because application configured broker URL 'memory://'"
+    )
 
     assert gui._is_harmless_log("warning", harmless_warning)
+    assert gui._is_harmless_log("warning", harmless_variant)
     assert gui._is_harmless_log("ERROR", harmless_error)
     assert not gui._is_harmless_log("warning", "Unexpected warning")
     assert not gui._is_harmless_log("info", harmless_warning)
