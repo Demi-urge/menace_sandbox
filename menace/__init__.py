@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from dynamic_path_router import repo_root
+from pathlib import Path
+
+try:  # pragma: no cover - optional helper module
+    from dynamic_path_router import repo_root as _repo_root
+except ModuleNotFoundError:  # pragma: no cover - fallback when module missing
+    def repo_root() -> Path:
+        """Return the repository root when :mod:`dynamic_path_router` is absent."""
+
+        return Path(__file__).resolve().parent.parent
+else:
+    repo_root = _repo_root
 
 # Allow importing modules from repository root using ``menace`` prefix.
 __path__.append(str(repo_root()))
