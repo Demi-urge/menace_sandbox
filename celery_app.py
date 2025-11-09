@@ -14,3 +14,10 @@ app.autodiscover_tasks(["menace_sandbox"])
 
 # Load tasks so Celery can register them
 import menace_sandbox.menace_tasks  # noqa: E402  pylint: disable=wrong-import-position
+
+
+if __name__ == "__main__":
+    print("🧠 Celery config:")
+    for key, value in app.conf.items():
+        if "redis" in str(value).lower():
+            print(f"{key} = {value}")
