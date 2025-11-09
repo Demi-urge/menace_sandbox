@@ -25,6 +25,7 @@ app = Celery(
     broker=os.getenv("CELERY_BROKER_URL", "memory://"),
     include=("menace_sandbox.menace_tasks",),
 )
+# Configure the result backend via environment variable with a sensible Redis default
 app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
 # Config
