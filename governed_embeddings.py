@@ -717,6 +717,45 @@ def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
     return None
 
 
+def _is_meta_tensor_loading_error(exc: Exception) -> bool:
+    """Return ``True`` when *exc* indicates the snapshot still has meta tensors."""
+
+    message = str(exc)
+    lowered = message.lower()
+    return "meta tensor" in lowered or "to_empty" in lowered or "no data" in lowered
+
+
+def _purge_corrupted_snapshot(snapshot_path: Path) -> None:
+    """Remove a corrupted ``SentenceTransformer`` snapshot directory."""
+
+    try:
+        exists = snapshot_path.exists()
+    except FileNotFoundError:
+        return
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug(
+            "failed to inspect corrupted snapshot %s: %s", snapshot_path, exc
+        )
+        return
+
+    if not exists:
+        return
+
+    try:
+        shutil.rmtree(snapshot_path)
+    except FileNotFoundError:
+        return
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug(
+            "failed to remove corrupted snapshot %s: %s", snapshot_path, exc
+        )
+    else:
+        logger.info(
+            "removed corrupted sentence transformer snapshot",
+            extra={"snapshot": str(snapshot_path)},
+        )
+
+
 def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
     """Remove stale Hugging Face lock files left behind by crashed downloads.
 
@@ -1511,6 +1550,7 @@ def _load_embedder() -> SentenceTransformer | None:
                 )
                 return model
             except Exception as exc:  # pragma: no cover - diagnostics only
+                corrupted = _is_meta_tensor_loading_error(exc)
                 logger.warning(
                     "failed to load sentence transformer from cached snapshot %s: %s",
                     snapshot_path,
@@ -1521,6 +1561,13 @@ def _load_embedder() -> SentenceTransformer | None:
                     error=str(exc),
                     exc_type=type(exc).__name__,
                 )
+                if corrupted:
+                    _trace(
+                        "load.snapshot.corrupted",
+                        snapshot=str(snapshot_path),
+                    )
+                    _purge_corrupted_snapshot(snapshot_path)
+                    local_kwargs.pop("local_files_only", None)
 
     token = os.getenv("HUGGINGFACE_API_TOKEN")
     if token:
