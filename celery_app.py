@@ -11,3 +11,6 @@ app.conf.update(
 )
 
 app.autodiscover_tasks(["menace_sandbox"])
+
+# Load tasks so Celery can register them
+import menace_sandbox.menace_tasks  # noqa: E402  pylint: disable=wrong-import-position
