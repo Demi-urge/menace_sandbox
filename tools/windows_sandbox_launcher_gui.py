@@ -39,8 +39,13 @@ logger.setLevel(logging.INFO)
 # pausing repeatedly.  Defining the snippets once makes it easy to expand the
 # allow-list if additional benign log lines surface in the future.
 _KNOWN_HARMLESS_LOG_SNIPPETS: tuple[str, ...] = (
-    "using broker from environment because application configured broker url 'memory://'",
-    "memory transport does not support event consuming",
+    # Celery emits a number of warnings when the in-memory broker/transport is
+    # used.  The exact phrasing varies between Celery releases so we keep the
+    # snippets intentionally broad to avoid flapping pause dialogs during
+    # preflight.
+    "using broker from environment because application configured broker url",
+    "using broker from config",
+    "memory transport does not support",
 )
 
 
