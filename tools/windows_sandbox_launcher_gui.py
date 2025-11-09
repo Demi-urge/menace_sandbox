@@ -55,7 +55,10 @@ def _is_harmless_log(level: str, message: str) -> bool:
     if level.lower() not in {"warning", "error"}:
         return False
 
-    normalized = message.lower()
+    # Celery occasionally inserts line breaks inside warning messages which
+    # prevents straightforward substring checks.  Collapsing whitespace keeps
+    # the matching logic resilient to formatting differences across versions.
+    normalized = " ".join(message.lower().split())
     return any(snippet in normalized for snippet in _KNOWN_HARMLESS_LOG_SNIPPETS)
 
 
