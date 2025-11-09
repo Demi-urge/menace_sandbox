@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from menace_sandbox.dynamic_path_router import clear_cache, resolve_path
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "tools" / "check_dynamic_paths.py"  # path-ignore
 
@@ -49,3 +51,17 @@ def test_resolve_path_suppresses_warning(tmp_path) -> None:
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_resolve_path_ignores_cwd(monkeypatch, tmp_path):
+    clear_cache()
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        resolved = resolve_path("config/settings.yaml")
+
+        expected = ROOT / "config" / "settings.yaml"
+        assert resolved == expected.resolve()
+        assert resolved.exists()
+    finally:
+        clear_cache()

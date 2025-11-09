@@ -4,6 +4,7 @@ This module also exposes :class:`ROICalculator` whose profiles live in
 ``configs/roi_profiles.yaml``.
 """
 
+import importlib
 import importlib.util
 import logging
 import os
@@ -13,22 +14,67 @@ import time
 from typing import TYPE_CHECKING
 import types
 from pathlib import Path
+import threading
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
-sys.modules.setdefault(
-    "dynamic_path_router",
-    types.SimpleNamespace(
-        resolve_path=lambda p: Path(p),
-        resolve_dir=lambda p: Path(p),
-        resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
-        path_for_prompt=lambda p: Path(p).as_posix(),
-        get_project_root=lambda: Path("."),
-        repo_root=lambda: Path("."),
-    ),
-)
+
+class _DynamicPathRouterProxy(types.ModuleType):
+    """Lazy loader that defers importing ``dynamic_path_router`` until needed."""
+
+    _target: object | None
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self._target = None
+        self._lock = threading.Lock()
+
+    def _load(self) -> object:
+        target = self._target
+        if target is not None:
+            return target
+
+        with self._lock:
+            target = self._target
+            if target is not None:
+                return target
+
+            try:
+                module = importlib.import_module("menace_sandbox.dynamic_path_router")
+            except ModuleNotFoundError:
+                module = types.SimpleNamespace(
+                    resolve_path=lambda p: Path(p),
+                    resolve_dir=lambda p: Path(p),
+                    resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
+                    path_for_prompt=lambda p: Path(p).as_posix(),
+                    get_project_root=lambda: Path("."),
+                    repo_root=lambda: Path("."),
+                )
+            else:
+                sys.modules.setdefault("menace_sandbox.dynamic_path_router", module)
+                sys.modules["dynamic_path_router"] = module
+                for attr in ("__doc__", "__file__", "__package__", "__loader__", "__spec__"):
+                    try:
+                        current = object.__getattribute__(self, attr)
+                    except AttributeError:
+                        current = None
+                    setattr(self, attr, getattr(module, attr, current))
+
+            self._target = module
+            return module
+
+    def __getattr__(self, item: str) -> object:
+        module = self._load()
+        return getattr(module, item)
+
+    def __dir__(self) -> list[str]:
+        module = self._load()
+        return sorted(set(super().__dir__()) | set(dir(module)))
+
+
+sys.modules.setdefault("dynamic_path_router", _DynamicPathRouterProxy("dynamic_path_router"))
 
 try:  # pragma: no cover - ensure YAML stub registration in minimal envs
     from .yaml_fallback import get_yaml as _ensure_yaml
