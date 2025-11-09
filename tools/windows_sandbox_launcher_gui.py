@@ -33,6 +33,27 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+# Warnings emitted by Celery when the in-memory transport is configured are
+# expected during preflight. They do not require operator intervention, but the
+# previous implementation treated them as actionable which resulted in the GUI
+# pausing repeatedly.  Defining the snippets once makes it easy to expand the
+# allow-list if additional benign log lines surface in the future.
+_KNOWN_HARMLESS_LOG_SNIPPETS: tuple[str, ...] = (
+    "using broker from environment because application configured broker url 'memory://'",
+    "memory transport does not support event consuming",
+)
+
+
+def _is_harmless_log(level: str, message: str) -> bool:
+    """Return ``True`` when *message* is a known benign log entry."""
+
+    if level.lower() not in {"warning", "error"}:
+        return False
+
+    normalized = message.lower()
+    return any(snippet in normalized for snippet in _KNOWN_HARMLESS_LOG_SNIPPETS)
+
+
 def _path_exists(candidate: object) -> bool:
     """Best-effort existence check for :func:`_purge_stale_files`."""
 
@@ -431,6 +452,10 @@ class SandboxLauncherGUI(tk.Tk):
             return
 
         if pause_event.is_set():
+            return
+
+        if _is_harmless_log(level, message):
+            logger.debug("Ignoring harmless %s log: %s", level, message)
             return
 
         pause_event.set()
