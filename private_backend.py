@@ -3,10 +3,11 @@ from __future__ import annotations
 """Backend loading local model weights via HuggingFace transformers."""
 
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Iterable
 import asyncio
 import time
 import threading
+import warnings
 
 import llm_config
 import rate_limit
@@ -47,7 +48,23 @@ class LocalWeightsBackend(LLMBackend):
         self._tokenizer = AutoTokenizer.from_pretrained(self.model)
         self._model = AutoModelForCausalLM.from_pretrained(self.model)
         if torch is not None:
-            self._model.to(self.device)
+            target_device = torch.device(self.device)
+            if _module_has_meta_tensors(self._model):
+                if hasattr(self._model, "to_empty"):
+                    self._model = self._model.to_empty(device=target_device)
+                    warnings.warn(
+                        "Model weights were still on the meta device; used to_empty() "
+                        "to materialise them on %s" % target_device,
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                else:  # pragma: no cover - only triggered on very old PyTorch
+                    raise RuntimeError(
+                        "Model contains meta tensors but torch.nn.Module.to_empty is "
+                        "unavailable. Upgrade PyTorch to 2.0 or newer."
+                    )
+            else:
+                self._model.to(target_device)
         cfg = llm_config.get_config()
         self._rate_limiter = rate_limit.SHARED_TOKEN_BUCKET
         self._rate_limiter.update_rate(getattr(cfg, "tokens_per_minute", 0))
@@ -151,3 +168,31 @@ def local_weights_client(model: str | None = None, device: str = "cpu") -> LLMCl
 
 
 __all__ = ["LocalWeightsBackend", "local_weights_client"]
+
+
+def _module_has_meta_tensors(module: Any) -> bool:
+    """Return ``True`` if *module* still contains tensors on the meta device."""
+
+    params: Iterable[Any] | None
+    try:
+        params = module.parameters(recurse=True)  # type: ignore[assignment]
+    except Exception:  # pragma: no cover - non standard module
+        params = None
+
+    if params is not None:
+        for param in params:
+            if getattr(param, "is_meta", False):
+                return True
+
+    buffers: Iterable[Any] | None
+    try:
+        buffers = module.buffers(recurse=True)  # type: ignore[assignment]
+    except Exception:  # pragma: no cover - non standard module
+        buffers = None
+
+    if buffers is not None:
+        for buffer in buffers:
+            if getattr(buffer, "is_meta", False):
+                return True
+
+    return False
