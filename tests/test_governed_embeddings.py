@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 import types
 
 import menace.governed_embeddings as governed_embeddings
@@ -452,6 +453,60 @@ def test_get_embedder_prefers_cached_snapshot(monkeypatch, tmp_path):
     assert recorded["path"] == str(snapshot_dir)
     # ``cache_folder`` should not be passed when we load directly from a snapshot.
     assert recorded["kwargs"].get("cache_folder") is None
+
+
+def test_corrupted_snapshot_is_purged_before_retry(monkeypatch, tmp_path):
+    cache_root = (
+        tmp_path
+        / "hub"
+        / "models--sentence-transformers--all-MiniLM-L6-v2"
+    )
+    snapshot_dir = cache_root / "snapshots" / "deadbeef"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "config.json").write_text("{}")
+    (snapshot_dir / "modules.json").write_text("{}")
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *_: None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "model", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_LOCK", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+
+    purged: dict[str, object] = {}
+
+    def fake_purge(path: Path) -> None:
+        purged["path"] = path
+
+    monkeypatch.setattr(governed_embeddings, "_purge_corrupted_snapshot", fake_purge)
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class DummySentenceTransformer:
+        def __init__(self, identifier: str, **kwargs: object) -> None:
+            calls.append((identifier, dict(kwargs)))
+            if len(calls) == 1:
+                raise RuntimeError(
+                    "Can't copy out of meta tensor; no data! Please use torch.nn.Module.to_empty()"
+                )
+            self.name = identifier
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "SentenceTransformer",
+        DummySentenceTransformer,
+    )
+
+    embedder = governed_embeddings.get_embedder()
+    assert isinstance(embedder, DummySentenceTransformer)
+    assert calls[0][0] == str(snapshot_dir)
+    assert purged.get("path") == snapshot_dir
+    assert calls[1][0] == governed_embeddings._MODEL_ID
+    assert "local_files_only" not in calls[1][1]
+    assert calls[1][1].get("cache_folder") == str(tmp_path)
 
 
 def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):
