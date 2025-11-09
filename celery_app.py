@@ -25,7 +25,7 @@ app = Celery(
     broker=os.getenv("CELERY_BROKER_URL", "memory://"),
     include=("menace_sandbox.menace_tasks",),
 )
-app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "cache+memory://")
+app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
 # Config
 app.conf.update(
