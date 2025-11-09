@@ -36,7 +36,7 @@ def _callable(attr, default):
 
 
 resolve_path = getattr(_dynamic_path_router, "resolve_path")
-_fallback_root = lambda: Path(__file__).resolve().parents[1]  # noqa: E731
+_fallback_root = lambda: Path(__file__).resolve().parents[2]  # noqa: E731
 repo_root = _callable(getattr(_dynamic_path_router, "repo_root", None), _fallback_root)
 get_project_root = _callable(
     getattr(_dynamic_path_router, "get_project_root", None), repo_root
@@ -57,14 +57,14 @@ try:  # pragma: no cover - allow flat import
         sandbox_crashes_total,
     )
 except Exception:  # pragma: no cover - fallback for package execution
-    from .metrics_exporter import (  # type: ignore
+    from ..metrics_exporter import (  # type: ignore
         sandbox_restart_total,
         environment_failure_total,
         sandbox_crashes_total,
     )
 
-from .cli import main as _cli_main
-from .cycle import ensure_vector_service
+from ..cli import main as _cli_main
+from ..cycle import ensure_vector_service
 
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
@@ -76,7 +76,7 @@ _AUTONOMOUS_LAUNCH_RETRY: threading.Timer | None = None
 logger = get_logger(__name__)
 
 
-_REPO_PACKAGE = Path(__file__).resolve().parents[1].name
+_REPO_PACKAGE = Path(__file__).resolve().parents[2].name
 _OPTIONAL_MODULE_CACHE: dict[str, ModuleType] = {}
 _MISSING_OPTIONAL: set[str] = set()
 _OPTIONAL_DEPENDENCY_WARNED: set[str] = set()
