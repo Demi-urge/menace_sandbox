@@ -119,12 +119,33 @@ class CommTestDB:
         conn = self.router.get_connection("results")
         cur = conn.cursor()
         version = int(cur.execute("PRAGMA user_version").fetchone()[0])
+
+        def table_exists(name: str) -> bool:
+            query = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
+            return cur.execute(query, (name,)).fetchone() is not None
+
+        def column_exists(table: str, column: str) -> bool:
+            if not table_exists(table):
+                return False
+            info = cur.execute(f"PRAGMA table_info({table})").fetchall()
+            return any(row[1] == column for row in info)
+
+        if not table_exists("results"):
+            for stmt in self.MIGRATIONS[0][1]:
+                cur.execute(stmt)
+            version = max(version, self.MIGRATIONS[0][0])
+
         for target, stmts in self.MIGRATIONS:
-            if version < target:
+            if target == 2:
+                needs_migration = not column_exists("results", "source_menace_id")
+            else:
+                needs_migration = version < target
+            if needs_migration:
                 for stmt in stmts:
                     cur.execute(stmt)
-                version = target
-                cur.execute(f"PRAGMA user_version = {version}")
+                version = max(version, target)
+
+        cur.execute(f"PRAGMA user_version = {version}")
         conn.commit()
 
     def log(self, result: CommTestResult, *, source_menace_id: str | None = None) -> None:
