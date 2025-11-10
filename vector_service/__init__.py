@@ -16,16 +16,21 @@ from typing import Any, Dict
 # example when running the CLI from a flat layout).  Prefer the relative
 # import to avoid relying on that side effect but keep the absolute variant as
 # a fallback for existing runtimes.
-try:
-    from .. import import_compat as _import_compat
-except ImportError:  # pragma: no cover - defensive fallback
-    import importlib
+_BOOTSTRAP_ERROR: ModuleNotFoundError | None = None
 
-    _import_compat = importlib.import_module("import_compat")
 
-try:  # pragma: no cover - optional dependencies may prevent full bootstrap
-    _import_compat.bootstrap(__name__, __file__)
-except ModuleNotFoundError as bootstrap_error:  # pragma: no cover - fallback
+def _define_fallback_loader(
+    bootstrap_error: ModuleNotFoundError | None,
+) -> None:
+    """Register the filesystem based ``load_internal`` shim."""
+
+    global load_internal, _BOOTSTRAP_ERROR
+
+    if bootstrap_error is None:
+        bootstrap_error = ModuleNotFoundError(
+            "import_compat is unavailable and vector_service cannot bootstrap",
+        )
+
     _BOOTSTRAP_ERROR = bootstrap_error
 
     def load_internal(name: str):
@@ -63,8 +68,27 @@ except ModuleNotFoundError as bootstrap_error:  # pragma: no cover - fallback
                 return module
         raise _BOOTSTRAP_ERROR
 
-else:  # pragma: no cover - fully provisioned environment
-    load_internal = _import_compat.load_internal
+
+try:
+    from .. import import_compat as _import_compat
+except ImportError:  # pragma: no cover - defensive fallback
+    import importlib
+
+    try:
+        _import_compat = importlib.import_module("import_compat")
+    except ModuleNotFoundError:
+        _import_compat = None
+
+
+if _import_compat is None:
+    _define_fallback_loader(None)
+else:
+    try:  # pragma: no cover - optional dependencies may prevent full bootstrap
+        _import_compat.bootstrap(__name__, __file__)
+    except ModuleNotFoundError as bootstrap_error:  # pragma: no cover - fallback
+        _define_fallback_loader(bootstrap_error)
+    else:  # pragma: no cover - fully provisioned environment
+        load_internal = _import_compat.load_internal
 
 
 class _Stub:  # pragma: no cover - simple callable placeholder
