@@ -909,6 +909,67 @@ def create_ephemeral_env(
         repo_path = Path(td) / "repo"
         subprocess.check_call(["git", "clone", "--depth", "1", str(workdir), str(repo_path)])
 
+        def _install_test_dependencies(
+            runner: Callable[..., subprocess.CompletedProcess],
+            pip_base: Sequence[str],
+        ) -> None:
+            try:
+                runner(
+                    [*pip_base, "install", "-e", ".[test]"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                logger.warning(
+                    "failed to install test extras; falling back to pytest deps",
+                    extra=log_record(rc=exc.returncode, output=(exc.stderr or exc.stdout or "")),
+                )
+                try:
+                    runner(
+                        [*pip_base, "install", "pytest", "pytest-json-report"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as fallback_exc:
+                    message = (
+                        "failed to install pytest dependencies required for sandbox tests"
+                    )
+                    logger.error(
+                        message,
+                        extra=log_record(
+                            rc=fallback_exc.returncode,
+                            output=(fallback_exc.stderr or fallback_exc.stdout or ""),
+                        ),
+                    )
+                    runtime_exc = RuntimeError(message)
+                    record_error(runtime_exc, context_builder=context_builder)
+                    raise runtime_exc from fallback_exc
+
+        def _verify_test_runner(
+            runner: Callable[..., subprocess.CompletedProcess],
+            python_cmd: Sequence[str],
+        ) -> None:
+            try:
+                runner(
+                    [*python_cmd, "-c", "import pytest"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                message = (
+                    "pytest is not available in the sandbox environment; install test dependencies"
+                )
+                logger.error(
+                    message,
+                    extra=log_record(rc=exc.returncode, output=(exc.stderr or exc.stdout or "")),
+                )
+                runtime_exc = RuntimeError(message)
+                record_error(runtime_exc, context_builder=context_builder)
+                raise runtime_exc from exc
+
         if use_docker:
             image = os.getenv("SANDBOX_DOCKER_IMAGE", "python:3.11-slim")
 
@@ -947,6 +1008,9 @@ def create_ephemeral_env(
                     )
                     record_error(exc, context_builder=context_builder)
                     raise
+
+            _install_test_dependencies(_run, ["pip"])
+            _verify_test_runner(_run, ["python"])
         else:
             venv_dir = Path(td) / "venv"
             subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
@@ -968,6 +1032,12 @@ def create_ephemeral_env(
                     )
                     record_error(exc, context_builder=context_builder)
                     raise
+
+            def _venv_runner(cmd: Sequence[str], **kw: Any) -> subprocess.CompletedProcess:
+                return subprocess.run(cmd, cwd=str(repo_path), **kw)
+
+            _install_test_dependencies(_venv_runner, [str(python), "-m", "pip"])
+            _verify_test_runner(_venv_runner, [str(python)])
 
             def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
                 env_local = os.environ.copy()
