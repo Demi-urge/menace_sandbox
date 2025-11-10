@@ -505,7 +505,7 @@ try:
 except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
     @contextmanager
     def create_ephemeral_env(workdir: Path, *, context_builder: ContextBuilder):  # type: ignore[misc]
-        yield Path(workdir), lambda cmd, **kw: subprocess.run(cmd, **kw)
+        yield Path(workdir), lambda cmd, **kw: subprocess.run(cmd, **kw), sys.executable
 
     def generate_edge_cases() -> dict[str, Any]:  # type: ignore[misc]
         try:
@@ -1726,18 +1726,6 @@ class SelfTestService:
 
         if not skip_guard and isinstance(selector_path, Path) and not selector_path.exists():
             raise ValueError(f"invalid target {target}")
-        cmd = [
-            sys.executable,
-            "-m",
-            self.test_runner,
-            "-q",
-            "--json-report",
-            "--json-report-file=-",
-            "-p",
-            "sandbox_runner.edge_case_plugin",
-            command_target,
-        ]
-
         passed = False
         warnings: list[Any] = []
         metrics: dict[str, Any] = {}
@@ -1747,14 +1735,80 @@ class SelfTestService:
                 env["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
             except Exception:
                 env["SANDBOX_EDGE_CASES"] = json.dumps({})
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=self.container_timeout,
-                env=env,
-            )
+            base_cmd = [
+                "-m",
+                self.test_runner,
+                "-q",
+                "--json-report",
+                "--json-report-file=-",
+                "-p",
+                "sandbox_runner.edge_case_plugin",
+            ]
+
+            if self.ephemeral:
+                repo_root = Path.cwd().resolve()
+
+                def _map_target(target: str, clone_root: Path) -> str:
+                    base, sep, remainder = target.partition("::")
+                    path = Path(base)
+                    mapped = base
+                    try:
+                        resolved = path if path.is_absolute() else (repo_root / path)
+                        rel = resolved.resolve().relative_to(repo_root)
+                    except Exception:
+                        if not path.is_absolute():
+                            mapped = (clone_root / path).as_posix()
+                    else:
+                        mapped = (clone_root / rel).as_posix()
+                    return mapped + (sep + remainder if sep else "")
+
+                with create_ephemeral_env(
+                    repo_root, context_builder=self.context_builder
+                ) as (clone_repo, runner, python_path):
+                    target_for_env = command_target
+                    if stub_path is not None:
+                        stub_resolved = Path(stub_path).resolve()
+                        try:
+                            rel_stub = stub_resolved.relative_to(repo_root)
+                        except Exception:
+                            rel_stub = Path(stub_path.name)
+                        dest_stub = clone_repo / rel_stub
+                        dest_stub.parent.mkdir(parents=True, exist_ok=True)
+                        try:
+                            shutil.copy2(stub_resolved, dest_stub)
+                        except Exception:
+                            self.logger.exception(
+                                "failed to copy stub into sandbox",
+                                extra=log_record(
+                                    source=stub_resolved.as_posix(),
+                                    destination=dest_stub.as_posix(),
+                                ),
+                            )
+                            target_for_env = _map_target(command_target, clone_repo)
+                        else:
+                            target_for_env = dest_stub.as_posix()
+                            if "::" in command_target:
+                                target_for_env += "::" + command_target.split("::", 1)[1]
+                    else:
+                        target_for_env = _map_target(command_target, clone_repo)
+
+                    proc = runner(
+                        [python_path, *base_cmd, target_for_env],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        timeout=self.container_timeout,
+                        env=env,
+                    )
+            else:
+                proc = subprocess.run(
+                    [*([sys.executable] + base_cmd), command_target],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=self.container_timeout,
+                    env=env,
+                )
             out = proc.stdout
             report: dict[str, Any] = {}
             try:
@@ -2276,7 +2330,7 @@ class SelfTestService:
                         rc = 0
                         try:
                             async with AsyncExitStack() as env_stack:
-                                _repo, runner = env_stack.enter_context(
+                                _repo, runner, python_bin = env_stack.enter_context(
                                     create_ephemeral_env(
                                         Path.cwd(),
                                         context_builder=self.context_builder,
@@ -2292,7 +2346,7 @@ class SelfTestService:
                                 try:
                                     proc = await asyncio.to_thread(
                                         runner,
-                                        cmd,
+                                        [python_bin, *cmd[1:]],
                                         capture_output=True,
                                         text=True,
                                         env=edge_env_local,

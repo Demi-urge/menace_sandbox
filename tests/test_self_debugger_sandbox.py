@@ -125,13 +125,13 @@ def _fake_env(workdir, *, context_builder):
             capture_output
             and text
             and len(cmd) >= 2
-            and cmd[0] == "python"
+            and cmd[0] in {"python", sys.executable}
             and cmd[1].startswith("-c")
         ):
             stdout = sys.executable
         return subprocess.CompletedProcess(cmd, 0, stdout, "")
 
-    yield workdir, _run
+    yield workdir, _run, sys.executable
 
 
 cfg_stub = types.SimpleNamespace(

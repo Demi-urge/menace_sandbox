@@ -1,10 +1,15 @@
 # flake8: noqa
 import asyncio
+from contextlib import contextmanager
 import importlib.util
 import logging
 import json
 import os
+from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 import types
 import time
 import pytest
@@ -43,10 +48,10 @@ license_mod.fingerprint = lambda *a, **k: ""
 sys.modules.setdefault("license_detector", license_mod)
 code_db_stub = types.ModuleType("code_database")
 code_db_stub.CodeDB = object
-sys.modules.setdefault("code_database", code_db_stub)
+sys.modules["code_database"] = code_db_stub
 menace_code_db_stub = types.ModuleType("menace.code_database")
 menace_code_db_stub.CodeDB = object
-sys.modules.setdefault("menace.code_database", menace_code_db_stub)
+sys.modules["menace.code_database"] = menace_code_db_stub
 od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
 od_stub.append_orphan_cache = lambda *a, **k: None
 od_stub.append_orphan_classifications = lambda *a, **k: None
@@ -76,7 +81,28 @@ import menace.error_bot as eb  # noqa: E402
 from menace.data_bot import DataBot, MetricsDB  # noqa: E402
 
 
-class DummyBuilder:
+ContextBuilderStub = type("ContextBuilderStub", (object,), {})
+mod.ContextBuilder = ContextBuilderStub
+
+
+class _StubErrorLogger:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def log(self, *args, **kwargs):
+        pass
+
+    def record(self, *args, **kwargs):
+        pass
+
+
+mod.ErrorLogger = _StubErrorLogger
+error_logger_stub = types.SimpleNamespace(ErrorLogger=_StubErrorLogger)
+sys.modules["menace.error_logger"] = error_logger_stub
+sys.modules["error_logger"] = error_logger_stub
+
+
+class DummyBuilder(ContextBuilderStub):
     def refresh_db_weights(self):
         pass
 
@@ -236,6 +262,74 @@ def test_module_harness_accepts_node_selector(tmp_path, monkeypatch):
     passed, warnings, metrics = svc._run_module_harness(selector)
 
     assert recorded["cmd"][-1] == selector
+    assert passed
+    assert warnings == []
+    assert metrics["categories"] == []
+
+
+def test_module_harness_uses_ephemeral_python(tmp_path, monkeypatch):
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    test_file = repo_dir / "test_dummy.py"
+    test_file.write_text(
+        "def test_dummy_identity():\n"
+        "    import dummy_pkg\n"
+        "    assert dummy_pkg.identity(5) == 5\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(repo_dir)
+    sys.modules.pop("dummy_pkg", None)
+    assert importlib.util.find_spec("dummy_pkg") is None
+
+    @contextmanager
+    def fake_env(workdir: Path, *, context_builder):
+        env_root = Path(tempfile.mkdtemp(dir=tmp_path))
+        repo_clone = env_root / "repo"
+        shutil.copytree(workdir, repo_clone)
+        venv_dir = env_root / "venv"
+        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+        python_bin = venv_dir / ("Scripts" if os.name == "nt" else "bin") / "python"
+        if os.name == "nt":
+            site_packages = venv_dir / "Lib" / "site-packages"
+        else:
+            site_packages = next((venv_dir / "lib").glob("python*/site-packages"))
+        pkg_dir = site_packages / "dummy_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "__init__.py").write_text(
+            "def identity(value):\n    return value\n",
+            encoding="utf-8",
+        )
+
+        def _run(cmd, *, env=None, **kwargs):
+            if cmd and Path(cmd[0]) == python_bin and "-m" in cmd and "pytest" in cmd:
+                check = subprocess.run(
+                    [str(python_bin), "-c", "import dummy_pkg"],
+                    capture_output=True,
+                    text=True,
+                )
+                if check.returncode != 0:
+                    return subprocess.CompletedProcess(cmd, 1, "", check.stderr)
+                payload = json.dumps({"summary": {"failed": 0, "error": 0}, "warnings": []})
+                return subprocess.CompletedProcess(cmd, 0, payload, "")
+            env_local = os.environ.copy()
+            env_local["PATH"] = f"{python_bin.parent}{os.pathsep}{env_local.get('PATH', '')}"
+            env_local["VIRTUAL_ENV"] = str(venv_dir)
+            if env:
+                env_local.update(env)
+            return subprocess.run(cmd, cwd=str(repo_clone), env=env_local, **kwargs)
+
+        try:
+            yield repo_clone, _run, str(python_bin)
+        finally:
+            shutil.rmtree(env_root, ignore_errors=True)
+
+    monkeypatch.setattr(mod, "create_ephemeral_env", fake_env)
+    monkeypatch.setattr(mod, "generate_edge_cases", lambda: {})
+
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
+    passed, warnings, metrics = svc._run_module_harness(test_file.as_posix())
+
     assert passed
     assert warnings == []
     assert metrics["categories"] == []
