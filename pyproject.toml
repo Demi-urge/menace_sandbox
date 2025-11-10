@@ -96,7 +96,8 @@ sample = "menace.plugins.sample:register"
 [project.optional-dependencies]
 test = [
     "pytest",
-    "hypothesis"
+    "hypothesis",
+    "pytest-json-report"
 ]
 watch = [
     "watchdog"
