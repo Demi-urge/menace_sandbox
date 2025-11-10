@@ -1329,7 +1329,7 @@ class SelfTestService:
                     extra=log_record(module=m, classification=classification),
                 )
                 continue
-            passed, warnings, metrics = self._run_module_harness(m)
+            passed, warnings, metrics = self._run_module_harness(m, use_ephemeral=False)
             info["test_passed"] = passed
             if warnings:
                 info["warnings"] = warnings
@@ -1418,7 +1418,7 @@ class SelfTestService:
                     extra=log_record(module=m, classification=cls),
                 )
                 continue
-            passed, warnings, metrics = self._run_module_harness(m)
+            passed, warnings, metrics = self._run_module_harness(m, use_ephemeral=False)
             info["test_passed"] = passed
             if warnings:
                 info["warnings"] = warnings
@@ -1670,15 +1670,26 @@ class SelfTestService:
         return result
 
     # ------------------------------------------------------------------
-    def _run_module_harness(self, mod: str) -> tuple[bool, list[Any], dict[str, Any]]:
+    def _run_module_harness(
+        self, mod: str, *, use_ephemeral: bool | None = None
+    ) -> tuple[bool, list[Any], dict[str, Any]]:
         """Run the test harness for *mod* synchronously and return results.
 
         Returns a tuple ``(passed, warnings, metrics)`` where *passed* is a
         boolean indicating if the harness exited successfully, *warnings* is a
         list of reported warnings and *metrics* contains runtime information
         compatible with :meth:`_test_orphan_modules`.
+
+        Parameters
+        ----------
+        use_ephemeral:
+            Overrides :attr:`ephemeral` to control whether the harness executes
+            inside an ephemeral sandbox.  ``None`` (the default) preserves the
+            instance setting.
         """
 
+        if use_ephemeral is None:
+            use_ephemeral = self.ephemeral
         stub_path: Path | None = None
         target = mod
         info = self.orphan_traces.get(mod, {})
@@ -1745,7 +1756,7 @@ class SelfTestService:
                 "sandbox_runner.edge_case_plugin",
             ]
 
-            if self.ephemeral:
+            if use_ephemeral:
                 repo_root = Path.cwd().resolve()
 
                 def _map_target(target: str, clone_root: Path) -> str:
