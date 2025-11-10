@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
+import importlib.util
 import subprocess
 import ast
 from types import SimpleNamespace
@@ -1688,8 +1689,42 @@ class SelfTestService:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to create pytest stub for %s", mod)
 
-        target_path = Path(target)
-        if not target_path.exists():
+        command_target = target if isinstance(target, str) else Path(target).as_posix()
+        file_selector = command_target
+        if stub_path is None and "::" in command_target:
+            file_selector = command_target.split("::", 1)[0]
+
+        selector_path = stub_path
+        if selector_path is None:
+            if not file_selector:
+                raise ValueError(f"invalid target {target}")
+            try:
+                selector_path = resolve_path(file_selector)
+            except FileNotFoundError:
+                selector_path = Path(file_selector)
+
+        skip_guard = False
+        if (
+            stub_path is None
+            and "::" in command_target
+            and isinstance(selector_path, Path)
+            and not selector_path.exists()
+        ):
+            module_name = file_selector
+            if module_name.endswith(".py"):
+                module_name = module_name[:-3]
+            module_name = module_name.replace("\\", ".").replace("/", ".").strip(".")
+            if module_name.endswith(".__init__"):
+                module_name = module_name[: -len(".__init__")]
+            if module_name:
+                try:
+                    spec = importlib.util.find_spec(module_name)
+                except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
+                    spec = None
+                else:
+                    skip_guard = spec is not None
+
+        if not skip_guard and isinstance(selector_path, Path) and not selector_path.exists():
             raise ValueError(f"invalid target {target}")
         cmd = [
             sys.executable,
@@ -1700,7 +1735,7 @@ class SelfTestService:
             "--json-report-file=-",
             "-p",
             "sandbox_runner.edge_case_plugin",
-            target_path.as_posix(),
+            command_target,
         ]
 
         passed = False
