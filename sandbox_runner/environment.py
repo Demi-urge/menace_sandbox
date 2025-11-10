@@ -883,14 +883,16 @@ def create_ephemeral_env(
     workdir: Path,
     *,
     context_builder: ContextBuilder,
-) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess]]]:
+) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess], str]]:
     """Prepare an isolated repo copy with dependencies installed.
 
     The repository at ``workdir`` is cloned into a temporary location and a
     Python environment (``venv`` by default, Docker when available and
     ``SANDBOX_BACKEND=docker``) is initialised with ``requirements.txt``
-    installed. The context manager yields the cloned repository path and a
-    ``run`` helper for executing commands inside the isolated environment.
+    installed. The context manager yields the cloned repository path, a
+    ``run`` helper for executing commands inside the isolated environment and
+    the absolute path to the Python interpreter that should be used for test
+    execution.
 
     The provided ``context_builder`` is mandatory and no fallback builder is
     created. Environment startup time and installation failures are logged via
@@ -1011,6 +1013,26 @@ def create_ephemeral_env(
 
             _install_test_dependencies(_run, ["pip"])
             _verify_test_runner(_run, ["python"])
+
+            python_path = "python"
+            try:
+                proc = _run(
+                    ["python", "-c", "import sys; print(sys.executable)"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    "failed to determine docker python interpreter",
+                    extra=log_record(
+                        rc=exc.returncode,
+                        output=(exc.stderr or exc.stdout or ""),
+                    ),
+                )
+                python_path = "python"
+            else:
+                python_path = proc.stdout.strip() or "python"
         else:
             venv_dir = Path(td) / "venv"
             subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
@@ -1047,9 +1069,11 @@ def create_ephemeral_env(
                     env_local.update(env)
                 return subprocess.run(cmd, cwd=str(repo_path), env=env_local, **kw)
 
+            python_path = str(python)
+
         elapsed = (time.perf_counter() - start) * 1000.0
         logger.info("ephemeral env ready", extra=log_record(startup_ms=int(elapsed)))
-        yield repo_path, _run
+        yield repo_path, _run, python_path
 
 
 def _update_coverage(

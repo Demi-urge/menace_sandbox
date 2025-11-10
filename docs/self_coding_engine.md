@@ -155,9 +155,9 @@ from context_builder_util import create_context_builder
 
 with create_ephemeral_env(
     Path("."), context_builder=create_context_builder()
-) as (repo, run):
+) as (repo, run, python_exe):
     (repo / "test_example.py").write_text("def test_ok():\n    assert True\n")
-    run(["pytest", "-q"], check=True)
+    run([python_exe, "-m", "pytest", "-q"], check=True)
 ```
 
 Startup time and installation failures are logged via the sandbox logging

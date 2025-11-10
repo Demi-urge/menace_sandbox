@@ -679,7 +679,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         with create_ephemeral_env(
             repo_src, context_builder=self.context_builder
-        ) as (repo, run):
+        ) as (repo, run, python_bin):
             repo = resolve_path(repo)
             paths_in_repo: list[Path] = []
             for p in test_paths:
@@ -700,13 +700,6 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 env_local["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
             except Exception:
                 env_local["SANDBOX_EDGE_CASES"] = "{}"
-
-            proc = run(
-                ["python", "-c", "import sys; print(sys.executable)"],
-                capture_output=True,
-                text=True,
-            )
-            python_bin = proc.stdout.strip() or "python"
 
             start = time.perf_counter()
             try:
@@ -1574,7 +1567,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
                     with create_ephemeral_env(
                         repo_src, context_builder=self.context_builder
-                    ) as (repo, run):
+                    ) as (repo, run, _python_bin):
                         repo = resolve_path(repo)
                         test_path = repo / f"test_auto{os.extsep}py"
                         test_path.write_text(code)
