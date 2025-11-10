@@ -129,48 +129,40 @@ def check_and_install(settings: SandboxSettings) -> None:
     logger.info("All dependencies satisfied")
 
 
-def auto_env_setup(
-    env_path: str = ".env",
-    *,
-    settings: SandboxSettings | None = None,
-    run_interactive_setup: bool = False,
-) -> None:
-    """Ensure the environment file exists before installing dependencies.
+def auto_env_setup(interactive: bool = False) -> None:
+    """Lightweight dependency check used by legacy tooling.
 
-    Historically :mod:`setup_dependencies` exposed an ``auto_env_setup`` helper
-    that callers imported to provision both the environment file and package
-    dependencies.  Some integration scripts – and a few external tools – still
-    rely on that behaviour.  The implementation vanished when the installer
-    module was refactored which surfaced ``ImportError`` exceptions for those
-    consumers.  Reintroduce the helper as a thin wrapper around
-    :mod:`auto_env_setup` and :func:`check_and_install` so legacy entry points
-    keep working without duplicating logic.
-
-    Parameters
-    ----------
-    env_path:
-        Optional override for the generated ``.env`` file location.
-    settings:
-        Pre-configured :class:`SandboxSettings` instance.  A new instance is
-        created when omitted so existing call sites continue to function.
-    run_interactive_setup:
-        When ``True`` also triggers ``auto_env_setup.interactive_setup`` after
-        generating the environment file.  The default ``False`` preserves the
-        previous non-interactive behaviour that scripts expect.
+    Some external scripts expect :mod:`setup_dependencies` to expose an
+    ``auto_env_setup`` helper that prints the availability of key system tools
+    and sets a simple environment variable.  During refactors the helper was
+    inadvertently replaced with a wrapper around the richer dependency
+    installer, which no longer matched those expectations.  Reintroduce the
+    minimal implementation that callers rely on so the import works again
+    without requiring the heavier sandbox configuration pipeline.
     """
 
-    try:
-        from auto_env_setup import ensure_env, interactive_setup  # type: ignore
-    except Exception as exc:  # pragma: no cover - import guard
-        raise RuntimeError("auto_env_setup module is unavailable") from exc
+    print("[+] Running auto_env_setup...")
 
-    logger.info("ensuring environment configuration via auto_env_setup")
-    ensure_env(env_path)
-    if run_interactive_setup:
-        logger.info("running interactive environment setup")
-        interactive_setup()
+    tools = {
+        "ffmpeg": "FFmpeg",
+        "tesseract": "Tesseract OCR",
+        "qemu-system-x86_64": "QEMU",
+    }
 
-    check_and_install(settings or SandboxSettings())
+    for cmd, name in tools.items():
+        path = shutil.which(cmd)
+        if path:
+            print(f"[✓] {name} found at: {path}")
+        else:
+            print(f"[!] {name} NOT found. You may need to install or add it to PATH.")
+
+    os.environ["MENACE_SANDBOX"] = "1"
+    print("[✓] Environment variable 'MENACE_SANDBOX' set.")
+
+    if interactive:
+        input("[?] Press Enter to continue after reviewing dependency status...")
+
+    print("[+] auto_env_setup complete.\n")
 
 
 def main() -> None:
