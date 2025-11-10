@@ -191,6 +191,15 @@ except Exception:  # pragma: no cover - NumPy not installed
 def safe_super_init(cls: type, instance: Any, *args: Any, **kwargs: Any) -> None:
     """Cooperatively call ``super().__init__`` while guarding ``object``."""
 
+    if not isinstance(instance, cls):
+        if args or kwargs:
+            print(
+                "[cooperative-init] Skipping super() for"
+                f" {cls.__name__} because {type(instance).__name__}"
+                " is not a subtype; dropping args/kwargs to avoid TypeError"
+            )
+        return
+
     try:
         mro = type(instance).__mro__
         next_cls = mro[mro.index(cls) + 1]
