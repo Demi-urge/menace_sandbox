@@ -37,6 +37,16 @@ sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
 sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
+license_mod = types.ModuleType("license_detector")
+license_mod.detect = lambda *a, **k: {}
+license_mod.fingerprint = lambda *a, **k: ""
+sys.modules.setdefault("license_detector", license_mod)
+code_db_stub = types.ModuleType("code_database")
+code_db_stub.CodeDB = object
+sys.modules.setdefault("code_database", code_db_stub)
+menace_code_db_stub = types.ModuleType("menace.code_database")
+menace_code_db_stub.CodeDB = object
+sys.modules.setdefault("menace.code_database", menace_code_db_stub)
 od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
 od_stub.append_orphan_cache = lambda *a, **k: None
 od_stub.append_orphan_classifications = lambda *a, **k: None
@@ -200,6 +210,35 @@ def test_custom_args(monkeypatch):
     assert any("-k" in str(x) for x in recorded["cmd"]) and any(
         "pattern" in str(x) for x in recorded["cmd"]
     )
+
+
+def test_module_harness_accepts_node_selector(tmp_path, monkeypatch):
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
+    test_file = tmp_path / "pkg" / "tests" / "test_mod.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("", encoding="utf-8")
+    selector = f"{test_file}::test_case"
+
+    monkeypatch.setattr(mod, "generate_edge_cases", lambda: {})
+
+    recorded: dict[str, list[str]] = {}
+
+    def fake_run(cmd, *, capture_output, text, check, timeout, env):  # type: ignore[override]
+        recorded["cmd"] = cmd
+
+        class Result:
+            stdout = json.dumps({"summary": {"failed": 0, "error": 0}, "warnings": []})
+
+        return Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    passed, warnings, metrics = svc._run_module_harness(selector)
+
+    assert recorded["cmd"][-1] == selector
+    assert passed
+    assert warnings == []
+    assert metrics["categories"] == []
 
 
 def test_parallel_workers(monkeypatch):
