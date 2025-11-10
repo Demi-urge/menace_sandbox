@@ -27,7 +27,7 @@ Example configuration snippet::
       confidence: 0.95
       model_params: {alpha: 0.3}
       test_command: ["pytest", "-q"]
-      workflow_tests: ["menace_sandbox/tests/test_workflow_benchmark.py::test_benchmark_and_training"]
+      workflow_tests: ["tests/test_workflow_benchmark.py::test_benchmark_and_training"]
     bots:
       example-bot:
         roi_drop: -0.2
