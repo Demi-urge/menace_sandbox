@@ -23,7 +23,7 @@ default:
     - pytest
     - -q
   workflow_tests:
-    - tests/test_workflow_benchmark.py::test_benchmark_and_training
+    - menace_sandbox/tests/test_workflow_benchmark.py::test_benchmark_and_training
 
 bots:
   QuickFixEngine:
