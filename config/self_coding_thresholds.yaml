@@ -23,7 +23,7 @@ default:
     - pytest
     - -q
   workflow_tests:
-    - tests/workflows/test_default.py::test_smoke
+    - tests/test_workflow_benchmark.py::test_benchmark_and_training
 
 bots:
   QuickFixEngine:
