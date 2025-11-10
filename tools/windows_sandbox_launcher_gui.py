@@ -1586,7 +1586,10 @@ def _install_python_dependencies(logger: logging.Logger) -> None:
     logger.info("Ensuring Python dependencies are installed.")
 
     commands = (
-        ("pip install -e .", [sys.executable, "-m", "pip", "install", "-e", "."]),
+        (
+            "pip install -e '.[test]'",
+            [sys.executable, "-m", "pip", "install", "-e", ".[test]"],
+        ),
         ("pip install jsonschema", [sys.executable, "-m", "pip", "install", "jsonschema"]),
     )
 
