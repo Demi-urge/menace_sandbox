@@ -373,6 +373,9 @@ class SelfCodingManager:
         self._last_commit_hash: str | None = None
         self._last_validation_summary: Dict[str, Any] | None = None
         thresholds = self.threshold_service.get(bot_name)
+        print(
+            f"[debug] SelfCodingManager init for: {bot_name}, thresholds={thresholds}, orchestrator={evolution_orchestrator}"
+        )
         self.roi_drop_threshold = (
             roi_drop_threshold
             if roi_drop_threshold is not None
@@ -1309,6 +1312,7 @@ class SelfCodingManager:
     ) -> dict[str, Any]:
         """Validate the updated module and execute workflow self tests."""
 
+        print(f"[debug] run_post_patch_cycle starting for: {self.bot_name}")
         self.validate_provenance(provenance_token)
         if self.quick_fix is None:
             raise RuntimeError("QuickFixEngine validation unavailable")
@@ -1534,6 +1538,9 @@ class SelfCodingManager:
                 )
                 attempt_count = attempt_index
         except Exception as exc:
+            print(
+                f"[debug] run_post_patch_cycle encountered error for {self.bot_name}: {exc}"
+            )
             if self.data_bot:
                 try:
                     self.data_bot.collect(
@@ -1560,6 +1567,8 @@ class SelfCodingManager:
                     self.logger.exception(
                         "failed to record post patch success metrics"
                     )
+            success = True
+            print(f"[debug] run_post_patch_cycle success: {success}")
             return summary
 
     def generate_patch(
@@ -3184,6 +3193,7 @@ def internalize_coding_bot(
     ``roi_threshold``, ``error_threshold`` and ``test_failure_threshold`` values.
     Additional keyword arguments are forwarded to ``SelfCodingManager``.
     """
+    print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
     manager = SelfCodingManager(
         engine,
         pipeline,
@@ -3333,8 +3343,14 @@ def internalize_coding_bot(
                 )
 
     if module_path is None or not module_path.exists():
+        print(
+            f"[debug] Bootstrap failed at module_path resolution due to missing path for: {bot_name}"
+        )
         _emit_failure("module_path_missing")
         if not hasattr(manager, "run_post_patch_cycle"):
+            print(
+                f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
+            )
             return manager
         raise RuntimeError("module path unavailable for internalization")
     if provenance_token is None:
@@ -3376,6 +3392,7 @@ def internalize_coding_bot(
                     "failed to publish internalize patch_attempt for %s",
                     bot_name,
                 )
+    print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
     return manager
 
 
