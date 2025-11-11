@@ -26,7 +26,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, Sequence
 import threading
 import inspect
 import importlib.util
@@ -1669,6 +1669,117 @@ class SelfTestService:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
         return result
 
+    def _run_with_streaming(
+        self,
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute *cmd* while streaming output to the logger."""
+
+        env = env or os.environ
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        def _consume(
+            stream: Any, collector: list[str], level: int, prefix: str
+        ) -> None:
+            if stream is None:
+                return
+            for line in iter(stream.readline, ""):
+                collector.append(line)
+                text = line.rstrip()
+                if not text:
+                    continue
+                if (
+                    prefix == "[stdout] "
+                    and text.startswith("{")
+                    and text.endswith("}")
+                    and "\"summary\"" in text
+                ):
+                    continue
+                self.logger.log(level, "%s%s", prefix, text)
+            stream.close()
+
+        stdout_thread = threading.Thread(
+            target=_consume,
+            args=(process.stdout, stdout_lines, logging.INFO, "[stdout] "),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_consume,
+            args=(process.stderr, stderr_lines, logging.INFO, "[stderr] "),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            rc = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout_thread.join()
+            stderr_thread.join()
+            raise subprocess.TimeoutExpired(
+                cmd, timeout, "".join(stdout_lines), "".join(stderr_lines)
+            )
+
+        stdout_thread.join()
+        stderr_thread.join()
+
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
+
+        if rc != 0:
+            raise subprocess.CalledProcessError(rc, cmd, output=stdout, stderr=stderr)
+
+        return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+
+    def _format_subprocess_excerpt(
+        self,
+        stdout: str | bytes | None,
+        stderr: str | bytes | None,
+        *,
+        max_lines: int = 25,
+        max_chars: int = 4000,
+    ) -> str:
+        """Return a readable snippet of subprocess output for error logs."""
+
+        def _normalise(payload: str | bytes | None) -> str:
+            if payload is None:
+                return ""
+            if isinstance(payload, bytes):
+                try:
+                    return payload.decode("utf-8", "replace")
+                except Exception:
+                    return payload.decode(errors="replace")
+            return str(payload)
+
+        snippets: list[str] = []
+        for label, payload in (("stdout", stdout), ("stderr", stderr)):
+            text = _normalise(payload).strip()
+            if not text:
+                continue
+            lines = text.splitlines()
+            excerpt_lines = lines[-max_lines:]
+            excerpt = "\n".join(excerpt_lines)
+            if len(excerpt) > max_chars:
+                excerpt = excerpt[-max_chars:]
+            snippets.append(
+                f"{label} (last {len(excerpt_lines)} lines):\n{excerpt}".rstrip()
+            )
+
+        return "\n\n".join(snippets)
+
     # ------------------------------------------------------------------
     def _run_module_harness(
         self, mod: str, *, use_ephemeral: bool | None = None
@@ -1690,6 +1801,7 @@ class SelfTestService:
 
         if use_ephemeral is None:
             use_ephemeral = self.ephemeral
+        start_time = time.perf_counter()
         stub_path: Path | None = None
         target = mod
         info = self.orphan_traces.get(mod, {})
@@ -1803,6 +1915,17 @@ class SelfTestService:
                     else:
                         target_for_env = _map_target(command_target, clone_repo)
 
+                    self.logger.info(
+                        "starting module harness %s (ephemeral=%s)",
+                        command_target,
+                        use_ephemeral,
+                        extra=log_record(
+                            module=mod,
+                            selector=command_target,
+                            ephemeral=use_ephemeral,
+                            mapped_target=target_for_env,
+                        ),
+                    )
                     proc = runner(
                         [python_path, *base_cmd, target_for_env],
                         capture_output=True,
@@ -1812,13 +1935,21 @@ class SelfTestService:
                         env=env,
                     )
             else:
-                proc = subprocess.run(
-                    [*([sys.executable] + base_cmd), command_target],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=self.container_timeout,
+                cmd = [*([sys.executable] + base_cmd), command_target]
+                self.logger.info(
+                    "starting module harness %s (ephemeral=%s)",
+                    command_target,
+                    use_ephemeral,
+                    extra=log_record(
+                        module=mod,
+                        selector=command_target,
+                        ephemeral=use_ephemeral,
+                    ),
+                )
+                proc = self._run_with_streaming(
+                    cmd,
                     env=env,
+                    timeout=self.container_timeout,
                 )
             out = proc.stdout
             report: dict[str, Any] = {}
@@ -1850,16 +1981,40 @@ class SelfTestService:
 
             metrics = {"coverage": cov, "runtime": runtime, "categories": categories}
             passed = True
+            duration = time.perf_counter() - start_time
+            self.logger.info(
+                "completed module harness %s in %.2fs (coverage=%.2f, warnings=%d)",
+                command_target,
+                duration,
+                cov,
+                len(warnings),
+                extra=log_record(
+                    module=mod,
+                    selector=command_target,
+                    runtime=duration,
+                    coverage=cov,
+                    warnings=len(warnings),
+                    categories=categories,
+                ),
+            )
         except subprocess.CalledProcessError as exc:
+            excerpt = self._format_subprocess_excerpt(exc.stdout, exc.stderr)
+            message = "module harness failed"
+            if excerpt:
+                message = f"{message}\n{excerpt}"
             self.logger.error(
-                "module harness failed",
-                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+                message,
+                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=excerpt or exc.stderr),
             )
             passed = False
         except subprocess.TimeoutExpired as exc:
+            excerpt = self._format_subprocess_excerpt(exc.stdout, exc.stderr)
+            message = "module harness timed out"
+            if excerpt:
+                message = f"{message}\n{excerpt}"
             self.logger.error(
-                "module harness timed out",
-                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+                message,
+                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=excerpt or exc.stderr),
             )
             passed = False
         except Exception as exc:  # pragma: no cover - best effort
