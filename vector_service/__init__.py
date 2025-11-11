@@ -69,12 +69,24 @@ def _define_fallback_loader(
         raise _BOOTSTRAP_ERROR
 
 
-try:
-    from .. import import_compat as _import_compat
-except ImportError:  # pragma: no cover - defensive fallback
+_import_compat = None
+
+if __package__ and "." in __package__:
+    try:  # pragma: no cover - prefer relative import when package context known
+        from .. import import_compat as _import_compat
+    except ImportError:  # pragma: no cover - environment may lack package parent
+        _import_compat = None
+
+if _import_compat is None:
+    try:  # pragma: no cover - works when menace_sandbox is installed as a package
+        from menace_sandbox import import_compat as _import_compat  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover - menace_sandbox not installed
+        _import_compat = None
+
+if _import_compat is None:
     import importlib
 
-    try:
+    try:  # pragma: no cover - final fallback for flat installs
         _import_compat = importlib.import_module("import_compat")
     except ModuleNotFoundError:
         _import_compat = None
