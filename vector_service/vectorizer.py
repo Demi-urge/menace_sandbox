@@ -32,11 +32,29 @@ except Exception:  # pragma: no cover - degrade gracefully when unavailable
     AutoModel = None  # type: ignore[assignment]
     AutoTokenizer = None  # type: ignore[assignment]
 
-from dynamic_path_router import resolve_path
+try:  # pragma: no cover - package execution path
+    from dynamic_path_router import resolve_path
+except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python -m vectorizer``
+    import sys
+
+    _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PACKAGE_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PACKAGE_ROOT))
+    from dynamic_path_router import resolve_path  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
-from .registry import load_handlers
-from .vector_store import VectorStore, get_default_vector_store
+
+try:  # pragma: no cover - prefer package-relative imports
+    from .registry import load_handlers
+    from .vector_store import VectorStore, get_default_vector_store
+except ImportError as exc:  # pragma: no cover - fallback when executed as a script
+    if "attempted relative import" not in str(exc):
+        raise
+    from vector_service.registry import load_handlers  # type: ignore
+    from vector_service.vector_store import (  # type: ignore
+        VectorStore,
+        get_default_vector_store,
+    )
 
 try:  # pragma: no cover - optional dependency used for text embeddings
     from sentence_transformers import SentenceTransformer  # type: ignore
