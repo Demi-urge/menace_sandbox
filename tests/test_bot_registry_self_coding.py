@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import logging
+
 import pytest
 
 import menace_sandbox.bot_registry as bot_registry
+import menace_sandbox.coding_bot_interface as coding_bot_interface
 
 
 @pytest.fixture(autouse=True)
@@ -185,6 +188,27 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     assert disabled is not None
     assert disabled["missing_dependencies"] == ["numpy", "torch"]
     assert disabled["reason"].startswith("self-coding bootstrap failed")
+
+
+def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
+    monkeypatch.setattr(coding_bot_interface._BOOTSTRAP_STATE, "depth", 1, raising=False)
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ExampleBot",
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert not manager
+    expected = (
+        "SelfCodingManager bootstrap skipped for ExampleBot: "
+        "re-entrant initialisation depth=1. "
+        "Re-entrant bootstrap detected; returning disabled manager temporarily"
+        "—internalisation will retry after ExampleBot completes."
+    )
+    assert expected in caplog.text
 
 
 def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
