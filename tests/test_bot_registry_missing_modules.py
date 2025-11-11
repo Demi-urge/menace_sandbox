@@ -1,8 +1,10 @@
 """Regression tests for Windows-specific import error parsing in bot registry."""
 
+import logging
 import types
 from pathlib import Path
 
+import menace_sandbox.bot_registry as bot_registry
 from menace_sandbox.bot_registry import (
     SelfCodingUnavailableError,
     _collect_missing_modules,
@@ -176,6 +178,61 @@ def test_collect_missing_modules_handles_constructor_hint():
     )
     missing = _collect_missing_modules(err)
     assert "quick_fix_engine" in missing
+
+
+def test_self_coding_unavailable_logs_retry_guidance(monkeypatch, caplog):
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "schedule_unmanaged_scan",
+        lambda self: None,
+        raising=False,
+    )
+
+    class _Bus:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        def publish(self, topic, payload) -> None:
+            self.events.append((topic, payload))
+
+    bus = _Bus()
+
+    def _raise_unavailable(self, name, *, manager=None, data_bot=None):
+        raise bot_registry.SelfCodingUnavailableError(
+            "self-coding bootstrap failed",
+            missing=("torch", "numpy"),
+            missing_resources=("bots.db",),
+        )
+
+    monkeypatch.setattr(
+        bot_registry.BotRegistry,
+        "_internalize_missing_coding_bot",
+        _raise_unavailable,
+        raising=False,
+    )
+
+    registry = bot_registry.BotRegistry(event_bus=bus)
+    registry.graph.add_node(
+        "GuidanceBot",
+        is_coding_bot=True,
+        pending_internalization=True,
+    )
+
+    caplog.set_level(logging.WARNING, logger=bot_registry.logger.name)
+    registry._retry_internalization("GuidanceBot")
+
+    node = registry.graph.nodes["GuidanceBot"]
+    guidance = node["self_coding_disabled"]["guidance"]
+
+    assert "dependencies: numpy, torch" in guidance
+    assert "resources: bots.db" in guidance
+    assert "Internalisation retries will continue until they are resolved." in guidance
+    assert any(record.message == guidance for record in caplog.records)
+
+    payload = next(
+        payload for topic, payload in bus.events if topic == "bot:self_coding_disabled"
+    )
+    assert payload["guidance"] == guidance
 
 
 def test_transient_detection_with_inferred_missing_module():
