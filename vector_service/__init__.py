@@ -81,7 +81,10 @@ if _import_compat is None:
     try:  # pragma: no cover - works when menace_sandbox is installed as a package
         from menace_sandbox import import_compat as _import_compat  # type: ignore
     except ModuleNotFoundError:  # pragma: no cover - menace_sandbox not installed
-        _import_compat = None
+        try:  # pragma: no cover - fallback to local import when running standalone
+            import import_compat as _import_compat  # type: ignore
+        except ModuleNotFoundError:
+            _import_compat = None
 
 if _import_compat is None:
     import importlib
