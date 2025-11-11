@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
@@ -55,7 +56,11 @@ class EntityDetector:
     """Detect and categorise entities with simple coreference and clustering."""
 
     def __init__(self) -> None:
-        self.nlp = spacy.load("en_core_web_sm") if spacy is not None else None
+        if spacy is not None:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
+            self.nlp = spacy.load("en_core_web_sm")
+        else:
+            self.nlp = None
         self.vectorizer = TfidfVectorizer()
         self.entities: Dict[str, Entity] = {}
         self.last_person: Optional[str] = None

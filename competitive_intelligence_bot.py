@@ -246,6 +246,7 @@ if spacy is not None:
         _CFG.get("spacy_model", "en_core_web_sm"),
     )
     try:
+        print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
         _NLP_MODEL = spacy.load(model_name)  # type: ignore
     except Exception as exc:  # pragma: no cover - optional
         logger.warning("spaCy model load failed: %s", exc)
