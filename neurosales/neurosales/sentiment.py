@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -27,7 +28,11 @@ class SentimentAnalyzer:
 
     def __init__(self) -> None:
         self.vader = SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
-        self.nlp = spacy.load("en_core_web_sm") if spacy is not None else None
+        if spacy is not None:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
+            self.nlp = spacy.load("en_core_web_sm")
+        else:
+            self.nlp = None
         self.intensifiers = {"very", "extremely", "really", "so", "super"}
         self.positive_words = {"happy", "joy", "excited"}
         self.negative_words = {"sad", "angry", "mad", "furious"}

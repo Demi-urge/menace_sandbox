@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Iterable
@@ -55,6 +55,7 @@ class IntentEntityExtractor:
         self.profile = IntentProfile()
 
         if spacy is not None and PhraseMatcher is not None:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
             self.nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
             self.matcher = PhraseMatcher(self.nlp.vocab, attr="LOWER")
         else:  # fallback simple matching

@@ -7,6 +7,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 import sqlite3
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -165,6 +166,7 @@ def classify_sentiment(text: str) -> float:
     text_lower = text.lower()
     if spacy is not None:
         try:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
             nlp = spacy.load("en_core_web_sm")  # type: ignore
             doc = nlp(text_lower)
             if hasattr(doc, "_.polarity"):
@@ -194,6 +196,7 @@ def extract_features(text: str) -> List[str]:
     """Extract basic product features from text."""
     if spacy is not None:
         try:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
             nlp = spacy.load("en_core_web_sm")  # type: ignore
         except Exception:
             nlp = spacy.blank("en")  # type: ignore

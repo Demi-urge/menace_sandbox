@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
@@ -49,6 +50,7 @@ class TextPreprocessor:
     def __init__(self, trigger_words: Iterable[str]) -> None:
         self.trigger_words = {w.lower() for w in trigger_words}
         if spacy is not None:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
             self.nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
         else:  # pragma: no cover - fallback
             self.nlp = None

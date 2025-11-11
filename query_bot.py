@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import logging
+import os
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -105,7 +106,11 @@ class SimpleNLU:
     """Lightweight natural language understanding helper."""
 
     def __init__(self) -> None:
-        self.nlp = spacy.load("en_core_web_sm") if spacy else None
+        if spacy:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
+            self.nlp = spacy.load("en_core_web_sm")
+        else:
+            self.nlp = None
 
     def parse(self, text: str) -> Dict[str, Any]:
         """Parse ``text`` into an intent and entities."""

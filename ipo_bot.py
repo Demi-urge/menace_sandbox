@@ -7,6 +7,7 @@ from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,7 +62,11 @@ class BlueprintIngestor:
     """Parse blueprints to extract tasks and dependencies."""
 
     def __init__(self) -> None:
-        self.nlp = spacy.load("en_core_web_sm") if spacy else None
+        if spacy:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
+            self.nlp = spacy.load("en_core_web_sm")
+        else:
+            self.nlp = None
 
     def ingest(self, text: str) -> Blueprint:
         names: List[str] = []

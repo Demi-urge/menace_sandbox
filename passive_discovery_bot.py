@@ -87,7 +87,11 @@ class PassiveDiscoveryBot:
         self.session = session or requests.Session()
         self.keyword_db = keyword_db
         self.keywords = self._load_keywords()
-        self._nlp_model = spacy.load("en_core_web_sm") if spacy else None
+        if spacy:
+            print("[DEBUG] Current PATH during spacy load:", os.environ["PATH"])
+            self._nlp_model = spacy.load("en_core_web_sm")
+        else:
+            self._nlp_model = None
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []
         if self.prediction_manager:
