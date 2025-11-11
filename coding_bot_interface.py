@@ -1663,14 +1663,16 @@ def _bootstrap_manager(
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
     def _disabled_manager(reason: str) -> Any:
-        print(
-            f"[debug] Bootstrap failed during manager instantiation for {name} due to: {reason}"
+        guidance = (
+            "Re-entrant bootstrap detected; returning disabled manager "
+            "temporarily—internalisation will retry after "
+            f"{name} completes."
         )
-        logger.debug(
-            "SelfCodingManager bootstrap skipped for %s: %s",
-            name,
-            reason,
+        message = (
+            f"SelfCodingManager bootstrap skipped for {name}: {reason}. {guidance}"
         )
+        print(message)
+        logger.warning(message)
         return _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
