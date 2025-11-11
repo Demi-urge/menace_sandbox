@@ -833,6 +833,30 @@ class SelfCodingUnavailableError(RuntimeError):
         return tuple(sorted(combined))
 
 
+def _format_self_coding_unavailable_guidance(
+    bot_name: str,
+    *,
+    missing: Iterable[str] = (),
+    missing_resources: Iterable[str] = (),
+) -> str:
+    """Return a human readable guidance message for unavailable self-coding."""
+
+    missing_deps = [dep for dep in missing if dep]
+    missing_res = [res for res in missing_resources if res]
+
+    segments: list[str] = []
+    if missing_deps:
+        segments.append(f"dependencies: {', '.join(missing_deps)}")
+    if missing_res:
+        segments.append(f"resources: {', '.join(missing_res)}")
+
+    requirements = "; ".join(segments) if segments else "unspecified requirements"
+    return (
+        f"Self-coding for {bot_name} is blocked pending {requirements}. "
+        "Internalisation retries will continue until they are resolved."
+    )
+
+
 class _SelfCodingComponents(NamedTuple):
     internalize_coding_bot: Any
     engine_cls: Any
@@ -1967,19 +1991,26 @@ class BotRegistry:
             except SelfCodingUnavailableError as exc:
                 node["pending_internalization"] = False
                 missing = list(exc.missing_dependencies)
+                missing_modules = list(exc.missing_modules)
+                missing_resources = list(exc.missing_resources)
+                guidance = _format_self_coding_unavailable_guidance(
+                    name,
+                    missing=missing_modules,
+                    missing_resources=missing_resources,
+                )
                 disabled_payload: dict[str, Any] = {
                     "reason": str(exc),
                     "missing_dependencies": missing,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "guidance": guidance,
                 }
-                if exc.missing_resources:
-                    disabled_payload["missing_resources"] = list(
-                        exc.missing_resources
-                    )
+                if missing_resources:
+                    disabled_payload["missing_resources"] = missing_resources
                 node["self_coding_disabled"] = disabled_payload
                 self._internalization_retry_attempts.pop(name, None)
                 self._clear_transient_error_state(name)
                 logger.warning("self-coding disabled for %s: %s", name, exc)
+                logger.warning(guidance)
                 if self.event_bus:
                     try:
                         self.event_bus.publish(
@@ -1987,10 +2018,9 @@ class BotRegistry:
                             {
                                 "bot": name,
                                 "missing": missing,
-                                "resources": list(exc.missing_resources)
-                                if exc.missing_resources
-                                else None,
+                                "resources": missing_resources if missing_resources else None,
                                 "reason": str(exc),
+                                "guidance": guidance,
                             },
                         )
                     except Exception:  # pragma: no cover - best effort
