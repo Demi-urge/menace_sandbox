@@ -84,7 +84,7 @@ def _resolve_management(
     ready, missing = ensure_self_coding_ready()
     if not ready:
         logger.warning(
-            "Self-coding integration disabled for TaskValidationBot due to missing dependencies: %s",
+            "Self-coding dependencies missing (%s); TaskValidationBot cannot register its manager and bootstrap will keep retrying until these modules are installed.",
             ", ".join(missing),
         )
         return _noop_self_coding, None, None, None

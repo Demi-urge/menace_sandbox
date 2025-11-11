@@ -113,7 +113,7 @@ def _bootstrap_self_coding() -> tuple[
     ready, missing = ensure_self_coding_ready()
     if not ready:
         logger.warning(
-            "Self-coding decorator unavailable; future prediction bots will run without autonomous updates (missing: %s)",
+            "Self-coding dependencies missing (%s); future prediction bots cannot register managers and bootstrap will keep retrying until these modules are installed.",
             ", ".join(missing),
         )
         return _noop_self_coding, None, None, None

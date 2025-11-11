@@ -2073,9 +2073,9 @@ def self_coding_managed(
                         register_as_coding_local = False
                     if missing:
                         logger.warning(
-                            "self-coding runtime unavailable for %s; missing %s",
-                            name,
+                            "Self-coding dependencies missing (%s); manager registration for %s is blocked and bootstrap will keep retrying until these modules are installed.",
                             ", ".join(sorted(missing)),
+                            name,
                         )
                 else:
                     register_as_coding_local = register_as_coding
