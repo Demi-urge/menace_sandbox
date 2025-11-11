@@ -127,6 +127,7 @@ def get_orchestrator(
 ) -> "EvolutionOrchestrator":
     """Return a singleton ``EvolutionOrchestrator``."""
 
+    print("[debug] get_orchestrator invoked")
     global _shared_orchestrator
     if _shared_orchestrator is None:
         from .evolution_orchestrator import EvolutionOrchestrator
@@ -138,6 +139,9 @@ def get_orchestrator(
         _shared_orchestrator = EvolutionOrchestrator(
             data_bot, capital_bot, engine, evolution_manager
         )
+        print(f"[debug] Orchestrator loaded: {_shared_orchestrator}")
+    else:
+        print(f"[debug] Orchestrator loaded: {_shared_orchestrator}")
     return _shared_orchestrator
 
 

@@ -1663,6 +1663,9 @@ def _bootstrap_manager(
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
     def _disabled_manager(reason: str) -> Any:
+        print(
+            f"[debug] Bootstrap failed during manager instantiation for {name} due to: {reason}"
+        )
         logger.debug(
             "SelfCodingManager bootstrap skipped for %s: %s",
             name,
@@ -1877,6 +1880,9 @@ def _resolve_helpers(
                 )
                 manager = _bootstrap_manager(name_local, registry, data_bot)
             except Exception as exc:
+                print(
+                    f"[debug] Bootstrap failed during _resolve_helpers for {name_local} due to: {exc}"
+                )
                 logger.warning(
                     "SelfCodingManager bootstrap failed for %s: %s",
                     name_local,
@@ -1887,6 +1893,9 @@ def _resolve_helpers(
                     data_bot=data_bot,
                 )
         else:
+            print(
+                "[debug] Bootstrap failed during _resolve_helpers: self-coding runtime unavailable"
+            )
             manager = _DisabledSelfCodingManager(
                 bot_registry=registry,
                 data_bot=data_bot,
@@ -1938,6 +1947,7 @@ def self_coding_managed(
         orig_init = cls.__init__  # type: ignore[attr-defined]
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
+        print(f"[debug] self_coding_managed wrapping bot={name}")
         try:
             module_path = inspect.getfile(cls)
         except Exception:  # pragma: no cover - best effort
