@@ -1028,5 +1028,8 @@ def init_db_router(
 
     configure_db_router_audit_logging()
 
+    print("Local:", local_path_str)
+    print("Shared:", shared_path_str)
+
     GLOBAL_ROUTER = DBRouter(menace_id, local_path_str, shared_path_str)
     return GLOBAL_ROUTER
