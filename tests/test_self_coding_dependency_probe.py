@@ -25,6 +25,33 @@ def test_probe_reports_missing(monkeypatch):
     probe._runtime_dependency_issues.cache_clear()
 
 
+def test_probe_logs_warning_for_missing(monkeypatch):
+    probe._runtime_dependency_issues.cache_clear()
+
+    class StubLogger:
+        def __init__(self):
+            self.messages: list[str] = []
+
+        def warning(self, msg, *args, **kwargs):
+            if args:
+                msg = msg % args
+            self.messages.append(msg)
+
+    stub_logger = StubLogger()
+
+    monkeypatch.setattr(probe, "logger", stub_logger)
+    monkeypatch.setattr(probe, "probe_missing_dependencies", lambda modules=None: ("pydantic",))
+    monkeypatch.setattr(probe, "_runtime_dependency_issues", lambda: ())
+
+    ready, missing = probe.ensure_self_coding_ready()
+
+    assert not ready
+    assert missing == ("pydantic",)
+    assert stub_logger.messages
+    assert "pydantic" in stub_logger.messages[-1]
+    assert "keep retrying" in stub_logger.messages[-1]
+
+
 def test_probe_all_present(monkeypatch):
     monkeypatch.setattr(
         probe,

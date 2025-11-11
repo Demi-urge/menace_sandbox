@@ -148,5 +148,14 @@ def ensure_self_coding_ready(
     missing = set(probe_missing_dependencies(modules))
     if modules is None:
         missing.update(_runtime_dependency_issues())
-    return (not missing, tuple(sorted(missing)))
+
+    if missing:
+        ordered = tuple(sorted(missing))
+        logger.warning(
+            "Self-coding dependencies missing (%s); bootstrap will keep retrying until these modules are installed.",
+            ", ".join(ordered),
+        )
+        return (False, ordered)
+
+    return (True, tuple())
 

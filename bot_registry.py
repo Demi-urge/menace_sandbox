@@ -2129,6 +2129,11 @@ class BotRegistry:
                 except Exception:  # pragma: no cover - defensive best effort
                     ready, missing = (False, tuple())
                 if not ready and missing:
+                    logger.warning(
+                        "Self-coding dependencies missing (%s); manager registration for %s is blocked and bootstrap will keep retrying until these modules are installed.",
+                        ", ".join(sorted(missing)),
+                        name,
+                    )
                     missing_modules.update(missing)
             if not missing_modules and isinstance(exc, (ImportError, ModuleNotFoundError)):
                 name_attr = getattr(exc, "name", None)
@@ -2350,9 +2355,9 @@ class BotRegistry:
                         self._cancel_internalization_retry(name)
                         self._clear_transient_error_state(name)
                         logger.warning(
-                            "self-coding disabled for %s: missing dependencies: %s",
-                            name,
+                            "Self-coding dependencies missing (%s); manager registration for %s is blocked and bootstrap will keep retrying until these modules are installed.",
                             ", ".join(missing_deps),
+                            name,
                         )
                         if self.event_bus:
                             try:
@@ -3675,6 +3680,10 @@ def _load_self_coding_components() -> _SelfCodingComponents:
 
     ready, missing = ensure_self_coding_ready()
     if not ready:
+        logger.warning(
+            "Self-coding dependencies missing (%s); manager registration is blocked and bootstrap will keep retrying until these modules are installed.",
+            ", ".join(missing),
+        )
         raise SelfCodingUnavailableError(
             "self-coding dependencies unavailable",
             missing=missing,
