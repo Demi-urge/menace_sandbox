@@ -1670,6 +1670,24 @@ class _DisabledSelfCodingManager:
 _BOOTSTRAP_STATE = threading.local()
 
 
+class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
+    """Truthful proxy used while the real manager is initialising."""
+
+    def __bool__(self) -> bool:  # pragma: no cover - truthiness is trivial
+        return True
+
+
+def _create_bootstrap_manager_sentinel(
+    *, bot_registry: Any, data_bot: Any
+) -> _BootstrapManagerSentinel:
+    """Return a sentinel manager used to guard the legacy bootstrap path."""
+
+    return _BootstrapManagerSentinel(
+        bot_registry=bot_registry,
+        data_bot=data_bot,
+    )
+
+
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
     """Swap *sentinel* references for *manager* across the pipeline hierarchy."""
 
@@ -1807,7 +1825,7 @@ def _bootstrap_manager(
         # real ``SelfCodingManager`` is still being bootstrapped.  Do not remove
         # this sentinel unless the pipeline stops reading ``manager`` during
         # initialisation.
-        sentinel_manager = _DisabledSelfCodingManager(
+        sentinel_manager = _create_bootstrap_manager_sentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
