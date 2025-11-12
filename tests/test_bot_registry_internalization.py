@@ -112,7 +112,13 @@ def test_register_bot_internalizes(monkeypatch):
     reg = bot_registry.BotRegistry(event_bus=bus)
     scheduled: list[str] = []
 
-    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         self._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append(name)
 
@@ -249,7 +255,13 @@ def test_register_bot_blocks_on_missing_dependency(monkeypatch):
 
     scheduled: list[str] = []
 
-    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         self._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append(name)
 
@@ -317,7 +329,13 @@ def test_dependency_failure_disables_self_coding(monkeypatch):
 
     scheduled: list[str] = []
 
-    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         self._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append(name)
 
@@ -422,7 +440,13 @@ def test_import_error_without_hints_disables_self_coding(monkeypatch):
 
     scheduled: list[str] = []
 
-    def _schedule(self, name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         self._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append(name)
 
@@ -443,6 +467,68 @@ def test_import_error_without_hints_disables_self_coding(monkeypatch):
     assert "self_coding_runtime" in disabled["missing_dependencies"]
     assert "unresolved import error" in disabled["reason"]
     assert any(evt[0] == "bot:self_coding_disabled" for evt in bus.events)
+
+
+def test_force_internalization_retry_resets_state_and_schedules(monkeypatch):
+    reg = bot_registry.BotRegistry()
+
+    name = "ForceRetryBot"
+    reg.graph.add_node(name)
+    node = reg.graph.nodes[name]
+    node.update(
+        {
+            "is_coding_bot": True,
+            "pending_internalization": False,
+            "self_coding_disabled": {"reason": "previous failure"},
+            "internalization_blocked": {"error": "boom"},
+        }
+    )
+    reg._internalization_retry_attempts[name] = reg._max_internalization_retries
+
+    created: list[object] = []
+
+    class DummyTimer:
+        def __init__(self, interval, function, args=None, kwargs=None):
+            self.interval = interval
+            self.function = function
+            self.args = args or ()
+            self.kwargs = kwargs or {}
+            self.daemon = False
+            self.cancelled = False
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_alive(self):
+            return not self.cancelled and not self.started
+
+    existing = DummyTimer(1.0, lambda: None)
+    reg._internalization_retry_handles[name] = existing
+
+    def fake_timer(interval, function, args=None, kwargs=None):
+        timer = DummyTimer(interval, function, args, kwargs)
+        created.append(timer)
+        return timer
+
+    monkeypatch.setattr(bot_registry.threading, "Timer", fake_timer)
+
+    scheduled = reg.force_internalization_retry(name, delay=2.0)
+
+    assert scheduled is True
+    assert created, "a new timer should be created"
+    timer = created[-1]
+    assert timer.interval == 2.0
+    assert timer.started is True
+    assert reg._internalization_retry_handles[name] is timer
+    assert existing.cancelled is True
+    assert node["pending_internalization"] is True
+    assert "self_coding_disabled" not in node
+    assert "internalization_blocked" not in node
+    assert reg._internalization_retry_attempts[name] == 0
 
 
 def test_register_bot_records_patch_id():

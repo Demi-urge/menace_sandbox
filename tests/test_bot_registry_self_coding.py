@@ -62,7 +62,12 @@ def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
 
     scheduled: list[tuple[str, float | None]] = []
 
-    def _schedule(name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         registry._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append((name, delay))
 
@@ -172,7 +177,12 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     registry = _make_registry()
     scheduled: list[tuple[str, float | None]] = []
 
-    def _schedule(name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         registry._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append((name, delay))
 
@@ -231,7 +241,12 @@ def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
         "_internalize_missing_coding_bot",
         lambda *a, **k: _boom(),
     )
-    def _schedule(name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         registry._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append((name, delay))
 
@@ -476,7 +491,12 @@ def test_transient_import_errors_with_varying_signatures(monkeypatch):
         "_internalize_missing_coding_bot",
         lambda *a, **k: _boom(),
     )
-    def _schedule(name: str, *, delay: float | None = None) -> None:
+    def _schedule(
+        name: str,
+        *,
+        delay: float | None = None,
+        force: bool = False,
+    ) -> None:
         registry._internalization_retry_attempts.setdefault(name, 0)
         scheduled.append((name, delay))
 

@@ -1698,15 +1698,27 @@ class BotRegistry:
         name: str,
         *,
         delay: float | None = None,
+        force: bool = False,
     ) -> None:
         """Schedule an asynchronous retry for ``internalize_coding_bot``."""
 
         with self._lock:
             existing = self._internalization_retry_handles.get(name)
             if existing is not None and getattr(existing, "is_alive", lambda: False)():
-                return
+                if not force:
+                    return
+                try:
+                    existing.cancel()
+                except Exception:  # pragma: no cover - timer cleanup best effort
+                    logger.debug(
+                        "failed to cancel pending internalization retry timer for %s", name,
+                        exc_info=True,
+                    )
             attempts = self._internalization_retry_attempts.setdefault(name, 0)
-            if attempts >= self._max_internalization_retries:
+            if force and attempts >= self._max_internalization_retries:
+                attempts = 0
+                self._internalization_retry_attempts[name] = 0
+            elif attempts >= self._max_internalization_retries:
                 node = self.graph.nodes.get(name)
                 if node is not None:
                     node.pop("pending_internalization", None)
@@ -1731,6 +1743,41 @@ class BotRegistry:
             timer.start()
         except Exception:  # pragma: no cover - timer creation best effort
             logger.exception("failed to start internalization retry timer for %s", name)
+
+    def force_internalization_retry(
+        self,
+        name: str,
+        *,
+        delay: float | None = None,
+    ) -> bool:
+        """Force a retry of ``internalize_coding_bot`` after an optional *delay*."""
+
+        with self._lock:
+            node = self.graph.nodes.get(name)
+            if node is None:
+                logger.debug(
+                    "force_internalization_retry skipped for unknown bot %s", name
+                )
+                return False
+            if not node.get("is_coding_bot", True):
+                logger.debug(
+                    "force_internalization_retry skipped for %s because self-coding is disabled",
+                    name,
+                )
+                return False
+            node["pending_internalization"] = True
+            node.pop("internalization_blocked", None)
+            node.pop("self_coding_disabled", None)
+            self._internalization_retry_attempts.pop(name, None)
+            self._transient_error_state.pop(name, None)
+
+        logger.warning(
+            "Forcing internalization retry for %s after %s second(s)",
+            name,
+            delay if delay is not None else "auto",
+        )
+        self._schedule_internalization_retry(name, delay=delay, force=True)
+        return True
 
     def _register_transient_failure(
         self, name: str, exc: Exception
