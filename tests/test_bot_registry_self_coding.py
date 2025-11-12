@@ -457,6 +457,93 @@ def test_bootstrap_manager_promotes_pipeline_manager(monkeypatch):
     assert pipeline.reattach_calls >= 1
 
 
+def test_lazy_pipeline_bootstrap_does_not_trigger_reentrant_warning(monkeypatch, caplog):
+    from menace_sandbox import bot_testing_bot
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = SimpleNamespace()
+    data_bot = SimpleNamespace()
+    created: dict[str, Any] = {}
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemoryManager:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None):
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry=None, data_bot=None, manager=None):
+            created.setdefault("pipelines", []).append(self)
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            sentinel_bot = SimpleNamespace(manager=manager)
+            self._bots = [sentinel_bot, SimpleNamespace(manager=manager)]
+            self.nested = SimpleNamespace(manager=manager)
+
+    original_get_module_attr = bot_testing_bot._get_module_attr
+
+    def _get_module_attr(module, attr, module_name):
+        if attr == "ModelAutomationPipeline":
+            return _StubPipeline
+        return original_get_module_attr(module, attr, module_name)
+
+    monkeypatch.setattr(bot_testing_bot, "_get_module_attr", _get_module_attr, raising=False)
+    monkeypatch.setattr(bot_testing_bot, "_get_context_builder", lambda: SimpleNamespace(), raising=False)
+    monkeypatch.setattr(bot_testing_bot, "_get_registry", lambda: registry, raising=False)
+    monkeypatch.setattr(bot_testing_bot, "_get_data_bot", lambda: data_bot, raising=False)
+    monkeypatch.setattr(bot_testing_bot, "_pipeline_promoter", None, raising=False)
+    bot_testing_bot._get_pipeline.cache_clear()
+
+    def _fake_loader(name: str, *, fallback=None):
+        if name == "code_database":
+            return SimpleNamespace(CodeDB=_StubCodeDB)
+        if name == "gpt_memory":
+            return SimpleNamespace(GPTMemoryManager=_StubMemoryManager)
+        if name == "self_coding_engine":
+            return SimpleNamespace(SelfCodingEngine=_StubEngine)
+        if name == "model_automation_pipeline":
+            bot_testing_bot._get_pipeline.cache_clear()
+            created["lazy_helper_pipeline"] = bot_testing_bot._get_pipeline()
+            return SimpleNamespace(ModelAutomationPipeline=_StubPipeline)
+        if name == "self_coding_manager":
+            return SimpleNamespace(SelfCodingManager=_StubManager)
+        raise AssertionError(f"unexpected optional module {name}")
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("use fallback")
+
+    monkeypatch.setattr(coding_bot_interface, "_load_optional_module", _fake_loader)
+    monkeypatch.setattr(coding_bot_interface, "create_context_builder", lambda: SimpleNamespace())
+    monkeypatch.setattr(coding_bot_interface, "_resolve_self_coding_manager_cls", lambda: _FailingManager)
+
+    manager = coding_bot_interface._bootstrap_manager("LazyHelperBot", registry, data_bot)
+
+    assert "re-entrant" not in caplog.text
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert all(getattr(bot, "manager", None) is manager for bot in getattr(pipeline, "_bots", []))
+    assert created["pipelines"][-1] is pipeline
+
+
 def test_bootstrap_manager_manager_cls_promotes_pipeline(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 

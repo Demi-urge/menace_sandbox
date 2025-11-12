@@ -9,9 +9,13 @@ print(">>> [trace] Importing BotRegistry from menace_sandbox.bot_registry...")
 from .bot_registry import BotRegistry
 print(">>> [trace] Successfully imported BotRegistry from menace_sandbox.bot_registry")
 
-print(">>> [trace] Importing _DisabledSelfCodingManager, self_coding_managed from menace_sandbox.coding_bot_interface...")
-from .coding_bot_interface import _DisabledSelfCodingManager, self_coding_managed
-print(">>> [trace] Successfully imported _DisabledSelfCodingManager, self_coding_managed from menace_sandbox.coding_bot_interface")
+print(">>> [trace] Importing _DisabledSelfCodingManager, prepare_pipeline_for_bootstrap, self_coding_managed from menace_sandbox.coding_bot_interface...")
+from .coding_bot_interface import (
+    _DisabledSelfCodingManager,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
+print(">>> [trace] Successfully imported _DisabledSelfCodingManager, prepare_pipeline_for_bootstrap, self_coding_managed from menace_sandbox.coding_bot_interface")
 print(">>> [trace] Importing SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager...")
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 print(">>> [trace] Successfully imported SelfCodingManager, internalize_coding_bot from menace_sandbox.self_coding_manager")
@@ -1986,6 +1990,7 @@ class _CapitalManagementBot:
 
 
 _pipeline_instance: "ModelAutomationPipeline | None" = None
+_pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
 evolution_orchestrator: "EvolutionOrchestrator | None" = None
 _manager_lock = threading.Lock()
 _manager_retry_timer: threading.Timer | None = None
@@ -1997,20 +2002,28 @@ _MANAGER_RETRY_DELAY = float(os.environ.get("CM_MANAGER_RETRY_DELAY", "0.75"))
 def _load_pipeline_instance() -> "ModelAutomationPipeline | None":
     """Instantiate :class:`ModelAutomationPipeline` lazily."""
 
-    global _pipeline_instance
+    global _pipeline_instance, _pipeline_promoter
     if _pipeline_instance is not None:
         return _pipeline_instance
     pipeline_cls = _get_pipeline_cls()
     if pipeline_cls is None:
         return None
     try:
-        _pipeline_instance = pipeline_cls(context_builder=_get_context_builder())
+        pipeline, promote = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
+            context_builder=_get_context_builder(),
+            bot_registry=_get_registry(),
+            data_bot=_get_data_bot(),
+        )
+        _pipeline_instance = pipeline
+        _pipeline_promoter = promote
     except Exception as exc:  # pragma: no cover - degraded bootstrap
         logger.warning(
             "ModelAutomationPipeline initialisation failed for CapitalManagementBot: %s",
             exc,
         )
         _pipeline_instance = None
+        _pipeline_promoter = None
     return _pipeline_instance
 
 
@@ -2080,6 +2093,7 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
     """Bootstrap the self-coding manager once dependencies are available."""
 
     global manager, _manager_retry_timer, _manager_retry_count
+    global _pipeline_promoter
     if manager is not None:
         return
     with _manager_lock:
@@ -2166,6 +2180,12 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
             if retry:
                 _schedule_manager_retry()
             return
+        promoter = _pipeline_promoter
+        if promoter is not None:
+            try:
+                promoter(manager_local)
+            finally:
+                _pipeline_promoter = None
         manager = manager_local
         if _manager_retry_timer is not None:
             try:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 import importlib
 import inspect
 import doctest
@@ -40,6 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger("BotTester")
 
 _MANAGER_LOCK = threading.RLock()
+_pipeline_promoter: Callable[[Any], None] | None = None
 
 
 def _import_relative(name: str):
@@ -113,7 +114,15 @@ def _get_pipeline() -> "ModelAutomationPipeline":
         "model_automation_pipeline",
     )
 
-    return pipeline_cls(context_builder=_get_context_builder())  # type: ignore[call-arg]
+    pipeline, promote = prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=_get_context_builder(),
+        bot_registry=_get_registry(),
+        data_bot=_get_data_bot(),
+    )
+    global _pipeline_promoter
+    _pipeline_promoter = promote
+    return pipeline
 
 
 @lru_cache(maxsize=1)
@@ -176,6 +185,13 @@ def _ensure_real_manager() -> "SelfCodingManager":
             test_failure_threshold=thresholds.test_failure_increase,
             threshold_service=threshold_service_cls(),
         )
+        global _pipeline_promoter
+        promoter = _pipeline_promoter
+        if promoter is not None:
+            try:
+                promoter(manager)
+            finally:
+                _pipeline_promoter = None
         _ensure_real_manager._instance = manager  # type: ignore[attr-defined]
         return manager
 
