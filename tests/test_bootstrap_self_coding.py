@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import importlib
+import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -146,3 +149,114 @@ def test_script_bootstrap_promotes_real_manager(monkeypatch, caplog):
     assert pipeline.registry_seen is registry
     assert pipeline.data_bot_seen is data_bot
     assert all(bot.manager is manager for bot in pipeline._bots)
+
+
+def test_error_bot_legacy_bootstrap_promotes_manager(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    import menace_sandbox.error_bot as error_bot
+
+    error_bot = importlib.reload(error_bot)
+
+    builder = SimpleNamespace()
+    monkeypatch.setattr(error_bot, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(error_bot, "CodeDB", lambda: SimpleNamespace())
+    monkeypatch.setattr(error_bot, "GPTMemoryManager", lambda: SimpleNamespace())
+    monkeypatch.setattr(error_bot, "ThresholdService", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        error_bot,
+        "get_thresholds",
+        lambda _name: SimpleNamespace(
+            roi_drop=0.1, error_increase=0.2, test_failure_increase=0.3
+        ),
+    )
+    monkeypatch.setattr(error_bot, "persist_sc_thresholds", lambda *args, **kwargs: None)
+    monkeypatch.setattr(error_bot, "get_orchestrator", lambda *args, **kwargs: SimpleNamespace())
+
+    registry = SimpleNamespace()
+    data_bot = SimpleNamespace()
+    error_bot.registry = registry
+    error_bot.data_bot = data_bot
+
+    class _StubCommunicationMaintenanceBot:
+        def __init__(self, manager):
+            self.manager = manager
+            self.finalized_with = None
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.manager = manager
+            self.finalized_with = (registry, data_bot)
+
+    class _StubPipeline:
+        instantiation_count = 0
+
+        def __init__(self, *, context_builder, manager=None, bot_registry=None, data_bot=None):
+            type(self).instantiation_count += 1
+            self.context_builder = context_builder
+            self.manager = manager
+            self.initial_manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.communication_bot = _StubCommunicationMaintenanceBot(manager)
+            self.comms_bot = self.communication_bot
+            self._bots = [self.communication_bot]
+            self.finalized_with = None
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.finalized_with = (manager, registry, data_bot)
+
+    pipeline_module = types.ModuleType("menace_sandbox.model_automation_pipeline")
+    pipeline_module.ModelAutomationPipeline = _StubPipeline
+    monkeypatch.setitem(sys.modules, "menace_sandbox.model_automation_pipeline", pipeline_module)
+
+    class _StubEngine:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    engine_module = types.ModuleType("menace_sandbox.self_coding_engine")
+    engine_module.SelfCodingEngine = _StubEngine
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_engine", engine_module)
+
+    class _StubManager:
+        def __init__(self, *, engine, pipeline, bot_registry, data_bot):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    def _internalize(
+        _bot_name,
+        engine,
+        pipeline,
+        *,
+        data_bot,
+        bot_registry,
+        **_kwargs,
+    ):
+        return _StubManager(
+            engine=engine,
+            pipeline=pipeline,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+
+    manager_module = types.ModuleType("menace_sandbox.self_coding_manager")
+    manager_module.internalize_coding_bot = _internalize
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_manager", manager_module)
+
+    manager = error_bot.get_manager()
+
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    pipeline = error_bot.get_pipeline()
+    assert isinstance(pipeline.initial_manager, coding_bot_interface._BootstrapManagerSentinel)
+    assert pipeline.manager is manager
+    assert pipeline.finalized_with == (manager, registry, data_bot)
+    assert _StubPipeline.instantiation_count == 1
+
+    communication_bot = pipeline.communication_bot
+    assert communication_bot.manager is manager
+    assert communication_bot.finalized_with == (registry, data_bot)
+
+    assert error_bot.get_manager() is manager
+    assert _StubPipeline.instantiation_count == 1
