@@ -1902,7 +1902,8 @@ def _resolve_helpers(
     any mandatory helper cannot be resolved.
     """
 
-    manager = manager or getattr(obj, "manager", None)
+    if manager is None:
+        manager = getattr(obj, "manager", None)
 
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
@@ -2356,7 +2357,11 @@ def self_coding_managed(
             ):
                 registry_obj = context.registry
                 data_bot_obj = context.data_bot
-                manager_default = context.manager or manager_instance
+                manager_default = (
+                    context.manager
+                    if context.manager is not None
+                    else manager_instance
+                )
             else:
                 registry_obj, data_bot_obj = _bootstrap_helpers()
                 manager_default = manager_instance

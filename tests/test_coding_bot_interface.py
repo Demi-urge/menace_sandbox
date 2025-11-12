@@ -293,3 +293,53 @@ def test_uses_manager_provenance_for_update():
     assert [update[0] for update in registry.provenance_updates] == ["provbot"]
     assert registry.provenance_updates[0][2:] == (123, "deadbeef")
 
+
+def test_falsey_manager_preserved_and_disabled_only_on_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class FalseyManager:
+        def __init__(self) -> None:
+            self.bot_registry = registry
+            self.data_bot = data_bot
+
+        def __bool__(self) -> bool:
+            return False
+
+    sentinel_manager = FalseyManager()
+
+    def _fail_bootstrap(*_args, **_kwargs):  # pragma: no cover - should not run
+        raise AssertionError("bootstrap should not execute when manager supplied")
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _fail_bootstrap)
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+
+    @self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+        manager=sentinel_manager,
+    )
+    class BotWithSentinel:
+        name = "sentinel"
+
+        def __init__(self) -> None:
+            pass
+
+    bot = BotWithSentinel()
+    assert bot.manager is sentinel_manager
+    assert not isinstance(bot.manager, cbi._DisabledSelfCodingManager)
+
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: False)
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class BotWithFallback:
+        name = "fallback"
+
+        def __init__(self) -> None:
+            pass
+
+    fallback_bot = BotWithFallback()
+    assert isinstance(fallback_bot.manager, cbi._DisabledSelfCodingManager)
+
