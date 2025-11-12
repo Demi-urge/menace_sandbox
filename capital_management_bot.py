@@ -1276,11 +1276,13 @@ class _CapitalManagementBot:
         webhook_url: str | None = None,
         config: CapitalManagementConfig | None = None,
         signal_adapters: Optional[Iterable[Callable[[], Dict[str, float]]]] = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         logger.debug(
             "CapitalManagementBot MRO: %s",
             [cls.__name__ for cls in type(self).__mro__],
         )
+        self.manager = manager
         self.config = config or CapitalManagementConfig()
         self.config.normalize_weights()
         self.config.apply_risk_profile()
