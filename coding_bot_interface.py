@@ -1802,13 +1802,43 @@ def _bootstrap_manager(
         if manager_cls is None:
             raise RuntimeError("self-coding runtime is unavailable")
 
+        sentinel_manager: _BootstrapManagerSentinel | None = None
+        context: _BootstrapContext | None = None
+        manager: Any = None
         try:
-            return manager_cls(  # type: ignore[call-arg]
+            sentinel_manager = _create_bootstrap_manager_sentinel(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            context = _push_bootstrap_context(
+                registry=bot_registry,
+                data_bot=data_bot,
+                manager=sentinel_manager,
+            )
+            manager = manager_cls(  # type: ignore[call-arg]
                 bot_registry=bot_registry,
                 data_bot=data_bot,
             )
         except TypeError:
-            pass
+            manager = None
+        except Exception as exc:
+            logger.debug(
+                "self-coding manager bootstrap via %s failed for %s",
+                getattr(manager_cls, "__name__", manager_cls),
+                name,
+                exc_info=exc,
+            )
+            raise
+        else:
+            _promote_pipeline_manager(
+                getattr(manager, "pipeline", None),
+                manager,
+                sentinel_manager,
+            )
+            return manager
+        finally:
+            if context is not None:
+                _pop_bootstrap_context(context)
 
         code_db_cls = _load_optional_module("code_database").CodeDB
         memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -289,6 +290,72 @@ def test_bootstrap_manager_promotes_pipeline_manager(monkeypatch):
     assert type(pipeline.comms_bot).manager is manager
     assert pipeline._bots[0].manager is manager
     assert pipeline.reattach_calls >= 1
+
+
+def test_bootstrap_manager_manager_cls_promotes_pipeline(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = _make_registry()
+    data_bot = SimpleNamespace()
+
+    created: dict[str, Any] = {}
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _PipelineBot:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            created.setdefault("bots", []).append(self)
+
+    class _SentinelPipeline:
+        def __init__(self, *, bot_registry, data_bot, manager):
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            bot = _PipelineBot()
+            self._bots = [bot]
+            self.initial_bot_manager = bot.manager
+            self.reattach_calls = 0
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+    class _StubManager:
+        def __init__(self, *, bot_registry, data_bot):
+            context = coding_bot_interface._current_bootstrap_context()
+            if context is None:
+                raise AssertionError("bootstrap context should be available")
+            sentinel = context.manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.pipeline = _SentinelPipeline(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                manager=sentinel,
+            )
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _StubManager,
+    )
+
+    manager = coding_bot_interface._bootstrap_manager("PipelineBot", registry, data_bot)
+
+    assert isinstance(manager, _StubManager)
+    assert not any("re-entrant" in record.message.lower() for record in caplog.records)
+
+    pipeline = manager.pipeline
+    assert isinstance(pipeline.initial_manager, coding_bot_interface._BootstrapManagerSentinel)
+    assert pipeline.initial_manager is pipeline.initial_bot_manager
+    assert pipeline.manager is manager
+    assert all(bot.manager is manager for bot in pipeline._bots)
+    assert created["bots"]
 
 
 def test_bootstrap_manager_handles_communication_bot_in_legacy_pipeline(
