@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, List, Dict, Optional, TYPE_CHECKING, Any
 import logging
 import threading
+import time
 
 registry = BotRegistry()
 
@@ -398,6 +399,28 @@ class _TruthyManagerWrapper:
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return True
 
+    @property
+    def __wrapped_manager__(self) -> object:
+        return self._manager
+
+
+def _unwrap_manager(candidate: object | None) -> object | None:
+    """Return the underlying manager instance when wrapped."""
+
+    if candidate is None:
+        return None
+    wrapped = getattr(candidate, "__wrapped_manager__", None)
+    if wrapped is not None:
+        return wrapped
+    return getattr(candidate, "_manager", candidate)
+
+
+def _is_disabled_manager(candidate: object | None) -> bool:
+    """Return ``True`` when *candidate* represents a disabled manager."""
+
+    inner = _unwrap_manager(candidate)
+    return isinstance(inner, _DisabledSelfCodingManager)
+
 
 def _resolve_fallback_manager() -> object | None:
     """Return a lightweight manager so registration skips retry loops."""
@@ -431,8 +454,116 @@ ResourcePredictionBot = self_coding_managed(
 )(ResourcePredictionBot)
 
 
+def force_manager_hotpatch(
+    *, retries: int = 3, delay: float = 2.0
+) -> object | None:
+    """Attempt to attach a real ``SelfCodingManager`` after bootstrap.
+
+    When the module imports before self-coding dependencies become available the
+    decorator receives a disabled manager stub.  Calling this helper after the
+    environment has stabilised retries ``BotRegistry``'s internal bootstrap so a
+    genuine manager is captured and wired into the class.
+    """
+
+    global _manager
+
+    internalize = getattr(registry, "_internalize_missing_coding_bot", None)
+    if not callable(internalize):
+        logger.debug(
+            "ResourcePredictionBot hotpatch unavailable; registry missing internalize helper"
+        )
+        return _unwrap_manager(_manager)
+
+    attempt = 0
+    last_error: BaseException | None = None
+    total_retries = max(1, retries)
+    while attempt < total_retries:
+        attempt += 1
+        if not _is_disabled_manager(_manager):
+            return _unwrap_manager(_manager)
+
+        try:
+            data_bot_obj = _DATA_BOT_PROXY.instance()
+        except Exception:
+            data_bot_obj = _DATA_BOT_PROXY
+
+        try:
+            internalize(
+                "ResourcePredictionBot",
+                manager=None,
+                data_bot=data_bot_obj,
+            )
+        except Exception as exc:  # pragma: no cover - best effort diagnostics
+            last_error = exc
+            logger.debug(
+                "ResourcePredictionBot hotpatch attempt %s failed", attempt, exc_info=True
+            )
+            if attempt < total_retries and delay > 0:
+                time.sleep(delay)
+            continue
+
+        node = registry.graph.nodes.get("ResourcePredictionBot", {})
+        manager_obj = _unwrap_manager(
+            node.get("selfcoding_manager") or node.get("manager")
+        )
+        if manager_obj is None or _is_disabled_manager(manager_obj):
+            if attempt < total_retries and delay > 0:
+                time.sleep(delay)
+            continue
+
+        _manager = manager_obj
+
+        bot_cls = globals().get("ResourcePredictionBot")
+        if isinstance(bot_cls, type):
+            try:
+                bot_cls.manager = manager_obj  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "ResourcePredictionBot hotpatch failed to update class manager",
+                    exc_info=True,
+                )
+            try:
+                bot_cls._self_coding_manual_mode = False  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            try:
+                bot_cls(manager=manager_obj, data_bot=data_bot_obj)
+            except Exception:  # pragma: no cover - best effort bootstrap
+                logger.debug(
+                    "ResourcePredictionBot hotpatch bootstrap instantiation failed",
+                    exc_info=True,
+                )
+        return manager_obj
+
+    if last_error is not None:
+        logger.debug(
+            "ResourcePredictionBot hotpatch exhausted retries", exc_info=last_error
+        )
+    return _unwrap_manager(_manager)
+
+
+def schedule_manager_hotpatch(*, delay: float = 2.0, retries: int = 3) -> None:
+    """Schedule :func:`force_manager_hotpatch` to run after a short delay."""
+
+    def _runner() -> None:
+        force_manager_hotpatch(retries=retries, delay=delay)
+
+    try:
+        threading.Timer(delay, _runner).start()
+    except Exception:  # pragma: no cover - best effort scheduling
+        logger.debug(
+            "ResourcePredictionBot hotpatch scheduling failed", exc_info=True
+        )
+
+
+if _is_disabled_manager(_manager):
+    schedule_manager_hotpatch()
+
+
 __all__ = [
     "ResourceMetrics",
     "TemplateDB",
     "ResourcePredictionBot",
+    "force_manager_hotpatch",
+    "schedule_manager_hotpatch",
 ]
