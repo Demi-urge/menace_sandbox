@@ -158,7 +158,6 @@ def bootstrap_self_coding(bot_name: str) -> None:
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
         )
-    promote_pipeline(manager)
 
     captured_stdout = stdout_buffer.getvalue().strip()
     captured_stderr = stderr_buffer.getvalue().strip()
@@ -225,6 +224,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         raise RuntimeError(
             f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
         )
+    promote_pipeline(manager)
     LOGGER.info("Self-coding manager registered: \"%s\"", type(manager).__name__)
 
 
