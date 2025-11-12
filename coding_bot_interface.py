@@ -101,6 +101,22 @@ from shared.provenance_state import (
 logger = logging.getLogger(__name__)
 
 
+def _parse_allowlist(raw: str | None) -> frozenset[str] | None:
+    """Return a parsed allowlist from *raw* env input."""
+
+    if raw is None:
+        return None
+    entries = {entry.strip() for entry in raw.split(",") if entry.strip()}
+    if not entries or "*" in entries:
+        return None
+    return frozenset(entries)
+
+
+_SELF_CODING_ALLOWLIST = _parse_allowlist(
+    os.environ.get("MENACE_SELF_CODING_ALLOWLIST")
+)
+
+
 @dataclass(eq=False)
 class _BootstrapContext:
     """Thread-scoped context shared during nested helper bootstrap."""
@@ -1940,6 +1956,10 @@ def self_coding_managed(
     name is registered with ``bot_registry`` the first time an instance is
     created so importing a module does not eagerly construct the helper
     dependencies.
+
+    To limit which bots are wrapped, set the environment variable
+    ``MENACE_SELF_CODING_ALLOWLIST`` to a comma separated list of bot names.  An
+    empty value or a value containing ``"*"`` enables all bots.
     """
 
     if bot_registry is None or data_bot is None:
@@ -1949,10 +1969,12 @@ def self_coding_managed(
         orig_init = cls.__init__  # type: ignore[attr-defined]
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
-        enabled_bots = {"CapitalManagementBot", "ResourcePredictionBot"}
-        if name not in enabled_bots:
+        allowlist = _SELF_CODING_ALLOWLIST
+        if allowlist is not None and name not in allowlist:
             logger.info(
-                "self_coding_managed temporarily disabled for bot %s", name
+                "self_coding_managed disabled for bot %s (allowlist=%s)",
+                name,
+                sorted(allowlist),
             )
             return cls
         print(f"[debug] self_coding_managed wrapping bot={name}")
