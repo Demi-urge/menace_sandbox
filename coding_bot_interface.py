@@ -126,6 +126,7 @@ class _BootstrapContext:
 
 
 _BOOTSTRAP_THREAD_STATE = threading.local()
+_SENTINEL_UNSET = object()
 
 
 def _push_bootstrap_context(
@@ -1809,6 +1810,7 @@ def prepare_pipeline_for_bootstrap(
     context_builder: Any,
     bot_registry: Any,
     data_bot: Any,
+    manager_override: Any | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -1818,14 +1820,18 @@ def prepare_pipeline_for_bootstrap(
     ``SelfCodingManager`` is still initialising.  The accompanying callback must
     be invoked once the concrete manager is ready so that all sentinel
     references are promoted atomically.
+    ``manager_override`` allows callers to reuse an existing sentinel instead of
+    creating a new one when nested helper bootstrap is already in progress.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
 
-    sentinel_manager = _create_bootstrap_manager_sentinel(
-        bot_registry=bot_registry,
-        data_bot=data_bot,
-    )
+    sentinel_manager = manager_override
+    if sentinel_manager is None:
+        sentinel_manager = _create_bootstrap_manager_sentinel(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
     context = _push_bootstrap_context(
         registry=bot_registry,
         data_bot=data_bot,
@@ -1935,19 +1941,21 @@ def _bootstrap_manager(
         elif hasattr(_BOOTSTRAP_STATE, "names"):
             delattr(_BOOTSTRAP_STATE, "names")
 
+    sentinel_manager = _create_bootstrap_manager_sentinel(
+        bot_registry=bot_registry,
+        data_bot=data_bot,
+    )
+    previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
+    _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
+
     try:
         manager_cls = _resolve_self_coding_manager_cls()
         if manager_cls is None:
             raise RuntimeError("self-coding runtime is unavailable")
 
-        sentinel_manager: _BootstrapManagerSentinel | None = None
         context: _BootstrapContext | None = None
         manager: Any = None
         try:
-            sentinel_manager = _create_bootstrap_manager_sentinel(
-                bot_registry=bot_registry,
-                data_bot=data_bot,
-            )
             context = _push_bootstrap_context(
                 registry=bot_registry,
                 data_bot=data_bot,
@@ -2000,6 +2008,7 @@ def _bootstrap_manager(
             context_builder=ctx_builder,
             bot_registry=bot_registry,
             data_bot=data_bot,
+            manager_override=sentinel_manager,
         )
         manager_mod = _load_optional_module(
             "self_coding_manager", fallback="menace.self_coding_manager"
@@ -2012,6 +2021,7 @@ def _bootstrap_manager(
             bot_registry=bot_registry,
         )
         promote(manager)
+        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
         return manager
     except RuntimeError:
         raise
@@ -2024,6 +2034,13 @@ def _bootstrap_manager(
             _BOOTSTRAP_STATE.depth = current_depth
         elif hasattr(_BOOTSTRAP_STATE, "depth"):
             delattr(_BOOTSTRAP_STATE, "depth")
+        if previous_sentinel is _SENTINEL_UNSET:
+            try:
+                delattr(_BOOTSTRAP_STATE, "sentinel_manager")
+            except AttributeError:
+                pass
+        else:
+            _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
 
 
 def _load_optional_module(name: str, *, fallback: str | None = None) -> Any:
@@ -2310,10 +2327,14 @@ def self_coding_managed(
             try:
                 registry_obj = _resolve_candidate(bot_registry)
                 data_bot_obj = _resolve_candidate(data_bot)
+                sentinel_manager = getattr(
+                    _BOOTSTRAP_STATE, "sentinel_manager", None
+                )
+                manager_for_context = manager_instance or sentinel_manager
                 context = _push_bootstrap_context(
                     registry=registry_obj,
                     data_bot=data_bot_obj,
-                    manager=manager_instance,
+                    manager=manager_for_context,
                 )
                 if registry_obj is None or data_bot_obj is None:
                     raise RuntimeError("BotRegistry and DataBot instances are required")
@@ -2328,7 +2349,7 @@ def self_coding_managed(
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("threshold reload failed for %s", name)
 
-                manager_local = manager_instance
+                manager_local = manager_instance or sentinel_manager
                 runtime_available = _self_coding_runtime_available()
                 if context is not None:
                     context.manager = manager_local
