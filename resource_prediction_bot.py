@@ -207,6 +207,7 @@ class ResourcePredictionBot:
         *,
         manager: "SelfCodingManager | None" = None,
     ) -> None:
+        self.manager = manager
         self.db = db or TemplateDB()
         if data_bot is not None:
             self.data_bot = data_bot
