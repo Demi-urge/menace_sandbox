@@ -27,6 +27,7 @@ from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
+    initialise_sentence_transformer,
 )
 
 try:  # optional dependency for embeddings
@@ -102,9 +103,12 @@ class VectorMemoryStorage(MemoryStorage):
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self.embedder = SentenceTransformer(
+                kwargs: dict[str, object] = {}
+                if SENTENCE_TRANSFORMER_DEVICE:
+                    kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+                self.embedder = initialise_sentence_transformer(
                     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-                    device=SENTENCE_TRANSFORMER_DEVICE,
+                    **kwargs,
                 )
             except Exception:
                 self.embedder = None

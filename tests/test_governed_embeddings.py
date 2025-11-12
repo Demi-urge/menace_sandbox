@@ -509,6 +509,43 @@ def test_corrupted_snapshot_is_purged_before_retry(monkeypatch, tmp_path):
     assert calls[1][1].get("cache_folder") == str(tmp_path)
 
 
+def test_initialise_sentence_transformer_retries_with_meta(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class DummySentenceTransformer:
+        def __init__(self, identifier: str, **kwargs: object) -> None:
+            calls.append((identifier, dict(kwargs)))
+            self.identifier = identifier
+            self.device = kwargs.get("device")
+            if len(calls) == 1:
+                raise RuntimeError(
+                    "Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty()"
+                )
+
+        def to_empty(self, *, device: object):
+            self.device = device
+            calls.append(("to_empty", device))
+            return self
+
+    dummy_torch = types.SimpleNamespace(device=lambda value: value)
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "SentenceTransformer",
+        DummySentenceTransformer,
+    )
+    monkeypatch.setattr(governed_embeddings, "torch", dummy_torch)
+
+    result = governed_embeddings.initialise_sentence_transformer("dummy", device="cpu")
+    assert isinstance(result, DummySentenceTransformer)
+    assert calls[0][0] == "dummy"
+    assert calls[0][1]["device"] == "cpu"
+    assert calls[1][0] == "dummy"
+    assert calls[1][1]["device"] == "meta"
+    assert calls[2] == ("to_empty", "cpu")
+    assert result.device == "cpu"
+
+
 def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):
     monkeypatch.setattr(governed_embeddings, "_BUNDLED_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_STUB_FALLBACK_USED", False)

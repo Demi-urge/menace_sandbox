@@ -24,6 +24,7 @@ from governed_embeddings import (
     SENTENCE_TRANSFORMER_DEVICE,
     canonical_model_id,
     governed_embed,
+    initialise_sentence_transformer,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,9 +58,12 @@ class EmbeddingConversationMemory:
         login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
         model_name = canonical_model_id(self.model_name)
         self.model_name = model_name
-        self._model = SentenceTransformer(
+        kwargs: dict[str, object] = {}
+        if SENTENCE_TRANSFORMER_DEVICE:
+            kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+        self._model = initialise_sentence_transformer(
             model_name,
-            device=SENTENCE_TRANSFORMER_DEVICE,
+            **kwargs,
         )
         dim = self._model.get_sentence_embedding_dimension()
         self._index = faiss.IndexFlatL2(dim)

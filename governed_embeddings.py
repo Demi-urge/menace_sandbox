@@ -715,6 +715,75 @@ def _is_meta_tensor_loading_error(exc: Exception) -> bool:
     return "meta tensor" in lowered or "to_empty" in lowered or "no data" in lowered
 
 
+def _materialise_sentence_transformer_device(
+    instance: "SentenceTransformer",
+    target_device: "str | object | None",
+) -> "SentenceTransformer":
+    """Move *instance* to *target_device* while handling meta tensor states."""
+
+    if torch is None:
+        raise RuntimeError("torch is required to materialise the sentence transformer")
+
+    if target_device is None:
+        return instance
+
+    try:
+        device = torch.device(target_device)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("invalid embedder device %s: %s", target_device, exc)
+        return instance
+
+    if hasattr(instance, "to_empty"):
+        try:
+            return instance.to_empty(device=device)
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug(
+                "failed to materialise sentence transformer with to_empty on %s: %s",
+                device,
+                exc,
+            )
+
+    try:
+        instance = instance.to(device)
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug("failed to move sentence transformer to %s: %s", device, exc)
+    return instance
+
+
+def initialise_sentence_transformer(
+    identifier: str,
+    *,
+    device: "str | None" = None,
+    **kwargs: object,
+) -> "SentenceTransformer":
+    """Construct a :class:`SentenceTransformer` handling meta tensor snapshots."""
+
+    if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
+        raise RuntimeError("sentence-transformers is not available")
+
+    init_kwargs = dict(kwargs)
+    if device and "device" not in init_kwargs:
+        init_kwargs["device"] = device
+
+    target_device = init_kwargs.get("device") or SENTENCE_TRANSFORMER_DEVICE or "cpu"
+
+    try:
+        return SentenceTransformer(identifier, **init_kwargs)
+    except Exception as exc:
+        if not _is_meta_tensor_loading_error(exc):
+            raise
+
+        logger.warning(
+            "sentence transformer initialisation encountered meta tensors; retrying",
+            extra={"model": identifier, "device": target_device},
+        )
+
+        meta_kwargs = dict(init_kwargs)
+        meta_kwargs["device"] = "meta"
+        model = SentenceTransformer(identifier, **meta_kwargs)
+        return _materialise_sentence_transformer_device(model, target_device)
+
+
 def _purge_corrupted_snapshot(snapshot_path: Path) -> None:
     """Remove a corrupted ``SentenceTransformer`` snapshot directory."""
 
@@ -1522,7 +1591,7 @@ def _load_embedder() -> SentenceTransformer | None:
                 device = SENTENCE_TRANSFORMER_DEVICE
                 if device:
                     snapshot_kwargs.setdefault("device", device)
-                model = SentenceTransformer(
+                model = initialise_sentence_transformer(
                     str(snapshot_path), **snapshot_kwargs
                 )
                 duration = time.perf_counter() - start
@@ -1582,7 +1651,7 @@ def _load_embedder() -> SentenceTransformer | None:
         _ensure_hf_timeouts()
         if SENTENCE_TRANSFORMER_DEVICE and "device" not in local_kwargs:
             local_kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
-        model = SentenceTransformer(_MODEL_ID, **local_kwargs)
+        model = initialise_sentence_transformer(_MODEL_ID, **local_kwargs)
         duration = time.perf_counter() - start
         logger.info(
             "loaded sentence transformer",
@@ -1617,7 +1686,7 @@ def _load_embedder() -> SentenceTransformer | None:
                 )
                 _trace("load.hub.retry")
                 _ensure_hf_timeouts()
-                model = SentenceTransformer(_MODEL_ID, **local_kwargs)
+                model = initialise_sentence_transformer(_MODEL_ID, **local_kwargs)
                 duration = time.perf_counter() - start
                 logger.info(
                     "loaded sentence transformer after retry",
@@ -1833,4 +1902,5 @@ __all__ = [
     "governed_embed",
     "get_embedder",
     "embedder_diagnostics",
+    "initialise_sentence_transformer",
 ]

@@ -53,6 +53,7 @@ from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
+    initialise_sentence_transformer,
 )
 from .influence_graph import InfluenceGraph
 
@@ -117,9 +118,12 @@ class InMemoryFaiss:
             import os
 
             login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-            self.model = SentenceTransformer(
+            kwargs: dict[str, object] = {}
+            if SENTENCE_TRANSFORMER_DEVICE:
+                kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+            self.model = initialise_sentence_transformer(
                 DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-                device=SENTENCE_TRANSFORMER_DEVICE,
+                **kwargs,
             )
             dim = self.model.get_sentence_embedding_dimension()
             self.index = faiss.IndexFlatL2(dim)
