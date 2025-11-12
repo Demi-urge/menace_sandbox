@@ -79,6 +79,14 @@ from .threshold_service import (
     threshold_service as _DEFAULT_THRESHOLD_SERVICE,
 )
 
+try:  # pragma: no cover - tolerate deployments without the guard helper
+    from .shared.self_coding_import_guard import self_coding_import_depth as _import_depth
+except Exception:  # pragma: no cover - fallback for flat layout or minimal bundles
+    try:
+        from shared.self_coding_import_guard import self_coding_import_depth as _import_depth  # type: ignore
+    except Exception:  # pragma: no cover - guard unavailable in stripped environments
+        _import_depth = None  # type: ignore
+
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import (
         QuickFixEngine,
@@ -148,6 +156,29 @@ def _get_base_manager_generate_helper() -> _ManagerGenerateHelperProto:
 
 _DEFAULT_CREATE_CONTEXT_BUILDER = create_context_builder
 _DEFAULT_CONTEXT_BUILDER_CLS = ContextBuilder
+
+
+def _current_self_coding_import_depth() -> int:
+    """Return the active self-coding import depth if the guard is available."""
+
+    depth_source = _import_depth
+    if depth_source is None:
+        return 0
+
+    getter = getattr(depth_source, "get", None)
+    if callable(getter):
+        try:
+            return int(getter(0))
+        except Exception:  # pragma: no cover - guard errors should not block bootstrap
+            return 0
+
+    if callable(depth_source):
+        try:
+            return int(depth_source())
+        except Exception:  # pragma: no cover - tolerate guard failures gracefully
+            return 0
+
+    return 0
 
 
 def _manager_generate_helper_with_builder(
@@ -3201,6 +3232,9 @@ def internalize_coding_bot(
     Additional keyword arguments are forwarded to ``SelfCodingManager``.
     """
     global _LAST_INTERNALIZE_AT
+
+    if _current_self_coding_import_depth() > 0:
+        print("Forcing manager despite depth lock")
 
     delay = 0.0
     if _INTERNALIZE_THROTTLE_SECONDS > 0:
