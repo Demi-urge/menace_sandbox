@@ -1670,6 +1670,32 @@ class _DisabledSelfCodingManager:
 _BOOTSTRAP_STATE = threading.local()
 
 
+def _propagate_manager_to_pipeline(
+    pipeline: Any,
+    previous_manager: Any,
+    manager: Any,
+) -> None:
+    """Replace ``previous_manager`` references on *pipeline* with *manager*."""
+
+    if pipeline is None or manager is None or previous_manager is manager:
+        return
+    try:
+        current = getattr(pipeline, "manager", None)
+        if current is previous_manager:
+            setattr(pipeline, "manager", manager)
+    except Exception:  # pragma: no cover - defensive best effort
+        logger.debug("pipeline manager propagation failed", exc_info=True)
+    bots = getattr(pipeline, "_bots", None)
+    if not isinstance(bots, list):
+        return
+    for bot in bots:
+        try:
+            if getattr(bot, "manager", None) is previous_manager:
+                setattr(bot, "manager", manager)
+        except Exception:  # pragma: no cover - best effort update
+            logger.debug("bot manager propagation failed for %s", bot, exc_info=True)
+
+
 def _bootstrap_manager(
     name: str,
     bot_registry: BotRegistry,
@@ -1735,25 +1761,40 @@ def _bootstrap_manager(
             "model_automation_pipeline", fallback="menace.model_automation_pipeline"
         )
         ctx_builder = create_context_builder()
-        engine = engine_mod.SelfCodingEngine(
-            code_db_cls(),
-            memory_cls(),
-            context_builder=ctx_builder,
-        )
-        pipeline = pipeline_mod.ModelAutomationPipeline(
-            context_builder=ctx_builder,
+        sentinel_manager = _DisabledSelfCodingManager(
             bot_registry=bot_registry,
+            data_bot=data_bot,
         )
+        context = _push_bootstrap_context(
+            registry=bot_registry,
+            data_bot=data_bot,
+            manager=sentinel_manager,
+        )
+        try:
+            engine = engine_mod.SelfCodingEngine(
+                code_db_cls(),
+                memory_cls(),
+                context_builder=ctx_builder,
+            )
+            pipeline = pipeline_mod.ModelAutomationPipeline(
+                context_builder=ctx_builder,
+                bot_registry=bot_registry,
+                manager=sentinel_manager,
+            )
+        finally:
+            _pop_bootstrap_context(context)
         manager_mod = _load_optional_module(
             "self_coding_manager", fallback="menace.self_coding_manager"
         )
-        return manager_mod.SelfCodingManager(
+        manager = manager_mod.SelfCodingManager(
             engine,
             pipeline,
             bot_name=name,
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
+        _propagate_manager_to_pipeline(pipeline, sentinel_manager, manager)
+        return manager
     except RuntimeError:
         raise
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
