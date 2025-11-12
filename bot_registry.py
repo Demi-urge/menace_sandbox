@@ -36,6 +36,14 @@ import errno
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
 
+try:  # pragma: no cover - optional logging helper
+    from .self_coding_policy import log_policy_state
+except Exception:  # pragma: no cover - support legacy layouts
+    try:
+        from self_coding_policy import log_policy_state  # type: ignore
+    except Exception:  # pragma: no cover - logging helper unavailable
+        log_policy_state = None  # type: ignore[assignment]
+
 from shared.provenance_state import (
     UNSIGNED_PROVENANCE_WARNING_CACHE as _UNSIGNED_PROVENANCE_WARNING_CACHE,
     UNSIGNED_PROVENANCE_WARNING_LAST_TS as _UNSIGNED_PROVENANCE_WARNING_LAST_TS,
@@ -1603,6 +1611,13 @@ class BotRegistry:
             self.schedule_unmanaged_scan()
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to schedule unmanaged bot scan")
+        if log_policy_state is not None:
+            try:
+                log_policy_state(bots=self.graph.nodes)
+            except Exception:  # pragma: no cover - logging best effort
+                logger.debug(
+                    "failed to log self-coding coverage", exc_info=True
+                )
 
     def hot_swap_active(self) -> bool:
         """Return ``True`` when this registry is performing a hot swap import."""
