@@ -1949,6 +1949,12 @@ def self_coding_managed(
         orig_init = cls.__init__  # type: ignore[attr-defined]
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
+        enabled_bots = {"CapitalManagementBot", "ResourcePredictionBot"}
+        if name not in enabled_bots:
+            logger.info(
+                "self_coding_managed temporarily disabled for bot %s", name
+            )
+            return cls
         print(f"[debug] self_coding_managed wrapping bot={name}")
         try:
             module_path = inspect.getfile(cls)
