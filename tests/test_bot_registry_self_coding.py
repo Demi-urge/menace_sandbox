@@ -199,6 +199,97 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     assert disabled["reason"].startswith("self-coding bootstrap failed")
 
 
+def test_bootstrap_manager_promotes_pipeline_manager(monkeypatch):
+    registry = _make_registry()
+    data_bot = SimpleNamespace()
+
+    class _LegacyManager:
+        def __init__(self, engine, pipeline):
+            self.engine = engine
+            self.pipeline = pipeline
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _LegacyManager,
+    )
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+
+    class _StubCommsBot:
+        manager = None
+
+        def __init__(self, manager):
+            self.manager = manager
+            type(self).manager = manager
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry, manager):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = _StubCommsBot(manager)
+            self._bots = [self.comms_bot]
+            self.reattach_calls = 0
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+    class _StubManager:
+        def __init__(
+            self,
+            engine,
+            pipeline,
+            *,
+            bot_name,
+            data_bot,
+            bot_registry,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    stubs = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_StubPipeline
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        return stubs[name]
+
+    monkeypatch.setattr(
+        coding_bot_interface, "_load_optional_module", _load_optional_module
+    )
+
+    manager = coding_bot_interface._bootstrap_manager("ExampleBot", registry, data_bot)
+
+    assert isinstance(manager, _StubManager)
+    pipeline = manager.pipeline
+    assert isinstance(pipeline.initial_manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert pipeline.initial_manager is not manager
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert type(pipeline.comms_bot).manager is manager
+    assert pipeline._bots[0].manager is manager
+    assert pipeline.reattach_calls >= 1
+
+
 def test_bootstrap_manager_fallback_avoids_reentrant_disabled_manager(monkeypatch, caplog):
     caplog.set_level(logging.WARNING)
 
