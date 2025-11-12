@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 
 from .auto_link import auto_link
-from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
+from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal, Callable
 
 from .unified_event_bus import EventBus, UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -124,7 +124,7 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .threshold_service import ThresholdService
@@ -151,13 +151,14 @@ _pipeline: "ModelAutomationPipeline" | None = None
 _evolution_orchestrator = None
 _thresholds = None
 _manager_instance: "SelfCodingManager" | None = None
+_pipeline_promoter: Callable[["SelfCodingManager"], None] | None = None
 
 
 def _ensure_self_coding_manager() -> "SelfCodingManager":
     """Initialise and return the shared self-coding manager lazily."""
 
     global _context_builder, _engine, _pipeline
-    global _evolution_orchestrator, _thresholds, _manager_instance
+    global _evolution_orchestrator, _thresholds, _manager_instance, _pipeline_promoter
 
     with _self_coding_lock:
         if _context_builder is None:
@@ -176,7 +177,14 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
         if _pipeline is None:
             from .model_automation_pipeline import ModelAutomationPipeline
 
-            _pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+            pipeline, promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=_context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+            )
+            _pipeline = pipeline
+            _pipeline_promoter = promoter
         assert _pipeline is not None
 
         if _evolution_orchestrator is None:
@@ -194,7 +202,7 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
         if _manager_instance is None:
             from .self_coding_manager import internalize_coding_bot
 
-            _manager_instance = internalize_coding_bot(
+            manager = internalize_coding_bot(
                 "ErrorBot",
                 _engine,
                 _pipeline,
@@ -206,6 +214,12 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                 error_threshold=_thresholds.error_increase,
                 test_failure_threshold=_thresholds.test_failure_increase,
             )
+            _manager_instance = manager
+            if _pipeline_promoter is not None:
+                try:
+                    _pipeline_promoter(manager)
+                finally:
+                    _pipeline_promoter = None
 
     assert _manager_instance is not None
     return _manager_instance
