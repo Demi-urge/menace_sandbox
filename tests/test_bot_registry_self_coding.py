@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -198,6 +197,106 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     assert disabled is not None
     assert disabled["missing_dependencies"] == ["numpy", "torch"]
     assert disabled["reason"].startswith("self-coding bootstrap failed")
+
+
+def test_bootstrap_manager_fallback_avoids_reentrant_disabled_manager(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+
+    registry = _make_registry()
+    data_bot = SimpleNamespace(
+        reload_thresholds=lambda name: SimpleNamespace(
+            roi_drop=0.1, error_threshold=0.05
+        )
+    )
+
+    class _LegacySelfCodingManager:
+        def __init__(self, engine, *, bot_registry, data_bot):  # pragma: no cover - stub
+            self.engine = engine
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _LegacySelfCodingManager,
+    )
+    monkeypatch.setattr(coding_bot_interface, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda: (True, ()),
+    )
+
+    created: dict[str, object] = {}
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _NestedBot:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemoryManager:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None):
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry, manager):
+            created["pipeline"] = self
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.manager = manager
+            sentinel_bot = SimpleNamespace(manager=manager)
+            self.nested = _NestedBot(manager=manager)
+            self._bots = [sentinel_bot, self.nested]
+
+    def _fake_loader(name: str, *, fallback=None):
+        if name == "code_database":
+            return SimpleNamespace(CodeDB=_StubCodeDB)
+        if name == "gpt_memory":
+            return SimpleNamespace(GPTMemoryManager=_StubMemoryManager)
+        if name == "self_coding_engine":
+            return SimpleNamespace(SelfCodingEngine=_StubEngine)
+        if name == "model_automation_pipeline":
+            return SimpleNamespace(ModelAutomationPipeline=_StubPipeline)
+        if name == "self_coding_manager":
+            return SimpleNamespace(SelfCodingManager=_StubManager)
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(coding_bot_interface, "_load_optional_module", _fake_loader)
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    manager = coding_bot_interface._bootstrap_manager("NestedBot", registry, data_bot)
+
+    assert not any("re-entrant" in record.message.lower() for record in caplog.records)
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is created.get("pipeline")
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert all(getattr(bot, "manager", None) is manager for bot in pipeline._bots)
 
 
 def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
