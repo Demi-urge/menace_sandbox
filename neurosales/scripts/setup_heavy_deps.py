@@ -10,6 +10,7 @@ import typing
 from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     SENTENCE_TRANSFORMER_DEVICE,
+    initialise_sentence_transformer,
 )
 try:  # pragma: no cover - optional dependency in minimal envs
     from dotenv import load_dotenv
@@ -144,14 +145,16 @@ def run(download_only: bool = False, logger=None) -> SetupHeavyDepsResult:
                 "HUGGINGFACE_API_TOKEN is not set; cannot prefetch embedding weights"
             )
 
-        from sentence_transformers import SentenceTransformer
         from huggingface_hub import login
 
         login(token=token)
         _log("Prefetching embedding model weights...", logger)
-        SentenceTransformer(
+        kwargs: dict[str, object] = {}
+        if SENTENCE_TRANSFORMER_DEVICE:
+            kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+        initialise_sentence_transformer(
             DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-            device=SENTENCE_TRANSFORMER_DEVICE,
+            **kwargs,
         )
         embeddings_prefetched = True
     except Exception as exc:  # pragma: no cover - optional dependency

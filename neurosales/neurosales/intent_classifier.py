@@ -23,6 +23,7 @@ from governed_embeddings import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     SENTENCE_TRANSFORMER_DEVICE,
     governed_embed,
+    initialise_sentence_transformer,
 )
 try:
     from compliance.license_fingerprint import check as license_check
@@ -66,9 +67,12 @@ class IntentClassifier:
                 import os
 
                 login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
-                self._sbert = SentenceTransformer(
+                kwargs: Dict[str, object] = {}
+                if SENTENCE_TRANSFORMER_DEVICE:
+                    kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+                self._sbert = initialise_sentence_transformer(
                     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-                    device=SENTENCE_TRANSFORMER_DEVICE,
+                    **kwargs,
                 )
             except Exception:
                 self.backend = "tfidf"
