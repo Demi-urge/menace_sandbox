@@ -144,6 +144,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
 
     stdout_buffer = _Tee(sys.stdout)
     stderr_buffer = _Tee(sys.stderr)
+    manager = None
     with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
         stderr_buffer
     ):
@@ -157,7 +158,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
         )
-        promote_pipeline(manager)
+    promote_pipeline(manager)
 
     captured_stdout = stdout_buffer.getvalue().strip()
     captured_stderr = stderr_buffer.getvalue().strip()

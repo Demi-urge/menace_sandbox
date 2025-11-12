@@ -315,31 +315,50 @@ def test_bootstrap_entrypoint_promotes_manager(monkeypatch, caplog):
         "menace_sandbox.data_bot.persist_sc_thresholds", lambda *_, **__: None
     )
 
-    pipeline_instances: list[SimpleNamespace] = []
     manager_box: dict[str, SimpleNamespace] = {}
+    pipeline_box: dict[str, SimpleNamespace] = {}
+    promote_calls: list[SimpleNamespace] = []
 
-    class _Pipeline:
-        def __init__(self, *, context_builder, manager=None, **kwargs) -> None:
-            self.context_builder = context_builder
-            self.manager = manager
-            self.initial_manager = manager
-            self.kwargs = kwargs
-            pipeline_instances.append(self)
+    def _prepare_pipeline_for_bootstrap(
+        *,
+        pipeline_cls,
+        context_builder,
+        bot_registry,
+        data_bot,
+    ):
+        sentinel = SimpleNamespace(kind="sentinel", pipeline_cls=pipeline_cls)
+        pipeline = SimpleNamespace(
+            context_builder=context_builder,
+            manager=sentinel,
+            initial_manager=sentinel,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            sentinel_manager=sentinel,
+        )
+        pipeline_box["pipeline"] = pipeline
+
+        def _promote(manager):
+            promote_calls.append(manager)
+            pipeline.manager = manager
+
+        return pipeline, _promote
 
     monkeypatch.setattr(
-        "menace_sandbox.model_automation_pipeline.ModelAutomationPipeline",
-        _Pipeline,
+        coding_bot_interface,
+        "prepare_pipeline_for_bootstrap",
+        _prepare_pipeline_for_bootstrap,
     )
 
     def _internalize_coding_bot(
         *,
         bot_name: str,
         engine: object,
-        pipeline: _Pipeline,
+        pipeline: SimpleNamespace,
         **_kwargs: object,
     ) -> SimpleNamespace:
-        sentinel = pipeline.manager
-        assert isinstance(sentinel, coding_bot_interface._BootstrapManagerSentinel)
+        assert pipeline is pipeline_box["pipeline"]
+        sentinel = pipeline.sentinel_manager
+        assert pipeline.manager is sentinel
         manager = SimpleNamespace(bot_name=bot_name, pipeline=pipeline, engine=engine)
         manager_box["manager"] = manager
         return manager
@@ -350,9 +369,8 @@ def test_bootstrap_entrypoint_promotes_manager(monkeypatch, caplog):
     )
 
     bootstrap_self_coding.bootstrap_self_coding("ExampleBot")
-
-    assert pipeline_instances, "pipeline should be constructed"
-    pipeline = pipeline_instances[-1]
+    pipeline = pipeline_box["pipeline"]
     manager = manager_box["manager"]
     assert pipeline.manager is manager
     assert "re-entrant initialisation depth" not in caplog.text
+    assert promote_calls == [manager]
