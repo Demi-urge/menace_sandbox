@@ -67,6 +67,21 @@ except Exception:  # pragma: no cover - fallback when executed from flat layout
     except Exception:  # pragma: no cover - dependency probe unavailable
         ensure_self_coding_ready = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox.self_coding_policy import get_self_coding_policy
+except Exception:  # pragma: no cover - fallback when executed from flat layout
+    try:
+        from self_coding_policy import get_self_coding_policy  # type: ignore
+    except Exception:  # pragma: no cover - allow decorator to proceed with defaults
+        def get_self_coding_policy():  # type: ignore[override]
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                allowlist=None,
+                denylist=frozenset(),
+                is_enabled=lambda _name: True,
+            )
+
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
@@ -99,22 +114,6 @@ from shared.provenance_state import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_allowlist(raw: str | None) -> frozenset[str] | None:
-    """Return a parsed allowlist from *raw* env input."""
-
-    if raw is None:
-        return None
-    entries = {entry.strip() for entry in raw.split(",") if entry.strip()}
-    if not entries or "*" in entries:
-        return None
-    return frozenset(entries)
-
-
-_SELF_CODING_ALLOWLIST = _parse_allowlist(
-    os.environ.get("MENACE_SELF_CODING_ALLOWLIST")
-)
 
 
 @dataclass(eq=False)
@@ -1957,9 +1956,10 @@ def self_coding_managed(
     created so importing a module does not eagerly construct the helper
     dependencies.
 
-    To limit which bots are wrapped, set the environment variable
-    ``MENACE_SELF_CODING_ALLOWLIST`` to a comma separated list of bot names.  An
-    empty value or a value containing ``"*"`` enables all bots.
+    To limit which bots are wrapped, set ``MENACE_SELF_CODING_ALLOWLIST`` and
+    ``MENACE_SELF_CODING_DENYLIST`` environment variables to comma separated
+    lists of bot names.  By default every bot is eligible unless explicitly
+    denied.  When an allowlist is provided only the listed bots are wrapped.
     """
 
     if bot_registry is None or data_bot is None:
@@ -1969,13 +1969,21 @@ def self_coding_managed(
         orig_init = cls.__init__  # type: ignore[attr-defined]
 
         name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
-        allowlist = _SELF_CODING_ALLOWLIST
-        if allowlist is not None and name not in allowlist:
-            logger.info(
-                "self_coding_managed disabled for bot %s (allowlist=%s)",
-                name,
-                sorted(allowlist),
-            )
+        policy = get_self_coding_policy()
+        if not policy.is_enabled(name):
+            if name in getattr(policy, "denylist", frozenset()):
+                logger.info(
+                    "self_coding_managed disabled for bot %s (denylist=%s)",
+                    name,
+                    sorted(policy.denylist),
+                )
+            else:
+                allowlist = getattr(policy, "allowlist", None)
+                logger.info(
+                    "self_coding_managed disabled for bot %s (allowlist=%s)",
+                    name,
+                    sorted(allowlist) if allowlist else [],
+                )
             return cls
         print(f"[debug] self_coding_managed wrapping bot={name}")
         try:
