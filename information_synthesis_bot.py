@@ -13,7 +13,7 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import asdict
 from functools import lru_cache
-from typing import Callable, Iterable, List
+from typing import TYPE_CHECKING, Callable, Iterable, List
 import os
 import sys
 import logging
@@ -209,6 +209,7 @@ class InformationSynthesisBot:
         *,
         event_bus: UnifiedEventBus | None = None,
         context_builder: ContextBuilder,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         available, diagnostic = _current_sqlalchemy_status()
         # update module-level flags so other consumers observe the latest status
@@ -232,7 +233,7 @@ class InformationSynthesisBot:
             pass
         self.context_builder = context_builder
         self.aggregator = aggregator or ResearchAggregatorBot(
-            [], context_builder=context_builder
+            [], context_builder=context_builder, manager=manager
         )
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         if Celery:
@@ -384,3 +385,7 @@ __all__ = [
     "SimpleField",
     "ValidationError",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

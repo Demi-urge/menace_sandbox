@@ -38,6 +38,9 @@ from .dynamic_resource_allocator_bot import DynamicResourceAllocator, DecisionLe
 
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
     from .error_bot import ErrorBot
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
 
 
 @dataclass
@@ -99,6 +102,7 @@ class DiagnosticManager:
         ledger: DecisionLedger | None = None,
         queue: CoordinationManager | None = None,
         log: ResolutionDB | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.metrics = metrics_db or MetricsDB()
         if not isinstance(context_builder, ContextBuilder):

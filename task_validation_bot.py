@@ -7,7 +7,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from dataclasses import asdict
-from typing import Callable, Iterable, List
+from typing import TYPE_CHECKING, Callable, Iterable, List
 import threading
 import logging
 
@@ -38,6 +38,11 @@ sys.modules.setdefault("menace", importlib.import_module("menace_sandbox"))
 sys.modules.setdefault("menace.task_validation_bot", sys.modules[__name__])
 
 dependency_probe = load_internal("self_coding_dependency_probe")
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback for optional manager usage
+    SelfCodingManager = object  # type: ignore[assignment]
 ensure_self_coding_ready = dependency_probe.ensure_self_coding_ready
 
 logger = logging.getLogger(__name__)
@@ -255,7 +260,13 @@ class TaskSchema(Schema):
 class TaskValidationBot:
     """Validate tasks against goals and structure."""
 
-    def __init__(self, goals: List[str], broker: str = "memory://") -> None:
+    def __init__(
+        self,
+        goals: List[str],
+        broker: str = "memory://",
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.goals = [g.lower() for g in goals]
         self.schema = TaskSchema()
         if Celery:

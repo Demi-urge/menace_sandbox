@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from gpt_memory_interface import GPTMemoryInterface
 
@@ -158,7 +158,12 @@ class VectorMemoryStorage(MemoryStorage):
 class MemoryBot(GPTMemoryInterface):
     """Bot that stores conversations and provides search with caching."""
 
-    def __init__(self, storage: MemoryStorage | None = None) -> None:
+    def __init__(
+        self,
+        storage: MemoryStorage | None = None,
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.storage = storage or MemoryStorage()
         self.cache: Dict[str, List[MemoryRecord]] = {}
 
@@ -217,3 +222,7 @@ class MemoryBot(GPTMemoryInterface):
 
 
 __all__ = ["MemoryRecord", "MemoryStorage", "VectorMemoryStorage", "MemoryBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

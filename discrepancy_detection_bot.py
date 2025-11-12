@@ -7,7 +7,7 @@ from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterable, List, Tuple, Any
+from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Tuple
 import importlib.metadata as metadata
 import uuid
 
@@ -63,6 +63,7 @@ class DiscrepancyDetectionBot:
         workflows_db: Any = None,
         storage: Any = None,
         severity_threshold: float = 1.0,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or DiscrepancyDB()
         self.optimizer = optimizer
@@ -141,3 +142,7 @@ __all__ = [
     "RuleExecutionError",
     "OptimizationError",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

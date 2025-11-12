@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Tuple
 
 from dynamic_path_router import resolve_path
 
@@ -480,6 +480,7 @@ class AICounterBot:
         strategy_bot: "StrategyPredictionBot" | None = None,
         bot_weights: dict[str, float] | None = None,
         model_path: str | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or CounterDB()
         self.prediction_manager = prediction_manager
@@ -722,3 +723,7 @@ __all__ = [
     "choose_countermeasure",
     "AICounterBot",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Tuple, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
@@ -351,7 +351,14 @@ class LeadPerformanceMonitor:
 class RevenueSpikeEvaluatorBot:
     """Detect revenue surges using exponential weighting."""
 
-    def __init__(self, db: RevenueEventsDB, window: int = 20, threshold: float = 3.0) -> None:
+    def __init__(
+        self,
+        db: RevenueEventsDB,
+        window: int = 20,
+        threshold: float = 3.0,
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.db = db
         self.window = window
         self.threshold = threshold
@@ -381,7 +388,13 @@ class RevenueSpikeEvaluatorBot:
 class CapitalAllocationBot:
     """Rebalance resources to favour surging models."""
 
-    def __init__(self, profit_db: ProfitabilityDB | None = None, enh_db: ProfitabilityDB | None = None) -> None:
+    def __init__(
+        self,
+        profit_db: ProfitabilityDB | None = None,
+        enh_db: ProfitabilityDB | None = None,
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.profit_db = profit_db or ProfitabilityDB()
         self.enh_db = enh_db or ProfitabilityDB()
 
@@ -406,3 +419,7 @@ __all__ = [
     "RevenueSpikeEvaluatorBot",
     "CapitalAllocationBot",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

@@ -12,7 +12,7 @@ import os
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable, Dict, List
+from typing import TYPE_CHECKING, Callable, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,8 @@ class HierarchyAssessmentBot:
         self,
         planning_api: str = "http://localhost:8000/plan",
         mq_url: str = "amqp://guest:guest@localhost:5672/%2F",
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.planning_api = planning_api
         if zmq:
@@ -210,3 +212,7 @@ class HierarchyAssessmentBot:
 
 
 __all__ = ["BotTaskRecord", "HierarchyAssessmentBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

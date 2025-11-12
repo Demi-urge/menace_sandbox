@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Iterable, List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER
 
@@ -244,6 +244,7 @@ class ResourceAllocationOptimizer:
         failure_system: FailureLearningSystem | None = None,
         evolution_history: EvolutionHistoryDB | None = None,
         async_mode: bool = False,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.roi_db = roi_db or ROIDB()
         self.error_db = error_db
@@ -586,3 +587,7 @@ __all__ = [
     "ResourceAllocationOptimizer",
     "ContextualRL",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

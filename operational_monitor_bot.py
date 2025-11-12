@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 from .data_interfaces import DataBotInterface
 from .shared.lazy_data_bot import get_data_bot as _load_shared_data_bot
@@ -136,6 +136,7 @@ class OperationalMonitoringBot(AdminBotBase):
         *,
         event_bus: UnifiedEventBus | None = None,
         severity_threshold: float = 5.0,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         super().__init__(db_router=db_router)
         self.db = metrics_db or MetricsDB()
@@ -305,3 +306,7 @@ if __name__ == "__main__":  # pragma: no cover - CLI use
 
 
 __all__ = ["AnomalyRecord", "AnomalyDB", "OperationalMonitoringBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

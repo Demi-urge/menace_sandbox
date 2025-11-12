@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List
+from typing import TYPE_CHECKING, Iterable, List
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
@@ -220,6 +220,7 @@ class SentimentBot:
         *,
         prediction_manager: "PredictionManager" | None = None,
         strategy_bot: "StrategyPredictionBot" | None = None,
+        manager: "SelfCodingManager | None" = None,
         ) -> None:
         self.db = db or SentimentDB()
         self.prediction_manager = prediction_manager
@@ -355,3 +356,7 @@ __all__ = [
     "predict_profitability",
     "SentimentBot",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

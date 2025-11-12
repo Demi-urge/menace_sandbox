@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -18,10 +18,12 @@ from .neuroplasticity import PathwayDB
 from .advanced_error_management import PredictiveResourceAllocator
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
 from vector_service.context_builder import ContextBuilder
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .menace_orchestrator import MenaceOrchestrator
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
 
 
 @dataclass
@@ -97,6 +99,7 @@ class DynamicResourceAllocator:
         scale_up_threshold: float = 0.8,
         scale_down_threshold: float = 0.2,
         context_builder: ContextBuilder,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.metrics_db = metrics_db or MetricsDB()
         self.prediction_bot = prediction_bot or ResourcePredictionBot()

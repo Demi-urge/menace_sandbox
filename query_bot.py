@@ -8,7 +8,7 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 import logging
 import os
 
@@ -169,6 +169,7 @@ class QueryBot:
         knowledge: LocalKnowledgeModule | None = LOCAL_KNOWLEDGE_MODULE,
         *,
         context_builder: ContextBuilder,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai
@@ -228,3 +229,7 @@ class QueryBot:
 
 
 __all__ = ["QueryBot", "QueryResult", "ContextStore", "DataFetcher"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

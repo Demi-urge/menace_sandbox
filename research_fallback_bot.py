@@ -9,7 +9,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Dict, Any
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 import re
 from collections import Counter
 import math
@@ -71,6 +71,7 @@ class ResearchFallbackBot:
         max_retries: int = 3,
         backoff: float = 1.0,
         embedding_dim: int = 64,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.info_db = info_db or InfoDB()
         self.max_retries = max_retries
@@ -213,3 +214,7 @@ class ResearchFallbackBot:
 
 
 __all__ = ["ResearchFallbackBot", "FallbackResult"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

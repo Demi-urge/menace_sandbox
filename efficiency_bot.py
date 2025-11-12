@@ -40,10 +40,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from .capital_management_bot import CapitalManagementBot
     from .prediction_manager_bot import PredictionManager
     from .chatgpt_enhancement_bot import EnhancementDB
+    from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback when optional deps missing
     CapitalManagementBot = Any  # type: ignore[assignment]
     PredictionManager = Any  # type: ignore[assignment]
     EnhancementDB = Any  # type: ignore[assignment]
+    SelfCodingManager = Any  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=1)
@@ -179,6 +181,7 @@ class EfficiencyBot:
         enhancement_db: Optional["EnhancementDB"] = None,
         models_db: Path | str = DB_PATH,
         event_bus: UnifiedEventBus | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or EfficiencyDB()
         self.data_bot = data_bot

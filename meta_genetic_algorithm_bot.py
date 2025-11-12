@@ -13,6 +13,9 @@ from functools import lru_cache
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .genetic_algorithm_bot import GeneticAlgorithmBot
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=1)
@@ -49,7 +52,12 @@ class MetaGARecord:
 class MetaGeneticAlgorithmBot:
     """Evolve configurations for GeneticAlgorithmBot instances."""
 
-    def __init__(self, population: int = 5) -> None:
+    def __init__(
+        self,
+        population: int = 5,
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.population = population
         self.history: List[MetaGARecord] = []
 
