@@ -503,6 +503,7 @@ def test_corrupted_snapshot_is_purged_before_retry(monkeypatch, tmp_path):
     embedder = governed_embeddings.get_embedder()
     assert isinstance(embedder, DummySentenceTransformer)
     assert calls[0][0] == str(snapshot_dir)
+    assert calls[0][1]["device"] == "meta"
     assert purged.get("path") == snapshot_dir
     assert calls[1][0] == governed_embeddings._MODEL_ID
     assert "local_files_only" not in calls[1][1]
@@ -543,6 +544,40 @@ def test_initialise_sentence_transformer_retries_with_meta(monkeypatch):
     assert calls[1][0] == "dummy"
     assert calls[1][1]["device"] == "meta"
     assert calls[2] == ("to_empty", "cpu")
+    assert result.device == "cpu"
+
+
+def test_initialise_sentence_transformer_force_meta(monkeypatch):
+    calls: list[tuple[str | object, dict[str, object]]] = []
+
+    class DummySentenceTransformer:
+        def __init__(self, identifier: str, **kwargs: object) -> None:
+            calls.append((identifier, dict(kwargs)))
+            self.identifier = identifier
+            self.device = kwargs.get("device")
+
+        def to_empty(self, *, device: object):
+            calls.append(("to_empty", device))
+            self.device = device
+            return self
+
+    dummy_torch = types.SimpleNamespace(device=lambda value: value)
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "SentenceTransformer",
+        DummySentenceTransformer,
+    )
+    monkeypatch.setattr(governed_embeddings, "torch", dummy_torch)
+
+    result = governed_embeddings.initialise_sentence_transformer(
+        "dummy", device="cpu", force_meta_initialisation=True
+    )
+
+    assert isinstance(result, DummySentenceTransformer)
+    assert calls[0][0] == "dummy"
+    assert calls[0][1]["device"] == "meta"
+    assert calls[1] == ("to_empty", "cpu")
     assert result.device == "cpu"
 
 

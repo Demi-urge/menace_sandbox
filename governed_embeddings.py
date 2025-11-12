@@ -754,6 +754,7 @@ def initialise_sentence_transformer(
     identifier: str,
     *,
     device: "str | None" = None,
+    force_meta_initialisation: bool = False,
     **kwargs: object,
 ) -> "SentenceTransformer":
     """Construct a :class:`SentenceTransformer` handling meta tensor snapshots."""
@@ -766,6 +767,12 @@ def initialise_sentence_transformer(
         init_kwargs["device"] = device
 
     target_device = init_kwargs.get("device") or SENTENCE_TRANSFORMER_DEVICE or "cpu"
+
+    if force_meta_initialisation and target_device != "meta":
+        meta_kwargs = dict(init_kwargs)
+        meta_kwargs["device"] = "meta"
+        model = SentenceTransformer(identifier, **meta_kwargs)
+        return _materialise_sentence_transformer_device(model, target_device)
 
     try:
         return SentenceTransformer(identifier, **init_kwargs)
@@ -1592,7 +1599,9 @@ def _load_embedder() -> SentenceTransformer | None:
                 if device:
                     snapshot_kwargs.setdefault("device", device)
                 model = initialise_sentence_transformer(
-                    str(snapshot_path), **snapshot_kwargs
+                    str(snapshot_path),
+                    force_meta_initialisation=True,
+                    **snapshot_kwargs,
                 )
                 duration = time.perf_counter() - start
                 logger.info(
