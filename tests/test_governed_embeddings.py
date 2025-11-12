@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 import types
 
+import pytest
+
 import menace.governed_embeddings as governed_embeddings
 import menace.local_knowledge_module as lkm
 import menace.menace_memory_manager as mmm
@@ -579,6 +581,43 @@ def test_initialise_sentence_transformer_force_meta(monkeypatch):
     assert calls[0][1]["device"] == "meta"
     assert calls[1] == ("to_empty", "cpu")
     assert result.device == "cpu"
+
+
+def test_materialise_sentence_transformer_raises_when_meta_persists(monkeypatch):
+    class DummyTensor:
+        def __init__(self, is_meta: bool) -> None:
+            self.is_meta = is_meta
+
+    class DummySentenceTransformer:
+        def __init__(self) -> None:
+            self.device = "meta"
+
+        def to_empty(self, *, device: object):
+            raise RuntimeError("to_empty unsupported")
+
+        def to(self, device: object):
+            raise RuntimeError("Cannot copy out of meta tensor; no data!")
+
+        def parameters(self, recurse: bool = True):
+            yield DummyTensor(True)
+
+        def buffers(self, recurse: bool = True):
+            if False:  # pragma: no cover - generator form requires yield
+                yield DummyTensor(False)
+
+    dummy_torch = types.SimpleNamespace(
+        device=lambda value: value,
+        nn=types.SimpleNamespace(Module=type("DummyModule", (), {})),
+    )
+
+    monkeypatch.setattr(governed_embeddings, "torch", dummy_torch)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        governed_embeddings._materialise_sentence_transformer_device(
+            DummySentenceTransformer(), "cpu"
+        )
+
+    assert "meta tensors" in str(excinfo.value)
 
 
 def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):

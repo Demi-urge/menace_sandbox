@@ -712,7 +712,41 @@ def _is_meta_tensor_loading_error(exc: Exception) -> bool:
 
     message = str(exc)
     lowered = message.lower()
-    return "meta tensor" in lowered or "to_empty" in lowered or "no data" in lowered
+    return (
+        "meta tensor" in lowered
+        or "to_empty" in lowered
+        or "no data" in lowered
+        or "still contains meta tensors" in lowered
+    )
+
+
+def _module_contains_meta_tensors(module: "torch.nn.Module") -> bool:
+    """Return ``True`` when *module* retains parameters or buffers on ``meta``."""
+
+    if torch is None:
+        return False
+
+    def _iter_meta_flags(iterable: Iterable[object]) -> Iterable[bool]:
+        for item in iterable:
+            try:
+                if getattr(item, "is_meta", False):
+                    yield True
+            except Exception:  # pragma: no cover - defensive only
+                continue
+
+    try:
+        if any(_iter_meta_flags(module.parameters(recurse=True))):
+            return True
+    except Exception:  # pragma: no cover - defensive only
+        pass
+
+    try:
+        if any(_iter_meta_flags(module.buffers(recurse=True))):
+            return True
+    except Exception:  # pragma: no cover - defensive only
+        pass
+
+    return False
 
 
 def _materialise_sentence_transformer_device(
@@ -735,7 +769,32 @@ def _materialise_sentence_transformer_device(
 
     if hasattr(instance, "to_empty"):
         try:
-            return instance.to_empty(device=device)
+            result = instance.to_empty(device=device)
+            if result is not None:
+                instance = result
+            if not _module_contains_meta_tensors(instance):
+                return instance
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug(
+                "failed to materialise sentence transformer with to_empty on %s: %s",
+                device,
+                exc,
+            )
+
+    module_to_empty = None
+    if torch is not None:
+        try:
+            module_to_empty = getattr(torch.nn.Module, "to_empty", None)
+        except Exception:  # pragma: no cover - defensive only
+            module_to_empty = None
+
+    if module_to_empty is not None:
+        try:
+            result = module_to_empty(instance, device=device)
+            if result is not None:
+                instance = result
+            if not _module_contains_meta_tensors(instance):
+                return instance
         except Exception as exc:  # pragma: no cover - diagnostics only
             logger.debug(
                 "failed to materialise sentence transformer with to_empty on %s: %s",
@@ -747,6 +806,10 @@ def _materialise_sentence_transformer_device(
         instance = instance.to(device)
     except Exception as exc:  # pragma: no cover - diagnostics only
         logger.debug("failed to move sentence transformer to %s: %s", device, exc)
+
+    if _module_contains_meta_tensors(instance):
+        raise RuntimeError("sentence transformer still contains meta tensors after materialisation")
+
     return instance
 
 
