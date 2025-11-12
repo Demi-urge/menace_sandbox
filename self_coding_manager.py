@@ -31,6 +31,13 @@ import importlib
 import shlex
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
+
+
+# Delay between successive internalisation attempts to avoid overwhelming the
+# manager bootstrap logic when multiple bots start simultaneously.
+_INTERNALIZE_THROTTLE_SECONDS = 1.5
+_INTERNALIZE_THROTTLE_LOCK = threading.Lock()
+_LAST_INTERNALIZE_AT = 0.0
 from contextlib import contextmanager
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -3193,6 +3200,22 @@ def internalize_coding_bot(
     ``roi_threshold``, ``error_threshold`` and ``test_failure_threshold`` values.
     Additional keyword arguments are forwarded to ``SelfCodingManager``.
     """
+    global _LAST_INTERNALIZE_AT
+
+    delay = 0.0
+    if _INTERNALIZE_THROTTLE_SECONDS > 0:
+        with _INTERNALIZE_THROTTLE_LOCK:
+            now = time.monotonic()
+            elapsed = now - _LAST_INTERNALIZE_AT
+            if elapsed < _INTERNALIZE_THROTTLE_SECONDS:
+                delay = _INTERNALIZE_THROTTLE_SECONDS - elapsed
+                target = now + delay
+            else:
+                target = now
+            _LAST_INTERNALIZE_AT = target
+    if delay > 0:
+        time.sleep(delay)
+
     print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
     manager = SelfCodingManager(
         engine,
