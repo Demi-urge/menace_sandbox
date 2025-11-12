@@ -1803,6 +1803,81 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
             logger.debug("pipeline reattachment hook failed", exc_info=True)
 
 
+def prepare_pipeline_for_bootstrap(
+    *,
+    pipeline_cls: type[Any],
+    context_builder: Any,
+    bot_registry: Any,
+    data_bot: Any,
+) -> tuple[Any, Callable[[Any], None]]:
+    """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
+
+    The returned ``ModelAutomationPipeline`` instance uses a temporary sentinel
+    manager so callers can safely construct nested bots while the real
+    ``SelfCodingManager`` is still initialising.  The accompanying callback must
+    be invoked once the concrete manager is ready so that all sentinel
+    references are promoted atomically.
+    """
+
+    sentinel_manager = _create_bootstrap_manager_sentinel(
+        bot_registry=bot_registry,
+        data_bot=data_bot,
+    )
+    context = _push_bootstrap_context(
+        registry=bot_registry,
+        data_bot=data_bot,
+        manager=sentinel_manager,
+    )
+    pipeline: Any | None = None
+    last_error: Exception | None = None
+    try:
+        init_kwargs = {
+            "context_builder": context_builder,
+            "bot_registry": bot_registry,
+            "data_bot": data_bot,
+            "manager": sentinel_manager,
+        }
+        variants: tuple[tuple[str, ...], ...] = (
+            ("context_builder", "bot_registry", "data_bot", "manager"),
+            ("context_builder", "bot_registry", "manager"),
+            ("context_builder", "manager"),
+            ("context_builder",),
+        )
+        for keys in variants:
+            try:
+                pipeline = pipeline_cls(
+                    **{key: init_kwargs[key] for key in keys if key in init_kwargs}
+                )
+            except TypeError as exc:
+                last_error = exc
+                continue
+            else:
+                break
+        if pipeline is None:
+            if last_error is None:
+                raise RuntimeError("pipeline bootstrap failed")
+            raise last_error
+    finally:
+        _pop_bootstrap_context(context)
+
+    try:
+        current_manager = getattr(pipeline, "manager", None)
+    except Exception:  # pragma: no cover - introspection guard
+        current_manager = None
+    if current_manager is not sentinel_manager:
+        try:
+            setattr(pipeline, "manager", sentinel_manager)
+        except Exception:  # pragma: no cover - best effort assignment
+            logger.debug(
+                "pipeline manager sentinel attachment failed for %s", pipeline, exc_info=True
+            )
+
+    def _promote(manager: Any) -> None:
+        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
+
+    return pipeline, _promote
+
+
 def _bootstrap_manager(
     name: str,
     bot_registry: BotRegistry,
@@ -1898,34 +1973,20 @@ def _bootstrap_manager(
             "model_automation_pipeline", fallback="menace.model_automation_pipeline"
         )
         ctx_builder = create_context_builder()
-        # ``ModelAutomationPipeline`` inspects the manager while wiring bot
-        # collaborators inside ``__init__``.  Supplying a dedicated sentinel
-        # ensures the constructor observes a non-null manager even though the
-        # real ``SelfCodingManager`` is still being bootstrapped.  Do not remove
-        # this sentinel unless the pipeline stops reading ``manager`` during
-        # initialisation.
-        sentinel_manager = _create_bootstrap_manager_sentinel(
+        engine = engine_mod.SelfCodingEngine(
+            code_db_cls(),
+            memory_cls(),
+            context_builder=ctx_builder,
+        )
+        pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
+        if pipeline_cls is None:
+            raise RuntimeError("ModelAutomationPipeline is unavailable")
+        pipeline, promote = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
+            context_builder=ctx_builder,
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-        context = _push_bootstrap_context(
-            registry=bot_registry,
-            data_bot=data_bot,
-            manager=sentinel_manager,
-        )
-        try:
-            engine = engine_mod.SelfCodingEngine(
-                code_db_cls(),
-                memory_cls(),
-                context_builder=ctx_builder,
-            )
-            pipeline = pipeline_mod.ModelAutomationPipeline(
-                context_builder=ctx_builder,
-                bot_registry=bot_registry,
-                manager=sentinel_manager,
-            )
-        finally:
-            _pop_bootstrap_context(context)
         manager_mod = _load_optional_module(
             "self_coding_manager", fallback="menace.self_coding_manager"
         )
@@ -1936,7 +1997,7 @@ def _bootstrap_manager(
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
-        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
+        promote(manager)
         return manager
     except RuntimeError:
         raise

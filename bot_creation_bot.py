@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, TYPE_CHECKING, Type, cast
+from typing import Callable, Deque, Dict, Iterable, List, Optional, TYPE_CHECKING, Type, cast
 from difflib import SequenceMatcher
 from collections import deque
 import re
@@ -87,7 +87,7 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
     from universal_retriever import UniversalRetriever  # type: ignore
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -97,6 +97,8 @@ engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_cont
 
 _pipeline_cls: "Type[ModelAutomationPipeline] | None" = None
 _pipeline_instance: "ModelAutomationPipeline | None" = None
+_pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
+_pipeline_promoter = None
 _bot_testing_cls: "Type[BotTestingBot] | None" = None
 
 
@@ -118,7 +120,7 @@ def _get_pipeline_cls() -> "Type[ModelAutomationPipeline] | None":
 def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
     """Instantiate :class:`ModelAutomationPipeline` lazily."""
 
-    global _pipeline_instance
+    global _pipeline_instance, _pipeline_promoter
     if _pipeline_instance is not None:
         return _pipeline_instance
 
@@ -127,13 +129,21 @@ def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
         return None
 
     try:
-        _pipeline_instance = pipeline_cls(context_builder=_context_builder)
+        pipeline, promote = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
+            context_builder=_context_builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+        _pipeline_instance = pipeline
+        _pipeline_promoter = promote
     except Exception as exc:  # pragma: no cover - degraded bootstrap path
         logger.warning(
             "ModelAutomationPipeline initialisation failed for BotCreationBot: %s",
             exc,
         )
         _pipeline_instance = None
+        _pipeline_promoter = None
 
     return _pipeline_instance
 
@@ -166,6 +176,12 @@ else:
             test_failure_threshold=_th.test_failure_increase,
             threshold_service=ThresholdService(),
         )
+        promoter = _pipeline_promoter
+        if promoter is not None and manager is not None:
+            try:
+                promoter(manager)
+            finally:
+                _pipeline_promoter = None
     except Exception as exc:  # pragma: no cover - degraded bootstrap path
         logger.warning(
             "BotCreationBot self-coding manager initialisation failed: %s",

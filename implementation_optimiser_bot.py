@@ -33,7 +33,10 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
-from menace_sandbox.coding_bot_interface import self_coding_managed
+from menace_sandbox.coding_bot_interface import (
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from menace_sandbox.task_handoff_bot import TaskPackage, TaskInfo
 from menace_sandbox.shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
@@ -43,6 +46,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 else:  # pragma: no cover - runtime fallback
     ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
+
+_pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
 
 
 def _resolve_pipeline_cls() -> type["ModelAutomationPipeline"] | None:
@@ -90,16 +95,26 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
     pipeline_cls = _resolve_pipeline_cls()
 
     def factory(context_builder: ContextBuilder) -> "ModelAutomationPipeline | None":
+        global _pipeline_promoter
         if pipeline_cls is None:
             return None
         try:
-            return pipeline_cls(context_builder=context_builder)
+            pipeline, promote = prepare_pipeline_for_bootstrap(
+                pipeline_cls=pipeline_cls,
+                context_builder=context_builder,
+                bot_registry=_get_registry(),
+                data_bot=_get_data_bot(),
+            )
         except Exception as exc:  # pragma: no cover - degraded bootstrap
             logger.warning(
                 "ModelAutomationPipeline initialisation failed for ImplementationOptimiserBot: %s",
                 exc,
             )
+            _pipeline_promoter = None
             return None
+        else:
+            _pipeline_promoter = promote
+            return pipeline
 
     return factory
 
@@ -149,12 +164,14 @@ def _get_thresholds() -> Any:
 
 @lru_cache(maxsize=1)
 def _build_manager() -> SelfCodingManager | None:
+    global _pipeline_promoter
     pipeline_factory = _create_pipeline_factory()
     pipeline = pipeline_factory(_get_context_builder())
     if pipeline is None:
         logger.warning(
             "ModelAutomationPipeline unavailable; ImplementationOptimiserBot will run without self-coding manager"
         )
+        _pipeline_promoter = None
         return None
 
     thresholds = _get_thresholds()
@@ -164,7 +181,7 @@ def _build_manager() -> SelfCodingManager | None:
         _get_engine(),
     )
     try:
-        return internalize_coding_bot(
+        manager = internalize_coding_bot(
             "ImplementationOptimiserBot",
             _get_engine(),
             pipeline,
@@ -182,6 +199,14 @@ def _build_manager() -> SelfCodingManager | None:
             exc,
         )
         return None
+    promoter = _pipeline_promoter
+    if promoter is not None:
+        try:
+            promoter(manager)
+        finally:
+            _pipeline_promoter = None
+    return manager
+
 
 
 @_lazy_helper
