@@ -1694,6 +1694,40 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
     if pipeline is None or manager is None or manager is sentinel:
         return
 
+    registry_ref = getattr(manager, "bot_registry", None)
+    data_bot_ref = getattr(manager, "data_bot", None)
+    finalized_targets: set[int] = set()
+
+    def _invoke_finalizer(target: Any) -> None:
+        if target is None:
+            return
+        key = id(target)
+        if key in finalized_targets:
+            return
+        finalizer = getattr(target, "_finalize_self_coding_bootstrap", None)
+        if not callable(finalizer):
+            return
+        kwargs: dict[str, Any] = {}
+        if registry_ref is not None:
+            kwargs["registry"] = registry_ref
+        if data_bot_ref is not None:
+            kwargs["data_bot"] = data_bot_ref
+        try:
+            finalizer(manager, **kwargs)
+        except TypeError:
+            try:
+                finalizer(manager)
+            except Exception:  # pragma: no cover - finalizer errors are non-fatal
+                logger.debug(
+                    "manager finaliser failed for %s", target, exc_info=True
+                )
+            else:
+                finalized_targets.add(key)
+        except Exception:  # pragma: no cover - finaliser errors are non-fatal
+            logger.debug("manager finaliser failed for %s", target, exc_info=True)
+        else:
+            finalized_targets.add(key)
+
     def _swap_manager(target: Any) -> None:
         if target is None:
             return
@@ -1702,20 +1736,34 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
         except Exception:  # pragma: no cover - introspection guard
             logger.debug("manager promotion inspection failed for %s", target, exc_info=True)
             return
+        finalizer_targets: list[Any] = []
         if current is sentinel:
             try:
                 setattr(target, "manager", manager)
             except Exception:  # pragma: no cover - best effort reassignment
                 logger.debug("failed to promote manager on %s", target, exc_info=True)
+            else:
+                finalizer_targets.append(target)
         owner = getattr(target, "__class__", None)
         if owner is not None:
             try:
-                if getattr(owner, "manager", None) is sentinel:
-                    setattr(owner, "manager", manager)
+                owner_current = getattr(owner, "manager", None)
             except Exception:  # pragma: no cover - class level guard
                 logger.debug(
-                    "failed to promote manager on %s class", owner, exc_info=True
+                    "manager promotion inspection failed for %s class", owner, exc_info=True
                 )
+            else:
+                if owner_current is sentinel:
+                    try:
+                        setattr(owner, "manager", manager)
+                    except Exception:  # pragma: no cover - class level guard
+                        logger.debug(
+                            "failed to promote manager on %s class", owner, exc_info=True
+                        )
+                    else:
+                        finalizer_targets.append(owner)
+        for final_target in finalizer_targets:
+            _invoke_finalizer(final_target)
 
     _swap_manager(pipeline)
 
@@ -1743,6 +1791,7 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
             continue
         seen.add(key)
         _swap_manager(candidate)
+        _invoke_finalizer(candidate)
 
     # Allow downstream consumers to refresh their cached manager reference when
     # promotion succeeds without importing heavy modules eagerly.
@@ -2440,6 +2489,66 @@ def self_coding_managed(
         cls.data_bot = None  # type: ignore[attr-defined]
         cls.manager = manager_instance  # type: ignore[attr-defined]
         cls._self_coding_manual_mode = True
+
+        def _finalize_self_coding_bootstrap(
+            real_manager: Any,
+            *,
+            registry: Any | None = None,
+            data_bot: Any | None = None,
+        ) -> None:
+            """Promote sentinel helpers to ``real_manager`` once available."""
+
+            nonlocal manager_instance, resolved_registry, resolved_data_bot
+            nonlocal bootstrap_done, bootstrap_error, bootstrap_in_progress
+
+            if real_manager is None:
+                return
+
+            registry_obj = registry
+            if registry_obj is None:
+                registry_obj = resolved_registry or getattr(real_manager, "bot_registry", None)
+            data_bot_obj = data_bot
+            if data_bot_obj is None:
+                data_bot_obj = resolved_data_bot or getattr(real_manager, "data_bot", None)
+
+            try:
+                with bootstrap_lock:
+                    manager_instance = real_manager
+                    try:
+                        cls.manager = real_manager  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensive
+                        logger.debug(
+                            "%s: failed to assign promoted manager", cls, exc_info=True
+                        )
+                    if registry_obj is not None:
+                        resolved_registry = registry_obj
+                        try:
+                            cls.bot_registry = registry_obj  # type: ignore[attr-defined]
+                        except Exception:  # pragma: no cover - defensive
+                            logger.debug(
+                                "%s: failed to assign promoted registry", cls, exc_info=True
+                            )
+                    if data_bot_obj is not None:
+                        resolved_data_bot = data_bot_obj
+                        try:
+                            cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
+                        except Exception:  # pragma: no cover - defensive
+                            logger.debug(
+                                "%s: failed to assign promoted data bot", cls, exc_info=True
+                            )
+                    cls._self_coding_manual_mode = False
+                    bootstrap_done = True
+                    bootstrap_error = None
+                    bootstrap_in_progress = False
+                    bootstrap_event.set()
+            except Exception:  # pragma: no cover - promotion should be best-effort
+                logger.debug(
+                    "%s: manager promotion finalisation failed", cls, exc_info=True
+                )
+
+        cls._finalize_self_coding_bootstrap = staticmethod(  # type: ignore[attr-defined]
+            _finalize_self_coding_bootstrap
+        )
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
