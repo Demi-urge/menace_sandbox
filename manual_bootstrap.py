@@ -40,6 +40,18 @@ _menace_pkg = importlib.import_module("menace")
 if not getattr(_menace_pkg, "RAISE_ERRORS", None):
     _menace_pkg = importlib.reload(_menace_pkg)
 
+try:
+    _coding_bot_interface = importlib.import_module("menace.coding_bot_interface")
+except ModuleNotFoundError:  # pragma: no cover - sandbox fallback
+    _coding_bot_interface = importlib.import_module(
+        "menace_sandbox.coding_bot_interface"
+    )
+
+prepare_pipeline_for_bootstrap = _coding_bot_interface.prepare_pipeline_for_bootstrap
+_DisabledSelfCodingManager = getattr(
+    _coding_bot_interface, "_DisabledSelfCodingManager", None
+)
+
 # === END PATH SETUP ===
 
 from menace_sandbox.environment_bootstrap import EnvironmentBootstrapper
@@ -92,15 +104,27 @@ def _register_balolos_coder():
     engine = SelfCodingEngine()
     data_bot = DataBot()
     registry = BotRegistry()
-    pipeline = ModelAutomationPipeline()
+    context_builder = getattr(engine, "context_builder", None)
+    if context_builder is None:
+        cognition = getattr(engine, "cognition_layer", None)
+        context_builder = getattr(cognition, "context_builder", None)
 
-    internalize_coding_bot(
+    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=context_builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    manager = internalize_coding_bot(
         name="Balolos Coder",
         engine=engine,
         data_bot=data_bot,
         pipeline=pipeline,
         registry=registry
     )
+
+    promote_pipeline(manager)
 
     print("Bots now in registry:", registry.get_all_bots())
 
