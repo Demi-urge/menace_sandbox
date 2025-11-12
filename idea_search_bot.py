@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, Dict
+from typing import TYPE_CHECKING, Dict, Iterable, List
 
 try:
     import requests  # type: ignore
@@ -37,6 +37,7 @@ from .database_management_bot import DatabaseManagementBot
 class KeywordBank:
     """Collection of topics and phrases used for query generation."""
 
+    manager: "SelfCodingManager | None" = None
     topics: List[str] = field(default_factory=lambda: [
         "ai",
         "sustainability",
@@ -235,3 +236,7 @@ def handoff_to_database(
     # keep communication one-way.
     bot.ingest_idea(result.title, tags=tags, source=source, urls=[result.link])
 
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

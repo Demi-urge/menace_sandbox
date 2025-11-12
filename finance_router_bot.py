@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 import asyncio
 import logging
 import re
@@ -63,6 +63,7 @@ class FinanceRouterBot:
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.capital_manager = capital_manager
         raw_log_path = str(
@@ -169,3 +170,7 @@ class FinanceRouterBot:
 
 
 __all__ = ["Transaction", "FinanceRouterBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

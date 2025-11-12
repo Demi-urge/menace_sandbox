@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from dynamic_path_router import resolve_path
@@ -169,6 +169,8 @@ class AutoReinvestmentBot:
         predictor: PredictiveSpendEngine | None = None,
         db: InvestmentDB | None = None,
         bot_id: str = DEFAULT_BOT_ID,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.cap_percentage = cap_percentage
         self.safety_reserve = safety_reserve
@@ -222,3 +224,7 @@ class AutoReinvestmentBot:
 
 
 __all__ = ["InvestmentRecord", "InvestmentDB", "PredictiveSpendEngine", "AutoReinvestmentBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

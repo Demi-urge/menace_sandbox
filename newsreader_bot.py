@@ -24,6 +24,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - optional heavy dependency
     from .chatgpt_idea_bot import ChatGPTClient
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
 
 try:
     import spacy  # type: ignore
@@ -70,7 +73,13 @@ class Event:
 class NewsDB:
     """SQLite backed storage for events."""
 
-    def __init__(self, menace_id: str = "default", path: Path = DB_PATH) -> None:
+    def __init__(
+        self,
+        menace_id: str = "default",
+        path: Path = DB_PATH,
+        *,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
         self.path = path
         self.router = GLOBAL_ROUTER or init_db_router(menace_id)
         self._init()

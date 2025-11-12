@@ -7,7 +7,7 @@ from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
-from typing import Dict, Tuple, Mapping, Any
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Tuple
 import logging
 
 registry = BotRegistry()
@@ -64,6 +64,8 @@ class PerformanceAssessmentBot:
         metrics_db: db.MetricsDB | None = None,
         model: SimpleRL | None = None,
         history_db: BotPerformanceHistoryDB | None = None,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = metrics_db or db.MetricsDB()
         self.model = model or SimpleRL()
@@ -173,3 +175,7 @@ __all__ = [
     "BotPerformanceHistoryDB",
     "PerformanceRecord",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

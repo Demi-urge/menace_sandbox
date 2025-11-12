@@ -32,6 +32,9 @@ from .scope_utils import Scope, build_scope_clause, apply_scope
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .bot_testing_bot import BotTestingBot
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
 
 
 def _default_db_path() -> Path:
@@ -249,6 +252,8 @@ class CommunicationTestingBot:
         self,
         db: CommTestDB | None = None,
         tester: "BotTestingBot | None" = None,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or CommTestDB()
         if tester is None:

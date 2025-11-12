@@ -84,9 +84,11 @@ except Exception:  # pragma: no cover - optional
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .capital_management_bot import CapitalManagementBot
     from .data_bot import DataBot
+    from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback for type hints
     CapitalManagementBot = Any  # type: ignore[assignment]
     DataBot = Any  # type: ignore[assignment]
+    SelfCodingManager = Any  # type: ignore[assignment]
 
 
 @dataclass
@@ -201,6 +203,8 @@ class ResourcePredictionBot:
         db: TemplateDB | None = None,
         data_bot: Optional[DataBot] = None,
         capital_bot: Optional[CapitalManagementBot] = None,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or TemplateDB()
         if data_bot is not None:

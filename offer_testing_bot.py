@@ -10,7 +10,7 @@ import sqlite3
 from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
-from typing import Any, List, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pathlib import Path
 import logging
 
@@ -205,6 +205,7 @@ class OfferTestingBot:
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.db = db or OfferDB(event_bus=event_bus)
         self.event_bus = event_bus
@@ -289,3 +290,7 @@ class OfferTestingBot:
 
 
 __all__ = ["OfferVariant", "OfferInteraction", "OfferDB", "OfferTestingBot"]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

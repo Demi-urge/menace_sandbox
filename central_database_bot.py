@@ -8,7 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, TypeVar
 import uuid
 
 from .logging_utils import set_correlation_id
@@ -83,6 +83,8 @@ class CentralDatabaseBot(AdminBotBase):
         lock_key: str = "menace.db_lock",
         db_router: "DBRouter" | None = None,
         fallback_local: bool = True,
+        *,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         super().__init__(db_router=db_router)
         self.engine: Engine = create_engine(db_url)
@@ -273,3 +275,7 @@ __all__ = [
     "CentralDatabaseError",
     "RedisUnavailableError",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]

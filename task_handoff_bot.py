@@ -21,7 +21,18 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from types import MethodType
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    cast,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1247,6 +1258,7 @@ class TaskHandoffBot:
         workflow_db: Optional[WorkflowDB] = None,
         *,
         event_bus: Optional[UnifiedEventBus] = None,
+        manager: "SelfCodingManager | None" = None,
     ) -> None:
         self.api_url = api_url
         if zmq:
@@ -1549,3 +1561,7 @@ __all__ = [
     "TaskHandoffBot",
     "ensure_task_handoff_registration",
 ]
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from .self_coding_manager import SelfCodingManager
+else:  # pragma: no cover - runtime fallback when manager is unused
+    SelfCodingManager = object  # type: ignore[assignment]
