@@ -825,6 +825,156 @@ def test_bootstrap_manager_fallback_avoids_reentrant_disabled_manager(monkeypatc
     assert all(getattr(bot, "manager", None) is manager for bot in pipeline._bots)
 
 
+def test_bootstrap_manager_fallback_promotes_registry_entries(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = _make_registry()
+    thresholds = SimpleNamespace(roi_drop=0.0, error_threshold=0.0, test_failure_threshold=0.0)
+    data_bot = SimpleNamespace(
+        reload_thresholds=lambda name: thresholds,
+        check_degradation=lambda name, roi, errors, test_failures: None,
+        subscribe_degradation=lambda callback: None,
+        event_bus=None,
+    )
+
+    class _LegacySelfCodingManager:
+        def __init__(self, engine, *, bot_registry, data_bot):
+            self.engine = engine
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _LegacySelfCodingManager,
+    )
+    monkeypatch.setattr(coding_bot_interface, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda: (True, ()),
+    )
+
+    sentinel = coding_bot_interface._create_bootstrap_manager_sentinel(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    registry.register_bot(
+        "NestedBot",
+        manager=sentinel,
+        data_bot=data_bot,
+        is_coding_bot=True,
+    )
+    registry.register_bot(
+        "ChildBot",
+        manager=sentinel,
+        data_bot=data_bot,
+        is_coding_bot=True,
+    )
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _RootBot:
+        name = "NestedBot"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _NestedBot:
+        name = "ChildBot"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None):
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    def _manager_helper(*_args, **_kwargs):
+        return None
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry, data_bot, manager):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.root = _RootBot(manager=manager)
+            self.child = _NestedBot(manager=manager)
+            self._bots = [self.root, self.child]
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(ModelAutomationPipeline=_StubPipeline),
+        "self_coding_manager": SimpleNamespace(
+            SelfCodingManager=_StubManager,
+            _manager_generate_helper_with_builder=_manager_helper,
+        ),
+        "quick_fix_engine": SimpleNamespace(QuickFixEngine=lambda *a, **k: SimpleNamespace()),
+        "error_bot": SimpleNamespace(ErrorDB=lambda: SimpleNamespace()),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    manager = coding_bot_interface._bootstrap_manager("NestedBot", registry, data_bot)
+
+    assert isinstance(manager, _StubManager)
+    assert not any("re-entrant" in record.message.lower() for record in caplog.records)
+
+    node = registry.graph.nodes["NestedBot"]
+    assert node["selfcoding_manager"] is manager
+    assert node["selfcoding_manager"] is not sentinel
+    assert not isinstance(node["selfcoding_manager"], coding_bot_interface._BootstrapManagerSentinel)
+
+    child_node = registry.graph.nodes["ChildBot"]
+    assert child_node["selfcoding_manager"] is manager
+    assert child_node["selfcoding_manager"] is not sentinel
+    assert not isinstance(
+        child_node["selfcoding_manager"],
+        coding_bot_interface._BootstrapManagerSentinel,
+    )
+
+
 def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
     monkeypatch.setattr(coding_bot_interface._BOOTSTRAP_STATE, "depth", 1, raising=False)
 
