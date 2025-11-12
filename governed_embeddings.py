@@ -176,19 +176,9 @@ def _resolve_sentence_transformer_device() -> str:
     if env_device:
         return env_device
 
-    if torch is not None:
-        try:
-            if torch.cuda.is_available():  # type: ignore[attr-defined]
-                return "cuda"
-        except Exception:  # pragma: no cover - defensive
-            pass
-        try:
-            mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
-            if mps_backend is not None and mps_backend.is_available():  # type: ignore[call-arg]
-                return "mps"
-        except Exception:  # pragma: no cover - defensive
-            pass
-
+    # Default to CPU to avoid invoking GPU-specific code paths which can be
+    # fragile across environments.  Callers can still opt in to a different
+    # device by setting ``SENTENCE_TRANSFORMER_DEVICE`` explicitly.
     return "cpu"
 
 try:  # pragma: no cover - lightweight fallback dependencies
