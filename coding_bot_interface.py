@@ -1670,30 +1670,70 @@ class _DisabledSelfCodingManager:
 _BOOTSTRAP_STATE = threading.local()
 
 
-def _propagate_manager_to_pipeline(
-    pipeline: Any,
-    previous_manager: Any,
-    manager: Any,
-) -> None:
-    """Replace ``previous_manager`` references on *pipeline* with *manager*."""
+def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
+    """Swap *sentinel* references for *manager* across the pipeline hierarchy."""
 
-    if pipeline is None or manager is None or previous_manager is manager:
+    if pipeline is None or manager is None or manager is sentinel:
         return
-    try:
-        current = getattr(pipeline, "manager", None)
-        if current is previous_manager:
-            setattr(pipeline, "manager", manager)
-    except Exception:  # pragma: no cover - defensive best effort
-        logger.debug("pipeline manager propagation failed", exc_info=True)
-    bots = getattr(pipeline, "_bots", None)
-    if not isinstance(bots, list):
-        return
-    for bot in bots:
+
+    def _swap_manager(target: Any) -> None:
+        if target is None:
+            return
         try:
-            if getattr(bot, "manager", None) is previous_manager:
-                setattr(bot, "manager", manager)
-        except Exception:  # pragma: no cover - best effort update
-            logger.debug("bot manager propagation failed for %s", bot, exc_info=True)
+            current = getattr(target, "manager", None)
+        except Exception:  # pragma: no cover - introspection guard
+            logger.debug("manager promotion inspection failed for %s", target, exc_info=True)
+            return
+        if current is sentinel:
+            try:
+                setattr(target, "manager", manager)
+            except Exception:  # pragma: no cover - best effort reassignment
+                logger.debug("failed to promote manager on %s", target, exc_info=True)
+        owner = getattr(target, "__class__", None)
+        if owner is not None:
+            try:
+                if getattr(owner, "manager", None) is sentinel:
+                    setattr(owner, "manager", manager)
+            except Exception:  # pragma: no cover - class level guard
+                logger.debug(
+                    "failed to promote manager on %s class", owner, exc_info=True
+                )
+
+    _swap_manager(pipeline)
+
+    bots: Iterable[Any]
+    bots = getattr(pipeline, "_bots", ()) or ()
+    related: list[Any] = [
+        getattr(pipeline, attr, None)
+        for attr in (
+            "comms_bot",
+            "synthesis_bot",
+            "diagnostic_manager",
+            "planner",
+            "aggregator",
+        )
+    ]
+    for candidate in bots:
+        related.append(candidate)
+
+    seen: set[int] = set()
+    for candidate in related:
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        _swap_manager(candidate)
+
+    # Allow downstream consumers to refresh their cached manager reference when
+    # promotion succeeds without importing heavy modules eagerly.
+    refresh = getattr(pipeline, "_attach_information_synthesis_manager", None)
+    if callable(refresh):
+        try:
+            refresh()
+        except Exception:  # pragma: no cover - downstream refresh should not block
+            logger.debug("pipeline reattachment hook failed", exc_info=True)
 
 
 def _bootstrap_manager(
@@ -1761,6 +1801,12 @@ def _bootstrap_manager(
             "model_automation_pipeline", fallback="menace.model_automation_pipeline"
         )
         ctx_builder = create_context_builder()
+        # ``ModelAutomationPipeline`` inspects the manager while wiring bot
+        # collaborators inside ``__init__``.  Supplying a dedicated sentinel
+        # ensures the constructor observes a non-null manager even though the
+        # real ``SelfCodingManager`` is still being bootstrapped.  Do not remove
+        # this sentinel unless the pipeline stops reading ``manager`` during
+        # initialisation.
         sentinel_manager = _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
@@ -1793,7 +1839,7 @@ def _bootstrap_manager(
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
-        _propagate_manager_to_pipeline(pipeline, sentinel_manager, manager)
+        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
         return manager
     except RuntimeError:
         raise
