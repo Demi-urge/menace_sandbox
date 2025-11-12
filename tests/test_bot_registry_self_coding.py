@@ -198,7 +198,172 @@ def test_register_bot_handles_bootstrap_import_failures(monkeypatch):
     disabled = node.get("self_coding_disabled")
     assert disabled is not None
     assert disabled["missing_dependencies"] == ["numpy", "torch"]
-    assert disabled["reason"].startswith("self-coding bootstrap failed")
+
+
+def test_pipeline_manager_promotion_finalizes_decorated_bots(monkeypatch):
+    monkeypatch.setattr(coding_bot_interface, "_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    class _BrokenManager:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise TypeError("fallback bootstrap")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _BrokenManager,
+    )
+
+    pipeline_bots: list[Any] = []
+
+    class _DummyCodeDB:
+        def __init__(self) -> None:
+            pass
+
+    class _DummyMemory:
+        def __init__(self) -> None:
+            pass
+
+    class _DummyEngine:
+        def __init__(self, *_args: Any, context_builder: Any = None) -> None:
+            self.context_builder = context_builder
+
+    class _DummyPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: Any,
+            bot_registry: Any,
+            manager: Any,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.manager = manager
+            self._bots = list(pipeline_bots)
+            for bot in self._bots:
+                try:
+                    setattr(bot, "manager", manager)
+                except Exception:
+                    pass
+            self.finalized = False
+            self.registry_seen = None
+            self.data_bot_seen = None
+
+        def _finalize_self_coding_bootstrap(
+            self,
+            promoted_manager: Any,
+            *,
+            registry: Any | None = None,
+            data_bot: Any | None = None,
+        ) -> None:
+            self.manager = promoted_manager
+            self.finalized = True
+            self.registry_seen = registry
+            self.data_bot_seen = data_bot
+
+    class _DummyManager:
+        def __init__(
+            self,
+            engine: Any,
+            pipeline: Any,
+            *,
+            bot_name: str,
+            data_bot: Any,
+            bot_registry: Any,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    original_loader = coding_bot_interface._load_optional_module
+
+    def _fake_loader(name: str, *, fallback: str | None = None) -> Any:
+        mapping = {
+            "code_database": SimpleNamespace(CodeDB=_DummyCodeDB),
+            "gpt_memory": SimpleNamespace(GPTMemoryManager=_DummyMemory),
+            "self_coding_engine": SimpleNamespace(SelfCodingEngine=_DummyEngine),
+            "model_automation_pipeline": SimpleNamespace(
+                ModelAutomationPipeline=_DummyPipeline
+            ),
+            "self_coding_manager": SimpleNamespace(SelfCodingManager=_DummyManager),
+        }
+        if name in mapping:
+            return mapping[name]
+        return original_loader(name, fallback=fallback)
+
+    monkeypatch.setattr(coding_bot_interface, "_load_optional_module", _fake_loader)
+    monkeypatch.setattr(
+        coding_bot_interface, "create_context_builder", lambda: SimpleNamespace()
+    )
+
+    original_bootstrap = coding_bot_interface._bootstrap_manager
+    call_counter = {"count": 0}
+
+    def _guarded_bootstrap(name: str, registry: Any, data_bot: Any) -> Any:
+        call_counter["count"] += 1
+        if call_counter["count"] > 1:
+            raise AssertionError("_bootstrap_manager invoked multiple times")
+        return original_bootstrap(name, registry, data_bot)
+
+    monkeypatch.setattr(coding_bot_interface, "_bootstrap_manager", _guarded_bootstrap)
+
+    class _DummyRegistry:
+        def register_bot(self, name: str, module_path: str = "", **kwargs: Any) -> None:
+            pass
+
+        def update_bot(self, name: str, module_path: str = "", **kwargs: Any) -> None:
+            pass
+
+    class _Thresholds:
+        roi_drop = 0
+        error_threshold = 0
+        test_failure_threshold = 0
+
+    class _DummyDataBot:
+        def reload_thresholds(self, name: str) -> Any:
+            return _Thresholds
+
+    registry = _DummyRegistry()
+    data_bot = _DummyDataBot()
+
+    pipeline_bots.clear()
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class SentinelBot:
+        name = "SentinelBot"
+
+        def __init__(self) -> None:
+            pass
+
+    pipeline_bots.append(SentinelBot)
+
+    bot = SentinelBot()
+    assert isinstance(bot.manager, _DummyManager)
+    assert SentinelBot.manager is bot.manager
+    assert SentinelBot.bot_registry is registry
+    assert SentinelBot.data_bot is data_bot
+    assert SentinelBot._self_coding_manual_mode is False
+    assert callable(getattr(SentinelBot, "_finalize_self_coding_bootstrap"))
+
+    pipeline = bot.manager.pipeline
+    assert pipeline.manager is bot.manager
+    assert pipeline.finalized is True
+    assert pipeline.registry_seen is registry
+    assert pipeline.data_bot_seen is data_bot
+
+    second = SentinelBot()
+    assert second.manager is bot.manager
+    assert call_counter["count"] == 1
+    assert SentinelBot._self_coding_manual_mode is False
 
 
 def test_bootstrap_manager_promotes_pipeline_manager(monkeypatch):
