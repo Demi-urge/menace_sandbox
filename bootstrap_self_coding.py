@@ -15,9 +15,13 @@ without requiring any additional dependencies beyond the project itself.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import logging
 import sys
+import traceback
 from pathlib import Path
+from textwrap import shorten
 from typing import Iterable
 
 
@@ -119,19 +123,99 @@ def bootstrap_self_coding(bot_name: str) -> None:
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.exception("Failed to persist thresholds for %s", bot_name)
 
-    manager = internalize_coding_bot(
-        bot_name=bot_name,
-        engine=engine,
-        pipeline=pipeline,
-        data_bot=data_bot,
-        bot_registry=registry,
-        roi_threshold=roi_threshold,
-        error_threshold=error_threshold,
-        test_failure_threshold=test_failure_threshold,
-    )
+    class _Tee(io.StringIO):
+        def __init__(self, target: io.TextIOBase) -> None:
+            super().__init__()
+            self._target = target
+
+        def write(self, data: str) -> int:  # pragma: no cover - trivial wrapper
+            self._target.write(data)
+            return super().write(data)
+
+        def flush(self) -> None:  # pragma: no cover - trivial wrapper
+            self._target.flush()
+            super().flush()
+
+    stdout_buffer = _Tee(sys.stdout)
+    stderr_buffer = _Tee(sys.stderr)
+    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
+        stderr_buffer
+    ):
+        manager = internalize_coding_bot(
+            bot_name=bot_name,
+            engine=engine,
+            pipeline=pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            roi_threshold=roi_threshold,
+            error_threshold=error_threshold,
+            test_failure_threshold=test_failure_threshold,
+        )
+
+    captured_stdout = stdout_buffer.getvalue().strip()
+    captured_stderr = stderr_buffer.getvalue().strip()
+
+    def _emit_diagnostics(message: str) -> None:
+        LOGGER.error("%s", message)
+        if captured_stdout:
+            LOGGER.error("Captured bootstrap stdout:\n%s", captured_stdout)
+        if captured_stderr:
+            LOGGER.error("Captured bootstrap stderr:\n%s", captured_stderr)
+
+    def _summarise_capture() -> str:
+        parts: list[str] = []
+        newline = "\n"
+        space = " "
+        if captured_stdout:
+            normalised_stdout = captured_stdout.replace(newline, space)
+            parts.append(
+                f"stdout={shorten(normalised_stdout, width=200, placeholder='…')}"
+            )
+        if captured_stderr:
+            normalised_stderr = captured_stderr.replace(newline, space)
+            parts.append(
+                f"stderr={shorten(normalised_stderr, width=200, placeholder='…')}"
+            )
+        if not parts:
+            stack_excerpt = "".join(traceback.format_stack(limit=5)).strip()
+            if stack_excerpt:
+                normalised_stack = stack_excerpt.replace(newline, space)
+                parts.append(
+                    f"stack={shorten(normalised_stack, width=200, placeholder='…')}"
+                )
+        return ", ".join(parts) if parts else "no diagnostics captured"
+
     if manager is None:
-        raise RuntimeError(
+        failure_summary = (
             "internalize_coding_bot returned None; self-coding manager registration failed"
+        )
+        diagnostic_summary = _summarise_capture()
+        message = f"{failure_summary}. Diagnostics: {diagnostic_summary}"
+        _emit_diagnostics(message)
+        raise RuntimeError(message)
+
+    manager_truthy = bool(manager)
+    if not manager_truthy:
+        disabled_summary = (
+            "internalize_coding_bot returned a disabled manager; "
+            "captured warnings/stack traces indicate re-entrant bootstrap prevented activation"
+        )
+        try:  # Optional clarity for readers familiar with the interface module
+            from menace_sandbox import coding_bot_interface
+        except Exception:  # pragma: no cover - defensive import guard
+            pass
+        else:
+            if isinstance(manager, coding_bot_interface._DisabledSelfCodingManager):
+                disabled_summary = (
+                    "internalize_coding_bot returned coding_bot_interface._DisabledSelfCodingManager; "
+                    "captured warnings/stack traces indicate re-entrant bootstrap prevented activation"
+                )
+        diagnostic_summary = _summarise_capture()
+        _emit_diagnostics(
+            f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
+        )
+        raise RuntimeError(
+            f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
         )
     LOGGER.info("Self-coding manager registered: \"%s\"", type(manager).__name__)
 
