@@ -2572,6 +2572,9 @@ def self_coding_managed(
             if data_bot_obj is None:
                 data_bot_obj = resolved_data_bot or getattr(real_manager, "data_bot", None)
 
+            promotion_kwargs: dict[str, Any] | None = None
+            should_promote_registry = False
+
             try:
                 with bootstrap_lock:
                     manager_instance = real_manager
@@ -2597,11 +2600,35 @@ def self_coding_managed(
                             logger.debug(
                                 "%s: failed to assign promoted data bot", cls, exc_info=True
                             )
+                    if register_as_coding and registry_obj is not None:
+                        should_promote_registry = True
+                        promotion_kwargs = dict(update_kwargs or {})
+                        if (
+                            decision is not None
+                            and getattr(decision, "provenance", None) is not None
+                            and promotion_kwargs is not None
+                            and "provenance" not in promotion_kwargs
+                        ):
+                            promotion_kwargs["provenance"] = decision.provenance
                     cls._self_coding_manual_mode = False
                     bootstrap_done = True
                     bootstrap_error = None
                     bootstrap_in_progress = False
                     bootstrap_event.set()
+                if should_promote_registry:
+                    helper = getattr(registry_obj, "promote_self_coding_manager", None)
+                    if callable(helper):
+                        try:
+                            helper(
+                                name,
+                                real_manager,
+                                data_bot_obj,
+                                **(promotion_kwargs or {}),
+                            )
+                        except Exception:  # pragma: no cover - best effort
+                            logger.debug(
+                                "%s: registry promotion failed for %s", cls, name, exc_info=True
+                            )
             except Exception:  # pragma: no cover - promotion should be best-effort
                 logger.debug(
                     "%s: manager promotion finalisation failed", cls, exc_info=True

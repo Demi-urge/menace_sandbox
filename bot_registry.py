@@ -2812,6 +2812,51 @@ class BotRegistry:
         except Exception as exc:  # pragma: no cover - best effort
             raise RuntimeError(f"provenance verification failed: {exc}") from exc
 
+    def promote_self_coding_manager(
+        self,
+        name: str,
+        manager: "SelfCodingManager" | None,
+        data_bot: "DataBot" | None,
+        **meta: Any,
+    ) -> None:
+        """Atomically promote ``name`` to use the concrete self-coding helpers."""
+
+        with self._lock:
+            node = self.graph.nodes.get(name)
+            if node is None:
+                logger.debug(
+                    "promote_self_coding_manager: registry node missing for %s", name
+                )
+                return
+
+            if manager is not None:
+                node["selfcoding_manager"] = manager
+                node["manager"] = manager
+            else:
+                node.pop("selfcoding_manager", None)
+                node.pop("manager", None)
+
+            if data_bot is not None:
+                node["data_bot"] = data_bot
+
+            if meta:
+                for key, value in meta.items():
+                    if value is None:
+                        continue
+                    node[key] = value
+
+            node["is_coding_bot"] = True
+
+        try:
+            manager_cls = type(manager).__name__ if manager is not None else "None"
+        except Exception:  # pragma: no cover - defensive best effort
+            manager_cls = (
+                manager.__class__.__name__
+                if manager is not None and hasattr(manager, "__class__")
+                else "unknown"
+            )
+        logger.debug("promoted self-coding manager for %s using %s", name, manager_cls)
+
     def update_bot(
         self,
         name: str,
