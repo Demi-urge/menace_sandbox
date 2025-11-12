@@ -89,6 +89,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
     from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
     from menace_sandbox.menace_memory_manager import MenaceMemoryManager
     from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+    from menace_sandbox.coding_bot_interface import prepare_pipeline_for_bootstrap
     from menace_sandbox.self_coding_engine import SelfCodingEngine
     from menace_sandbox.self_coding_manager import internalize_coding_bot
     from menace_sandbox.self_coding_thresholds import get_thresholds
@@ -102,7 +103,12 @@ def bootstrap_self_coding(bot_name: str) -> None:
         MenaceMemoryManager(),
         context_builder=builder,
     )
-    pipeline = ModelAutomationPipeline(context_builder=builder)
+    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
 
     roi_threshold = error_threshold = test_failure_threshold = None
     try:
@@ -151,6 +157,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
         )
+        promote_pipeline(manager)
 
     captured_stdout = stdout_buffer.getvalue().strip()
     captured_stderr = stderr_buffer.getvalue().strip()

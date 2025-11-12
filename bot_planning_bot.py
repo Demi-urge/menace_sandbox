@@ -6,7 +6,10 @@ import logging
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import (
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 try:  # pragma: no cover - fail fast if self-coding manager missing
     from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 except Exception as exc:  # pragma: no cover - critical dependency
@@ -33,7 +36,7 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, cast
+from typing import Callable, Dict, Iterable, List, Optional, cast
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 from .shared.cooperative_init import ensure_cooperative_init, monkeypatch_class_references
@@ -59,6 +62,7 @@ _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 
 pipeline: "ModelAutomationPipeline | None" = None
+_pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
 
 evolution_orchestrator = get_orchestrator("BotPlanningBot", data_bot, engine)
 _th = get_thresholds("BotPlanningBot")
@@ -72,19 +76,34 @@ persist_sc_thresholds(
 manager: SelfCodingManager | None = None
 
 
+def _promote_pipeline_manager(manager: SelfCodingManager | None) -> None:
+    global _pipeline_promoter
+    promoter = _pipeline_promoter
+    if promoter is None or manager is None:
+        return
+    promoter(manager)
+    _pipeline_promoter = None
+
+
 def _initialise_self_coding() -> None:
     """Initialise the ModelAutomationPipeline and self-coding manager lazily."""
 
-    global pipeline, manager
+    global pipeline, manager, _pipeline_promoter
     if pipeline is None:
         try:
-            pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+            pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=_context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+            )
         except Exception as exc:  # pragma: no cover - degraded bootstrap path
             logger.warning(
                 "ModelAutomationPipeline unavailable for BotPlanningBot: %s",
                 exc,
             )
             pipeline = None
+            _pipeline_promoter = None
 
     if pipeline is None:
         logger.warning(
@@ -115,6 +134,8 @@ def _initialise_self_coding() -> None:
 
     if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
         raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
+
+    _promote_pipeline_manager(manager)
 
 
 class TemplateManager:

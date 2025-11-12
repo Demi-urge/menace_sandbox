@@ -27,6 +27,7 @@ from .knowledge_graph import KnowledgeGraph
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_thresholds import get_thresholds
+from .coding_bot_interface import prepare_pipeline_for_bootstrap
 
 try:  # pragma: no cover - optional vector service dependency
     from vector_service.context_builder import ContextBuilder
@@ -69,8 +70,12 @@ class DebugLoopService:
             bus = UnifiedEventBus()
             registry = bot_registry or BotRegistry(event_bus=bus)
             data_bot = data_bot or DataBot()
-            pipeline = ModelAutomationPipeline(
-                context_builder=context_builder, event_bus=bus, bot_registry=registry
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+                event_bus=bus,
             )
             _th = get_thresholds("DebugLoopService")
             persist_sc_thresholds(
@@ -94,6 +99,7 @@ class DebugLoopService:
                 raise RuntimeError(
                     "internalize_coding_bot failed to return a SelfCodingManager"
                 )
+            promote_pipeline(manager)
             feedback = TelemetryFeedback(
                 logger,
                 manager,

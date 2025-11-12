@@ -20,7 +20,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 
 try:
     from vector_service.context_builder import ContextBuilder
@@ -124,9 +124,11 @@ class AutoEscalationManager:
                     from .self_coding_manager import SelfCodingManager
                     from .model_automation_pipeline import ModelAutomationPipeline
 
-                    pipeline = ModelAutomationPipeline(
+                    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                        pipeline_cls=ModelAutomationPipeline,
                         context_builder=self.context_builder,
                         bot_registry=registry,
+                        data_bot=data_bot,
                         event_bus=event_bus,
                     )
                     manager = SelfCodingManager(
@@ -137,6 +139,7 @@ class AutoEscalationManager:
                         data_bot=data_bot,
                         event_bus=event_bus,
                     )
+                    promote_pipeline(manager)
                     manager.register_bot(self.__class__.__name__)
                     self.manager = manager
                 except Exception as exc:

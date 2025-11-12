@@ -97,7 +97,9 @@ def _resolve_management(
     try:
         registry_cls = load_internal("bot_registry").BotRegistry
         data_bot_cls = load_internal("data_bot").DataBot
-        decorator = load_internal("coding_bot_interface").self_coding_managed
+        interface_mod = load_internal("coding_bot_interface")
+        decorator = interface_mod.self_coding_managed
+        prepare_pipeline_for_bootstrap = interface_mod.prepare_pipeline_for_bootstrap
         manager_mod = load_internal("self_coding_manager")
         engine_mod = load_internal("self_coding_engine")
         pipeline_mod = load_internal("model_automation_pipeline")
@@ -166,9 +168,11 @@ def _resolve_management(
             memory_cls(),
             context_builder=context_builder,
         )
-        pipeline = pipeline_mod.ModelAutomationPipeline(
+        pipeline, promote = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_mod.ModelAutomationPipeline,
             context_builder=context_builder,
             bot_registry=registry,
+            data_bot=data_bot,
             validator_factory=_validator_factory,
         )
         manager = manager_mod.SelfCodingManager(
@@ -177,6 +181,7 @@ def _resolve_management(
             data_bot=data_bot,
             bot_registry=registry,
         )
+        promote(manager)
     except Exception as exc:  # pragma: no cover - bootstrap degraded
         logger.warning(
             "Self-coding services unavailable for TaskValidationBot: %s",

@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import (
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .code_database import CodeDB
@@ -58,7 +61,12 @@ data_bot = DataBot(start_server=False)
 
 _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
-pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
+    pipeline_cls=ModelAutomationPipeline,
+    context_builder=_context_builder,
+    bot_registry=registry,
+    data_bot=data_bot,
+)
 evolution_orchestrator = get_orchestrator("AutomatedReviewer", data_bot, engine)
 _th = get_thresholds("AutomatedReviewer")
 persist_sc_thresholds(
@@ -79,6 +87,18 @@ manager = internalize_coding_bot(
     test_failure_threshold=_th.test_failure_increase,
     threshold_service=ThresholdService(),
 )
+
+
+def _promote_pipeline_manager(manager: SelfCodingManager | None) -> None:
+    global _pipeline_promoter
+    promoter = _pipeline_promoter
+    if promoter is None or manager is None:
+        return
+    promoter(manager)
+    _pipeline_promoter = None
+
+
+_promote_pipeline_manager(manager)
 
 
 @self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)

@@ -1809,6 +1809,7 @@ def prepare_pipeline_for_bootstrap(
     context_builder: Any,
     bot_registry: Any,
     data_bot: Any,
+    **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
 
@@ -1817,6 +1818,8 @@ def prepare_pipeline_for_bootstrap(
     ``SelfCodingManager`` is still initialising.  The accompanying callback must
     be invoked once the concrete manager is ready so that all sentinel
     references are promoted atomically.
+    Additional keyword arguments are forwarded to ``pipeline_cls`` during
+    instantiation.
     """
 
     sentinel_manager = _create_bootstrap_manager_sentinel(
@@ -1831,23 +1834,34 @@ def prepare_pipeline_for_bootstrap(
     pipeline: Any | None = None
     last_error: Exception | None = None
     try:
-        init_kwargs = {
-            "context_builder": context_builder,
-            "bot_registry": bot_registry,
-            "data_bot": data_bot,
-            "manager": sentinel_manager,
-        }
+        init_kwargs = dict(pipeline_kwargs)
+        init_kwargs.setdefault("context_builder", context_builder)
+        if bot_registry is not None:
+            init_kwargs.setdefault("bot_registry", bot_registry)
+        if data_bot is not None:
+            init_kwargs.setdefault("data_bot", data_bot)
+        init_kwargs.setdefault("manager", sentinel_manager)
+
         variants: tuple[tuple[str, ...], ...] = (
             ("context_builder", "bot_registry", "data_bot", "manager"),
             ("context_builder", "bot_registry", "manager"),
             ("context_builder", "manager"),
             ("context_builder",),
         )
+        static_items = {
+            key: value
+            for key, value in init_kwargs.items()
+            if key
+            not in {"context_builder", "bot_registry", "data_bot", "manager"}
+        }
+
         for keys in variants:
+            if not all(key in init_kwargs for key in keys):
+                continue
             try:
-                pipeline = pipeline_cls(
-                    **{key: init_kwargs[key] for key in keys if key in init_kwargs}
-                )
+                call_kwargs = {key: init_kwargs[key] for key in keys}
+                call_kwargs.update(static_items)
+                pipeline = pipeline_cls(**call_kwargs)
             except TypeError as exc:
                 last_error = exc
                 continue
