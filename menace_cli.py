@@ -297,6 +297,7 @@ def handle_patch(args: argparse.Namespace) -> int:
         from data_bot import DataBot, persist_sc_thresholds
         from self_coding_thresholds import get_thresholds
         from threshold_service import ThresholdService
+        from coding_bot_interface import prepare_pipeline_for_bootstrap
 
         bot_name = Path(args.module).stem
         data_bot = DataBot(start_server=False)
@@ -307,7 +308,12 @@ def handle_patch(args: argparse.Namespace) -> int:
             context_builder=builder,
             stack_assist=stack_override,
         )
-        pipeline = ModelAutomationPipeline(context_builder=builder)
+        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
         _th = get_thresholds(bot_name)
         persist_sc_thresholds(
             bot_name,
@@ -326,6 +332,7 @@ def handle_patch(args: argparse.Namespace) -> int:
             test_failure_threshold=_th.test_failure_increase,
             threshold_service=ThresholdService(),
         )
+        promote_pipeline(manager)
         if not isinstance(manager, SelfCodingManager):  # type: ignore[name-defined]
             print(
                 "internalize_coding_bot failed to return a SelfCodingManager",
