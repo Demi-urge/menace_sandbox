@@ -2208,20 +2208,57 @@ def _initialise_self_coding_manager(*, retry: bool = True) -> None:
 
 
 def _schedule_manager_retry(delay: float | None = None) -> None:
-    """Schedule a retry for :func:`_initialise_self_coding_manager`."""
+    """Leverage registry retries to attach the self-coding manager."""
 
     global _manager_retry_timer, _manager_retry_count
     if manager is not None:
         return
+
+    retry_delay = _MANAGER_RETRY_DELAY if delay is None else delay
+
+    registry_obj: BotRegistry | None = None
+    try:
+        registry_obj = _get_registry()
+    except Exception:  # pragma: no cover - defensive best effort
+        logger.debug(
+            "CapitalManagementBot retry skipped; registry unavailable",
+            exc_info=True,
+        )
+
+    if registry_obj is not None:
+        try:
+            scheduled = registry_obj.force_internalization_retry(
+                "CapitalManagementBot", delay=retry_delay
+            )
+        except Exception:  # pragma: no cover - defensive best effort
+            logger.warning(
+                "CapitalManagementBot registry retry scheduling failed", exc_info=True
+            )
+        else:
+            if scheduled:
+                _manager_retry_count = 0
+                if _manager_retry_timer is not None:
+                    try:
+                        _manager_retry_timer.cancel()
+                    except Exception:  # pragma: no cover - timer cleanup best effort
+                        logger.debug(
+                            "unable to cancel pending manager retry timer", exc_info=True
+                        )
+                    finally:
+                        _manager_retry_timer = None
+                return
+
     if _manager_retry_count >= _MANAGER_MAX_RETRIES:
         return
     if _manager_retry_timer is not None and _manager_retry_timer.is_alive():
         return
+
     _manager_retry_count += 1
-    retry_delay = _MANAGER_RETRY_DELAY if delay is None else delay
 
     def _retry() -> None:
-        _initialise_self_coding_manager(retry=True)
+        global _manager_retry_timer
+        _manager_retry_timer = None
+        _schedule_manager_retry(delay=retry_delay)
 
     timer = threading.Timer(retry_delay, _retry)
     timer.daemon = True
@@ -2229,23 +2266,8 @@ def _schedule_manager_retry(delay: float | None = None) -> None:
     timer.start()
 
 
-class _TruthyManagerProxy:
-    """Wrapper that keeps fallback managers truthy for registry checks."""
-
-    __slots__ = ("_manager",)
-
-    def __init__(self, manager_obj: object) -> None:
-        self._manager = manager_obj
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._manager, name)
-
-    def __bool__(self) -> bool:  # pragma: no cover - trivial
-        return True
-
-
 def _resolve_decorator_manager() -> object | None:
-    """Return a manager placeholder so registration avoids retry loops."""
+    """Return a falsy manager placeholder so registry retries are triggered."""
 
     if manager is not None:
         return manager
@@ -2267,7 +2289,7 @@ def _resolve_decorator_manager() -> object | None:
             exc_info=True,
         )
         return None
-    return _TruthyManagerProxy(disabled)
+    return disabled
 
 
 def bootstrap_capital_management_self_coding() -> "SelfCodingManager | None":
