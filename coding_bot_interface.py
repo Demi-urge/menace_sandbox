@@ -2771,6 +2771,32 @@ def _bootstrap_manager(
         elif hasattr(_BOOTSTRAP_STATE, "names"):
             delattr(_BOOTSTRAP_STATE, "names")
 
+    bootstrap_owner: _BootstrapOwnerSentinel | None = None
+    owner_context: _BootstrapContext | None = None
+    placeholder_manager: Any = sentinel_manager
+
+    def _link_bootstrap_owner(candidate: Any) -> None:
+        if bootstrap_owner is None or candidate is None:
+            return
+        if candidate is bootstrap_owner:
+            return
+        if not _is_bootstrap_placeholder(candidate):
+            return
+        try:
+            setattr(candidate, "_bootstrap_owner_delegate", bootstrap_owner)
+        except Exception:  # pragma: no cover - best effort linkage
+            logger.debug(
+                "failed to link bootstrap delegate %s to owner sentinel", candidate,
+                exc_info=True,
+            )
+        try:
+            setattr(bootstrap_owner, "_bootstrap_owner_delegate", candidate)
+        except Exception:  # pragma: no cover - best effort linkage
+            logger.debug(
+                "failed to link bootstrap owner sentinel to %s", candidate,
+                exc_info=True,
+            )
+
     try:
         manager_cls = _resolve_self_coding_manager_cls()
         if manager_cls is None:
@@ -2809,22 +2835,12 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
         bootstrap_owner = _BootstrapOwnerSentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-        try:
-            sentinel_manager._bootstrap_owner_delegate = bootstrap_owner
-        except Exception:  # pragma: no cover - best effort linkage
-            logger.debug("failed to link bootstrap owner sentinel", exc_info=True)
-        try:
-            bootstrap_owner._bootstrap_owner_delegate = sentinel_manager
-        except Exception:  # pragma: no cover - best effort linkage
-            logger.debug(
-                "failed to link bootstrap owner delegate sentinel",
-                exc_info=True,
-            )
+        _link_bootstrap_owner(sentinel_manager)
+        placeholder_manager = bootstrap_owner or sentinel_manager
         _BOOTSTRAP_STATE.sentinel_manager = bootstrap_owner
         logger.debug(
             "activated bootstrap owner sentinel %s for %s",
@@ -2854,18 +2870,23 @@ def _bootstrap_manager(
             pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
             if pipeline_cls is None:
                 raise RuntimeError("ModelAutomationPipeline is unavailable")
-            placeholder_manager = bootstrap_owner or sentinel_manager
             pipeline, promote = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
                 context_builder=ctx_builder,
                 bot_registry=bot_registry,
                 data_bot=data_bot,
-                manager_override=placeholder_manager,
-                manager_sentinel=placeholder_manager,
+                manager_override=bootstrap_owner,
+                manager_sentinel=bootstrap_owner,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
+            pipeline_manager = getattr(pipeline, "manager", None)
+            if _is_bootstrap_placeholder(pipeline_manager):
+                _link_bootstrap_owner(pipeline_manager)
+                if pipeline_manager is not bootstrap_owner:
+                    _assign_bootstrap_manager_placeholder(pipeline, bootstrap_owner)
         finally:
-            _pop_bootstrap_context(owner_context)
+            if owner_context is not None:
+                _pop_bootstrap_context(owner_context)
         manager_mod = _load_optional_module(
             "self_coding_manager", fallback="menace.self_coding_manager"
         )
