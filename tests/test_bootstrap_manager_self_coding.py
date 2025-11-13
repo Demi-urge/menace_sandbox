@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-
 import sys
+from typing import Callable
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -179,3 +179,92 @@ def test_pipeline_bootstrap_promotes_sentinel(stub_bootstrap_env: dict[str, Modu
         "NestedHelper",
     }
     assert all(entry[1] is manager for entry in registry.promotions)
+
+
+def test_prebuilt_pipeline_helpers_promoted_without_reentrant_warning(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("fallback to manual pipeline")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="prebuilt")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class NestedHelper:
+        name = "PrebuiltNestedHelper"
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class CommunicationMaintenanceBot:
+        name = "PrebuiltComms"
+
+        def __init__(self) -> None:
+            self.helper = NestedHelper()
+
+    class StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = CommunicationMaintenanceBot()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        StubPipeline
+    )
+
+    real_prepare = cbi.prepare_pipeline_for_bootstrap
+    pipeline, promoter = real_prepare(
+        pipeline_cls=StubPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert pipeline.comms_bot.manager is pipeline.manager
+    assert pipeline.comms_bot.helper.manager is pipeline.manager
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is StubPipeline
+        return pipeline, promoter
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    caplog.clear()
+    manager = cbi._bootstrap_manager("PrebuiltOwner", registry, data_bot)
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+    assert not any("re-entrant" in record.message for record in caplog.records)
