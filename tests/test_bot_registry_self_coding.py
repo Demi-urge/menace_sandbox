@@ -888,6 +888,126 @@ def test_bootstrap_manager_promotes_eager_pipeline_helpers(monkeypatch, caplog):
     assert helper_node["manager"] is manager
     assert helper_node["selfcoding_manager"] is not pipeline.initial_manager
 
+
+def test_bootstrap_manager_fallback_injects_bootstrap_owner(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = _make_registry()
+    thresholds = SimpleNamespace(
+        roi_drop=0.0,
+        error_threshold=0.0,
+        test_failure_threshold=0.0,
+    )
+    data_bot = SimpleNamespace(
+        reload_thresholds=lambda name: thresholds,
+        check_degradation=lambda *args, **kwargs: None,
+        subscribe_degradation=lambda callback: None,
+        event_bus=None,
+    )
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("use fallback bootstrap")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _InlineHelper:
+        name = "InlineHelper"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.initial_manager = manager
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    class _InlinePipeline:
+        def __init__(self, *, context_builder, bot_registry, data_bot, manager=None):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.helper = _InlineHelper(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            self._bots = [self.helper]
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_InlinePipeline
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+        "quick_fix_engine": SimpleNamespace(
+            QuickFixEngine=lambda *args, **kwargs: SimpleNamespace()
+        ),
+        "error_bot": SimpleNamespace(ErrorDB=lambda: SimpleNamespace()),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "InlineHelperBot", registry, data_bot
+    )
+
+    assert not any(
+        "re-entrant" in record.message.lower() for record in caplog.records
+    )
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    helper = pipeline.helper
+    assert helper.manager is manager
+    assert getattr(pipeline.initial_manager, "_bootstrap_owner_marker", False) is True
+
 def test_bootstrap_manager_fallback_honors_sentinel_during_nested_pipeline_init(
     monkeypatch, caplog
 ):

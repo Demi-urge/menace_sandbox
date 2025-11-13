@@ -151,6 +151,133 @@ def test_script_bootstrap_promotes_real_manager(monkeypatch, caplog):
     assert all(bot.manager is manager for bot in pipeline._bots)
 
 
+def test_bootstrap_manager_handles_prebuilt_pipeline(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = SimpleNamespace()
+    data_bot = SimpleNamespace()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("use fallback")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    helper = SimpleNamespace(manager=None)
+    pipeline = SimpleNamespace(
+        manager=None,
+        initial_manager=None,
+        helper=helper,
+        _bots=[helper],
+        comms_bot=None,
+        synthesis_bot=None,
+        diagnostic_manager=None,
+        planner=None,
+        aggregator=None,
+        reattach_calls=0,
+        finalized=False,
+        finalizer_args=None,
+    )
+
+    def _attach_information_synthesis_manager():
+        pipeline.reattach_calls += 1
+
+    def _finalize_self_coding_bootstrap(manager, *, registry=None, data_bot=None):
+        pipeline.finalized = True
+        pipeline.finalizer_args = (manager, registry, data_bot)
+
+    pipeline._attach_information_synthesis_manager = _attach_information_synthesis_manager
+    pipeline._finalize_self_coding_bootstrap = _finalize_self_coding_bootstrap
+
+    def _pipeline_factory(**kwargs):
+        manager = kwargs.get("manager")
+        pipeline.manager = manager
+        pipeline.initial_manager = manager
+        helper.manager = manager
+        helper.initial_manager = manager
+        pipeline.context = kwargs
+        return pipeline
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_pipeline_factory
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+        "quick_fix_engine": SimpleNamespace(
+            QuickFixEngine=lambda *args, **kwargs: SimpleNamespace()
+        ),
+        "error_bot": SimpleNamespace(ErrorDB=lambda: SimpleNamespace()),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    # Script builds the pipeline before self-coding bootstrap runs.
+    _pipeline_factory(
+        context_builder=SimpleNamespace(),
+        bot_registry=registry,
+        data_bot=data_bot,
+        manager=None,
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "OneOffScriptBot", registry, data_bot
+    )
+
+    assert manager.pipeline is pipeline
+    assert pipeline.manager is manager
+    assert helper.manager is manager
+    assert helper.initial_manager is not manager
+    assert getattr(helper.initial_manager, "_bootstrap_owner_marker", False)
+    assert pipeline._finalize_self_coding_bootstrap is _finalize_self_coding_bootstrap
+    assert pipeline.reattach_calls >= 1
+    assert "re-entrant" not in caplog.text
+
+
 def test_bootstrap_entrypoint_uses_prepare_helper(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
