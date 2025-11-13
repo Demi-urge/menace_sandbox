@@ -2129,6 +2129,19 @@ def _assign_bootstrap_manager_placeholder(target: Any, placeholder: Any) -> None
             )
 
 
+def _resolve_bootstrap_owner(candidate: Any) -> Any | None:
+    """Return the bootstrap owner sentinel associated with *candidate*."""
+
+    if candidate is None:
+        return None
+    owner = getattr(candidate, "_bootstrap_owner_delegate", None)
+    if owner is not None:
+        return owner
+    if _is_bootstrap_owner(candidate):
+        return candidate
+    return None
+
+
 @contextlib.contextmanager
 def _inject_manager_placeholder_during_init(
     pipeline_cls: type[Any], placeholder: Any
@@ -2170,6 +2183,34 @@ def _inject_manager_placeholder_during_init(
             logger.debug(
                 "failed to restore original __init__ on %s", pipeline_cls, exc_info=True
             )
+
+
+@contextlib.contextmanager
+def _pipeline_manager_placeholder_shim(
+    pipeline_cls: type[Any], placeholder: Any
+) -> Iterator[bool]:
+    """Assign *placeholder* early and expose the bootstrap owner sentinel."""
+
+    owner_sentinel = _resolve_bootstrap_owner(placeholder)
+    previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
+    sentinel_applied = False
+    if owner_sentinel is not None:
+        _BOOTSTRAP_STATE.sentinel_manager = owner_sentinel
+        sentinel_applied = True
+    try:
+        with _inject_manager_placeholder_during_init(
+            pipeline_cls, placeholder
+        ) as patched:
+            yield patched
+    finally:
+        if sentinel_applied:
+            if previous_sentinel is _SENTINEL_UNSET:
+                try:
+                    delattr(_BOOTSTRAP_STATE, "sentinel_manager")
+                except AttributeError:  # pragma: no cover - best effort cleanup
+                    pass
+            else:
+                _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
 
 
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
@@ -2502,7 +2543,7 @@ def prepare_pipeline_for_bootstrap(
                     "manager" not in call_kwargs and manager_placeholder is not None
                 )
                 if requires_injection:
-                    with _inject_manager_placeholder_during_init(
+                    with _pipeline_manager_placeholder_shim(
                         pipeline_cls, manager_placeholder
                     ):
                         pipeline = pipeline_cls(**call_kwargs)
