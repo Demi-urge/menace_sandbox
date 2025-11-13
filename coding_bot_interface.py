@@ -1814,6 +1814,18 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
     ) -> None:
         """Swap this sentinel out for *real_manager* once bootstrap completes."""
 
+        logger.debug(
+            "promoting bootstrap owner sentinel with %s", real_manager
+        )
+        if sentinel is not None:
+            attach_delegate = getattr(sentinel, "attach_delegate", None)
+            if callable(attach_delegate):
+                try:
+                    attach_delegate(real_manager)
+                except Exception:  # pragma: no cover - best effort linkage
+                    logger.debug(
+                        "bootstrap owner failed to attach sentinel delegate", exc_info=True
+                    )
         self._resolved_manager = real_manager
         if real_manager is not None:
             try:
@@ -1839,11 +1851,18 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
             )
 
         if callable(promoter) and real_manager is not None:
+            logger.debug(
+                "promoting fallback pipeline references for %s", real_manager
+            )
             try:
                 promoter(real_manager)
             except Exception:  # pragma: no cover - promotion must be best effort
                 logger.debug(
                     "bootstrap owner pipeline promotion failed", exc_info=True
+                )
+            else:
+                logger.debug(
+                    "fallback pipeline promotion finished for %s", real_manager
                 )
 
         callbacks = tuple(self._promotion_callbacks)
@@ -1883,12 +1902,17 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
     if candidate_sentinel is None:
         return plan
     owner_active = bool(getattr(candidate_sentinel, "bootstrap_owner_active", False))
-    if candidate_sentinel is sentinel_manager and bootstrap_depth > 0:
+    owner_marker = bool(getattr(candidate_sentinel, "_bootstrap_owner_marker", False))
+    owner_registered = candidate_sentinel is sentinel_manager
+    owner_in_use = owner_active
+    if owner_marker and (bootstrap_depth > 0 or owner_registered):
+        owner_in_use = True
+    if owner_registered and bootstrap_depth > 0:
         plan.defer = True
         plan.should_bootstrap = False
         plan.manager = candidate_sentinel
         return plan
-    if owner_active:
+    if owner_in_use:
         plan.defer = True
         plan.should_bootstrap = False
         plan.manager = candidate_sentinel
@@ -2249,7 +2273,16 @@ def prepare_pipeline_for_bootstrap(
             data_bot=data_bot,
         )
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
-    guard_claimed = False
+    owner_guard_attached = False
+    release_owner_guard = getattr(sentinel_manager, "_release_bootstrap_state", None)
+    claim_guard = getattr(sentinel_manager, "claim_bootstrap_state_guard", None)
+    if callable(claim_guard):
+        try:
+            owner_guard_attached = bool(claim_guard(restore_sentinel_state))
+        except Exception:  # pragma: no cover - best effort coordination
+            logger.debug(
+                "sentinel failed to claim bootstrap guard", exc_info=True
+            )
     context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
@@ -2296,20 +2329,29 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
-        claim_guard = getattr(sentinel_manager, "claim_bootstrap_state_guard", None)
-        if callable(claim_guard):
-            try:
-                guard_claimed = bool(claim_guard(restore_sentinel_state))
-            except Exception:  # pragma: no cover - best effort coordination
-                logger.debug(
-                    "sentinel failed to claim bootstrap guard", exc_info=True
-                )
-        if guard_claimed:
-            restore_sentinel_state = lambda: None
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
-        restore_sentinel_state()
+        if owner_guard_attached:
+            # The bootstrap owner now owns the guard and will release it once the
+            # real manager is promoted.  If we claimed the guard but failed before
+            # installing the pipeline we must release it eagerly to keep the
+            # sentinel stack balanced.
+            continue_guard = pipeline is not None
+            if not continue_guard:
+                released = False
+                if callable(release_owner_guard):
+                    try:
+                        release_owner_guard()
+                    except Exception:  # pragma: no cover - best effort cleanup
+                        logger.debug(
+                            "bootstrap owner sentinel guard release failed", exc_info=True
+                        )
+                    else:
+                        released = True
+                owner_guard_attached = released
+        if not owner_guard_attached:
+            restore_sentinel_state()
 
     try:
         current_manager = getattr(pipeline, "manager", None)
