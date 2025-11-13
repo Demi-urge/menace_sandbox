@@ -5,7 +5,7 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import normalise_manager_arg, self_coding_managed
 # flake8: noqa
 import json
 import logging
@@ -1229,7 +1229,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
-        manager = manager or getattr(type(self), "manager", None)
+        manager = normalise_manager_arg(manager, type(self))
         if error_bot is not None:
             self.error_bot = error_bot
         else:

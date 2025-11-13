@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import normalise_manager_arg, self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -164,7 +164,11 @@ class StructuralEvolutionBot:
         self.logger = logging.getLogger("StructuralEvolution")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
-        self.manager = manager or globals().get("manager")
+        self.manager = normalise_manager_arg(
+            manager,
+            type(self),
+            fallback=globals().get("manager"),
+        )
 
     def take_snapshot(self, limit: int = 100) -> SystemSnapshot:
         df = self.metrics_db.fetch(limit)

@@ -214,6 +214,47 @@ def test_check_updates(monkeypatch, tmp_path):
     assert "update" in builder.terms
 
 
+def test_error_bot_receives_falsey_manager(monkeypatch, tmp_path):
+    repo_path = tmp_path / "repo"
+    cmb.Repo.init(repo_path)
+    mdb = cmb.MaintenanceDB(tmp_path / "m.db")
+    builder = DummyBuilder()
+
+    class FalseyManager:
+        def __init__(self) -> None:
+            self.bot_registry = object()
+            self.data_bot = object()
+
+        def __bool__(self) -> bool:  # pragma: no cover - explicit behaviour
+            return False
+
+    sentinel = FalseyManager()
+    captured: dict[str, object] = {}
+
+    class DummyErrorBot:
+        def __init__(self) -> None:
+            self.db = types.SimpleNamespace(log_discrepancy=lambda *_a, **_k: None)
+
+        def handle_error(self, *_a, **_k):  # pragma: no cover - stub
+            return None
+
+    def fake_construct_error_bot(*, manager, **kwargs):
+        captured["manager"] = manager
+        return DummyErrorBot()
+
+    monkeypatch.setattr(cmb, "_construct_error_bot", fake_construct_error_bot)
+
+    cmb.CommunicationMaintenanceBot(
+        mdb,
+        repo_path=repo_path,
+        db_router=DummyRouter(),
+        context_builder=builder,
+        manager=sentinel,
+    )
+
+    assert captured.get("manager") is sentinel
+
+
 def test_subscribe_failures_logged(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(cmb, "Celery", None)
     repo_path = tmp_path / "repo"
