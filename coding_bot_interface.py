@@ -2784,13 +2784,14 @@ def _bootstrap_manager(
             pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
             if pipeline_cls is None:
                 raise RuntimeError("ModelAutomationPipeline is unavailable")
+            placeholder_manager = bootstrap_owner or sentinel_manager
             pipeline, promote = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
                 context_builder=ctx_builder,
                 bot_registry=bot_registry,
                 data_bot=data_bot,
-                manager_override=bootstrap_owner,
-                manager_sentinel=bootstrap_owner,
+                manager_override=placeholder_manager,
+                manager_sentinel=placeholder_manager,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
         finally:
@@ -2806,22 +2807,18 @@ def _bootstrap_manager(
             bot_registry=bot_registry,
         )
         try:
-            current_pipeline_manager = getattr(pipeline, "manager", None)
-        except Exception:  # pragma: no cover - best effort
-            current_pipeline_manager = None
-        if current_pipeline_manager is not manager:
-            try:
-                setattr(pipeline, "manager", manager)
-            except Exception:  # pragma: no cover - best effort reassignment
-                logger.debug(
-                    "failed to promote pipeline manager to real manager", exc_info=True
-                )
-        try:
-            promote(manager)
+            _promote_pipeline_manager(pipeline, manager, placeholder_manager)
         except Exception:  # pragma: no cover - promotion must stay best-effort
             logger.debug(
-                "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                "fallback pipeline promotion failed for %s", name, exc_info=True
             )
+        else:
+            try:
+                promote(manager)
+            except Exception:  # pragma: no cover - promotion must stay best-effort
+                logger.debug(
+                    "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                )
         attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
         if callable(attach_delegate):
             try:
