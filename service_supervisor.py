@@ -70,7 +70,10 @@ from .shared_event_bus import event_bus as bus  # noqa: E402
 from .bot_registry import BotRegistry  # noqa: E402
 from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
 from .self_coding_thresholds import get_thresholds  # noqa: E402
-from .coding_bot_interface import self_coding_managed  # noqa: E402
+from .coding_bot_interface import (  # noqa: E402
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from .shared_evolution_orchestrator import get_orchestrator  # noqa: E402
 
 try:  # optional dependency
@@ -378,6 +381,7 @@ class ServiceSupervisor:
         self.restart_log = restart_log
         self.targets: Dict[str, Tuple[Callable[[], None], Optional[str]]] = {}
         self.processes: Dict[str, mp.Process] = {}
+        self._pipeline_promoter: Callable[[object], None] | None = None
         # Use the self healing orchestrator for restart logic
         self.healer = SelfHealingOrchestrator(KnowledgeGraph())
         self.healer.heal = self._heal  # type: ignore[assignment]
@@ -391,10 +395,12 @@ class ServiceSupervisor:
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
-        pipeline = ModelAutomationPipeline(
+        pipeline, self._pipeline_promoter = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
             context_builder=self.context_builder,
             event_bus=bus,
             bot_registry=registry,
+            data_bot=data_bot,
         )
         evolution_orchestrator = get_orchestrator(
             self.__class__.__name__, data_bot, engine
@@ -420,6 +426,10 @@ class ServiceSupervisor:
             test_failure_threshold=_th.test_failure_increase,
             evolution_orchestrator=evolution_orchestrator,
         )
+        promoter = self._pipeline_promoter
+        if promoter is not None:
+            promoter(manager)
+            self._pipeline_promoter = None
         manager.context_builder = self.context_builder
         self.manager = manager
         self.error_db = ErrorDB()
@@ -452,10 +462,12 @@ class ServiceSupervisor:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
-            pipeline = ModelAutomationPipeline(
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
                 context_builder=self.context_builder,
                 event_bus=bus,
                 bot_registry=registry,
+                data_bot=data_bot,
             )
             evolution_orchestrator = get_orchestrator(
                 self.__class__.__name__, data_bot, engine
@@ -481,6 +493,8 @@ class ServiceSupervisor:
                 test_failure_threshold=_th.test_failure_increase,
                 evolution_orchestrator=evolution_orchestrator,
             )
+            if promote_pipeline is not None:
+                promote_pipeline(manager)
             manager.context_builder = self.context_builder
             outcome = manager.auto_run_patch(path, description)
             summary = outcome.get("summary") if outcome else None
