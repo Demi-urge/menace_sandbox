@@ -2057,6 +2057,24 @@ def _activate_bootstrap_sentinel(manager: Any | None) -> Callable[[], None]:
     return _restore
 
 
+def _claim_bootstrap_owner_guard(
+    manager: Any, restore_callback: Callable[[], None]
+) -> tuple[bool, Callable[[], None] | None]:
+    """Mark *manager* as the active bootstrap owner when supported."""
+
+    owner_guard_attached = False
+    release_owner_guard = getattr(manager, "_release_bootstrap_state", None)
+    claim_guard = getattr(manager, "claim_bootstrap_state_guard", None)
+    if callable(claim_guard):
+        try:
+            owner_guard_attached = bool(claim_guard(restore_callback))
+        except Exception:  # pragma: no cover - best effort coordination
+            logger.debug(
+                "sentinel failed to claim bootstrap guard", exc_info=True
+            )
+    return owner_guard_attached, release_owner_guard
+
+
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
     """Swap sentinel references for *manager* across the pipeline hierarchy."""
 
@@ -2120,9 +2138,10 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                         "failed to reset pending manager flag on %s", target, exc_info=True
                     )
 
-    def _rewire_helper_attributes(target: Any) -> None:
+    def _rewire_helper_attributes(target: Any) -> bool:
+        manager_rewired = False
         if target is None:
-            return
+            return manager_rewired
         for attr, replacement in (
             ("manager", manager),
             ("bot_registry", registry_ref),
@@ -2142,12 +2161,15 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 logger.debug(
                     "failed to promote %s attribute on %s", attr, target, exc_info=True
                 )
+            else:
+                if attr == "manager":
+                    manager_rewired = True
         try:
             finalizer_attr = getattr(target, "_finalize_self_coding_bootstrap")
         except Exception:
             finalizer_attr = None
         if finalizer_attr is None:
-            return
+            return manager_rewired
         owner = getattr(finalizer_attr, "__self__", None)
         if _is_placeholder(owner) or _is_placeholder(finalizer_attr):
             try:
@@ -2158,13 +2180,14 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                     target,
                     exc_info=True,
                 )
+        return manager_rewired
 
     def _swap_manager(target: Any) -> None:
         nonlocal finalized_targets
         if target is None:
             return
         finalizer_targets: list[Any] = []
-        _rewire_helper_attributes(target)
+        manager_rewired = _rewire_helper_attributes(target)
         try:
             current_manager = getattr(target, "manager", None)
         except Exception:  # pragma: no cover - best effort
@@ -2176,6 +2199,8 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 logger.debug("failed to promote manager on %s", target, exc_info=True)
             else:
                 finalizer_targets.append(target)
+        elif manager_rewired:
+            finalizer_targets.append(target)
         owner = getattr(target, "__class__", None)
         if owner is not None:
             try:
@@ -2273,16 +2298,10 @@ def prepare_pipeline_for_bootstrap(
             data_bot=data_bot,
         )
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
-    owner_guard_attached = False
-    release_owner_guard = getattr(sentinel_manager, "_release_bootstrap_state", None)
-    claim_guard = getattr(sentinel_manager, "claim_bootstrap_state_guard", None)
-    if callable(claim_guard):
-        try:
-            owner_guard_attached = bool(claim_guard(restore_sentinel_state))
-        except Exception:  # pragma: no cover - best effort coordination
-            logger.debug(
-                "sentinel failed to claim bootstrap guard", exc_info=True
-            )
+    (
+        owner_guard_attached,
+        release_owner_guard,
+    ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
     context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
@@ -2526,6 +2545,23 @@ def _bootstrap_manager(
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
+        try:
+            current_pipeline_manager = getattr(pipeline, "manager", None)
+        except Exception:  # pragma: no cover - best effort
+            current_pipeline_manager = None
+        if current_pipeline_manager is not manager:
+            try:
+                setattr(pipeline, "manager", manager)
+            except Exception:  # pragma: no cover - best effort reassignment
+                logger.debug(
+                    "failed to promote pipeline manager to real manager", exc_info=True
+                )
+        try:
+            promote(manager)
+        except Exception:  # pragma: no cover - promotion must stay best-effort
+            logger.debug(
+                "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+            )
         attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
         if callable(attach_delegate):
             try:

@@ -278,6 +278,171 @@ def test_bootstrap_manager_handles_prebuilt_pipeline(monkeypatch, caplog):
     assert "re-entrant" not in caplog.text
 
 
+def test_fallback_prebuilt_pipeline_helpers_receive_promoted_manager(
+    monkeypatch, caplog
+):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    builder = SimpleNamespace()
+    monkeypatch.setattr(coding_bot_interface, "create_context_builder", lambda: builder)
+
+    runtime_enabled = {"value": False}
+
+    def _runtime_available() -> bool:
+        return runtime_enabled["value"]
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_self_coding_runtime_available",
+        _runtime_available,
+    )
+
+    registry = SimpleNamespace()
+    data_bot = SimpleNamespace()
+
+    helper_instances: list[SimpleNamespace] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _ManagedHelper:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.created_during_fallback = runtime_enabled["value"]
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.manager = manager
+            if registry is not None:
+                self.bot_registry = registry
+            if data_bot is not None:
+                self.data_bot = data_bot
+
+    pipeline_box: dict[str, SimpleNamespace] = {}
+
+    def _pipeline_factory(*, context_builder, manager=None, bot_registry=None, data_bot=None):
+        helper = _ManagedHelper(
+            manager=manager,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+        pipeline = pipeline_box.get("pipeline")
+        if pipeline is None:
+            pipeline = SimpleNamespace(
+                context_builder=context_builder,
+                helper_instances=[helper],
+                _bots=[helper],
+                helper=helper,
+                manager=manager,
+                initial_manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                reattach_calls=0,
+                finalized=False,
+                finalizer_args=None,
+            )
+
+            def _attach_information_synthesis_manager():
+                pipeline.reattach_calls += 1
+
+            def _finalize_self_coding_bootstrap(manager_obj, *, registry=None, data_bot=None):
+                pipeline.finalized = True
+                pipeline.finalizer_args = (manager_obj, registry, data_bot)
+
+            pipeline._attach_information_synthesis_manager = (
+                _attach_information_synthesis_manager
+            )
+            pipeline._finalize_self_coding_bootstrap = _finalize_self_coding_bootstrap
+            pipeline_box["pipeline"] = pipeline
+        else:
+            pipeline.helper_instances.append(helper)
+            pipeline._bots.append(helper)
+            pipeline.helper = helper
+            pipeline.manager = manager
+            pipeline.initial_manager = manager
+            pipeline.bot_registry = bot_registry
+            pipeline.data_bot = data_bot
+        return pipeline
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _FallbackManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("force fallback pipeline path")
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_pipeline_factory
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FallbackManager,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+
+    # Script builds the pipeline before bootstrap kicks in.
+    _pipeline_factory(
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        manager=None,
+    )
+
+    runtime_enabled["value"] = True
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "PrebuiltFallbackBot", registry, data_bot
+    )
+
+    assert manager.pipeline is pipeline_box["pipeline"]
+    assert "re-entrant initialisation depth" not in caplog.text
+    promoted_helpers = [
+        helper for helper in helper_instances if helper.created_during_fallback
+    ]
+    assert promoted_helpers, "expected helpers created during fallback bootstrap"
+    for helper in promoted_helpers:
+        assert helper.manager is manager
+        assert not isinstance(
+            helper.manager, coding_bot_interface._DisabledSelfCodingManager
+        )
+
+
 def test_bootstrap_manager_handles_nested_helper_bootstrap(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
