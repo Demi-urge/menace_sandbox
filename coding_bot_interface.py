@@ -18,6 +18,7 @@ Example:
     ...     ...
 """
 
+import contextlib
 import contextvars
 import importlib.util
 import sys
@@ -34,7 +35,7 @@ import threading
 from typing import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
-from typing import Any, Callable, Literal, TypeVar, TYPE_CHECKING
+from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
 try:  # pragma: no cover - prefer package-relative import
@@ -2108,6 +2109,69 @@ def _claim_bootstrap_owner_guard(
     return owner_guard_attached, release_owner_guard
 
 
+def _assign_bootstrap_manager_placeholder(target: Any, placeholder: Any) -> None:
+    """Assign *placeholder* to ``manager`` and ``initial_manager`` on *target*."""
+
+    if placeholder is None or target is None:
+        return
+    for attr in ("manager", "initial_manager"):
+        try:
+            current = getattr(target, attr)
+        except Exception:
+            current = None
+        if current is placeholder:
+            continue
+        try:
+            setattr(target, attr, placeholder)
+        except Exception:  # pragma: no cover - best effort assignment
+            logger.debug(
+                "failed to assign %s placeholder on %s", attr, target, exc_info=True
+            )
+
+
+@contextlib.contextmanager
+def _inject_manager_placeholder_during_init(
+    pipeline_cls: type[Any], placeholder: Any
+) -> Iterator[bool]:
+    """Temporarily inject *placeholder* before ``pipeline_cls.__init__`` executes."""
+
+    if placeholder is None:
+        yield False
+        return
+    try:
+        original_init = pipeline_cls.__init__  # type: ignore[attr-defined]
+    except AttributeError:
+        yield False
+        return
+    if not callable(original_init):
+        yield False
+        return
+
+    @wraps(original_init)
+    def _wrapped_init(self: Any, *args: Any, **kwargs: Any) -> Any:
+        _assign_bootstrap_manager_placeholder(self, placeholder)
+        return original_init(self, *args, **kwargs)
+
+    try:
+        setattr(pipeline_cls, "__init__", _wrapped_init)
+    except Exception:  # pragma: no cover - best effort instrumentation
+        logger.debug(
+            "failed to patch %s for manager placeholder injection", pipeline_cls,
+            exc_info=True,
+        )
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        try:
+            setattr(pipeline_cls, "__init__", original_init)
+        except Exception:  # pragma: no cover - best effort restoration
+            logger.debug(
+                "failed to restore original __init__ on %s", pipeline_cls, exc_info=True
+            )
+
+
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
     """Swap sentinel references for *manager* across the pipeline hierarchy."""
 
@@ -2198,6 +2262,17 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 if attr == "manager":
                     manager_rewired = True
         try:
+            initial_candidate = getattr(target, "initial_manager")
+        except Exception:
+            initial_candidate = None
+        if _is_placeholder(initial_candidate):
+            try:
+                setattr(target, "initial_manager", manager)
+            except Exception:  # pragma: no cover - best effort update
+                logger.debug(
+                    "failed to promote initial_manager on %s", target, exc_info=True
+                )
+        try:
             finalizer_attr = getattr(target, "_finalize_self_coding_bootstrap")
         except Exception:
             finalizer_attr = None
@@ -2286,6 +2361,51 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
         seen.add(key)
         _swap_manager(candidate)
         _invoke_finalizer(candidate)
+
+    def _promote_registry_metadata() -> None:
+        if registry_ref is None:
+            return
+        graph = getattr(registry_ref, "graph", None)
+        if graph is None:
+            return
+        nodes = getattr(graph, "nodes", None)
+        if nodes is None:
+            return
+        entries: list[tuple[Any, Any]] = []
+        items = getattr(nodes, "items", None)
+        if callable(items):
+            try:
+                entries = list(items())
+            except Exception:  # pragma: no cover - best effort view coercion
+                entries = []
+        if not entries:
+            try:
+                keys = list(nodes)
+            except Exception:  # pragma: no cover - view iteration may fail
+                keys = []
+            for key in keys:
+                try:
+                    entries.append((key, nodes[key]))
+                except Exception:  # pragma: no cover - best effort access
+                    logger.debug(
+                        "failed to inspect registry node %s", key, exc_info=True
+                    )
+        for _name, payload in entries:
+            if not isinstance(payload, Mapping):
+                continue
+            for attr in ("selfcoding_manager", "manager"):
+                current = payload.get(attr)
+                if not _is_placeholder(current):
+                    continue
+                try:
+                    payload[attr] = manager
+                except Exception:  # pragma: no cover - registry mutation best effort
+                    logger.debug(
+                        "failed to promote %s on registry entry %s", attr, _name,
+                        exc_info=True,
+                    )
+
+    _promote_registry_metadata()
 
     # Allow downstream consumers to refresh their cached manager reference when
     # promotion succeeds without importing heavy modules eagerly.
@@ -2378,7 +2498,16 @@ def prepare_pipeline_for_bootstrap(
             try:
                 call_kwargs = {key: init_kwargs[key] for key in keys}
                 call_kwargs.update(static_items)
-                pipeline = pipeline_cls(**call_kwargs)
+                requires_injection = (
+                    "manager" not in call_kwargs and manager_placeholder is not None
+                )
+                if requires_injection:
+                    with _inject_manager_placeholder_during_init(
+                        pipeline_cls, manager_placeholder
+                    ):
+                        pipeline = pipeline_cls(**call_kwargs)
+                else:
+                    pipeline = pipeline_cls(**call_kwargs)
             except TypeError as exc:
                 last_error = exc
                 continue
@@ -2388,28 +2517,7 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
-        if manager_placeholder is not None:
-            try:
-                current_manager = getattr(pipeline, "manager", None)
-            except Exception:  # pragma: no cover - introspection guard
-                current_manager = None
-            if current_manager is not manager_placeholder:
-                try:
-                    setattr(pipeline, "manager", manager_placeholder)
-                except Exception:  # pragma: no cover - best effort assignment
-                    logger.debug(
-                        "pipeline manager placeholder assignment failed for %s",
-                        pipeline,
-                        exc_info=True,
-                    )
-            try:
-                setattr(pipeline, "initial_manager", manager_placeholder)
-            except Exception:  # pragma: no cover - best effort tracking
-                logger.debug(
-                    "pipeline initial manager annotation failed for %s",
-                    pipeline,
-                    exc_info=True,
-                )
+        _assign_bootstrap_manager_placeholder(pipeline, manager_placeholder)
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
@@ -2582,7 +2690,6 @@ def _bootstrap_manager(
                 data_bot=data_bot,
                 manager_override=sentinel_manager,
                 manager_sentinel=sentinel_manager,
-                manager=sentinel_manager,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
         finally:

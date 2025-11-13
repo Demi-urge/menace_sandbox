@@ -13,6 +13,87 @@ import pytest
 import menace_sandbox.coding_bot_interface as coding_bot_interface
 
 
+def _install_managerless_bootstrap(monkeypatch, pipeline_cls):
+    builder = SimpleNamespace(name="managerless-builder")
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: builder,
+    )
+
+    code_db_module = types.ModuleType("menace_sandbox.code_database")
+    code_db_module.CodeDB = lambda: SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.code_database", code_db_module)
+    monkeypatch.setitem(sys.modules, "code_database", code_db_module)
+
+    memory_module = types.ModuleType("menace_sandbox.gpt_memory")
+    memory_module.GPTMemoryManager = lambda *_args, **_kwargs: SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.gpt_memory", memory_module)
+    monkeypatch.setitem(sys.modules, "gpt_memory", memory_module)
+
+    class _Engine:
+        def __init__(self, *_args, **_kwargs):
+            self.context_builder = _kwargs.get("context_builder")
+
+    engine_module = types.ModuleType("menace_sandbox.self_coding_engine")
+    engine_module.SelfCodingEngine = _Engine
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.self_coding_engine", engine_module
+    )
+    monkeypatch.setitem(sys.modules, "self_coding_engine", engine_module)
+
+    class _SelfCodingManager:
+        def __init__(self, engine, pipeline, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    manager_module = types.ModuleType("menace_sandbox.self_coding_manager")
+    manager_module.SelfCodingManager = _SelfCodingManager
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.self_coding_manager", manager_module
+    )
+    monkeypatch.setitem(sys.modules, "self_coding_manager", manager_module)
+
+    pipeline_module = types.ModuleType("menace_sandbox.model_automation_pipeline")
+    pipeline_module.ModelAutomationPipeline = pipeline_cls
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.model_automation_pipeline", pipeline_module
+    )
+    monkeypatch.setitem(sys.modules, "model_automation_pipeline", pipeline_module)
+
+    def _fake_load_internal(name: str):
+        module = sys.modules.get(f"menace_sandbox.{name}")
+        if module is None:
+            raise ModuleNotFoundError(name)
+        return module
+
+    monkeypatch.setattr(coding_bot_interface, "load_internal", _fake_load_internal)
+
+    class _PrimaryManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("legacy bootstrap rejecting manager keyword")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _PrimaryManager,
+    )
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_self_coding_runtime_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _preserve_runtime_flags(monkeypatch):
     """Ensure runtime availability probes are restored after each test."""
@@ -1448,3 +1529,210 @@ def test_bootstrap_entrypoint_promotes_all_bots(monkeypatch, caplog):
     assert pipeline.promotions == [manager]
     assert all(bot.manager is manager for bot in pipeline._bots)
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_managerless_pipeline_bootstrap_injects_placeholder(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    class _Registry:
+        def __init__(self):
+            self.graph = SimpleNamespace(nodes={})
+
+        def register_bot(self, name, module_path, **kwargs):
+            node = self.graph.nodes.setdefault(name, {})
+            node["module_path"] = module_path
+            node["selfcoding_manager"] = kwargs.get("manager")
+
+        def update_bot(self, *_args, **_kwargs):  # pragma: no cover - helper stub
+            return None
+
+        def mark_bot_patch_in_progress(self, *_args, **_kwargs):  # pragma: no cover
+            return None
+
+    class _DataBot:
+        def reload_thresholds(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                roi_drop=0.1,
+                error_threshold=0.2,
+                test_failure_threshold=0.3,
+            )
+
+        def schedule_monitoring(self, *_args, **_kwargs):  # pragma: no cover
+            return None
+
+    registry = _Registry()
+    data_bot = _DataBot()
+    policy = SimpleNamespace(
+        allowlist=None,
+        denylist=frozenset(),
+        is_enabled=lambda _name: True,
+    )
+    monkeypatch.setattr(coding_bot_interface, "get_self_coding_policy", lambda: policy)
+
+    helper_manager_states: list[object] = []
+    pipeline_manager_states: list[object] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _PipelineHelper:
+        name = "ManagerlessPipelineHelper"
+
+        def __init__(self, *, manager=None, **_kwargs):
+            helper_manager_states.append(manager)
+            assert manager is not None, "helper should never see manager=None"
+            self.manager = manager
+            self.initial_manager = manager
+            self.finalized_with = None
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.manager = manager
+            self.initial_manager = manager
+            self.finalized_with = (registry, data_bot)
+
+    class _ManagerlessPipeline:
+        def __init__(self, *, context_builder, bot_registry=None, data_bot=None):
+            snapshot = getattr(self, "manager", None)
+            pipeline_manager_states.append(snapshot)
+            assert snapshot is not None, "pipeline should receive a placeholder"
+            self.context_builder = context_builder
+            self.manager = snapshot
+            self.initial_manager = getattr(self, "initial_manager", snapshot)
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.communication_bot = _PipelineHelper(manager=self.manager)
+            self.comms_bot = self.communication_bot
+            self._bots = [self.communication_bot]
+            self.reattach_calls = 0
+            self.finalized_with = None
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.finalized_with = (manager, registry, data_bot)
+
+    _install_managerless_bootstrap(monkeypatch, _ManagerlessPipeline)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ManagerlessBot", registry, data_bot
+    )
+
+    assert manager
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert "re-entrant initialisation depth" not in caplog.text
+    assert helper_manager_states
+    assert all(state is not None for state in helper_manager_states)
+    assert pipeline_manager_states
+    assert all(
+        isinstance(state, coding_bot_interface._DisabledSelfCodingManager)
+        for state in pipeline_manager_states
+    )
+
+    pipeline = manager.pipeline
+    helper = pipeline.communication_bot
+    assert helper.manager is manager
+    assert helper.initial_manager is manager
+    assert pipeline.manager is manager
+    assert pipeline.initial_manager is manager
+    node = registry.graph.nodes.get(_PipelineHelper.name)
+    assert node["selfcoding_manager"] is manager
+
+
+def test_resolve_helpers_promotes_managerless_registry(monkeypatch):
+    class _Registry:
+        def __init__(self):
+            self.graph = SimpleNamespace(nodes={})
+            self.promotions: list[tuple[str, object]] = []
+
+        def register_bot(self, name, module_path, **kwargs):
+            node = self.graph.nodes.setdefault(name, {})
+            node["module_path"] = module_path
+            node["selfcoding_manager"] = kwargs.get("manager")
+
+        def promote_self_coding_manager(self, name, manager, *_args, **_kwargs):
+            self.promotions.append((name, manager))
+
+        def update_bot(self, *_args, **_kwargs):  # pragma: no cover - helper stub
+            return None
+
+    class _DataBot:
+        def reload_thresholds(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                roi_drop=0.1,
+                error_threshold=0.2,
+                test_failure_threshold=0.3,
+            )
+
+        def schedule_monitoring(self, *_args, **_kwargs):  # pragma: no cover
+            return None
+
+    registry = _Registry()
+    data_bot = _DataBot()
+    policy = SimpleNamespace(
+        allowlist=None,
+        denylist=frozenset(),
+        is_enabled=lambda _name: True,
+    )
+    monkeypatch.setattr(coding_bot_interface, "get_self_coding_policy", lambda: policy)
+
+    pipeline_helper_states: list[object] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _PipelineHelper:
+        name = "PipelineCommsHelper"
+
+        def __init__(self, *, manager=None, **_kwargs):
+            pipeline_helper_states.append(manager)
+            assert manager is not None
+            self.manager = manager
+            self.initial_manager = manager
+
+    class _ManagerlessPipeline:
+        def __init__(self, *, context_builder, bot_registry=None, data_bot=None):
+            snapshot = getattr(self, "manager", None)
+            assert snapshot is not None
+            self.context_builder = context_builder
+            self.manager = snapshot
+            self.initial_manager = getattr(self, "initial_manager", snapshot)
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.communication_bot = _PipelineHelper(manager=self.manager)
+            self.comms_bot = self.communication_bot
+            self._bots = [self.communication_bot]
+
+        def _attach_information_synthesis_manager(self):  # pragma: no cover - stub
+            return None
+
+    _install_managerless_bootstrap(monkeypatch, _ManagerlessPipeline)
+
+    helper_instances: list[object] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _StandaloneHelper:
+        name = "StandaloneManagerlessHelper"
+
+        def __init__(self, *, manager=None, **_kwargs):
+            helper_instances.append(self)
+            self.manager = manager
+            self.bot_registry = _kwargs.get("bot_registry") or registry
+            self.data_bot = _kwargs.get("data_bot") or data_bot
+
+    helper = _StandaloneHelper()
+    assert helper.manager
+    assert helper.manager.pipeline.communication_bot.manager is helper.manager
+    assert helper.manager.pipeline.initial_manager is helper.manager
+    comms_helper = helper.manager.pipeline.communication_bot
+    assert comms_helper.manager is helper.manager
+    assert comms_helper.initial_manager is helper.manager
+    node = registry.graph.nodes.get(_StandaloneHelper.name)
+    assert node["selfcoding_manager"] is helper.manager
+    assert pipeline_helper_states
+    assert all(state is not None for state in pipeline_helper_states)
