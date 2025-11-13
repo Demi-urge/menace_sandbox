@@ -278,6 +278,198 @@ def test_bootstrap_manager_handles_prebuilt_pipeline(monkeypatch, caplog):
     assert "re-entrant" not in caplog.text
 
 
+def test_bootstrap_manager_handles_nested_helper_bootstrap(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    builder = SimpleNamespace()
+    monkeypatch.setattr(coding_bot_interface, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_self_coding_runtime_available",
+        lambda: True,
+    )
+
+    class _Registry:
+        def register_bot(self, *_args, **_kwargs):
+            return None
+
+        def update_bot(self, *_args, **_kwargs):
+            return None
+
+    registry = _Registry()
+
+    class _DataBot:
+        def __init__(self) -> None:
+            self.thresholds: dict[str, float] = {}
+
+        def reload_thresholds(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                roi_drop=0.1,
+                error_threshold=0.2,
+                test_failure_threshold=0.3,
+            )
+
+    data_bot = _DataBot()
+
+    helper_instances: list[SimpleNamespace] = []
+
+    def _registry_factory() -> SimpleNamespace:
+        return registry
+
+    def _data_bot_factory() -> _DataBot:
+        return data_bot
+
+    _registry_factory.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+    _data_bot_factory.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=_registry_factory,
+        data_bot=_data_bot_factory,
+    )
+    class _ManagedHelper:
+        name = "NestedBootstrapHelper"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.initial_manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.finalized_with = None
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(self, manager, *, registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = registry or self.bot_registry
+            self.data_bot = data_bot or self.data_bot
+            self.finalized_with = (registry, data_bot)
+
+    pipeline_box: dict[str, SimpleNamespace] = {}
+
+    def _pipeline_factory(*, context_builder, manager=None, bot_registry=None, data_bot=None):
+        pipeline = pipeline_box.get("pipeline")
+        if pipeline is None:
+            pipeline = SimpleNamespace(
+                context_builder=context_builder,
+                manager=manager,
+                initial_manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                helper=None,
+                _bots=[],
+                finalized=False,
+                finalizer_args=None,
+                reattach_calls=0,
+            )
+
+            def _attach_information_synthesis_manager():
+                pipeline.reattach_calls += 1
+
+            def _finalize_self_coding_bootstrap(manager_obj, *, registry=None, data_bot=None):
+                pipeline.finalized = True
+                pipeline.finalizer_args = (manager_obj, registry, data_bot)
+
+            pipeline._attach_information_synthesis_manager = (
+                _attach_information_synthesis_manager
+            )
+            pipeline._finalize_self_coding_bootstrap = _finalize_self_coding_bootstrap
+            helper = _ManagedHelper(
+                manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            pipeline.helper = helper
+            pipeline._bots = [helper]
+            pipeline_box["pipeline"] = pipeline
+            return pipeline
+
+        pipeline.manager = manager
+        pipeline.initial_manager = manager
+        pipeline.bot_registry = bot_registry
+        pipeline.data_bot = data_bot
+        helper = pipeline.helper
+        if helper is not None and manager is not None:
+            helper.manager = manager
+        return pipeline
+
+    bootstrap_attempts = {"count": 0}
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            bootstrap_attempts["count"] += 1
+            raise TypeError("preferred bootstrap path unavailable")
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_pipeline_factory
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+
+    pipeline, _promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_pipeline_factory,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    assert pipeline_box["pipeline"] is pipeline
+    assert bootstrap_attempts["count"] == 0
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "NestedPipelineBot", registry, data_bot
+    )
+
+    assert bootstrap_attempts["count"] == 1
+    assert manager
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    helper = pipeline.helper
+    assert isinstance(helper.initial_manager, coding_bot_interface._BootstrapManagerSentinel)
+    assert manager.pipeline is pipeline
+    assert pipeline.manager is manager
+    assert pipeline.reattach_calls >= 1
+    assert helper.manager is manager
+    assert len(helper_instances) == 1
+
+
 def test_bootstrap_entrypoint_uses_prepare_helper(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
