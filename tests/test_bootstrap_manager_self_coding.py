@@ -206,6 +206,100 @@ def prebuilt_pipeline_env(
 
 
 @pytest.fixture
+def reentrant_prebuilt_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build a pipeline whose helper instantiation re-enters ``_bootstrap_manager``.
+
+    The pipeline is constructed *before* the test exercises
+    :func:`coding_bot_interface._bootstrap_manager`.  During construction the
+    ``CommunicationMaintenanceBot`` immediately instantiates a nested helper that
+    is also decorated with :func:`self_coding_managed`.  The nested helper's
+    decorator resolves helpers eagerly and re-enters ``_bootstrap_manager`` while
+    the first call is still running.  This fixture mirrors the production
+    bootstrap regression so the accompanying test can assert the final manager
+    promotion remains stable.
+    """
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("manager bootstrap fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="reentrant")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("ReentrantComms", "ReentrantNestedHelper")
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ReentrantNestedHelper:
+        name = helper_names[1]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ReentrantCommunicationBot:
+        name = helper_names[0]
+
+        def __init__(self) -> None:
+            self.helper = ReentrantNestedHelper()
+
+    class ReentrantPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = ReentrantCommunicationBot()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        ReentrantPipeline
+    )
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=ReentrantPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert pipeline.comms_bot.manager is pipeline.manager
+    assert pipeline.comms_bot.helper.manager is pipeline.manager
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=ReentrantPipeline,
+        pipeline=pipeline,
+        promoter=promoter,
+        helper_names=helper_names,
+    )
+
+
+@pytest.fixture
 def fallback_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -384,6 +478,68 @@ def test_prebuilt_pipeline_helpers_promoted_without_reentrant_warning(
     )
     assert all(
         entry[1] is manager for entry in prebuilt_pipeline_env.registry.promotions
+    )
+
+
+def test_prebuilt_reentrant_pipeline_stabilises_manager(
+    reentrant_prebuilt_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression test for helper decorators re-entering ``_bootstrap_manager``.
+
+    The pipeline is instantiated before calling ``_bootstrap_manager`` so its
+    ``@self_coding_managed`` helpers already kicked off a nested bootstrap while
+    the first call was still constructing the fallback pipeline.  The test
+    ensures the subsequent promotion replaces every helper's manager with the
+    real instance and no re-entrant warnings leak into the logs.
+    """
+
+    import menace.coding_bot_interface as cbi
+
+    def _reuse_prebuilt_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is reentrant_prebuilt_pipeline_env.pipeline_cls
+        return (
+            reentrant_prebuilt_pipeline_env.pipeline,
+            reentrant_prebuilt_pipeline_env.promoter,
+        )
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_prebuilt_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ReentrantOwner",
+            reentrant_prebuilt_pipeline_env.registry,
+            reentrant_prebuilt_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert reentrant_prebuilt_pipeline_env.pipeline.manager is manager
+    assert reentrant_prebuilt_pipeline_env.pipeline.comms_bot.manager is manager
+    assert (
+        reentrant_prebuilt_pipeline_env.pipeline.comms_bot.helper.manager is manager
+    )
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    helper_names = set(reentrant_prebuilt_pipeline_env.helper_names)
+    registered_names = {
+        entry[0] for entry in reentrant_prebuilt_pipeline_env.registry.registered
+    }
+    assert registered_names == helper_names
+    assert all(
+        entry[1].get("manager") is manager
+        for entry in reentrant_prebuilt_pipeline_env.registry.registered
+    )
+    assert {
+        entry[0] for entry in reentrant_prebuilt_pipeline_env.registry.promotions
+    } == helper_names
+    assert all(
+        entry[1] is manager for entry in reentrant_prebuilt_pipeline_env.registry.promotions
     )
 
 
