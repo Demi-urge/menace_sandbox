@@ -1922,7 +1922,11 @@ def _bootstrap_manager(
         )
 
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    if depth > 0:
+    sentinel_active = isinstance(
+        getattr(_BOOTSTRAP_STATE, "sentinel_manager", None),
+        _BootstrapManagerSentinel,
+    )
+    if depth > 0 and not sentinel_active:
         return _disabled_manager(f"re-entrant initialisation depth={depth}")
 
     active = set(getattr(_BOOTSTRAP_STATE, "names", set()))
@@ -2350,10 +2354,13 @@ def self_coding_managed(
                         logger.exception("threshold reload failed for %s", name)
 
                 manager_local = manager_instance or sentinel_manager
+                sentinel_placeholder = isinstance(
+                    manager_local, _BootstrapManagerSentinel
+                )
                 runtime_available = _self_coding_runtime_available()
                 if context is not None:
                     context.manager = manager_local
-                if manager_local is None and runtime_available:
+                if (manager_local is None or sentinel_placeholder) and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
                     if callable(ensure_self_coding_ready):
@@ -2369,6 +2376,8 @@ def self_coding_managed(
                             )
                     if ready:
                         try:
+                            if sentinel_placeholder:
+                                manager_local = None
                             manager_local = manager_local or _bootstrap_manager(
                                 name,
                                 registry_obj,
