@@ -2570,17 +2570,23 @@ def self_coding_managed(
                 return resolved_registry, resolved_data_bot
 
             context: _BootstrapContext | None = None
+            parent_context = _current_bootstrap_context()
+            contextual_manager = None
+            if parent_context is not None and parent_context.manager is not None:
+                contextual_manager = parent_context.manager
             try:
                 registry_obj = _resolve_candidate(bot_registry)
                 data_bot_obj = _resolve_candidate(data_bot)
                 sentinel_manager = getattr(
                     _BOOTSTRAP_STATE, "sentinel_manager", None
                 )
-                manager_for_context = (
-                    manager_instance
-                    if manager_instance is not None
-                    else sentinel_manager
-                )
+                manager_for_context = contextual_manager
+                if manager_for_context is None:
+                    manager_for_context = (
+                        manager_instance
+                        if manager_instance is not None
+                        else sentinel_manager
+                    )
                 context = _push_bootstrap_context(
                     registry=registry_obj,
                     data_bot=data_bot_obj,
@@ -2599,11 +2605,13 @@ def self_coding_managed(
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("threshold reload failed for %s", name)
 
-                manager_local = (
-                    manager_instance
-                    if manager_instance is not None
-                    else sentinel_manager
-                )
+                manager_local = manager_for_context
+                if manager_local is None:
+                    manager_local = (
+                        manager_instance
+                        if manager_instance is not None
+                        else sentinel_manager
+                    )
                 strategy = _should_bootstrap_manager(manager_local)
                 manager_local = strategy.manager
                 sentinel_placeholder = strategy.sentinel is not None
