@@ -203,6 +203,84 @@ def prebuilt_pipeline_env(
     )
 
 
+
+
+@pytest.fixture
+def fallback_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Create a pipeline whose helpers normalise ``manager`` via truthiness checks."""
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("pipeline bootstrap fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="fallback")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("LegacyCommunicationBot", "LegacyNestedHelper")
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class LegacyNestedHelper:
+        name = helper_names[1]
+
+        def __init__(self, manager: object | None = None) -> None:
+            self.bot_name = self.name
+            self.manager = manager
+            self.initial_manager = manager
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class LegacyCommunicationBot:
+        name = helper_names[0]
+
+        def __init__(self, manager: object | None = None) -> None:
+            manager = manager or None
+            self.bot_name = self.name
+            self.manager = manager
+            self.initial_manager = manager
+            self.helper = LegacyNestedHelper(manager=manager)
+
+    class LegacyPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+            **_kwargs: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.comms_bot = LegacyCommunicationBot(manager=manager)
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        LegacyPipeline
+    )
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        helper_names=helper_names,
+    )
+
+
 def test_pipeline_bootstrap_promotes_sentinel(stub_bootstrap_env: dict[str, ModuleType], caplog: pytest.LogCaptureFixture) -> None:
     import menace.coding_bot_interface as cbi
 
@@ -306,4 +384,81 @@ def test_prebuilt_pipeline_helpers_promoted_without_reentrant_warning(
     )
     assert all(
         entry[1] is manager for entry in prebuilt_pipeline_env.registry.promotions
+    )
+
+
+def test_bootstrap_manager_handles_truthy_owner_sentinel(
+    fallback_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    manager = cbi._bootstrap_manager(
+        "LegacyPipelineOwner",
+        fallback_pipeline_env.registry,
+        fallback_pipeline_env.data_bot,
+    )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+
+    registered_names = {entry[0] for entry in fallback_pipeline_env.registry.registered}
+    assert registered_names == set(fallback_pipeline_env.helper_names)
+    assert {entry[0] for entry in fallback_pipeline_env.registry.promotions} == set(
+        fallback_pipeline_env.helper_names
+    )
+    assert all(
+        entry[1] is manager for entry in fallback_pipeline_env.registry.promotions
+    )
+
+
+def test_bootstrap_manager_warns_when_owner_sentinel_is_falsy(
+    fallback_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    original_activate = cbi._activate_bootstrap_sentinel
+
+    def _regression_activate(manager: object | None) -> Callable[[], None]:  # pragma: no cover - regression hook
+        restore = original_activate(manager)
+        try:
+            delattr(cbi._BOOTSTRAP_STATE, "sentinel_manager")
+        except AttributeError:
+            pass
+        return restore
+
+    monkeypatch.setattr(cbi, "_activate_bootstrap_sentinel", _regression_activate)
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    manager = cbi._bootstrap_manager(
+        "LegacyPipelineOwner",
+        fallback_pipeline_env.registry,
+        fallback_pipeline_env.data_bot,
+    )
+
+    assert any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+
+    registered_names = {entry[0] for entry in fallback_pipeline_env.registry.registered}
+    assert registered_names == set(fallback_pipeline_env.helper_names)
+    assert all(
+        isinstance(entry[1].get("manager"), cbi._DisabledSelfCodingManager)
+        for entry in fallback_pipeline_env.registry.registered
     )
