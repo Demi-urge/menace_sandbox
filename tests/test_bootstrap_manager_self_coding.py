@@ -204,6 +204,105 @@ def prebuilt_pipeline_env(
 
 
 
+@pytest.fixture
+def prebuilt_managerless_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build a pipeline whose helpers bootstrap themselves before tests run."""
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("manager bootstrap fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="prebuilt-managerless")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("PrebuiltManagerlessComms", "PrebuiltManagerlessNested")
+    placeholder_manager = cbi._DisabledSelfCodingManager(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    bootstrap_attempts: list[str] = []
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PrebuiltManagerlessNestedHelper:
+        name = helper_names[1]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PrebuiltManagerlessCommunicationBot:
+        name = helper_names[0]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+            self.helper = PrebuiltManagerlessNestedHelper()
+
+    class PrebuiltManagerlessPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = None
+            self.initial_manager = None
+            self.comms_bot = PrebuiltManagerlessCommunicationBot()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        PrebuiltManagerlessPipeline
+    )
+
+    with monkeypatch.context() as patch_context:
+        def _capture_reentrant_bootstrap(
+            name: str, bot_registry: object, data_bot_obj: object
+        ) -> object:
+            bootstrap_attempts.append(name)
+            return placeholder_manager
+
+        patch_context.setattr(cbi, "_bootstrap_manager", _capture_reentrant_bootstrap)
+        pipeline = PrebuiltManagerlessPipeline(
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+
+    assert bootstrap_attempts  # ensure nested helpers attempted to bootstrap
+
+    def _promote(manager: object) -> None:
+        cbi._promote_pipeline_manager(pipeline, manager, placeholder_manager)
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=PrebuiltManagerlessPipeline,
+        pipeline=pipeline,
+        promoter=_promote,
+        helper_names=helper_names,
+        bootstrap_attempts=tuple(bootstrap_attempts),
+        placeholder=placeholder_manager,
+    )
+
+
 
 @pytest.fixture
 def reentrant_prebuilt_pipeline_env(
@@ -549,6 +648,60 @@ def test_prebuilt_pipeline_helpers_promoted_without_reentrant_warning(
     )
     assert all(
         entry[1] is manager for entry in prebuilt_pipeline_env.registry.promotions
+    )
+
+
+def test_prebuilt_managerless_pipeline_promotes_helpers(
+    prebuilt_managerless_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is prebuilt_managerless_pipeline_env.pipeline_cls
+        return (
+            prebuilt_managerless_pipeline_env.pipeline,
+            prebuilt_managerless_pipeline_env.promoter,
+        )
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "PrebuiltManagerlessOwner",
+            prebuilt_managerless_pipeline_env.registry,
+            prebuilt_managerless_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    pipeline = prebuilt_managerless_pipeline_env.pipeline
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+
+    helper_names = set(prebuilt_managerless_pipeline_env.helper_names)
+    registered_names = {
+        entry[0] for entry in prebuilt_managerless_pipeline_env.registry.registered
+    }
+    assert registered_names == helper_names
+    promoted_names = {
+        entry[0] for entry in prebuilt_managerless_pipeline_env.registry.promotions
+    }
+    assert promoted_names == helper_names
+    assert all(
+        entry[1] is manager
+        for entry in prebuilt_managerless_pipeline_env.registry.promotions
+    )
+    assert helper_names.issubset(
+        set(prebuilt_managerless_pipeline_env.bootstrap_attempts)
     )
 
 
