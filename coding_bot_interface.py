@@ -1969,6 +1969,39 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
 
         return self._delegate or self
 
+    def claim_bootstrap_state_guard(
+        self, guard: Callable[[], None] | None
+    ) -> bool:
+        """Delegate guard ownership to the bootstrap owner sentinel when present."""
+
+        if guard is None:
+            return False
+        delegate = self._bootstrap_owner_delegate
+        claim_guard = getattr(delegate, "claim_bootstrap_state_guard", None)
+        if not callable(claim_guard):
+            return False
+        try:
+            return bool(claim_guard(guard))
+        except Exception:  # pragma: no cover - delegate coordination best-effort
+            logger.debug(
+                "bootstrap manager sentinel failed to claim guard", exc_info=True
+            )
+        return False
+
+    def _release_bootstrap_state(self) -> None:
+        """Proxy guard release requests to the bootstrap owner sentinel."""
+
+        delegate = self._bootstrap_owner_delegate
+        release_guard = getattr(delegate, "_release_bootstrap_state", None)
+        if not callable(release_guard):
+            return
+        try:
+            release_guard()
+        except Exception:  # pragma: no cover - delegate coordination best-effort
+            logger.debug(
+                "bootstrap manager sentinel failed to release guard", exc_info=True
+            )
+
     def add_delegate_callback(self, callback: Callable[[Any], None]) -> None:
         """Subscribe *callback* to manager promotion events."""
 
@@ -2472,7 +2505,6 @@ def _bootstrap_manager(
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
     _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
 
-    placeholder_manager: Any | None = None
     try:
         manager_cls = _resolve_self_coding_manager_cls()
         if manager_cls is None:
@@ -2511,10 +2543,7 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        placeholder_manager = _DisabledSelfCodingManager(
-            bot_registry=bot_registry,
-            data_bot=data_bot,
-        )
+        _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
         bootstrap_owner = _BootstrapOwnerSentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
@@ -2526,7 +2555,7 @@ def _bootstrap_manager(
         owner_context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
-            manager=bootstrap_owner,
+            manager=sentinel_manager,
         )
         try:
             code_db_cls = _load_optional_module("code_database").CodeDB
@@ -2551,23 +2580,11 @@ def _bootstrap_manager(
                 context_builder=ctx_builder,
                 bot_registry=bot_registry,
                 data_bot=data_bot,
-                manager_override=bootstrap_owner,
-                manager_sentinel=placeholder_manager,
+                manager_override=sentinel_manager,
+                manager_sentinel=sentinel_manager,
+                manager=sentinel_manager,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
-            try:
-                current_manager = getattr(pipeline, "manager", None)
-            except Exception:
-                current_manager = None
-            if current_manager is not placeholder_manager:
-                try:
-                    setattr(pipeline, "manager", placeholder_manager)
-                except Exception:  # pragma: no cover - best effort
-                    logger.debug(
-                        "pipeline manager sentinel assignment failed for %s",
-                        pipeline,
-                        exc_info=True,
-                    )
         finally:
             _pop_bootstrap_context(owner_context)
         manager_mod = _load_optional_module(
