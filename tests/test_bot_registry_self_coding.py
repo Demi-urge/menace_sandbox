@@ -725,6 +725,169 @@ def test_bootstrap_manager_handles_communication_bot_in_legacy_pipeline(
     assert all(getattr(bot, "manager", None) is manager for bot in pipeline._bots)
 
 
+def test_bootstrap_manager_promotes_eager_pipeline_helpers(monkeypatch, caplog):
+    """Pipeline bootstrap should promote nested helpers instantiated without a manager."""
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = _make_registry()
+    thresholds = SimpleNamespace(
+        roi_drop=0.0,
+        error_threshold=0.0,
+        test_failure_threshold=0.0,
+    )
+    data_bot = SimpleNamespace(
+        reload_thresholds=lambda name: thresholds,
+        check_degradation=lambda *args, **kwargs: None,
+        subscribe_degradation=lambda callback: None,
+        event_bus=None,
+    )
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_DEFERRED_SENTINEL_CALLBACKS",
+        set(),
+        raising=False,
+    )
+
+    helper_name = "StubCommunicationMaintenanceBot"
+    registry.graph.add_node(helper_name, is_coding_bot=True)
+
+    attach_counter = {"count": 0}
+    original_attach = coding_bot_interface._BootstrapManagerSentinel.attach_delegate
+
+    def _tracking_attach(self, real_manager):
+        attach_counter["count"] += 1
+        return original_attach(self, real_manager)
+
+    monkeypatch.setattr(
+        coding_bot_interface._BootstrapManagerSentinel,
+        "attach_delegate",
+        _tracking_attach,
+        raising=False,
+    )
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("use fallback pipeline bootstrap")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _StubCommunicationMaintenanceBot:
+        name = helper_name
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    comms_module = SimpleNamespace(
+        CommunicationMaintenanceBot=_StubCommunicationMaintenanceBot
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.communication_maintenance_bot",
+        comms_module,
+    )
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    class _UserSpacePipeline:
+        def __init__(self, *, context_builder, bot_registry, data_bot, manager):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = comms_module.CommunicationMaintenanceBot(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            self.comms_initial_manager = self.comms_bot.manager
+            self._bots = [self.comms_bot]
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_UserSpacePipeline
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+        "quick_fix_engine": SimpleNamespace(
+            QuickFixEngine=lambda *args, **kwargs: SimpleNamespace()
+        ),
+        "error_bot": SimpleNamespace(ErrorDB=lambda: SimpleNamespace()),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name in modules:
+            return modules[name]
+        raise AssertionError(f"unexpected optional module {name}")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "UserSpacePipelineBot", registry, data_bot
+    )
+
+    assert attach_counter["count"] == 1
+    assert not any("re-entrant" in record.message.lower() for record in caplog.records)
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert isinstance(
+        pipeline.initial_manager, coding_bot_interface._BootstrapManagerSentinel
+    )
+    assert pipeline.initial_manager is pipeline.comms_initial_manager
+    assert pipeline.comms_bot.manager is manager
+
+    helper_node = registry.graph.nodes[helper_name]
+    assert helper_node["selfcoding_manager"] is manager
+    assert helper_node["manager"] is manager
+    assert helper_node["selfcoding_manager"] is not pipeline.initial_manager
+
 def test_bootstrap_manager_fallback_honors_sentinel_during_nested_pipeline_init(
     monkeypatch, caplog
 ):
