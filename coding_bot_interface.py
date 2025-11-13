@@ -1690,8 +1690,14 @@ class _DisabledSelfCodingManager:
         return getattr(self.engine, "context_builder", None)
 
 
-class _BootstrapOwnerManager(_DisabledSelfCodingManager):
-    """Sentinel exposed while the fallback bootstrap pipeline is active."""
+class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
+    """Sentinel exposed while the fallback bootstrap pipeline is active.
+
+    The sentinel deliberately evaluates truthy so downstream helpers treat it as
+    an active manager while ``_bootstrap_manager`` is still constructing the
+    real ``SelfCodingManager``.  This ensures bootstrap heuristics do not try to
+    re-enter while the fallback pipeline is wiring itself up.
+    """
 
     __slots__ = _DisabledSelfCodingManager.__slots__ + (
         "_promotion_callbacks",
@@ -1712,6 +1718,13 @@ class _BootstrapOwnerManager(_DisabledSelfCodingManager):
         self._bootstrap_state_guard: Callable[[], None] | None = None
         self._owner_active = False
         self._pipeline_promoter: Callable[[Any], None] | None = None
+
+    def __bool__(self) -> bool:  # pragma: no cover - trivial truthiness
+        """Stay truthy while acting as the bootstrap owner sentinel."""
+
+        if self._owner_active:
+            return True
+        return bool(self._resolved_manager)
 
     @property
     def bootstrap_owner_active(self) -> bool:
@@ -1867,7 +1880,7 @@ def _using_bootstrap_sentinel(candidate: Any | None = None) -> bool:
     if candidate is sentinel_manager:
         return True
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    return depth > 0 and isinstance(sentinel_manager, _BootstrapManagerSentinel)
+    return depth > 0 and _is_bootstrap_placeholder(sentinel_manager)
 
 
 class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
@@ -2311,9 +2324,8 @@ def _bootstrap_manager(
         )
 
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    sentinel_active = isinstance(
-        getattr(_BOOTSTRAP_STATE, "sentinel_manager", None),
-        _BootstrapManagerSentinel,
+    sentinel_active = _is_bootstrap_placeholder(
+        getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     )
     if depth > 0 and not sentinel_active:
         return _disabled_manager(f"re-entrant initialisation depth={depth}")
@@ -2379,7 +2391,7 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        bootstrap_owner = _BootstrapOwnerManager(
+        bootstrap_owner = _BootstrapOwnerSentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
@@ -2415,7 +2427,7 @@ def _bootstrap_manager(
                 context_builder=ctx_builder,
                 bot_registry=bot_registry,
                 data_bot=data_bot,
-                sentinel_factory=lambda: bootstrap_owner,
+                manager_override=bootstrap_owner,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
             try:
