@@ -22,6 +22,7 @@ import contextlib
 import contextvars
 import importlib.util
 import sys
+from collections import deque
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from functools import wraps
 import inspect
@@ -2405,31 +2406,91 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
 
     _swap_manager(pipeline)
 
-    bots: Iterable[Any]
-    bots = getattr(pipeline, "_bots", ()) or ()
-    related: list[Any] = [
-        getattr(pipeline, attr, None)
-        for attr in (
+    def _iter_related_values(value: Any) -> Iterator[Any]:
+        if value is None:
+            return
+        if isinstance(value, Mapping):
+            for nested in value.values():
+                yield from _iter_related_values(nested)
+            return
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for nested in value:
+                yield from _iter_related_values(nested)
+            return
+        yield value
+
+    def _should_queue_candidate(candidate: Any) -> bool:
+        if candidate is None:
+            return False
+        if id(candidate) in sentinel_ids:
+            return False
+        if isinstance(candidate, (str, bytes, bytearray, int, float, complex, bool)):
+            return False
+        try:
+            manager_candidate = getattr(candidate, "manager", None)
+        except Exception:
+            manager_candidate = None
+        if _is_placeholder(manager_candidate):
+            return True
+        try:
+            initial_candidate = getattr(candidate, "initial_manager", None)
+        except Exception:
+            initial_candidate = None
+        return _is_placeholder(initial_candidate)
+
+    def _collect_related_targets(root: Any) -> list[Any]:
+        related: list[Any] = []
+        if root is None:
+            return related
+        attr_hints = (
             "comms_bot",
             "synthesis_bot",
             "diagnostic_manager",
             "planner",
             "aggregator",
+            "helper",
+            "helpers",
+            "_helpers",
+            "bots",
+            "_bots",
         )
-    ]
-    for candidate in bots:
-        related.append(candidate)
+        for attr in attr_hints:
+            try:
+                value = getattr(root, attr)
+            except Exception:
+                continue
+            for candidate in _iter_related_values(value):
+                if _should_queue_candidate(candidate):
+                    related.append(candidate)
+        mapping = getattr(root, "__dict__", None)
+        if isinstance(mapping, dict):
+            for value in mapping.values():
+                for candidate in _iter_related_values(value):
+                    if _should_queue_candidate(candidate):
+                        related.append(candidate)
+        return related
 
-    seen: set[int] = set()
-    for candidate in related:
+    seen: set[int] = {id(pipeline)}
+    pending: deque[Any] = deque()
+
+    def _enqueue(candidate: Any) -> None:
         if candidate is None:
-            continue
+            return
         key = id(candidate)
         if key in seen:
-            continue
+            return
         seen.add(key)
+        pending.append(candidate)
+
+    for candidate in _collect_related_targets(pipeline):
+        _enqueue(candidate)
+
+    while pending:
+        candidate = pending.popleft()
         _swap_manager(candidate)
         _invoke_finalizer(candidate)
+        for nested in _collect_related_targets(candidate):
+            _enqueue(nested)
 
     def _promote_registry_metadata() -> None:
         if registry_ref is None:
@@ -2536,6 +2597,30 @@ def prepare_pipeline_for_bootstrap(
         owner_guard_attached,
         release_owner_guard,
     ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
+    manual_restore_pending = not owner_guard_attached
+    sentinel_state_released = False
+
+    def _finalize_bootstrap_state(*, due_to_failure: bool = False) -> None:
+        nonlocal manual_restore_pending, owner_guard_attached, sentinel_state_released
+        if sentinel_state_released:
+            return
+        if due_to_failure and owner_guard_attached:
+            released = False
+            if callable(release_owner_guard):
+                try:
+                    release_owner_guard()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    logger.debug(
+                        "bootstrap owner sentinel guard release failed", exc_info=True
+                    )
+                else:
+                    released = True
+            owner_guard_attached = released
+        if manual_restore_pending or not owner_guard_attached:
+            restore_sentinel_state()
+            manual_restore_pending = False
+            owner_guard_attached = False
+            sentinel_state_released = True
     context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
@@ -2595,26 +2680,8 @@ def prepare_pipeline_for_bootstrap(
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
-        if owner_guard_attached:
-            # The bootstrap owner now owns the guard and will release it once the
-            # real manager is promoted.  If we claimed the guard but failed before
-            # installing the pipeline we must release it eagerly to keep the
-            # sentinel stack balanced.
-            continue_guard = pipeline is not None
-            if not continue_guard:
-                released = False
-                if callable(release_owner_guard):
-                    try:
-                        release_owner_guard()
-                    except Exception:  # pragma: no cover - best effort cleanup
-                        logger.debug(
-                            "bootstrap owner sentinel guard release failed", exc_info=True
-                        )
-                    else:
-                        released = True
-                owner_guard_attached = released
-        if not owner_guard_attached:
-            restore_sentinel_state()
+        if pipeline is None:
+            _finalize_bootstrap_state(due_to_failure=True)
 
     try:
         current_manager = getattr(pipeline, "manager", None)
@@ -2629,7 +2696,10 @@ def prepare_pipeline_for_bootstrap(
             )
 
     def _promote(manager: Any) -> None:
-        _promote_pipeline_manager(pipeline, manager, manager_placeholder)
+        try:
+            _promote_pipeline_manager(pipeline, manager, manager_placeholder)
+        finally:
+            _finalize_bootstrap_state()
 
     return pipeline, _promote
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
+from pathlib import Path
 from typing import Callable
 from types import ModuleType, SimpleNamespace
 
@@ -604,6 +606,167 @@ def test_pipeline_bootstrap_promotes_sentinel(stub_bootstrap_env: dict[str, Modu
         "NestedHelper",
     }
     assert all(entry[1] is manager for entry in registry.promotions)
+
+
+def test_fallback_pipeline_promotes_real_communication_bot_manager(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("MENACE_MODE", "development")
+
+    import menace.communication_maintenance_bot as comms_mod
+
+    comms_mod = importlib.reload(comms_mod)
+
+    class _StubContextBuilder:
+        def query(self, *_args: object, **_kwargs: object) -> str:
+            return ""
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - trivial stub
+            return None
+
+    monkeypatch.setattr(comms_mod, "ContextBuilder", _StubContextBuilder)
+    monkeypatch.setattr(comms_mod, "load_templates", lambda: {})
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "flush_queue",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "fetch_cluster_data",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_ensure_repo",
+        lambda self, repo_path: SimpleNamespace(path=repo_path),
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_create_scheduler",
+        lambda self, _broker: SimpleNamespace(),
+    )
+
+    class _StubMaintenanceDB:
+        def __init__(self) -> None:
+            self._state: dict[str, object] = {}
+
+        def get_state(self, key: str) -> object | None:
+            return self._state.get(key)
+
+        def set_state(self, key: str, value: object) -> None:
+            self._state[key] = value
+
+    class _StubDBRouter:
+        def query_all(self, _term: str) -> None:  # pragma: no cover - noop
+            return None
+
+        def get_connection(self, _name: str) -> SimpleNamespace:  # pragma: no cover - noop
+            class _Conn(SimpleNamespace):
+                def execute(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+                    return None
+
+                def close(self) -> None:  # pragma: no cover - noop
+                    return None
+
+            return _Conn()
+
+    class _StubCommStore:
+        def cleanup(self) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubEventBus:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubMemoryMgr:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force fallback pipeline bootstrap")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = _StubContextBuilder()
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    class LegacyCommsPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+            **_kwargs: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            comm_store = _StubCommStore()
+            config = comms_mod.MaintenanceBotConfig(
+                comm_log_path=tmp_path / "comm.log",
+                message_queue=tmp_path / "queue.jsonl",
+                error_db_path=tmp_path / "errors.db",
+                comm_log_max_size_mb=1.0,
+            )
+            self.comms_bot = comms_mod.CommunicationMaintenanceBot(
+                db=_StubMaintenanceDB(),
+                error_bot=None,
+                repo_path=tmp_path,
+                broker=None,
+                db_router=_StubDBRouter(),
+                event_bus=_StubEventBus(),
+                memory_mgr=_StubMemoryMgr(),
+                context_builder=context_builder,
+                webhook_urls=[],
+                comm_store=comm_store,
+                config=config,
+                admin_tokens=[],
+                manager=manager,
+            )
+            helper = getattr(self.comms_bot, "error_bot", None)
+            bots = [self.comms_bot]
+            if helper is not None:
+                bots.append(helper)
+                self.error_helper = helper
+            self._bots = bots
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        LegacyCommsPipeline
+    )
+
+    caplog.set_level(logging.WARNING)
+    manager = cbi._bootstrap_manager("LegacyCommsOwner", registry, data_bot)
+
+    assert not any(
+        "re-entrant initialisation depth" in record.message for record in caplog.records
+    )
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    helper = getattr(pipeline.comms_bot, "error_bot", None)
+    if helper is not None:
+        assert helper.manager is manager
+        assert not isinstance(helper.manager, cbi._DisabledSelfCodingManager)
 
 
 def test_prebuilt_pipeline_helpers_promoted_without_reentrant_warning(
