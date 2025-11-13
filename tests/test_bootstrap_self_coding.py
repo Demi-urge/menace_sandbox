@@ -374,3 +374,137 @@ def test_bootstrap_entrypoint_promotes_manager(monkeypatch, caplog):
     assert pipeline.manager is manager
     assert "re-entrant initialisation depth" not in caplog.text
     assert promote_calls == [manager]
+
+
+def test_bootstrap_entrypoint_promotes_all_bots(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    import menace_sandbox.bootstrap_self_coding as bootstrap_self_coding
+
+    bootstrap_self_coding = importlib.reload(bootstrap_self_coding)
+
+    builder = SimpleNamespace()
+    monkeypatch.setattr(
+        "menace_sandbox.context_builder_util.create_context_builder",
+        lambda: builder,
+    )
+
+    class _Registry:
+        def __init__(self) -> None:
+            self.registered: list[str] = []
+
+    class _DataBot:
+        def __init__(self, *_, **__):
+            self.thresholds: dict[str, object] = {}
+
+        def reload_thresholds(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                roi_drop=0.1, error_threshold=0.2, test_failure_threshold=0.3
+            )
+
+    class _CodeDB:
+        def __init__(self) -> None:
+            self.initialized = True
+
+    class _MemoryManager:
+        def __init__(self) -> None:
+            self.context = None
+
+    class _Engine:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.args = _args
+            self.kwargs = _kwargs
+
+    monkeypatch.setattr("menace_sandbox.bot_registry.BotRegistry", _Registry)
+    monkeypatch.setattr("menace_sandbox.data_bot.DataBot", _DataBot)
+    monkeypatch.setattr(
+        "menace_sandbox.data_bot.persist_sc_thresholds", lambda *_, **__: None
+    )
+    monkeypatch.setattr("menace_sandbox.code_database.CodeDB", _CodeDB)
+    monkeypatch.setattr(
+        "menace_sandbox.menace_memory_manager.MenaceMemoryManager", _MemoryManager
+    )
+    monkeypatch.setattr("menace_sandbox.self_coding_engine.SelfCodingEngine", _Engine)
+
+    thresholds = SimpleNamespace(
+        roi_drop=0.1, error_increase=0.2, test_failure_increase=0.3
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.self_coding_thresholds.get_thresholds",
+        lambda _name: thresholds,
+    )
+
+    pipeline_box: dict[str, SimpleNamespace] = {}
+    manager_box: dict[str, SimpleNamespace] = {}
+
+    def _prepare_pipeline_for_bootstrap(
+        *,
+        pipeline_cls,
+        context_builder,
+        bot_registry,
+        data_bot,
+    ):
+        sentinel = coding_bot_interface._create_bootstrap_manager_sentinel(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+        bots = [SimpleNamespace(name=f"bot-{idx}", manager=sentinel) for idx in range(3)]
+        pipeline = SimpleNamespace(
+            context_builder=context_builder,
+            manager=sentinel,
+            initial_manager=sentinel,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            sentinel_manager=sentinel,
+            _bots=bots,
+            promotions=[],
+        )
+        pipeline_box["pipeline"] = pipeline
+
+        def _promote(manager):
+            pipeline.promotions.append(manager)
+            pipeline.manager = manager
+            for bot in pipeline._bots:
+                bot.manager = manager
+
+        return pipeline, _promote
+
+    monkeypatch.setattr(
+        "menace_sandbox.coding_bot_interface.prepare_pipeline_for_bootstrap",
+        _prepare_pipeline_for_bootstrap,
+    )
+
+    def _internalize_coding_bot(
+        *,
+        bot_name: str,
+        engine: object,
+        pipeline: SimpleNamespace,
+        data_bot: object,
+        bot_registry: object,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        assert pipeline is pipeline_box["pipeline"]
+        manager = SimpleNamespace(
+            bot_name=bot_name,
+            engine=engine,
+            pipeline=pipeline,
+            data_bot=data_bot,
+            bot_registry=bot_registry,
+        )
+        manager_box["manager"] = manager
+        return manager
+
+    monkeypatch.setattr(
+        "menace_sandbox.self_coding_manager.internalize_coding_bot",
+        _internalize_coding_bot,
+    )
+
+    bootstrap_self_coding.bootstrap_self_coding("ExampleBot")
+
+    pipeline = pipeline_box["pipeline"]
+    manager = manager_box["manager"]
+    assert manager
+    assert pipeline.manager is manager
+    assert pipeline.promotions == [manager]
+    assert all(bot.manager is manager for bot in pipeline._bots)
+    assert "re-entrant initialisation depth" not in caplog.text

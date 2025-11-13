@@ -1,8 +1,11 @@
 import sys
-import types
-import sys
-import pytest
 import contextvars
+import logging
+import sys
+import types
+from types import SimpleNamespace
+
+import pytest
 
 
 class DummyManager:
@@ -147,7 +150,11 @@ def test_missing_data_bot():
 
 
 def test_auto_instantiates_orchestrator():
-    registry = DummyRegistry()
+    class _Registry(DummyRegistry):
+        def register_bot(self, name, *_args, **kwargs):
+            return super().register_bot(name, **kwargs)
+
+    registry = _Registry()
     data_bot = DummyDataBot()
 
     @self_coding_managed(bot_registry=registry, data_bot=data_bot)
@@ -179,7 +186,11 @@ def test_orchestrator_autoinstantiation_failure(monkeypatch):
 
 
 def test_successful_initialisation_registers():
-    registry = DummyRegistry()
+    class _Registry(DummyRegistry):
+        def register_bot(self, name, *_args, **kwargs):
+            return super().register_bot(name, **kwargs)
+
+    registry = _Registry()
     data_bot = DummyDataBot()
     orchestrator = DummyOrchestrator()
 
@@ -342,4 +353,68 @@ def test_falsey_manager_preserved_and_disabled_only_on_runtime_failure(
 
     fallback_bot = BotWithFallback()
     assert isinstance(fallback_bot.manager, cbi._DisabledSelfCodingManager)
+
+
+def test_bootstrap_helpers_promotes_manager_with_reentrant_depth(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    class _Registry(DummyRegistry):
+        def register_bot(self, name, *_args, **kwargs):
+            return super().register_bot(name, **kwargs)
+
+    registry = _Registry()
+    data_bot = DummyDataBot()
+    sentinel = cbi._create_bootstrap_manager_sentinel(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1, raising=False)
+    monkeypatch.setattr(
+        cbi._BOOTSTRAP_STATE, "sentinel_manager", sentinel, raising=False
+    )
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(cbi, "ensure_self_coding_ready", lambda: (True, ()))
+    monkeypatch.setattr(cbi, "_registry_hot_swap_active", lambda _registry: False)
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_provenance_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            mode="active",
+            reason=None,
+            patch_id=None,
+            commit=None,
+            available=True,
+            source="tests",
+        ),
+    )
+
+    bootstrap_calls: dict[str, object] = {}
+
+    def _tracking_bootstrap_manager(name, bot_registry, data_bot):
+        bootstrap_calls["depth_before"] = getattr(cbi._BOOTSTRAP_STATE, "depth", 0)
+        manager = SimpleNamespace(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            pipeline=SimpleNamespace(manager=None, _bots=[]),
+        )
+        bootstrap_calls["manager"] = manager
+        bootstrap_calls["depth_after"] = getattr(cbi._BOOTSTRAP_STATE, "depth", 0)
+        return manager
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _tracking_bootstrap_manager)
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class NestedBot:
+        name = "NestedBot"
+
+        def __init__(self):
+            pass
+
+    bot = NestedBot()
+
+    assert bootstrap_calls["manager"] is bot.manager
+    assert bootstrap_calls["depth_before"] == 1
+    assert "re-entrant initialisation depth" not in caplog.text
 
