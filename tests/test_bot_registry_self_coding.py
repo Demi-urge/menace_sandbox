@@ -725,6 +725,143 @@ def test_bootstrap_manager_handles_communication_bot_in_legacy_pipeline(
     assert all(getattr(bot, "manager", None) is manager for bot in pipeline._bots)
 
 
+def test_bootstrap_manager_fallback_honors_sentinel_during_nested_pipeline_init(
+    monkeypatch, caplog
+):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    registry = _make_registry()
+    data_bot = SimpleNamespace()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):
+            raise TypeError("use legacy fallback")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=lambda: registry,
+        data_bot=lambda: data_bot,
+    )
+    class _SentinelCommunicationBot:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.initial_manager = manager
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.error_bot = SimpleNamespace(manager=manager)
+
+    comms_module = SimpleNamespace(
+        CommunicationMaintenanceBot=_SentinelCommunicationBot
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.communication_maintenance_bot",
+        comms_module,
+    )
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry, data_bot, manager):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = comms_module.CommunicationMaintenanceBot(
+                manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            self.initial_comms_manager = self.comms_bot.initial_manager
+            bots = [self.comms_bot, getattr(self.comms_bot, "error_bot", None)]
+            self._bots = [bot for bot in bots if bot is not None]
+            self.reattach_calls = 0
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+    modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_StubPipeline
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubManager),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        return modules[name]
+
+    monkeypatch.setattr(
+        coding_bot_interface, "_load_optional_module", _load_optional_module
+    )
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(),
+    )
+
+    original_bootstrap = coding_bot_interface._bootstrap_manager
+    call_count = 0
+
+    def _spy_bootstrap_manager(name: str, bot_registry, data_bot):
+        nonlocal call_count
+        call_count += 1
+        return original_bootstrap(name, bot_registry, data_bot)
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_bootstrap_manager",
+        _spy_bootstrap_manager,
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "CommunicationMaintenanceBot",
+        registry,
+        data_bot,
+    )
+
+    assert call_count == 1
+    assert isinstance(manager, _StubManager)
+    assert not any("re-entrant" in record.message.lower() for record in caplog.records)
+
+    pipeline = manager.pipeline
+    assert isinstance(
+        pipeline.initial_manager, coding_bot_interface._BootstrapManagerSentinel
+    )
+    assert isinstance(
+        pipeline.initial_comms_manager, coding_bot_interface._BootstrapManagerSentinel
+    )
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.error_bot.manager is manager
+    assert all(getattr(bot, "manager", None) is manager for bot in pipeline._bots)
+
+
 def test_bootstrap_manager_fallback_avoids_reentrant_disabled_manager(monkeypatch, caplog):
     caplog.set_level(logging.WARNING)
 
