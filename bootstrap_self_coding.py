@@ -103,7 +103,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         MenaceMemoryManager(),
         context_builder=builder,
     )
-    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+    pipeline, promote_manager = prepare_pipeline_for_bootstrap(
         pipeline_cls=ModelAutomationPipeline,
         context_builder=builder,
         bot_registry=registry,
@@ -224,7 +224,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         raise RuntimeError(
             f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
         )
-    promote_pipeline(manager)
+    promote_manager(manager)
     LOGGER.info("Self-coding manager registered: \"%s\"", type(manager).__name__)
 
 
