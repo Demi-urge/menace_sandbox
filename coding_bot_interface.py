@@ -1690,6 +1690,130 @@ class _DisabledSelfCodingManager:
         return getattr(self.engine, "context_builder", None)
 
 
+class _BootstrapOwnerManager(_DisabledSelfCodingManager):
+    """Sentinel exposed while the fallback bootstrap pipeline is active."""
+
+    __slots__ = _DisabledSelfCodingManager.__slots__ + (
+        "_promotion_callbacks",
+        "_resolved_manager",
+        "_bootstrap_state_guard",
+        "_owner_active",
+        "_pipeline_promoter",
+    )
+
+    def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
+        super().__init__(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            bootstrap_owner=True,
+        )
+        self._promotion_callbacks: list[Callable[[Any], None]] = []
+        self._resolved_manager: Any | None = None
+        self._bootstrap_state_guard: Callable[[], None] | None = None
+        self._owner_active = False
+        self._pipeline_promoter: Callable[[Any], None] | None = None
+
+    @property
+    def bootstrap_owner_active(self) -> bool:
+        """Return ``True`` while this sentinel guards fallback bootstrap."""
+
+        return self._owner_active
+
+    def claim_bootstrap_state_guard(self, guard: Callable[[], None]) -> bool:
+        """Adopt *guard* so the owner controls bootstrap state cleanup."""
+
+        if not callable(guard):
+            return False
+        self._bootstrap_state_guard = guard
+        self._owner_active = True
+        return True
+
+    def bind_pipeline_promoter(self, callback: Callable[[Any], None]) -> None:
+        """Remember the *callback* used to promote pipeline managers."""
+
+        if callable(callback):
+            self._pipeline_promoter = callback
+
+    def _release_bootstrap_state(self) -> None:
+        guard = self._bootstrap_state_guard
+        self._bootstrap_state_guard = None
+        self._owner_active = False
+        if callable(guard):
+            try:
+                guard()
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug(
+                    "bootstrap owner sentinel failed to release guard", exc_info=True
+                )
+
+    def add_promotion_callback(self, callback: Callable[[Any], None]) -> None:
+        """Subscribe *callback* to manager promotion events."""
+
+        if not callable(callback):
+            return
+        if self._resolved_manager is not None:
+            try:
+                callback(self._resolved_manager)
+            except Exception:  # pragma: no cover - callbacks best-effort
+                logger.debug("bootstrap owner callback failed", exc_info=True)
+            return
+        self._promotion_callbacks.append(callback)
+
+    def add_delegate_callback(self, callback: Callable[[Any], None]) -> None:
+        """Mirror the sentinel API so decorators can subscribe uniformly."""
+
+        self.add_promotion_callback(callback)
+
+    def mark_ready(
+        self,
+        real_manager: Any,
+        *,
+        sentinel: Any | None = None,
+    ) -> None:
+        """Swap this sentinel out for *real_manager* once bootstrap completes."""
+
+        self._resolved_manager = real_manager
+        if real_manager is not None:
+            try:
+                self.bot_registry = getattr(real_manager, "bot_registry", self.bot_registry)
+            except Exception:  # pragma: no cover - best effort injection
+                logger.debug(
+                    "bootstrap owner failed to refresh bot_registry", exc_info=True
+                )
+            try:
+                self.data_bot = getattr(real_manager, "data_bot", self.data_bot)
+            except Exception:  # pragma: no cover - best effort injection
+                logger.debug(
+                    "bootstrap owner failed to refresh data_bot", exc_info=True
+                )
+
+        promoter = self._pipeline_promoter
+        if promoter is None and real_manager is not None:
+            pipeline = getattr(real_manager, "pipeline", None)
+            promoter = lambda mgr: _promote_pipeline_manager(  # type: ignore[assignment]
+                pipeline,
+                mgr,
+                sentinel,
+            )
+
+        if callable(promoter) and real_manager is not None:
+            try:
+                promoter(real_manager)
+            except Exception:  # pragma: no cover - promotion must be best effort
+                logger.debug(
+                    "bootstrap owner pipeline promotion failed", exc_info=True
+                )
+
+        callbacks = tuple(self._promotion_callbacks)
+        self._promotion_callbacks.clear()
+        self._release_bootstrap_state()
+        for callback in callbacks:
+            try:
+                callback(real_manager)
+            except Exception:  # pragma: no cover - callbacks must be best-effort
+                logger.debug("bootstrap owner callback failed", exc_info=True)
+
+
 _BOOTSTRAP_STATE = threading.local()
 _DEFERRED_SENTINEL_CALLBACKS: set[int] = set()
 
@@ -1697,7 +1821,7 @@ _DEFERRED_SENTINEL_CALLBACKS: set[int] = set()
 @dataclass
 class _ManagerBootstrapPlan:
     manager: Any | None
-    sentinel: _BootstrapManagerSentinel | None
+    sentinel: Any | None
     defer: bool
     should_bootstrap: bool
 
@@ -1716,7 +1840,13 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
     )
     if candidate_sentinel is None:
         return plan
+    owner_active = bool(getattr(candidate_sentinel, "bootstrap_owner_active", False))
     if candidate_sentinel is sentinel_manager and bootstrap_depth > 0:
+        plan.defer = True
+        plan.should_bootstrap = False
+        plan.manager = candidate_sentinel
+        return plan
+    if owner_active:
         plan.defer = True
         plan.should_bootstrap = False
         plan.manager = candidate_sentinel
@@ -2050,6 +2180,7 @@ def prepare_pipeline_for_bootstrap(
     bot_registry: Any,
     data_bot: Any,
     manager_override: Any | None = None,
+    sentinel_factory: Callable[[], Any] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -2061,17 +2192,22 @@ def prepare_pipeline_for_bootstrap(
     references are promoted atomically.
     ``manager_override`` allows callers to reuse an existing sentinel instead of
     creating a new one when nested helper bootstrap is already in progress.
+    ``sentinel_factory`` can be used to lazily construct a sentinel so callers
+    can track when bootstrap contexts adopt it.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
 
     sentinel_manager = manager_override
+    if sentinel_manager is None and sentinel_factory is not None:
+        sentinel_manager = sentinel_factory()
     if sentinel_manager is None:
         sentinel_manager = _create_bootstrap_manager_sentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
+    guard_claimed = False
     context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
@@ -2118,6 +2254,16 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
+        claim_guard = getattr(sentinel_manager, "claim_bootstrap_state_guard", None)
+        if callable(claim_guard):
+            try:
+                guard_claimed = bool(claim_guard(restore_sentinel_state))
+            except Exception:  # pragma: no cover - best effort coordination
+                logger.debug(
+                    "sentinel failed to claim bootstrap guard", exc_info=True
+                )
+        if guard_claimed:
+            restore_sentinel_state = lambda: None
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
@@ -2233,10 +2379,9 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        bootstrap_owner = _DisabledSelfCodingManager(
+        bootstrap_owner = _BootstrapOwnerManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
-            bootstrap_owner=True,
         )
         try:
             sentinel_manager._bootstrap_owner_delegate = bootstrap_owner
@@ -2270,8 +2415,9 @@ def _bootstrap_manager(
                 context_builder=ctx_builder,
                 bot_registry=bot_registry,
                 data_bot=data_bot,
-                manager_override=bootstrap_owner,
+                sentinel_factory=lambda: bootstrap_owner,
             )
+            bootstrap_owner.bind_pipeline_promoter(promote)
             try:
                 current_manager = getattr(pipeline, "manager", None)
             except Exception:
@@ -2303,8 +2449,7 @@ def _bootstrap_manager(
                 attach_delegate(manager)
             except Exception:  # pragma: no cover - best effort bridge
                 logger.debug("sentinel delegate attachment failed", exc_info=True)
-        promote(manager)
-        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
+        bootstrap_owner.mark_ready(manager, sentinel=sentinel_manager)
         return manager
     except RuntimeError:
         raise
@@ -2665,6 +2810,7 @@ def self_coding_managed(
                 runtime_available = _self_coding_runtime_available()
                 register_deferred_local = register_deferred
                 sentinel_in_use = False
+                owner_sentinel_active = False
                 if strategy.defer and strategy.sentinel is not None:
                     logger.debug(
                         "%s: sentinel manager active at bootstrap depth=%s; deferring real manager promotion",
@@ -2685,6 +2831,17 @@ def self_coding_managed(
                     sentinel_in_use = True
                 else:
                     sentinel_in_use = _using_bootstrap_sentinel(manager_local)
+                if _is_bootstrap_owner(manager_local):
+                    owner_sentinel_active = bool(
+                        getattr(manager_local, "bootstrap_owner_active", False)
+                    )
+                    if owner_sentinel_active:
+                        sentinel_in_use = True
+                    elif sentinel_in_use:
+                        logger.debug(
+                            "%s: bootstrap owner sentinel detected without active guard; awaiting promotion",
+                            name,
+                        )
                 if sentinel_in_use:
                     subscribe = getattr(
                         _finalize_self_coding_bootstrap,
@@ -3097,7 +3254,7 @@ def self_coding_managed(
                 )
 
         def _subscribe_to_deferred_promotion(
-            sentinel: _BootstrapManagerSentinel | None,
+            sentinel: Any | None,
         ) -> None:
             if sentinel is None:
                 return
@@ -3110,7 +3267,12 @@ def self_coding_managed(
                 pipeline = getattr(real_manager, "pipeline", None)
                 _promote_pipeline_manager(pipeline, real_manager, sentinel)
 
-            sentinel.add_delegate_callback(_trigger)
+            subscribe_callback = getattr(sentinel, "add_delegate_callback", None)
+            if not callable(subscribe_callback):
+                subscribe_callback = getattr(sentinel, "add_promotion_callback", None)
+            if not callable(subscribe_callback):
+                return
+            subscribe_callback(_trigger)
 
         cls._finalize_self_coding_bootstrap = staticmethod(  # type: ignore[attr-defined]
             _finalize_self_coding_bootstrap
