@@ -151,6 +151,208 @@ def test_script_bootstrap_promotes_real_manager(monkeypatch, caplog):
     assert all(bot.manager is manager for bot in pipeline._bots)
 
 
+def test_fallback_bootstrap_nested_helpers_use_owner_sentinel(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    thresholds = SimpleNamespace(
+        roi_drop=0.0,
+        error_threshold=0.0,
+        test_failure_threshold=0.0,
+    )
+
+    class _Registry:
+        def register_bot(self, *_args, **_kwargs):
+            return None
+
+        def update_bot(self, *_args, **_kwargs):
+            return None
+
+    class _DataBot:
+        def reload_thresholds(self, *_args, **_kwargs):
+            return thresholds
+
+        def schedule_monitoring(self, *_args, **_kwargs):
+            return None
+
+    registry = _Registry()
+    data_bot = _DataBot()
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+
+    policy = SimpleNamespace(
+        allowlist=None,
+        denylist=frozenset(),
+        is_enabled=lambda _name: True,
+    )
+    monkeypatch.setattr(
+        coding_bot_interface, "get_self_coding_policy", lambda: policy
+    )
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "create_context_builder",
+        lambda: SimpleNamespace(name="context"),
+    )
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry, data_bot):  # pragma: no cover - stub
+            raise TypeError("legacy path")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    helper_instances: list[SimpleNamespace] = []
+    nested_helper_instances: list[SimpleNamespace] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _NestedHelper:
+        name = "FallbackNestedHelper"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.initial_manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            nested_helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(
+            self, manager, *, registry=None, data_bot=None
+        ):
+            self.manager = manager
+            if registry is not None:
+                self.bot_registry = registry
+            if data_bot is not None:
+                self.data_bot = data_bot
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _OuterHelper:
+        name = "FallbackOuterHelper"
+
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.initial_manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.nested_helper = _NestedHelper(
+                manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(
+            self, manager, *, registry=None, data_bot=None
+        ):
+            self.manager = manager
+            if registry is not None:
+                self.bot_registry = registry
+            if data_bot is not None:
+                self.data_bot = data_bot
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder, bot_registry, data_bot, manager):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.finalized = False
+            self.finalizer_args = None
+            self._bots = []
+            self.helper = _OuterHelper(
+                manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            self._bots.extend([self.helper, self.helper.nested_helper])
+            self.reattach_calls = 0
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+        def _finalize_self_coding_bootstrap(
+            self, manager, *, registry=None, data_bot=None
+        ):
+            self.finalized = True
+            self.finalizer_args = (manager, registry, data_bot)
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class _StubSelfCodingManager:
+        def __init__(self, engine, pipeline, *, bot_name, data_bot, bot_registry):
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+
+    stub_modules = {
+        "code_database": SimpleNamespace(CodeDB=_StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=_StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=_StubEngine),
+        "model_automation_pipeline": SimpleNamespace(
+            ModelAutomationPipeline=_StubPipeline
+        ),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=_StubSelfCodingManager),
+    }
+
+    def _load_optional_module(name: str, *, fallback: str | None = None):
+        if name not in stub_modules:
+            raise AssertionError(f"unexpected optional module {name}")
+        return stub_modules[name]
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _load_optional_module,
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "NestedFallbackBot", registry, data_bot
+    )
+
+    assert manager
+    assert isinstance(manager, _StubSelfCodingManager)
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    pipeline = manager.pipeline
+    assert isinstance(pipeline, _StubPipeline)
+    assert pipeline.manager is manager
+    assert pipeline.reattach_calls >= 1
+
+    assert helper_instances and nested_helper_instances
+    for helper in (*helper_instances, *nested_helper_instances):
+        assert helper.manager is manager
+        assert helper.initial_manager is not manager
+        assert helper.bot_registry is registry
+        assert helper.data_bot is data_bot
+
+    assert all(bot.manager is manager for bot in pipeline._bots)
+
+
 def test_bootstrap_manager_handles_prebuilt_pipeline(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
