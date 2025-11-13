@@ -169,6 +169,12 @@ def _current_bootstrap_context() -> _BootstrapContext | None:
     return stack[-1]
 
 
+def _is_bootstrap_owner(candidate: Any) -> bool:
+    """Return ``True`` if *candidate* represents the bootstrap owner sentinel."""
+
+    return bool(getattr(candidate, "_bootstrap_owner_marker", False))
+
+
 def _record_cooperative_init_trace(
     instance: object,
     cls: type,
@@ -1625,9 +1631,16 @@ class _DisabledSelfCodingManager:
         "evolution_orchestrator",
         "_last_patch_id",
         "_last_commit_hash",
+        "_bootstrap_owner_marker",
     )
 
-    def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
+    def __init__(
+        self,
+        *,
+        bot_registry: Any,
+        data_bot: Any,
+        bootstrap_owner: bool = False,
+    ) -> None:
         self.bot_registry = bot_registry
         self.data_bot = data_bot
         self.engine = SimpleNamespace(
@@ -1639,6 +1652,7 @@ class _DisabledSelfCodingManager:
         self.evolution_orchestrator = None
         self._last_patch_id = None
         self._last_commit_hash = None
+        self._bootstrap_owner_marker = bootstrap_owner
 
     def __bool__(self) -> bool:
         """Report ``False`` so helper heuristics treat the manager as disabled."""
@@ -1714,6 +1728,7 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
         "_delegate_callbacks",
         "_owner_registry",
         "_owner_data_bot",
+        "_bootstrap_owner_delegate",
     )
 
     def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
@@ -1722,6 +1737,7 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
         self._delegate_callbacks: list[Callable[[Any], None]] = []
         self._owner_registry = bot_registry
         self._owner_data_bot = data_bot
+        self._bootstrap_owner_delegate: Any | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - truthiness is trivial
         return True
@@ -1792,7 +1808,7 @@ def _create_bootstrap_manager_sentinel(
 
 
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
-    """Swap *sentinel* references for *manager* across the pipeline hierarchy."""
+    """Swap sentinel references for *manager* across the pipeline hierarchy."""
 
     if pipeline is None or manager is None or manager is sentinel:
         return
@@ -1800,6 +1816,20 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
     registry_ref = getattr(manager, "bot_registry", None)
     data_bot_ref = getattr(manager, "data_bot", None)
     finalized_targets: set[int] = set()
+    sentinel_candidates: list[Any] = []
+    if sentinel is not None:
+        sentinel_candidates.append(sentinel)
+        delegate = getattr(sentinel, "_bootstrap_owner_delegate", None)
+        if delegate is not None:
+            sentinel_candidates.append(delegate)
+    sentinel_ids = {id(candidate) for candidate in sentinel_candidates}
+
+    def _is_placeholder(value: Any) -> bool:
+        if value is None:
+            return False
+        if id(value) in sentinel_ids:
+            return True
+        return _is_bootstrap_owner(value)
 
     def _invoke_finalizer(target: Any) -> None:
         if target is None:
@@ -1828,19 +1858,57 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 finalized_targets.add(key)
         except Exception:  # pragma: no cover - finaliser errors are non-fatal
             logger.debug("manager finaliser failed for %s", target, exc_info=True)
-        else:
-            finalized_targets.add(key)
 
-    def _swap_manager(target: Any) -> None:
+    def _rewire_helper_attributes(target: Any) -> None:
         if target is None:
             return
+        for attr, replacement in (
+            ("manager", manager),
+            ("bot_registry", registry_ref),
+            ("data_bot", data_bot_ref),
+        ):
+            if replacement is None:
+                continue
+            try:
+                current = getattr(target, attr)
+            except Exception:
+                continue
+            if not _is_placeholder(current):
+                continue
+            try:
+                setattr(target, attr, replacement)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to promote %s attribute on %s", attr, target, exc_info=True
+                )
         try:
-            current = getattr(target, "manager", None)
-        except Exception:  # pragma: no cover - introspection guard
-            logger.debug("manager promotion inspection failed for %s", target, exc_info=True)
+            finalizer_attr = getattr(target, "_finalize_self_coding_bootstrap")
+        except Exception:
+            finalizer_attr = None
+        if finalizer_attr is None:
+            return
+        owner = getattr(finalizer_attr, "__self__", None)
+        if _is_placeholder(owner) or _is_placeholder(finalizer_attr):
+            try:
+                delattr(target, "_finalize_self_coding_bootstrap")
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug(
+                    "failed to reset _finalize_self_coding_bootstrap on %s",
+                    target,
+                    exc_info=True,
+                )
+
+    def _swap_manager(target: Any) -> None:
+        nonlocal finalized_targets
+        if target is None:
             return
         finalizer_targets: list[Any] = []
-        if current is sentinel:
+        _rewire_helper_attributes(target)
+        try:
+            current_manager = getattr(target, "manager", None)
+        except Exception:  # pragma: no cover - best effort
+            current_manager = None
+        if _is_placeholder(current_manager):
             try:
                 setattr(target, "manager", manager)
             except Exception:  # pragma: no cover - best effort reassignment
@@ -1856,7 +1924,7 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                     "manager promotion inspection failed for %s class", owner, exc_info=True
                 )
             else:
-                if owner_current is sentinel:
+                if _is_placeholder(owner_current):
                     try:
                         setattr(owner, "manager", manager)
                     except Exception:  # pragma: no cover - class level guard
@@ -2092,30 +2160,60 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        code_db_cls = _load_optional_module("code_database").CodeDB
-        memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
-        engine_mod = _load_optional_module(
-            "self_coding_engine", fallback="menace.self_coding_engine"
-        )
-        pipeline_mod = _load_optional_module(
-            "model_automation_pipeline", fallback="menace.model_automation_pipeline"
-        )
-        ctx_builder = create_context_builder()
-        engine = engine_mod.SelfCodingEngine(
-            code_db_cls(),
-            memory_cls(),
-            context_builder=ctx_builder,
-        )
-        pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
-        if pipeline_cls is None:
-            raise RuntimeError("ModelAutomationPipeline is unavailable")
-        pipeline, promote = prepare_pipeline_for_bootstrap(
-            pipeline_cls=pipeline_cls,
-            context_builder=ctx_builder,
+        bootstrap_owner = _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
-            manager_override=sentinel_manager,
+            bootstrap_owner=True,
         )
+        try:
+            sentinel_manager._bootstrap_owner_delegate = bootstrap_owner
+        except Exception:  # pragma: no cover - best effort linkage
+            logger.debug("failed to link bootstrap owner sentinel", exc_info=True)
+        owner_context = _push_bootstrap_context(
+            registry=bot_registry,
+            data_bot=data_bot,
+            manager=bootstrap_owner,
+        )
+        try:
+            code_db_cls = _load_optional_module("code_database").CodeDB
+            memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
+            engine_mod = _load_optional_module(
+                "self_coding_engine", fallback="menace.self_coding_engine"
+            )
+            pipeline_mod = _load_optional_module(
+                "model_automation_pipeline", fallback="menace.model_automation_pipeline"
+            )
+            ctx_builder = create_context_builder()
+            engine = engine_mod.SelfCodingEngine(
+                code_db_cls(),
+                memory_cls(),
+                context_builder=ctx_builder,
+            )
+            pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
+            if pipeline_cls is None:
+                raise RuntimeError("ModelAutomationPipeline is unavailable")
+            pipeline, promote = prepare_pipeline_for_bootstrap(
+                pipeline_cls=pipeline_cls,
+                context_builder=ctx_builder,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                manager_override=bootstrap_owner,
+            )
+            try:
+                current_manager = getattr(pipeline, "manager", None)
+            except Exception:
+                current_manager = None
+            if current_manager is not bootstrap_owner:
+                try:
+                    setattr(pipeline, "manager", bootstrap_owner)
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug(
+                        "pipeline manager sentinel assignment failed for %s",
+                        pipeline,
+                        exc_info=True,
+                    )
+        finally:
+            _pop_bootstrap_context(owner_context)
         manager_mod = _load_optional_module(
             "self_coding_manager", fallback="menace.self_coding_manager"
         )
