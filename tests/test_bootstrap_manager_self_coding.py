@@ -930,6 +930,55 @@ def test_prebuilt_reentrant_pipeline_stabilises_manager(
     )
 
 
+def test_prebuilt_pipeline_helpers_receive_real_manager(
+    reentrant_prebuilt_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ensure pipelines constructed before bootstrap still see real managers."""
+
+    import menace.coding_bot_interface as cbi
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is reentrant_prebuilt_pipeline_env.pipeline_cls
+        return (
+            reentrant_prebuilt_pipeline_env.pipeline,
+            reentrant_prebuilt_pipeline_env.promoter,
+        )
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "PrebuiltManagerOwner",
+            reentrant_prebuilt_pipeline_env.registry,
+            reentrant_prebuilt_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    pipeline = reentrant_prebuilt_pipeline_env.pipeline
+    assert pipeline.manager is manager
+
+    helpers = (
+        pipeline.comms_bot,
+        getattr(pipeline.comms_bot, "helper", None),
+    )
+    for helper in helpers:
+        if helper is None:
+            continue
+        assert getattr(helper, "manager", None) is manager
+        initial = getattr(helper, "initial_manager", manager)
+        assert initial is manager
+        assert not isinstance(helper.manager, cbi._DisabledSelfCodingManager)
+
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
 def test_managerless_pipeline_bootstrap_avoids_reentrant_warning(
     managerless_pipeline_env: SimpleNamespace, caplog: pytest.LogCaptureFixture
 ) -> None:
