@@ -1669,13 +1669,115 @@ class _DisabledSelfCodingManager:
 
 
 _BOOTSTRAP_STATE = threading.local()
+_DEFERRED_SENTINEL_CALLBACKS: set[int] = set()
+
+
+@dataclass
+class _ManagerBootstrapPlan:
+    manager: Any | None
+    sentinel: _BootstrapManagerSentinel | None
+    defer: bool
+    should_bootstrap: bool
+
+
+def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
+    """Return strategy hints for *candidate* based on sentinel state."""
+
+    sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+    bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    candidate_sentinel = (
+        candidate if isinstance(candidate, _BootstrapManagerSentinel) else None
+    )
+    plan = _ManagerBootstrapPlan(
+        manager=candidate,
+        sentinel=candidate_sentinel,
+        defer=False,
+        should_bootstrap=candidate is None,
+    )
+    if candidate_sentinel is None:
+        return plan
+    if candidate_sentinel is sentinel_manager and bootstrap_depth > 0:
+        plan.defer = True
+        plan.should_bootstrap = False
+        plan.manager = candidate_sentinel
+        return plan
+    plan.manager = None
+    plan.should_bootstrap = True
+    return plan
 
 
 class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
     """Truthful proxy used while the real manager is initialising."""
 
+    __slots__ = _DisabledSelfCodingManager.__slots__ + (
+        "_delegate",
+        "_delegate_callbacks",
+        "_owner_registry",
+        "_owner_data_bot",
+    )
+
+    def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
+        super().__init__(bot_registry=bot_registry, data_bot=data_bot)
+        self._delegate: Any | None = None
+        self._delegate_callbacks: list[Callable[[Any], None]] = []
+        self._owner_registry = bot_registry
+        self._owner_data_bot = data_bot
+
     def __bool__(self) -> bool:  # pragma: no cover - truthiness is trivial
         return True
+
+    def __getattr__(self, attr: str) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return getattr(delegate, attr)
+        raise AttributeError(attr)
+
+    def resolve(self) -> Any:
+        """Return the concrete manager once attached, falling back to ``self``."""
+
+        return self._delegate or self
+
+    def add_delegate_callback(self, callback: Callable[[Any], None]) -> None:
+        """Subscribe *callback* to manager promotion events."""
+
+        if not callable(callback):
+            return
+        delegate = self._delegate
+        if delegate is not None:
+            try:
+                callback(delegate)
+            except Exception:  # pragma: no cover - callbacks must be best-effort
+                logger.debug("sentinel delegate callback failed", exc_info=True)
+            return
+        self._delegate_callbacks.append(callback)
+
+    def attach_delegate(self, real_manager: Any) -> None:
+        """Attach *real_manager* and notify any pending callbacks."""
+
+        self._delegate = real_manager
+        if real_manager is not None:
+            registry = getattr(real_manager, "bot_registry", None)
+            data_bot = getattr(real_manager, "data_bot", None)
+            if registry is None and self._owner_registry is not None:
+                try:
+                    setattr(real_manager, "bot_registry", self._owner_registry)
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("delegate registry injection failed", exc_info=True)
+            if data_bot is None and self._owner_data_bot is not None:
+                try:
+                    setattr(real_manager, "data_bot", self._owner_data_bot)
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("delegate data bot injection failed", exc_info=True)
+            self.bot_registry = getattr(real_manager, "bot_registry", self.bot_registry)
+            self.data_bot = getattr(real_manager, "data_bot", self.data_bot)
+
+        callbacks = tuple(self._delegate_callbacks)
+        self._delegate_callbacks.clear()
+        for callback in callbacks:
+            try:
+                callback(real_manager)
+            except Exception:  # pragma: no cover - callbacks are best-effort
+                logger.debug("sentinel delegate callback failed", exc_info=True)
 
 
 def _create_bootstrap_manager_sentinel(
@@ -2024,6 +2126,12 @@ def _bootstrap_manager(
             data_bot=data_bot,
             bot_registry=bot_registry,
         )
+        attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
+        if callable(attach_delegate):
+            try:
+                attach_delegate(manager)
+            except Exception:  # pragma: no cover - best effort bridge
+                logger.debug("sentinel delegate attachment failed", exc_info=True)
         promote(manager)
         _promote_pipeline_manager(pipeline, manager, sentinel_manager)
         return manager
@@ -2362,32 +2470,49 @@ def self_coding_managed(
                     if manager_instance is not None
                     else sentinel_manager
                 )
-                sentinel_placeholder = isinstance(
-                    manager_local, _BootstrapManagerSentinel
-                )
+                strategy = _should_bootstrap_manager(manager_local)
+                manager_local = strategy.manager
+                sentinel_placeholder = strategy.sentinel is not None
                 runtime_available = _self_coding_runtime_available()
-                bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-                sentinel_deferral_active = sentinel_placeholder and bootstrap_depth > 0
-                if sentinel_deferral_active:
+                if strategy.defer and strategy.sentinel is not None:
                     logger.debug(
                         "%s: sentinel manager active at bootstrap depth=%s; deferring real manager promotion",
                         name,
-                        bootstrap_depth,
+                        getattr(_BOOTSTRAP_STATE, "depth", 0),
                     )
-                elif sentinel_placeholder:
-                    # A sentinel lingering without an active bootstrap indicates the
-                    # original attempt completed (or failed) and a new manager should
-                    # be created.
+                    subscribe = getattr(
+                        _finalize_self_coding_bootstrap,
+                        "_subscribe_to_deferred_promotion",
+                        None,
+                    )
+                    if callable(subscribe):
+                        subscribe(strategy.sentinel)
+                    if context is not None:
+                        context.manager = manager_local
+                    register_as_coding_local = False
+                    with bootstrap_lock:
+                        cls.bot_registry = registry_obj  # type: ignore[attr-defined]
+                        cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
+                        cls.manager = manager_local  # type: ignore[attr-defined]
+                        cls._self_coding_manual_mode = True
+                        manager_instance = manager_local
+                        resolved_registry = registry_obj
+                        resolved_data_bot = data_bot_obj
+                        register_as_coding = False
+                        bootstrap_done = True
+                        bootstrap_error = None
+                        bootstrap_in_progress = False
+                        bootstrap_event.set()
+                    return registry_obj, data_bot_obj
+                if sentinel_placeholder and not strategy.defer:
                     logger.debug(
                         "%s: stale sentinel manager detected; triggering manager bootstrap",
                         name,
                     )
-                    manager_local = None
+                    manager_local = strategy.manager
                 if context is not None:
                     context.manager = manager_local
-                if sentinel_deferral_active:
-                    register_as_coding_local = register_as_coding
-                elif manager_local is None and runtime_available:
+                if strategy.should_bootstrap and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
                     if callable(ensure_self_coding_ready):
@@ -2704,8 +2829,27 @@ def self_coding_managed(
                     "%s: manager promotion finalisation failed", cls, exc_info=True
                 )
 
+        def _subscribe_to_deferred_promotion(
+            sentinel: _BootstrapManagerSentinel | None,
+        ) -> None:
+            if sentinel is None:
+                return
+            key = id(sentinel)
+            if key in _DEFERRED_SENTINEL_CALLBACKS:
+                return
+            _DEFERRED_SENTINEL_CALLBACKS.add(key)
+
+            def _trigger(real_manager: Any) -> None:
+                pipeline = getattr(real_manager, "pipeline", None)
+                _promote_pipeline_manager(pipeline, real_manager, sentinel)
+
+            sentinel.add_delegate_callback(_trigger)
+
         cls._finalize_self_coding_bootstrap = staticmethod(  # type: ignore[attr-defined]
             _finalize_self_coding_bootstrap
+        )
+        _finalize_self_coding_bootstrap._subscribe_to_deferred_promotion = (  # type: ignore[attr-defined]
+            _subscribe_to_deferred_promotion
         )
 
         @wraps(orig_init)
