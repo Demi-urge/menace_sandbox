@@ -20,8 +20,20 @@ def test_register_balolos_coder_promotes_pipeline(monkeypatch, caplog):
     manager_box: dict[str, SimpleNamespace] = {}
     promote_calls: list[SimpleNamespace] = []
 
-    def fake_prepare_pipeline_for_bootstrap(*, pipeline_cls, context_builder, bot_registry, data_bot, **_):
-        sentinel = disabled_cls(bot_registry=bot_registry, data_bot=data_bot)
+    def fake_prepare_pipeline_for_bootstrap(
+        *,
+        pipeline_cls,
+        context_builder,
+        bot_registry,
+        data_bot,
+        manager_override=None,
+        manager_sentinel=None,
+        sentinel_factory=None,
+        **_,
+    ):
+        sentinel = manager_sentinel or manager_override
+        if sentinel is None:
+            sentinel = disabled_cls(bot_registry=bot_registry, data_bot=data_bot)
         pipeline = SimpleNamespace(
             pipeline_cls=pipeline_cls,
             context_builder=context_builder,

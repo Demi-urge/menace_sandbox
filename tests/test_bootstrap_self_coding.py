@@ -684,10 +684,22 @@ def test_bootstrap_entrypoint_uses_prepare_helper(monkeypatch, caplog):
     pipeline_box: dict[str, SimpleNamespace] = {}
     manager_box: dict[str, SimpleNamespace] = {}
 
-    def _prepare_pipeline_for_bootstrap(*, pipeline_cls, context_builder, bot_registry, data_bot):
+    def _prepare_pipeline_for_bootstrap(
+        *,
+        pipeline_cls,
+        context_builder,
+        bot_registry,
+        data_bot,
+        manager_override=None,
+        manager_sentinel=None,
+        sentinel_factory=None,
+        **_,
+    ):
         nonlocal helper_called
         helper_called = True
-        sentinel = SimpleNamespace(kind="sentinel", pipeline_cls=pipeline_cls)
+        sentinel = manager_sentinel or manager_override
+        if sentinel is None:
+            sentinel = SimpleNamespace(kind="sentinel", pipeline_cls=pipeline_cls)
         pipeline = SimpleNamespace(
             manager=sentinel,
             initial_manager=sentinel,
@@ -730,6 +742,139 @@ def test_bootstrap_entrypoint_uses_prepare_helper(monkeypatch, caplog):
     assert pipeline.manager is manager
     assert pipeline.promotions == [manager]
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+@pytest.mark.parametrize("accepts_manager", [True, False])
+def test_prepare_pipeline_promotes_placeholder_for_scripts(
+    accepts_manager: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    class _Registry:
+        def __init__(self) -> None:
+            self.registered: list[tuple[str, object]] = []
+
+        def register_bot(self, name: str, manager: object, **_kwargs: object) -> None:
+            self.registered.append((name, manager))
+
+        def update_bot(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    class _Thresholds:
+        roi_drop = 0.0
+        error_threshold = 0.0
+        test_failure_threshold = 0.0
+
+    class _DataBot:
+        def reload_thresholds(self, _name: str) -> _Thresholds:
+            return _Thresholds()
+
+        def schedule_monitoring(self, _name: str) -> None:
+            return None
+
+    registry = _Registry()
+    data_bot = _DataBot()
+
+    def _registry_factory() -> _Registry:
+        return registry
+
+    def _data_bot_factory() -> _DataBot:
+        return data_bot
+
+    _registry_factory.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+    _data_bot_factory.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+    helper_instances: list[SimpleNamespace] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=_registry_factory,
+        data_bot=_data_bot_factory,
+    )
+    class _HelperBot:
+        def __init__(self, *, manager: object | None = None) -> None:
+            self.manager = manager
+            self.bot_registry = None
+            self.data_bot = None
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(
+            self,
+            manager: object,
+            *,
+            registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.manager = manager
+            self.bot_registry = registry
+            self.data_bot = data_bot
+
+    class _PipelineAcceptsManager:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.helpers = [_HelperBot(manager=manager), _HelperBot()]
+            self._bots = list(self.helpers)
+            self.comms_bot = None
+            self.synthesis_bot = None
+            self.diagnostic_manager = None
+            self.planner = None
+            self.aggregator = None
+            self._attach_information_synthesis_manager = lambda: None
+
+    class _PipelineWithoutManager:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = None
+            self.initial_manager = None
+            self.helpers = [_HelperBot(), _HelperBot()]
+            self._bots = list(self.helpers)
+            self.comms_bot = None
+            self.synthesis_bot = None
+            self.diagnostic_manager = None
+            self.planner = None
+            self.aggregator = None
+            self._attach_information_synthesis_manager = lambda: None
+
+    pipeline_cls = _PipelineAcceptsManager if accepts_manager else _PipelineWithoutManager
+    builder = SimpleNamespace()
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    placeholder = pipeline.manager
+    assert isinstance(placeholder, coding_bot_interface._DisabledSelfCodingManager)
+    assert all(helper.manager is placeholder for helper in pipeline.helpers)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    real_manager = SimpleNamespace(bot_registry=registry, data_bot=data_bot)
+    promote(real_manager)
+
+    assert pipeline.manager is real_manager
+    assert all(helper.manager is real_manager for helper in pipeline.helpers)
 
 
 def test_error_bot_legacy_bootstrap_promotes_manager(monkeypatch, caplog):
@@ -906,8 +1051,14 @@ def test_bootstrap_entrypoint_promotes_manager(monkeypatch, caplog):
         context_builder,
         bot_registry,
         data_bot,
+        manager_override=None,
+        manager_sentinel=None,
+        sentinel_factory=None,
+        **_,
     ):
-        sentinel = SimpleNamespace(kind="sentinel", pipeline_cls=pipeline_cls)
+        sentinel = manager_sentinel or manager_override
+        if sentinel is None:
+            sentinel = SimpleNamespace(kind="sentinel", pipeline_cls=pipeline_cls)
         pipeline = SimpleNamespace(
             context_builder=context_builder,
             manager=sentinel,
@@ -1024,11 +1175,17 @@ def test_bootstrap_entrypoint_promotes_all_bots(monkeypatch, caplog):
         context_builder,
         bot_registry,
         data_bot,
+        manager_override=None,
+        manager_sentinel=None,
+        sentinel_factory=None,
+        **_,
     ):
-        sentinel = coding_bot_interface._create_bootstrap_manager_sentinel(
-            bot_registry=bot_registry,
-            data_bot=data_bot,
-        )
+        sentinel = manager_sentinel or manager_override
+        if sentinel is None:
+            sentinel = coding_bot_interface._create_bootstrap_manager_sentinel(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
         bots = [SimpleNamespace(name=f"bot-{idx}", manager=sentinel) for idx in range(3)]
         pipeline = SimpleNamespace(
             context_builder=context_builder,
