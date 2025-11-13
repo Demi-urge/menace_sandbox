@@ -1720,6 +1720,22 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
     return plan
 
 
+def _using_bootstrap_sentinel(candidate: Any | None = None) -> bool:
+    """Return ``True`` when the current bootstrap flow relies on a sentinel."""
+
+    if _is_bootstrap_owner(candidate):
+        return True
+    if isinstance(candidate, _BootstrapManagerSentinel):
+        return True
+    sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+    if sentinel_manager is None:
+        return False
+    if candidate is sentinel_manager:
+        return True
+    depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    return depth > 0 and isinstance(sentinel_manager, _BootstrapManagerSentinel)
+
+
 class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
     """Truthful proxy used while the real manager is initialising."""
 
@@ -1838,6 +1854,7 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
         if key in finalized_targets:
             return
         finalizer = getattr(target, "_finalize_self_coding_bootstrap", None)
+        pending_manager = bool(getattr(target, "_self_coding_pending_manager", False))
         if not callable(finalizer):
             return
         kwargs: dict[str, Any] = {}
@@ -1858,6 +1875,16 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 finalized_targets.add(key)
         except Exception:  # pragma: no cover - finaliser errors are non-fatal
             logger.debug("manager finaliser failed for %s", target, exc_info=True)
+        else:
+            finalized_targets.add(key)
+        finally:
+            if pending_manager:
+                try:
+                    setattr(target, "_self_coding_pending_manager", False)
+                except Exception:  # pragma: no cover - best effort cleanup
+                    logger.debug(
+                        "failed to reset pending manager flag on %s", target, exc_info=True
+                    )
 
     def _rewire_helper_attributes(target: Any) -> None:
         if target is None:
@@ -1933,6 +1960,10 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                         )
                     else:
                         finalizer_targets.append(owner)
+        if getattr(target, "_self_coding_pending_manager", False):
+            finalizer_targets.append(target)
+        if owner is not None and getattr(owner, "_self_coding_pending_manager", False):
+            finalizer_targets.append(owner)
         for final_target in finalizer_targets:
             _invoke_finalizer(final_target)
 
@@ -2349,6 +2380,8 @@ def _resolve_helpers(
 
     if manager is None:
         manager = getattr(obj, "manager", None)
+        if manager is None and _using_bootstrap_sentinel():
+            manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
 
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
@@ -2485,6 +2518,8 @@ def self_coding_managed(
         should_update = True
         register_as_coding = True
         register_as_coding_local = register_as_coding
+        register_deferred = False
+        deferred_registration: dict[str, Any] | None = None
         decision: _BootstrapDecision | None = None
         resolved_registry: BotRegistry | None = None
         resolved_data_bot: DataBot | None = None
@@ -2511,6 +2546,7 @@ def self_coding_managed(
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
             nonlocal bootstrap_in_progress, bootstrap_error
+            nonlocal register_deferred, deferred_registration
 
             if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
                 return resolved_registry, resolved_data_bot
@@ -2572,6 +2608,8 @@ def self_coding_managed(
                 manager_local = strategy.manager
                 sentinel_placeholder = strategy.sentinel is not None
                 runtime_available = _self_coding_runtime_available()
+                register_deferred_local = register_deferred
+                sentinel_in_use = False
                 if strategy.defer and strategy.sentinel is not None:
                     logger.debug(
                         "%s: sentinel manager active at bootstrap depth=%s; deferring real manager promotion",
@@ -2588,20 +2626,26 @@ def self_coding_managed(
                     if context is not None:
                         context.manager = manager_local
                     register_as_coding_local = False
-                    with bootstrap_lock:
-                        cls.bot_registry = registry_obj  # type: ignore[attr-defined]
-                        cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
-                        cls.manager = manager_local  # type: ignore[attr-defined]
-                        cls._self_coding_manual_mode = True
-                        manager_instance = manager_local
-                        resolved_registry = registry_obj
-                        resolved_data_bot = data_bot_obj
-                        register_as_coding = False
-                        bootstrap_done = True
-                        bootstrap_error = None
-                        bootstrap_in_progress = False
-                        bootstrap_event.set()
-                    return registry_obj, data_bot_obj
+                    register_deferred_local = True
+                    sentinel_in_use = True
+                else:
+                    sentinel_in_use = _using_bootstrap_sentinel(manager_local)
+                if sentinel_in_use:
+                    subscribe = getattr(
+                        _finalize_self_coding_bootstrap,
+                        "_subscribe_to_deferred_promotion",
+                        None,
+                    )
+                    if callable(subscribe):
+                        subscribe(manager_local)
+                    register_as_coding_local = False
+                    register_deferred_local = True
+                placeholder_manager = (
+                    manager_local is None or not _is_self_coding_manager(manager_local)
+                )
+                if placeholder_manager and not strategy.should_bootstrap:
+                    register_as_coding_local = False
+                    register_deferred_local = True
                 if sentinel_placeholder and not strategy.defer:
                     logger.debug(
                         "%s: stale sentinel manager detected; triggering manager bootstrap",
@@ -2610,7 +2654,7 @@ def self_coding_managed(
                     manager_local = strategy.manager
                 if context is not None:
                     context.manager = manager_local
-                if strategy.should_bootstrap and runtime_available:
+                if (not sentinel_in_use) and strategy.should_bootstrap and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
                     if callable(ensure_self_coding_ready):
@@ -2655,7 +2699,8 @@ def self_coding_managed(
                             name,
                         )
                 else:
-                    register_as_coding_local = register_as_coding
+                    if not sentinel_in_use:
+                        register_as_coding_local = register_as_coding
 
                 decision_local = decision
                 update_kwargs_local = dict(update_kwargs)
@@ -2735,53 +2780,67 @@ def self_coding_managed(
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("manager registration failed for %s", name)
 
-                if registry_obj is not None:
-                    if register_as_coding_local:
+                register_kwargs: dict[str, Any] | None = None
+                if (
+                    registry_obj is not None
+                    and (register_as_coding_local or register_deferred_local)
+                ):
+                    register_kwargs = dict(update_kwargs_local)
+                    if (
+                        decision_local is not None
+                        and decision_local.provenance is not None
+                        and "provenance" not in register_kwargs
+                    ):
+                        register_kwargs["provenance"] = decision_local.provenance
+                    if orchestrator_factory is None and manager_local is not None:
+                        orchestrator_factory = getattr(
+                            manager_local,
+                            "orchestrator_factory",
+                            None,
+                        )
+                    if orchestrator_factory is not None:
                         try:
-                            register_kwargs = dict(update_kwargs_local)
-                            if (
-                                decision_local is not None
-                                and decision_local.provenance is not None
-                                and "provenance" not in register_kwargs
-                            ):
-                                register_kwargs["provenance"] = decision_local.provenance
-                            if orchestrator_factory is None and manager_local is not None:
-                                orchestrator_factory = getattr(
-                                    manager_local,
-                                    "orchestrator_factory",
-                                    None,
+                            register_sig = inspect.signature(
+                                registry_obj.register_bot
+                            )
+                        except (TypeError, ValueError):  # pragma: no cover - best effort
+                            register_sig = None
+                        include_factory = False
+                        if register_sig is None:
+                            include_factory = True
+                        else:
+                            params = register_sig.parameters
+                            if "orchestrator_factory" in params:
+                                include_factory = True
+                            else:
+                                include_factory = any(
+                                    param.kind == inspect.Parameter.VAR_KEYWORD
+                                    for param in params.values()
                                 )
-                            if orchestrator_factory is not None:
-                                try:
-                                    register_sig = inspect.signature(
-                                        registry_obj.register_bot
-                                    )
-                                except (TypeError, ValueError):  # pragma: no cover - best effort
-                                    register_sig = None
-                                include_factory = False
-                                if register_sig is None:
-                                    include_factory = True
-                                else:
-                                    params = register_sig.parameters
-                                    if "orchestrator_factory" in params:
-                                        include_factory = True
-                                    else:
-                                        include_factory = any(
-                                            param.kind
-                                            == inspect.Parameter.VAR_KEYWORD
-                                            for param in params.values()
-                                        )
-                                if include_factory:
-                                    register_kwargs["orchestrator_factory"] = (
-                                        orchestrator_factory
-                                    )
+                        if include_factory:
+                            register_kwargs["orchestrator_factory"] = orchestrator_factory
+
+                deferred_payload_local: dict[str, Any] | None = None
+                if registry_obj is not None:
+                    if register_deferred_local or (
+                        placeholder_manager and not register_as_coding_local
+                    ):
+                        deferred_payload_local = {
+                            "register_kwargs": dict(register_kwargs or {}),
+                            "roi_threshold": roi_t,
+                            "error_threshold": err_t,
+                            "should_update": should_update_local,
+                            "update_kwargs": dict(update_kwargs_local),
+                        }
+                    elif register_as_coding_local:
+                        try:
                             registry_obj.register_bot(
                                 name,
                                 module_path,
                                 manager=manager_local,
                                 roi_threshold=roi_t,
                                 error_threshold=err_t,
-                                **register_kwargs,
+                                **(register_kwargs or {}),
                             )
                         except Exception:  # pragma: no cover - best effort
                             logger.exception("bot registration failed for %s", name)
@@ -2802,7 +2861,7 @@ def self_coding_managed(
                                 name,
                             )
 
-                    if should_update_local:
+                    if should_update_local and not register_deferred_local:
                         try:
                             registry_obj.update_bot(name, module_path, **update_kwargs_local)
                         except Exception:  # pragma: no cover - best effort
@@ -2815,12 +2874,22 @@ def self_coding_managed(
                     cls.bot_registry = registry_obj  # type: ignore[attr-defined]
                     cls.data_bot = data_bot_obj  # type: ignore[attr-defined]
                     cls.manager = manager_local  # type: ignore[attr-defined]
-                    cls._self_coding_manual_mode = not register_as_coding_local
+                    cls._self_coding_manual_mode = (
+                        register_deferred_local or not register_as_coding_local
+                    )
+                    try:
+                        cls._self_coding_pending_manager = register_deferred_local  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensive
+                        logger.debug(
+                            "%s: failed to flag pending manager promotion", cls, exc_info=True
+                        )
 
                     manager_instance = manager_local
                     update_kwargs = update_kwargs_local
                     should_update = should_update_local
                     register_as_coding = register_as_coding_local
+                    register_deferred = register_deferred_local
+                    deferred_registration = deferred_payload_local
                     decision = decision_local
                     resolved_registry = registry_obj
                     resolved_data_bot = data_bot_obj
@@ -2843,6 +2912,7 @@ def self_coding_managed(
         cls.data_bot = None  # type: ignore[attr-defined]
         cls.manager = manager_instance  # type: ignore[attr-defined]
         cls._self_coding_manual_mode = True
+        cls._self_coding_pending_manager = False  # type: ignore[attr-defined]
 
         def _finalize_self_coding_bootstrap(
             real_manager: Any,
@@ -2854,6 +2924,7 @@ def self_coding_managed(
 
             nonlocal manager_instance, resolved_registry, resolved_data_bot
             nonlocal bootstrap_done, bootstrap_error, bootstrap_in_progress
+            nonlocal register_deferred, deferred_registration
 
             if real_manager is None:
                 return
@@ -2867,6 +2938,7 @@ def self_coding_managed(
 
             promotion_kwargs: dict[str, Any] | None = None
             should_promote_registry = False
+            pending_registration: dict[str, Any] | None = None
 
             try:
                 with bootstrap_lock:
@@ -2893,7 +2965,14 @@ def self_coding_managed(
                             logger.debug(
                                 "%s: failed to assign promoted data bot", cls, exc_info=True
                             )
-                    if register_as_coding and registry_obj is not None:
+                    pending_registration = deferred_registration
+                    deferred_registration = None
+                    was_deferred = register_deferred
+                    register_deferred = False
+                    if (
+                        (register_as_coding or was_deferred)
+                        and registry_obj is not None
+                    ):
                         should_promote_registry = True
                         promotion_kwargs = dict(update_kwargs or {})
                         if (
@@ -2904,6 +2983,12 @@ def self_coding_managed(
                         ):
                             promotion_kwargs["provenance"] = decision.provenance
                     cls._self_coding_manual_mode = False
+                    try:
+                        cls._self_coding_pending_manager = False  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensive
+                        logger.debug(
+                            "%s: failed to reset pending manager flag", cls, exc_info=True
+                        )
                     bootstrap_done = True
                     bootstrap_error = None
                     bootstrap_in_progress = False
@@ -2921,6 +3006,35 @@ def self_coding_managed(
                         except Exception:  # pragma: no cover - best effort
                             logger.debug(
                                 "%s: registry promotion failed for %s", cls, name, exc_info=True
+                            )
+                if pending_registration is not None and registry_obj is not None:
+                    try:
+                        registry_obj.register_bot(
+                            name,
+                            module_path,
+                            manager=real_manager,
+                            roi_threshold=pending_registration.get("roi_threshold"),
+                            error_threshold=pending_registration.get("error_threshold"),
+                            **pending_registration.get("register_kwargs", {}),
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception(
+                            "bot registration failed during deferred promotion for %s",
+                            name,
+                        )
+                    if (
+                        pending_registration.get("should_update")
+                        and pending_registration.get("update_kwargs")
+                    ):
+                        try:
+                            registry_obj.update_bot(
+                                name,
+                                module_path,
+                                **pending_registration["update_kwargs"],
+                            )
+                        except Exception:  # pragma: no cover - best effort
+                            logger.exception(
+                                "bot update failed during deferred promotion for %s", name
                             )
             except Exception:  # pragma: no cover - promotion should be best-effort
                 logger.debug(
@@ -2952,6 +3066,14 @@ def self_coding_managed(
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
+            registry_obj: BotRegistry | None = None
+            data_bot_obj: DataBot | None = None
+            if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
+                registry_obj, data_bot_obj = _bootstrap_helpers()
+            else:
+                registry_obj = resolved_registry
+                data_bot_obj = resolved_data_bot
+
             context = _current_bootstrap_context()
             if (
                 context is not None
@@ -2966,8 +3088,10 @@ def self_coding_managed(
                     else manager_instance
                 )
             else:
-                registry_obj, data_bot_obj = _bootstrap_helpers()
                 manager_default = manager_instance
+
+            if registry_obj is None or data_bot_obj is None:
+                registry_obj, data_bot_obj = _bootstrap_helpers()
             init_kwargs = dict(kwargs)
             orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
                 "evolution_orchestrator"
@@ -3015,6 +3139,9 @@ def self_coding_managed(
                         "failed to initialise thresholds for %s", name_local
                     )
             manual_mode = getattr(cls, "_self_coding_manual_mode", False)
+            pending_manager_flag = bool(
+                getattr(cls, "_self_coding_pending_manager", False)
+            )
             manager_is_active = _is_self_coding_manager(manager_local)
             if (
                 _self_coding_runtime_available()
@@ -3028,6 +3155,14 @@ def self_coding_managed(
                 )
                 manual_mode = True
             self.manager = manager_local
+
+            if pending_manager_flag:
+                try:
+                    self._self_coding_pending_manager = True  # type: ignore[attr-defined]
+                except Exception:  # pragma: no cover - best effort marker
+                    logger.debug(
+                        "%s: failed to flag pending manager on %s", name_local, self, exc_info=True
+                    )
 
             if not manager_is_active:
                 if orchestrator is not None:
