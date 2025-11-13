@@ -175,6 +175,14 @@ def _is_bootstrap_owner(candidate: Any) -> bool:
     return bool(getattr(candidate, "_bootstrap_owner_marker", False))
 
 
+def _is_bootstrap_placeholder(candidate: Any) -> bool:
+    """Return ``True`` when *candidate* represents a bootstrap placeholder."""
+
+    if candidate is None:
+        return False
+    return isinstance(candidate, _BootstrapManagerSentinel) or _is_bootstrap_owner(candidate)
+
+
 def _record_cooperative_init_trace(
     instance: object,
     cls: type,
@@ -1699,9 +1707,7 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
 
     sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    candidate_sentinel = (
-        candidate if isinstance(candidate, _BootstrapManagerSentinel) else None
-    )
+    candidate_sentinel = candidate if _is_bootstrap_placeholder(candidate) else None
     plan = _ManagerBootstrapPlan(
         manager=candidate,
         sentinel=candidate_sentinel,
@@ -1723,9 +1729,7 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
 def _using_bootstrap_sentinel(candidate: Any | None = None) -> bool:
     """Return ``True`` when the current bootstrap flow relies on a sentinel."""
 
-    if _is_bootstrap_owner(candidate):
-        return True
-    if isinstance(candidate, _BootstrapManagerSentinel):
+    if _is_bootstrap_placeholder(candidate):
         return True
     sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     if sentinel_manager is None:
@@ -1821,6 +1825,40 @@ def _create_bootstrap_manager_sentinel(
         bot_registry=bot_registry,
         data_bot=data_bot,
     )
+
+
+def _activate_bootstrap_sentinel(manager: Any | None) -> Callable[[], None]:
+    """Temporarily expose *manager* as the active bootstrap sentinel."""
+
+    previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
+    sentinel_was_set = manager is not None
+    if sentinel_was_set:
+        _BOOTSTRAP_STATE.sentinel_manager = manager
+    depth_missing = not hasattr(_BOOTSTRAP_STATE, "depth")
+    previous_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    depth_overridden = previous_depth <= 0
+    if depth_overridden:
+        _BOOTSTRAP_STATE.depth = 1
+
+    def _restore() -> None:
+        if depth_overridden:
+            if depth_missing:
+                try:
+                    delattr(_BOOTSTRAP_STATE, "depth")
+                except AttributeError:  # pragma: no cover - best effort cleanup
+                    pass
+            else:
+                _BOOTSTRAP_STATE.depth = previous_depth
+        if sentinel_was_set:
+            if previous_sentinel is _SENTINEL_UNSET:
+                try:
+                    delattr(_BOOTSTRAP_STATE, "sentinel_manager")
+                except AttributeError:  # pragma: no cover - best effort cleanup
+                    pass
+            else:
+                _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+
+    return _restore
 
 
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
@@ -2033,14 +2071,16 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-    context = _push_bootstrap_context(
-        registry=bot_registry,
-        data_bot=data_bot,
-        manager=sentinel_manager,
-    )
+    restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
+    context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
     try:
+        context = _push_bootstrap_context(
+            registry=bot_registry,
+            data_bot=data_bot,
+            manager=sentinel_manager,
+        )
         init_kwargs = dict(pipeline_kwargs)
         init_kwargs.setdefault("context_builder", context_builder)
         if bot_registry is not None:
@@ -2079,7 +2119,9 @@ def prepare_pipeline_for_bootstrap(
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
     finally:
-        _pop_bootstrap_context(context)
+        if context is not None:
+            _pop_bootstrap_context(context)
+        restore_sentinel_state()
 
     try:
         current_manager = getattr(pipeline, "manager", None)
@@ -2572,14 +2614,19 @@ def self_coding_managed(
             context: _BootstrapContext | None = None
             parent_context = _current_bootstrap_context()
             contextual_manager = None
+            contextual_placeholder: Any | None = None
             if parent_context is not None and parent_context.manager is not None:
                 contextual_manager = parent_context.manager
+                if _is_bootstrap_placeholder(contextual_manager):
+                    contextual_placeholder = contextual_manager
             try:
                 registry_obj = _resolve_candidate(bot_registry)
                 data_bot_obj = _resolve_candidate(data_bot)
                 sentinel_manager = getattr(
                     _BOOTSTRAP_STATE, "sentinel_manager", None
                 )
+                if sentinel_manager is None and contextual_placeholder is not None:
+                    sentinel_manager = contextual_placeholder
                 manager_for_context = contextual_manager
                 if manager_for_context is None:
                     manager_for_context = (
