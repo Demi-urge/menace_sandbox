@@ -580,6 +580,43 @@ class ModelAutomationPipeline:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
         self.manager = manager
+
+        def _call_with_manager(
+            factory: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> Any:
+            if factory is None:
+                raise ValueError("factory is required")
+            if self.manager is None:
+                return factory(*args, **kwargs)
+            try:
+                return factory(*args, **kwargs, manager=self.manager)
+            except TypeError as exc:
+                if "manager" not in str(exc):
+                    raise
+                _LOGGER.debug(
+                    "%s rejected manager argument; continuing without manager",
+                    getattr(factory, "__name__", repr(factory)),
+                    exc_info=True,
+                )
+                return factory(*args, **kwargs)
+
+        def _bind_manager(candidate: Any) -> Any:
+            if candidate is None or self.manager is None:
+                return candidate
+            try:
+                current = getattr(candidate, "manager", None)
+            except Exception:  # pragma: no cover - defensive attribute access
+                return candidate
+            if current is None:
+                try:
+                    setattr(candidate, "manager", self.manager)
+                except Exception:  # pragma: no cover - best effort binding
+                    _LOGGER.debug(
+                        "manager binding failed for %s during pipeline bootstrap",
+                        candidate,
+                        exc_info=True,
+                    )
+            return candidate
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
@@ -593,57 +630,77 @@ class ModelAutomationPipeline:
         if synthesis_bot is None:
             from ..information_synthesis_bot import InformationSynthesisBot
 
-            synthesis_bot = InformationSynthesisBot(
+            synthesis_bot = _call_with_manager(
+                InformationSynthesisBot,
                 aggregator=self.aggregator,
                 workflow_db=self.workflow_db,
                 event_bus=event_bus,
                 context_builder=self.context_builder,
             )
-        self.synthesis_bot = synthesis_bot
+        self.synthesis_bot = _bind_manager(synthesis_bot)
         self._validator_factory: Callable[[], "TaskValidationBot"] | None = validator_factory
         self._validator: "TaskValidationBot | None" = validator
         self._validator_wrapped = False
         self._bots_primed = False
         planner_cls, planning_task_cls, _ = planning_components()
         self._planning_task_cls = planning_task_cls
-        self.planner = planner or planner_cls()
-        self.hierarchy = hierarchy or build_default_hierarchy()
-        self.data_bot = data_bot or create_data_bot(self.logger)
+        self.planner = planner or _call_with_manager(planner_cls)
+        self.planner = _bind_manager(self.planner)
+        hierarchy = hierarchy or build_default_hierarchy()
+        self.hierarchy = _bind_manager(hierarchy)
+        data_bot = data_bot or create_data_bot(self.logger)
+        self.data_bot = _bind_manager(data_bot)
         if capital_manager is None:
             capital_manager_cls = capital_manager_cls_factory()
-            capital_manager = cast("CapitalManagementBot", capital_manager_cls())
-        self.capital_manager = capital_manager
+            capital_manager = cast(
+                "CapitalManagementBot",
+                _call_with_manager(cast(Callable[..., Any], capital_manager_cls)),
+            )
+        self.capital_manager = _bind_manager(capital_manager)
 
         if predictor:
-            self.predictor = predictor
+            self.predictor = _bind_manager(predictor)
             if getattr(self.predictor, "data_bot", None) is None:
                 self.predictor.data_bot = self.data_bot
             if getattr(self.predictor, "capital_bot", None) is None:
                 self.predictor.capital_bot = self.capital_manager
         else:
-            self.predictor = ResourcePredictionBot(
-                data_bot=self.data_bot, capital_bot=self.capital_manager
+            self.predictor = _call_with_manager(
+                ResourcePredictionBot,
+                data_bot=self.data_bot,
+                capital_bot=self.capital_manager,
             )
+            self.predictor = _bind_manager(self.predictor)
 
-        self.handoff = handoff or TaskHandoffBot(event_bus=event_bus)
+        self.handoff = handoff or _call_with_manager(
+            TaskHandoffBot, event_bus=event_bus
+        )
+        self.handoff = _bind_manager(self.handoff)
         pre_bot_cls, build_task_cls, roi_result_cls = self._ensure_pre_execution_components()
         self._build_task_cls = build_task_cls
         self._roi_result_cls = roi_result_cls
         if roi_bot:
-            self.roi_bot = roi_bot
+            self.roi_bot = _bind_manager(roi_bot)
             if getattr(self.roi_bot, "handoff", None) is None:
                 self.roi_bot.handoff = self.handoff
         else:
-            self.roi_bot = pre_bot_cls(handoff=self.handoff)
+            self.roi_bot = _call_with_manager(pre_bot_cls, handoff=self.handoff)
+            self.roi_bot = _bind_manager(self.roi_bot)
         if optimiser is None:
             optimiser_cls = implementation_optimiser_cls()
-            optimiser = optimiser_cls(context_builder=self.context_builder)
-        self.optimiser = optimiser
+            optimiser = _call_with_manager(
+                optimiser_cls, context_builder=self.context_builder
+            )
+        self.optimiser = _bind_manager(optimiser)
         self.funds = funds
         self.roi_threshold = roi_threshold
 
-        self.efficiency_bot = efficiency_bot or EfficiencyBot()
-        self.performance_bot = performance_bot or PerformanceAssessmentBot()
+        self.efficiency_bot = efficiency_bot or _call_with_manager(EfficiencyBot)
+        self.efficiency_bot = _bind_manager(self.efficiency_bot)
+        self.performance_bot = performance_bot or _call_with_manager(
+            PerformanceAssessmentBot
+        )
+        self.performance_bot = _bind_manager(self.performance_bot)
         if comms_bot is None:
             comms_bot_cls = get_communication_maintenance_bot_cls()
             try:
@@ -659,21 +716,31 @@ class ModelAutomationPipeline:
                     "falling back to default constructor",
                     exc_info=True,
                 )
-                comms_bot = comms_bot_cls()
-        self.comms_bot = comms_bot
-        self.monitor_bot = monitor_bot or OperationalMonitoringBot()
-        self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
-        self.sentiment_bot = sentiment_bot or SentimentBot()
-        self.query_bot = query_bot or QueryBot(context_builder=self.context_builder)
-        self.memory_bot = memory_bot or MemoryBot()
+                comms_bot = _call_with_manager(comms_bot_cls)
+        self.comms_bot = _bind_manager(comms_bot)
+        self.monitor_bot = _bind_manager(
+            monitor_bot or OperationalMonitoringBot()
+        )
+        self.db_bot = db_bot or _call_with_manager(
+            CentralDatabaseBot, db_router=self.db_router
+        )
+        self.db_bot = _bind_manager(self.db_bot)
+        self.sentiment_bot = sentiment_bot or _call_with_manager(SentimentBot)
+        self.sentiment_bot = _bind_manager(self.sentiment_bot)
+        self.query_bot = query_bot or _call_with_manager(
+            QueryBot, context_builder=self.context_builder
+        )
+        self.query_bot = _bind_manager(self.query_bot)
+        self.memory_bot = memory_bot or _call_with_manager(MemoryBot)
+        self.memory_bot = _bind_manager(self.memory_bot)
         if comms_test_bot is None:
             comms_test_bot_cls = _communication_testing_bot_cls()
-            comms_test_bot = comms_test_bot_cls()
-        self.comms_test_bot = comms_test_bot
+            comms_test_bot = _call_with_manager(comms_test_bot_cls)
+        self.comms_test_bot = _bind_manager(comms_test_bot)
         if discrepancy_bot is None:
             discrepancy_cls = _discrepancy_detection_bot_cls()
-            discrepancy_bot = discrepancy_cls()
-        self.discrepancy_bot = discrepancy_bot
+            discrepancy_bot = _call_with_manager(discrepancy_cls)
+        self.discrepancy_bot = _bind_manager(discrepancy_bot)
         if finance_bot is None:
             try:
                 finance_cls = _finance_router_cls()
@@ -685,14 +752,14 @@ class ModelAutomationPipeline:
                 finance_bot = None
             else:
                 try:
-                    finance_bot = finance_cls()
+                    finance_bot = _call_with_manager(finance_cls)
                 except Exception as exc:  # pragma: no cover - degraded bootstrap
                     self.logger.warning(
                         "FinanceRouterBot initialisation failed for ModelAutomationPipeline: %s",
                         exc,
                     )
                     finance_bot = None
-        self.finance_bot = finance_bot
+        self.finance_bot = _bind_manager(finance_bot)
         if creation_bot is None:
             _bot_creation_cls: type["BotCreationBot"] | None
             try:
@@ -710,8 +777,8 @@ class ModelAutomationPipeline:
 
             if _bot_creation_cls is not None:
                 try:
-                    creation_bot = _bot_creation_cls(
-                        context_builder=self.context_builder
+                    creation_bot = _call_with_manager(
+                        _bot_creation_cls, context_builder=self.context_builder
                     )
                 except Exception as exc:  # pragma: no cover - degraded bootstrap
                     self.logger.warning(
@@ -720,36 +787,51 @@ class ModelAutomationPipeline:
                     )
                     creation_bot = None
 
-        self.creation_bot = creation_bot
-        self.meta_ga_bot = meta_ga_bot or get_meta_genetic_algorithm_bot_cls()()
-        self.offer_bot = offer_bot or OfferTestingBot()
-        self.fallback_bot = fallback_bot or ResearchFallbackBot()
+        self.creation_bot = _bind_manager(creation_bot)
+        if meta_ga_bot is None:
+            meta_cls = get_meta_genetic_algorithm_bot_cls()
+            meta_ga_bot = _call_with_manager(meta_cls)
+        self.meta_ga_bot = _bind_manager(meta_ga_bot)
+        self.offer_bot = offer_bot or _call_with_manager(OfferTestingBot)
+        self.offer_bot = _bind_manager(self.offer_bot)
+        self.fallback_bot = fallback_bot or _call_with_manager(ResearchFallbackBot)
+        self.fallback_bot = _bind_manager(self.fallback_bot)
         if optimizer is None:
             ResourceAllocationOptimizerCls = get_resource_allocation_optimizer_cls()
-            optimizer = ResourceAllocationOptimizerCls()
-        self.optimizer = optimizer
-        self.ai_counter_bot = ai_counter_bot or AICounterBot()
+            optimizer = _call_with_manager(ResourceAllocationOptimizerCls)
+        self.optimizer = _bind_manager(optimizer)
+        self.ai_counter_bot = ai_counter_bot or _call_with_manager(AICounterBot)
+        self.ai_counter_bot = _bind_manager(self.ai_counter_bot)
         if allocator is None:
             alloc_bot_cls, alloc_db_cls = _resource_allocation_components()
             DynamicResourceAllocatorCls = get_dynamic_resource_allocator_cls()
-            allocator = DynamicResourceAllocatorCls(
-                alloc_bot=alloc_bot_cls(
-                    alloc_db_cls(), context_builder=self.context_builder
-                ),
+            alloc_bot = _call_with_manager(
+                alloc_bot_cls, alloc_db_cls(), context_builder=self.context_builder
+            )
+            allocator = _call_with_manager(
+                DynamicResourceAllocatorCls,
+                alloc_bot=alloc_bot,
                 context_builder=self.context_builder,
             )
-        self.allocator = allocator
+        self.allocator = _bind_manager(allocator)
         if diagnostic_manager is None:
             DiagnosticManagerCls = get_diagnostic_manager_cls()
-            diagnostic_manager = DiagnosticManagerCls(
-                context_builder=self.context_builder
+            diagnostic_manager = _call_with_manager(
+                DiagnosticManagerCls, context_builder=self.context_builder
             )
-        self.diagnostic_manager = diagnostic_manager
+        self.diagnostic_manager = _bind_manager(diagnostic_manager)
         self.idea_bank = idea_bank or KeywordBank()
         self.news_db = news_db or NewsDB()
-        self.reinvestment_bot = reinvestment_bot or AutoReinvestmentBot()
-        self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
-        self.allocation_bot = allocation_bot or CapitalAllocationBot()
+        self.reinvestment_bot = reinvestment_bot or _call_with_manager(
+            AutoReinvestmentBot
+        )
+        self.reinvestment_bot = _bind_manager(self.reinvestment_bot)
+        self.spike_bot = spike_bot or _call_with_manager(
+            RevenueSpikeEvaluatorBot, RevenueEventsDB()
+        )
+        self.spike_bot = _bind_manager(self.spike_bot)
+        self.allocation_bot = allocation_bot or _call_with_manager(CapitalAllocationBot)
+        self.allocation_bot = _bind_manager(self.allocation_bot)
         if bot_registry is None:
             from ..bot_registry import BotRegistry as _BotRegistry
 
@@ -808,6 +890,7 @@ class ModelAutomationPipeline:
             if bot is not None
         ]
         for bot in self._bots:
+            _bind_manager(bot)
             wrap_bot_methods(bot, self.db_router, self.bot_registry)
         if self._validator is not None and not self._validator_wrapped:
             self._register_validator(self._validator)

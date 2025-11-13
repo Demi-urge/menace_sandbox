@@ -2271,6 +2271,7 @@ def prepare_pipeline_for_bootstrap(
     bot_registry: Any,
     data_bot: Any,
     manager_override: Any | None = None,
+    manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
@@ -2283,8 +2284,11 @@ def prepare_pipeline_for_bootstrap(
     references are promoted atomically.
     ``manager_override`` allows callers to reuse an existing sentinel instead of
     creating a new one when nested helper bootstrap is already in progress.
-    ``sentinel_factory`` can be used to lazily construct a sentinel so callers
-    can track when bootstrap contexts adopt it.
+    ``manager_sentinel`` forces a specific placeholder to be passed to the
+    pipeline constructor even when a different sentinel guards the bootstrap
+    context so callers can ensure downstream helpers see a consistent manager
+    reference.  ``sentinel_factory`` can be used to lazily construct a sentinel
+    so callers can track when bootstrap contexts adopt it.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -2297,6 +2301,9 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
+    manager_placeholder = manager_sentinel
+    if manager_placeholder is None:
+        manager_placeholder = sentinel_manager
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -2317,7 +2324,7 @@ def prepare_pipeline_for_bootstrap(
             init_kwargs.setdefault("bot_registry", bot_registry)
         if data_bot is not None:
             init_kwargs.setdefault("data_bot", data_bot)
-        init_kwargs.setdefault("manager", sentinel_manager)
+        init_kwargs.setdefault("manager", manager_placeholder)
 
         variants: tuple[tuple[str, ...], ...] = (
             ("context_builder", "bot_registry", "data_bot", "manager"),
@@ -2348,6 +2355,28 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
+        if manager_placeholder is not None:
+            try:
+                current_manager = getattr(pipeline, "manager", None)
+            except Exception:  # pragma: no cover - introspection guard
+                current_manager = None
+            if current_manager is not manager_placeholder:
+                try:
+                    setattr(pipeline, "manager", manager_placeholder)
+                except Exception:  # pragma: no cover - best effort assignment
+                    logger.debug(
+                        "pipeline manager placeholder assignment failed for %s",
+                        pipeline,
+                        exc_info=True,
+                    )
+            try:
+                setattr(pipeline, "initial_manager", manager_placeholder)
+            except Exception:  # pragma: no cover - best effort tracking
+                logger.debug(
+                    "pipeline initial manager annotation failed for %s",
+                    pipeline,
+                    exc_info=True,
+                )
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
@@ -2385,7 +2414,7 @@ def prepare_pipeline_for_bootstrap(
             )
 
     def _promote(manager: Any) -> None:
-        _promote_pipeline_manager(pipeline, manager, sentinel_manager)
+        _promote_pipeline_manager(pipeline, manager, manager_placeholder)
 
     return pipeline, _promote
 
@@ -2443,6 +2472,7 @@ def _bootstrap_manager(
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
     _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
 
+    placeholder_manager: Any | None = None
     try:
         manager_cls = _resolve_self_coding_manager_cls()
         if manager_cls is None:
@@ -2481,6 +2511,10 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
+        placeholder_manager = _DisabledSelfCodingManager(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
         bootstrap_owner = _BootstrapOwnerSentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
@@ -2518,15 +2552,16 @@ def _bootstrap_manager(
                 bot_registry=bot_registry,
                 data_bot=data_bot,
                 manager_override=bootstrap_owner,
+                manager_sentinel=placeholder_manager,
             )
             bootstrap_owner.bind_pipeline_promoter(promote)
             try:
                 current_manager = getattr(pipeline, "manager", None)
             except Exception:
                 current_manager = None
-            if current_manager is not bootstrap_owner:
+            if current_manager is not placeholder_manager:
                 try:
-                    setattr(pipeline, "manager", bootstrap_owner)
+                    setattr(pipeline, "manager", placeholder_manager)
                 except Exception:  # pragma: no cover - best effort
                     logger.debug(
                         "pipeline manager sentinel assignment failed for %s",
