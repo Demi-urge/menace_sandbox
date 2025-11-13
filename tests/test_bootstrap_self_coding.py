@@ -7,6 +7,7 @@ import importlib
 import sys
 import types
 from types import SimpleNamespace
+import pathlib
 
 import pytest
 
@@ -1528,6 +1529,164 @@ def test_bootstrap_entrypoint_promotes_all_bots(monkeypatch, caplog):
     assert pipeline.manager is manager
     assert pipeline.promotions == [manager]
     assert all(bot.manager is manager for bot in pipeline._bots)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_internalize_coding_bot_handles_prebuilt_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    class _Registry:
+        def __init__(self) -> None:
+            self.graph = SimpleNamespace(nodes={})
+            self.modules: dict[str, str] = {}
+            self.registered: list[tuple[str, object | None]] = []
+
+        def register_bot(self, name: str, **kwargs: object) -> None:
+            self.registered.append((name, kwargs.get("manager")))
+
+        def update_bot(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    class _Thresholds:
+        roi_drop = 0.1
+        error_threshold = 0.2
+        test_failure_threshold = 0.0
+
+    class _DataBot:
+        def __init__(self) -> None:
+            self.settings = SimpleNamespace(bot_thresholds={"ExampleBot": _Thresholds()})
+            self.event_bus = SimpleNamespace(publish=lambda *_: None)
+
+        def reload_thresholds(self, _name: str) -> _Thresholds:
+            return _Thresholds()
+
+        def schedule_monitoring(self, _name: str) -> None:
+            return None
+
+        def collect(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    registry = _Registry()
+    data_bot = _DataBot()
+
+    helper_instances: list[SimpleNamespace] = []
+
+    @coding_bot_interface.self_coding_managed(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    class _HelperBot:
+        def __init__(self, *, manager: object | None = None, **_kwargs: object) -> None:
+            self.manager = manager
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(
+            self,
+            manager: object,
+            *,
+            registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.manager = manager
+
+    class _Pipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self._bots = [
+                _HelperBot(
+                    manager=manager,
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                )
+            ]
+
+    builder = SimpleNamespace(name="builder")
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_Pipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    module_path = tmp_path / "example_bot.py"
+    module_path.write_text("print('stub bot')\n", encoding="utf-8")
+    registry.graph.nodes["ExampleBot"] = {"module": str(module_path)}
+    registry.modules["ExampleBot"] = str(module_path)
+
+    import menace_sandbox.self_coding_manager as scm
+
+    class _StubSelfCodingManager:
+        def __init__(
+            self,
+            engine: object,
+            pipeline_obj: object,
+            *,
+            bot_name: str,
+            data_bot: object,
+            bot_registry: object,
+            **_kwargs: object,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline_obj
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+            self.quick_fix = object()
+            self.logger = logging.getLogger("test.internalize")
+            self.event_bus = SimpleNamespace(publish=lambda *_: None)
+            self.evolution_orchestrator = None
+
+        def run_post_patch_cycle(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"self_tests": {"failed": 0}}
+
+        def scan_repo(self) -> None:  # pragma: no cover - stubbed
+            return None
+
+    monkeypatch.setattr(scm, "SelfCodingManager", _StubSelfCodingManager)
+    monkeypatch.setattr(scm, "persist_sc_thresholds", lambda *a, **k: None)
+
+    engine = SimpleNamespace(name="engine")
+    orchestrator = SimpleNamespace(
+        provenance_token="token",
+        register_bot=lambda *_: None,
+        register_patch_cycle=lambda *_: None,
+        event_bus=SimpleNamespace(publish=lambda *_: None),
+    )
+
+    manager = scm.internalize_coding_bot(
+        bot_name="ExampleBot",
+        engine=engine,
+        pipeline=pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        evolution_orchestrator=orchestrator,
+        roi_threshold=0.1,
+        error_threshold=0.2,
+        test_failure_threshold=0.0,
+    )
+
+    promote(manager)
+
+    assert isinstance(manager, _StubSelfCodingManager)
+    assert manager in [entry[1] for entry in registry.registered]
+    assert all(
+        isinstance(helper.manager, _StubSelfCodingManager) for helper in helper_instances
+    )
     assert "re-entrant initialisation depth" not in caplog.text
 
 
