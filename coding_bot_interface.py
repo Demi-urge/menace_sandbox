@@ -1623,6 +1623,35 @@ if not _ENGINE_AVAILABLE and _ENGINE_IMPORT_ERROR is not None:
     )
 
 
+def normalise_manager_arg(
+    manager: "SelfCodingManager | None",
+    owner: object | Mapping[str, object] | None,
+    *,
+    fallback: "SelfCodingManager | None" = None,
+) -> "SelfCodingManager | None":
+    """Return ``manager`` unless ``None`` falling back to ``owner`` or ``fallback``.
+
+    ``manager`` arguments frequently originate from sentinels that deliberately
+    evaluate ``False`` (for example when proxying disabled self-coding
+    runtimes).  Treat ``None`` as the only signal to replace the supplied
+    manager.  ``owner`` may be a class, module, or globals dict that exposes a
+    ``manager`` attribute.  ``fallback`` provides a final default when neither
+    the argument nor ``owner`` supply a concrete manager.
+    """
+
+    if manager is not None:
+        return manager
+    candidate = None
+    if owner is not None:
+        if isinstance(owner, Mapping):
+            candidate = owner.get("manager")
+        else:
+            candidate = getattr(owner, "manager", None)
+    if candidate is not None:
+        return candidate
+    return fallback
+
+
 def _self_coding_runtime_available() -> bool:
     return _ENGINE_AVAILABLE and _resolve_self_coding_manager_cls() is not None
 

@@ -87,7 +87,11 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
     from universal_retriever import UniversalRetriever  # type: ignore
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    normalise_manager_arg,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -237,7 +241,7 @@ class BotCreationBot(AdminBotBase):
         self.metrics_db = metrics_db or MetricsDB()
         self.planner = planner or BotPlanningBot()
         self.context_builder = context_builder
-        self.manager = manager or type(self).manager
+        self.manager = normalise_manager_arg(manager, type(self))
         self.developer = developer or BotDevelopmentBot(
             context_builder=self.context_builder, db_steward=self.db_router
         )

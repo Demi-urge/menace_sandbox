@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import (
+    normalise_manager_arg,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -126,7 +127,7 @@ class AutomatedReviewer:
             escalation_manager = AutoEscalationManager(context_builder=context_builder)
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.manager = manager or type(self).manager
+        self.manager = normalise_manager_arg(manager, type(self))
         try:
             name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
             self.manager.register_bot(name)
