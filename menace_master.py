@@ -74,6 +74,7 @@ from menace.bot_registry import BotRegistry  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.retry_utils import retry  # noqa: E402
 from menace.disaster_recovery import DisasterRecovery  # noqa: E402
+from coding_bot_interface import prepare_pipeline_for_bootstrap  # noqa: E402
 try:
     import sandbox_runner  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
@@ -563,8 +564,12 @@ def deploy_patch(
     orchestrator = EvolutionOrchestrator(
         data_bot, capital_bot, engine, evolution_manager
     )
-    pipeline = ModelAutomationPipeline(
-        context_builder=builder, event_bus=bus, bot_registry=registry
+    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        event_bus=bus,
     )
     _th = get_thresholds("MenaceMaster")
     persist_sc_thresholds(
@@ -587,6 +592,10 @@ def deploy_patch(
         test_failure_threshold=_th.test_failure_increase,
         evolution_orchestrator=orchestrator,
     )
+    try:
+        promote_pipeline(manager)
+    except Exception:  # pragma: no cover - promotion must be best-effort
+        logger.debug("pipeline promotion failed", exc_info=True)
     manager.context_builder = builder
     try:
         outcome = manager.auto_run_patch(path, description)
@@ -600,6 +609,7 @@ def deploy_patch(
             raise RuntimeError(f"self tests failed ({failed_tests})")
     except Exception:
         rb.auto_rollback("latest", [])
+        raise
 
 
 def main(argv: Iterable[str] | None = None) -> None:
