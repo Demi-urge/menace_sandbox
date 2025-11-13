@@ -69,6 +69,42 @@ def _setup_mm_stubs(monkeypatch):
         "menace.self_coding_manager",
         PatchApprovalPolicy=DummyBot,
         SelfCodingManager=DummyBot,
+        internalize_coding_bot=lambda *a, **k: DummyBot(),
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.self_coding_engine",
+        SelfCodingEngine=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.code_database",
+        CodeDB=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.menace_memory_manager",
+        MenaceMemoryManager=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.model_automation_pipeline",
+        ModelAutomationPipeline=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.capital_management_bot",
+        CapitalManagementBot=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.system_evolution_manager",
+        SystemEvolutionManager=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.evolution_orchestrator",
+        EvolutionOrchestrator=DummyBot,
     )
     _stub_module(
         monkeypatch,
@@ -108,7 +144,13 @@ def _setup_mm_stubs(monkeypatch):
         monkeypatch, "menace.self_service_override", SelfServiceOverride=DummyBot
     )
     _stub_module(monkeypatch, "menace.resource_allocation_optimizer", ROIDB=DummyBot)
-    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot)
+    _stub_module(
+        monkeypatch,
+        "menace.data_bot",
+        MetricsDB=DummyBot,
+        DataBot=DummyBot,
+        persist_sc_thresholds=lambda *a, **k: None,
+    )
     _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBot)
     _stub_module(monkeypatch, "menace.retry_utils", retry=lambda *a, **k: (lambda f: f))
     _stub_module(
@@ -478,7 +520,12 @@ def test_deploy_patch_requires_self_test_summary(monkeypatch, tmp_path):
     manager = DummyManager()
 
     monkeypatch.setattr(module, "SelfCodingEngine", lambda *a, **k: manager.engine, raising=False)
-    monkeypatch.setattr(module, "ModelAutomationPipeline", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        module,
+        "prepare_pipeline_for_bootstrap",
+        lambda **kwargs: (types.SimpleNamespace(), lambda *_a, **_k: None),
+        raising=False,
+    )
     monkeypatch.setattr(module, "DataBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
     monkeypatch.setattr(module, "CapitalManagementBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
     monkeypatch.setattr(module, "SystemEvolutionManager", lambda *a, **k: types.SimpleNamespace(), raising=False)
