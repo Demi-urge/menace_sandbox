@@ -2334,7 +2334,11 @@ def self_coding_managed(
                 sentinel_manager = getattr(
                     _BOOTSTRAP_STATE, "sentinel_manager", None
                 )
-                manager_for_context = manager_instance or sentinel_manager
+                manager_for_context = (
+                    manager_instance
+                    if manager_instance is not None
+                    else sentinel_manager
+                )
                 context = _push_bootstrap_context(
                     registry=registry_obj,
                     data_bot=data_bot_obj,
@@ -2353,14 +2357,37 @@ def self_coding_managed(
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("threshold reload failed for %s", name)
 
-                manager_local = manager_instance or sentinel_manager
+                manager_local = (
+                    manager_instance
+                    if manager_instance is not None
+                    else sentinel_manager
+                )
                 sentinel_placeholder = isinstance(
                     manager_local, _BootstrapManagerSentinel
                 )
                 runtime_available = _self_coding_runtime_available()
+                bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+                sentinel_deferral_active = sentinel_placeholder and bootstrap_depth > 0
+                if sentinel_deferral_active:
+                    logger.debug(
+                        "%s: sentinel manager active at bootstrap depth=%s; deferring real manager promotion",
+                        name,
+                        bootstrap_depth,
+                    )
+                elif sentinel_placeholder:
+                    # A sentinel lingering without an active bootstrap indicates the
+                    # original attempt completed (or failed) and a new manager should
+                    # be created.
+                    logger.debug(
+                        "%s: stale sentinel manager detected; triggering manager bootstrap",
+                        name,
+                    )
+                    manager_local = None
                 if context is not None:
                     context.manager = manager_local
-                if (manager_local is None or sentinel_placeholder) and runtime_available:
+                if sentinel_deferral_active:
+                    register_as_coding_local = register_as_coding
+                elif manager_local is None and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
                     if callable(ensure_self_coding_ready):
@@ -2376,13 +2403,12 @@ def self_coding_managed(
                             )
                     if ready:
                         try:
-                            if sentinel_placeholder:
-                                manager_local = None
-                            manager_local = manager_local or _bootstrap_manager(
-                                name,
-                                registry_obj,
-                                data_bot_obj,
-                            )
+                            if manager_local is None:
+                                manager_local = _bootstrap_manager(
+                                    name,
+                                    registry_obj,
+                                    data_bot_obj,
+                                )
                         except RuntimeError as exc:
                             register_as_coding_local = False
                             logger.warning(
