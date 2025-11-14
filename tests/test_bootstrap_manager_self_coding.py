@@ -4,7 +4,7 @@ import importlib
 import logging
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -629,7 +629,7 @@ def direct_pipeline_env(
     monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
 
     helper_names = ("DirectComms", "DirectNestedHelper")
-    placeholder_manager = cbi._DisabledSelfCodingManager(
+    placeholder_manager = cbi._BootstrapManagerSentinel(
         bot_registry=registry,
         data_bot=data_bot,
     )
@@ -684,8 +684,16 @@ def direct_pipeline_env(
 
     assert bootstrap_attempts  # ensure helpers attempted bootstrap eagerly
 
-    def _promote(manager: object) -> None:
-        cbi._promote_pipeline_manager(pipeline, manager, placeholder_manager)
+    promotion_calls: list[object] = []
+
+    def _promote(manager: object, *, extra_sentinels: Iterable[object] | None = None) -> None:
+        promotion_calls.append(manager)
+        cbi._promote_pipeline_manager(
+            pipeline,
+            manager,
+            placeholder_manager,
+            extra_sentinels=extra_sentinels,
+        )
 
     stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = DirectPipeline  # type: ignore[attr-defined]
 
@@ -1907,6 +1915,119 @@ def test_direct_pipeline_promotes_prebuilt_helpers(
     assert pipeline.comms_bot.manager is manager
     assert pipeline.comms_bot.helper.manager is manager
 
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
+def test_manual_pipeline_helper_reuses_placeholder_manager(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ensure script-style helper bootstrap reuses fallback sentinels safely."""
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    helper_name = "ManualFallbackHelper"
+    owner_name = "ManualFallbackOwner"
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force legacy fallback path")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="manual-fallback")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    placeholder_manager = cbi._DisabledSelfCodingManager(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    helper_bootstrap_calls: list[str] = []
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ManualFallbackHelper:
+        name = helper_name
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    class ManualFallbackPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.helper = ManualFallbackHelper()
+            self._bots = [self.helper]
+
+    with monkeypatch.context() as patch_context:
+        def _placeholder_bootstrap(name: str, *_args: object, **_kwargs: object) -> object:
+            helper_bootstrap_calls.append(name)
+            return placeholder_manager
+
+        patch_context.setattr(cbi, "_bootstrap_manager", _placeholder_bootstrap)
+        pipeline = ManualFallbackPipeline(
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+            manager=placeholder_manager,
+        )
+
+    assert helper_bootstrap_calls == [helper_name]
+    assert pipeline.helper.manager is placeholder_manager
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        ManualFallbackPipeline
+    )
+
+    promotion_calls: list[object] = []
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is ManualFallbackPipeline
+
+        def _promote(
+            manager: object, *, extra_sentinels: Iterable[object] | None = None
+        ) -> None:
+            promotion_calls.append(manager)
+            cbi._promote_pipeline_manager(
+                pipeline,
+                manager,
+                placeholder_manager,
+                extra_sentinels=extra_sentinels,
+            )
+
+        return pipeline, _promote
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(owner_name, registry, data_bot)
+
+    assert manager
+    assert manager is not placeholder_manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert promotion_calls, "expected pipeline promoter to run for manual pipeline"
+    assert pipeline.helper.manager is manager
     assert not any(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
