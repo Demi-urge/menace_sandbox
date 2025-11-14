@@ -2253,6 +2253,101 @@ def test_managerless_pipeline_bootstrap_avoids_reentrant_warning(
     )
 
 
+def test_preinstantiated_pipeline_bootstrap_promotes_without_reentrant_warning(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    builder = SimpleNamespace(label="preinstantiated-pipeline")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(cbi, "ensure_self_coding_ready", lambda: (True, ()))
+
+    recorded_pipelines: list[tuple[object | None, object | None]] = []
+
+    def _recording_bootstrap_manager(
+        name: str,
+        bot_registry: object,
+        data_bot: object,
+        *,
+        pipeline: object | None = None,
+        pipeline_manager: object | None = None,
+        pipeline_promoter: Callable[[object], None] | None = None,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        context = cbi._current_bootstrap_context()
+        context_pipeline = getattr(context, "pipeline", None) if context else None
+        recorded_pipelines.append((pipeline, context_pipeline))
+        resolved_pipeline = pipeline or context_pipeline
+        return SimpleNamespace(
+            name=name,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            pipeline=resolved_pipeline,
+            evolution_orchestrator=None,
+        )
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _recording_bootstrap_manager)
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PreManagerHelper:
+        name = "PreManagerHelper"
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ModelAutomationPipeline:
+        name = "PreManagerPipeline"
+        _bot_attribute_order = ("helper",)
+        context_builder: object | None = None
+        manager: object | None = None
+
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.helper = PreManagerHelper()
+            self._bots = [self.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        ModelAutomationPipeline
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        pipeline = ModelAutomationPipeline(
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+    pipeline_manager = getattr(pipeline, "manager", None)
+    assert pipeline_manager
+    assert not isinstance(pipeline_manager, cbi._DisabledSelfCodingManager)
+
+    helper_manager = getattr(pipeline.helper, "manager", None)
+    assert helper_manager
+    assert not isinstance(helper_manager, cbi._DisabledSelfCodingManager)
+    assert getattr(helper_manager, "pipeline", None) is pipeline
+    assert not any("Re-entrant bootstrap" in record.message for record in caplog.records)
+    assert recorded_pipelines
+    for pipeline_arg, context_pipeline in recorded_pipelines:
+        assert context_pipeline is pipeline
+        assert pipeline_arg is pipeline
+
+
 def test_bootstrap_manager_handles_truthy_owner_sentinel(
     fallback_pipeline_env: SimpleNamespace,
     caplog: pytest.LogCaptureFixture,
