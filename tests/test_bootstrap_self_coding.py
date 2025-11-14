@@ -15,6 +15,9 @@ from typing import Any, Callable
 import pytest
 
 import menace_sandbox.coding_bot_interface as coding_bot_interface
+import bootstrap_self_coding
+
+pytest_plugins = ("tests.test_bootstrap_manager_self_coding",)
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -2723,3 +2726,151 @@ def test_bootstrap_entrypoint_handles_stubbed_communication_bot(monkeypatch, cap
     assert "re-entrant initialisation depth=1" not in caplog.text
     manager = manager_box["manager"]
     assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+
+
+def _install_stub_module(monkeypatch, name: str, **entries: object) -> types.ModuleType:
+    module = types.ModuleType(name)
+    module.__dict__.update(entries)
+    monkeypatch.setitem(sys.modules, name, module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "pipeline_fixture",
+    ["prebuilt_managerless_pipeline_env", "reentrant_prebuilt_pipeline_env"],
+)
+def test_cli_bootstrap_promotes_helper_graphs(
+    monkeypatch, caplog, request, pipeline_fixture
+):
+    env = request.getfixturevalue(pipeline_fixture)
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+    caplog.set_level(logging.WARNING, logger=bootstrap_self_coding.LOGGER.name)
+
+    helpers_before = tuple(getattr(env.pipeline, "_bots", ()))
+    threshold_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    prepare_calls: list[dict[str, object]] = []
+    internalize_state: dict[str, object] = {}
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.bot_registry",
+        BotRegistry=lambda: env.registry,
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.code_database",
+        CodeDB=lambda: SimpleNamespace(kind="code-db"),
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.context_builder_util",
+        create_context_builder=lambda: env.builder,
+    )
+
+    def _data_bot_factory(start_server: bool = False) -> object:
+        assert start_server is False
+        return env.data_bot
+
+    def _persist_sc_thresholds(*args: object, **kwargs: object) -> None:
+        threshold_calls.append((args, kwargs))
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.data_bot",
+        DataBot=_data_bot_factory,
+        persist_sc_thresholds=_persist_sc_thresholds,
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.menace_memory_manager",
+        MenaceMemoryManager=lambda: SimpleNamespace(kind="memory"),
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.model_automation_pipeline",
+        ModelAutomationPipeline=env.pipeline_cls,
+    )
+
+    class _StubEngine:
+        def __init__(self, *_args: object, context_builder: object, **_kwargs: object):
+            self.context_builder = context_builder
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_engine",
+        SelfCodingEngine=_StubEngine,
+    )
+
+    def _thresholds(_name: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            roi_drop=0.1,
+            error_increase=0.2,
+            test_failure_increase=0.3,
+        )
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_thresholds",
+        get_thresholds=_thresholds,
+    )
+
+    def _prepare_pipeline_for_bootstrap(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        prepare_calls.append(kwargs)
+        assert kwargs.get("pipeline_cls") is env.pipeline_cls
+        assert kwargs.get("context_builder") is env.builder
+        assert kwargs.get("bot_registry") is env.registry
+        assert kwargs.get("data_bot") is env.data_bot
+        return env.pipeline, env.promoter
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "prepare_pipeline_for_bootstrap",
+        _prepare_pipeline_for_bootstrap,
+    )
+
+    def _internalize_coding_bot(**kwargs: object) -> SimpleNamespace:
+        internalize_state["kwargs"] = kwargs
+        pipeline = kwargs["pipeline"]
+        internalize_state["pipeline_manager"] = getattr(pipeline, "manager", None)
+        manager = SimpleNamespace(
+            pipeline=pipeline,
+            bot_registry=kwargs["bot_registry"],
+            data_bot=kwargs["data_bot"],
+            bot_name=kwargs["bot_name"],
+        )
+        internalize_state["manager"] = manager
+        return manager
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_manager",
+        internalize_coding_bot=_internalize_coding_bot,
+    )
+
+    bot_name = f"Cli{pipeline_fixture.title()}"
+    bootstrap_self_coding.bootstrap_self_coding(bot_name)
+
+    assert prepare_calls, "expected prepare_pipeline_for_bootstrap to be invoked"
+    assert threshold_calls, "persist_sc_thresholds should capture CLI thresholds"
+    assert "kwargs" in internalize_state
+    assert internalize_state["kwargs"]["bot_name"] == bot_name
+    assert internalize_state["kwargs"]["pipeline"] is env.pipeline
+    received_manager = internalize_state["pipeline_manager"]
+    if received_manager is not None:
+        assert isinstance(
+            received_manager, coding_bot_interface._BootstrapManagerSentinel
+        )
+
+    manager = internalize_state["manager"]
+    pipeline_manager = getattr(env.pipeline, "manager", None)
+    if pipeline_manager is not None:
+        assert pipeline_manager is manager
+    for helper in helpers_before:
+        helper_manager = getattr(helper, "manager", None)
+        assert helper_manager is manager
+        assert not isinstance(
+            helper_manager, coding_bot_interface._DisabledSelfCodingManager
+        )
+
+    assert "re-entrant initialisation depth" not in caplog.text
