@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Callable, TYPE_CHECKING, cast
+from typing import Any, Dict, Iterable, List, Callable, TYPE_CHECKING
 import logging
 from importlib import import_module
 from pathlib import Path
@@ -29,9 +29,14 @@ def _flat_import(module: str) -> object:
         return import_module(qualified)
 
 if _HAS_PACKAGE:
-    from .coding_bot_interface import self_coding_managed
+    from .coding_bot_interface import (
+        prepare_pipeline_for_bootstrap,
+        self_coding_managed,
+    )
 else:  # pragma: no cover - execution as a script
-    self_coding_managed = _flat_import("coding_bot_interface").self_coding_managed  # type: ignore[attr-defined]
+    _coding_bot_interface = _flat_import("coding_bot_interface")
+    prepare_pipeline_for_bootstrap = _coding_bot_interface.prepare_pipeline_for_bootstrap  # type: ignore[attr-defined]
+    self_coding_managed = _coding_bot_interface.self_coding_managed  # type: ignore[attr-defined]
 
 if _HAS_PACKAGE:
     from .neuroplasticity import PathwayDB
@@ -135,31 +140,6 @@ def _load_model_automation_pipeline() -> type | None:
     return None
 
 
-if TYPE_CHECKING:  # pragma: no cover - typing only import
-    from .model_automation_pipeline import ModelAutomationPipeline as _ModelAutomationPipeline
-else:  # pragma: no cover - runtime alias for typing convenience
-    _ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
-
-
-def _create_model_automation_pipeline(
-    *, context_builder: Any
-) -> _ModelAutomationPipeline | None:
-    """Instantiate ``ModelAutomationPipeline`` while avoiding circular imports."""
-
-    pipeline_cls = _load_model_automation_pipeline()
-    if pipeline_cls is None:
-        return None
-    try:
-        return cast("_ModelAutomationPipeline", pipeline_cls)(
-            context_builder=context_builder
-        )
-    except Exception as exc:  # pragma: no cover - defensive bootstrap
-        logger.debug(
-            "Failed to initialise ModelAutomationPipeline: %s",
-            exc,
-            exc_info=True,
-        )
-        return None
 
 try:
     if _HAS_PACKAGE:
@@ -372,16 +352,32 @@ def _ensure_runtime_dependencies() -> dict[str, Any]:
 
     runtime["engine"] = engine
 
+    pipeline: Any | None = None
+    promote_pipeline: Callable[[Any], None] | None = None
     if context_builder is not None and engine is not None:
-        pipeline = _create_model_automation_pipeline(context_builder=context_builder)
-        if pipeline is None:
+        pipeline_cls = _load_model_automation_pipeline()
+        if pipeline_cls is None:
             logger.warning(
                 "ModelAutomationPipeline unavailable for WorkflowEvolutionBot",
             )
-    else:
-        pipeline = None
+        else:
+            try:
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=pipeline_cls,
+                    context_builder=context_builder,
+                    bot_registry=registry_local,
+                    data_bot=data_bot_local,
+                )
+            except Exception as exc:  # pragma: no cover - degraded bootstrap
+                logger.warning(
+                    "Failed to bootstrap ModelAutomationPipeline for WorkflowEvolutionBot: %s",
+                    exc,
+                )
+                pipeline = None
+                promote_pipeline = None
 
     runtime["pipeline"] = pipeline
+    runtime["promote_pipeline"] = promote_pipeline
 
     try:
         evolution_orchestrator = (
@@ -439,6 +435,17 @@ def _ensure_runtime_dependencies() -> dict[str, Any]:
             manager_local = None
     else:
         manager_local = None
+
+    if manager_local is not None:
+        promoter = runtime.get("promote_pipeline")
+        if callable(promoter):
+            try:
+                promoter(manager_local)
+            except Exception as exc:  # pragma: no cover - best effort promotion
+                logger.warning(
+                    "failed to promote WorkflowEvolutionBot pipeline manager: %s",
+                    exc,
+                )
 
     runtime["manager"] = manager_local
 
