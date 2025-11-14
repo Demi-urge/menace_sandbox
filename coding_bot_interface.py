@@ -125,6 +125,7 @@ class _BootstrapContext:
     registry: Any = None
     data_bot: Any = None
     manager: Any = None
+    sentinel: Any = None
 
 
 _BOOTSTRAP_THREAD_STATE = threading.local()
@@ -140,7 +141,12 @@ def _push_bootstrap_context(
     if stack is None:
         stack = []
         _BOOTSTRAP_THREAD_STATE.stack = stack
-    context = _BootstrapContext(registry=registry, data_bot=data_bot, manager=manager)
+    context = _BootstrapContext(
+        registry=registry,
+        data_bot=data_bot,
+        manager=manager,
+        sentinel=manager,
+    )
     stack.append(context)
     return context
 
@@ -1737,6 +1743,7 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         "_owner_active",
         "_pipeline_promoter",
         "_bootstrap_owner_delegate",
+        "_extra_manager_sentinels",
     )
 
     def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
@@ -1751,6 +1758,7 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         self._owner_active = False
         self._pipeline_promoter: Callable[[Any], None] | None = None
         self._bootstrap_owner_delegate: Any | None = None
+        self._extra_manager_sentinels: list[Any] = []
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial truthiness
         """Always evaluate truthy so helper heuristics keep deferring."""
@@ -1813,6 +1821,7 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         real_manager: Any,
         *,
         sentinel: Any | None = None,
+        extra_sentinels: Iterable[Any] | None = None,
     ) -> None:
         """Swap this sentinel out for *real_manager* once bootstrap completes."""
 
@@ -1843,13 +1852,22 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
                     "bootstrap owner failed to refresh data_bot", exc_info=True
                 )
 
+        if extra_sentinels:
+            for candidate in extra_sentinels:
+                if candidate is None:
+                    continue
+                if any(existing is candidate for existing in self._extra_manager_sentinels):
+                    continue
+                self._extra_manager_sentinels.append(candidate)
+
         promoter = self._pipeline_promoter
         if promoter is None and real_manager is not None:
             pipeline = getattr(real_manager, "pipeline", None)
-            promoter = lambda mgr: _promote_pipeline_manager(  # type: ignore[assignment]
+            promoter = lambda mgr, *, extra_sentinels=None: _promote_pipeline_manager(  # type: ignore[assignment]
                 pipeline,
                 mgr,
                 sentinel,
+                extra_sentinels=extra_sentinels,
             )
 
         if callable(promoter) and real_manager is not None:
@@ -1857,7 +1875,12 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
                 "promoting fallback pipeline references for %s", real_manager
             )
             try:
-                promoter(real_manager)
+                promote_kwargs: dict[str, Any] = {}
+                if self._extra_manager_sentinels:
+                    promote_kwargs["extra_sentinels"] = tuple(
+                        dict.fromkeys(self._extra_manager_sentinels)
+                    )
+                promoter(real_manager, **promote_kwargs)
             except Exception:  # pragma: no cover - promotion must be best effort
                 logger.debug(
                     "bootstrap owner pipeline promotion failed", exc_info=True
@@ -2414,7 +2437,12 @@ def _pipeline_manager_placeholder_shim(
                 _BOOTSTRAP_STATE.depth = previous_depth
 
 
-def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
+def _promote_pipeline_manager(
+    pipeline: Any,
+    manager: Any,
+    sentinel: Any,
+    extra_sentinels: Iterable[Any] | None = None,
+) -> None:
     """Swap sentinel references for *manager* across the pipeline hierarchy."""
 
     if pipeline is None or manager is None or manager is sentinel:
@@ -2429,6 +2457,11 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
         delegate = getattr(sentinel, "_bootstrap_owner_delegate", None)
         if delegate is not None:
             sentinel_candidates.append(delegate)
+    if extra_sentinels:
+        for candidate in extra_sentinels:
+            if candidate is None:
+                continue
+            sentinel_candidates.append(candidate)
     sentinel_ids = {id(candidate) for candidate in sentinel_candidates}
 
     helper_promotions: list[str] = []
@@ -2743,6 +2776,7 @@ def prepare_pipeline_for_bootstrap(
     manager_override: Any | None = None,
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
+    extra_manager_sentinels: Iterable[Any] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -2761,7 +2795,10 @@ def prepare_pipeline_for_bootstrap(
     pipeline constructor even when a different sentinel guards the bootstrap
     context so callers can ensure downstream helpers see a consistent manager
     reference.  ``sentinel_factory`` can be used to lazily construct a sentinel
-    so callers can track when bootstrap contexts adopt it.
+    so callers can track when bootstrap contexts adopt it.  When helpers attach
+    temporary managers that should be promoted alongside the bootstrap sentinel,
+    include them via ``extra_manager_sentinels`` so promotion callbacks replace
+    every placeholder atomically.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -2908,9 +2945,31 @@ def prepare_pipeline_for_bootstrap(
                 "pipeline manager sentinel attachment failed for %s", pipeline, exc_info=True
             )
 
-    def _promote(manager: Any) -> None:
+    def _promote(
+        manager: Any,
+        *,
+        extra_sentinels: Iterable[Any] | None = None,
+    ) -> None:
         try:
-            _promote_pipeline_manager(pipeline, manager, manager_placeholder)
+            combined: list[Any] = []
+            seen: set[int] = set()
+            for group in (extra_manager_sentinels, extra_sentinels):
+                if not group:
+                    continue
+                for candidate in group:
+                    if candidate is None:
+                        continue
+                    key = id(candidate)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    combined.append(candidate)
+            _promote_pipeline_manager(
+                pipeline,
+                manager,
+                manager_placeholder,
+                extra_sentinels=combined or None,
+            )
         finally:
             _deregister_bootstrap_helper_callback(_promote)
             _finalize_bootstrap_state()
@@ -2934,6 +2993,10 @@ def _bootstrap_manager(
     name: str,
     bot_registry: BotRegistry,
     data_bot: DataBot,
+    *,
+    pipeline: Any | None = None,
+    pipeline_manager: Any | None = None,
+    pipeline_promoter: Callable[[Any], None] | None = None,
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
@@ -2975,6 +3038,17 @@ def _bootstrap_manager(
     )
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
     _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
+    fallback_manager_sentinels: list[Any] = []
+
+    def _track_extra_sentinel(candidate: Any) -> None:
+        if candidate is None:
+            return
+        if any(existing is candidate for existing in fallback_manager_sentinels):
+            return
+        fallback_manager_sentinels.append(candidate)
+
+    if pipeline_manager is not None:
+        _track_extra_sentinel(pipeline_manager)
     next_depth = depth + 1
     logger.debug(
         "installed bootstrap sentinel %s for %s (depth=%s)",
@@ -3121,11 +3195,20 @@ def _bootstrap_manager(
                 placeholder_manager,
                 name,
             )
+            reentrant_manager = pipeline_manager
+            if reentrant_manager is None and getattr(_BOOTSTRAP_STATE, "depth", 0) > 0:
+                reentrant_manager = _DisabledSelfCodingManager(
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                )
+                _track_extra_sentinel(reentrant_manager)
             owner_context = _push_bootstrap_context(
                 registry=bot_registry,
                 data_bot=data_bot,
                 manager=placeholder_manager,
             )
+            if owner_context is not None:
+                owner_context.sentinel = reentrant_manager or placeholder_manager
             try:
                 code_db_cls = _load_optional_module("code_database").CodeDB
                 memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
@@ -3135,7 +3218,12 @@ def _bootstrap_manager(
                 pipeline_mod = _load_optional_module(
                     "model_automation_pipeline", fallback="menace.model_automation_pipeline"
                 )
-                ctx_builder = create_context_builder()
+                if pipeline is None:
+                    ctx_builder = create_context_builder()
+                else:
+                    ctx_builder = getattr(pipeline, "context_builder", None)
+                    if ctx_builder is None:
+                        ctx_builder = create_context_builder()
                 engine = engine_mod.SelfCodingEngine(
                     code_db_cls(),
                     memory_cls(),
@@ -3144,19 +3232,82 @@ def _bootstrap_manager(
                 pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
                 if pipeline_cls is None:
                     raise RuntimeError("ModelAutomationPipeline is unavailable")
-                pipeline, promote = prepare_pipeline_for_bootstrap(
-                    pipeline_cls=pipeline_cls,
-                    context_builder=ctx_builder,
-                    bot_registry=bot_registry,
-                    data_bot=data_bot,
-                    bootstrap_manager=placeholder_manager,
-                    manager_override=placeholder_manager,
-                    manager_sentinel=placeholder_manager,
-                    manager=placeholder_manager,
-                )
+                local_pipeline = pipeline
+                promote: Callable[[Any], None] | None = pipeline_promoter
+                if local_pipeline is None:
+                    local_pipeline, promote = prepare_pipeline_for_bootstrap(
+                        pipeline_cls=pipeline_cls,
+                        context_builder=ctx_builder,
+                        bot_registry=bot_registry,
+                        data_bot=data_bot,
+                        bootstrap_manager=reentrant_manager or placeholder_manager,
+                        manager_override=placeholder_manager,
+                        manager_sentinel=placeholder_manager,
+                        manager=reentrant_manager or placeholder_manager,
+                        extra_manager_sentinels=(
+                            fallback_manager_sentinels or None
+                        ),
+                    )
+                elif not callable(promote):
+                    def _default_promote(
+                        real_manager: Any,
+                        *,
+                        extra_sentinels: Iterable[Any] | None = None,
+                    ) -> None:
+                        combined: list[Any] = []
+                        seen: set[int] = set()
+                        for group in (fallback_manager_sentinels, extra_sentinels):
+                            if not group:
+                                continue
+                            for candidate in group:
+                                if candidate is None:
+                                    continue
+                                key = id(candidate)
+                                if key in seen:
+                                    continue
+                                seen.add(key)
+                                combined.append(candidate)
+                        _promote_pipeline_manager(
+                            local_pipeline,
+                            real_manager,
+                            placeholder_manager,
+                            extra_sentinels=combined or None,
+                        )
+
+                    promote = _default_promote
+                else:
+                    delegate = promote
+
+                    def _wrapped_promote(
+                        real_manager: Any,
+                        *,
+                        extra_sentinels: Iterable[Any] | None = None,
+                        _extras: Iterable[Any] | None = fallback_manager_sentinels,
+                    ) -> None:
+                        combined: list[Any] = []
+                        seen: set[int] = set()
+                        for group in (_extras, extra_sentinels):
+                            if not group:
+                                continue
+                            for candidate in group:
+                                if candidate is None:
+                                    continue
+                                key = id(candidate)
+                                if key in seen:
+                                    continue
+                                seen.add(key)
+                                combined.append(candidate)
+                        try:
+                            delegate(real_manager, extra_sentinels=combined or None)
+                        except TypeError:
+                            delegate(real_manager)
+
+                    promote = _wrapped_promote
+
                 bind_promoter = getattr(bootstrap_owner, "bind_pipeline_promoter", None)
-                if callable(bind_promoter):
+                if callable(bind_promoter) and callable(promote):
                     bind_promoter(promote)
+                pipeline = local_pipeline
                 pipeline_manager = getattr(pipeline, "manager", None)
                 if placeholder_manager is not None and not _is_bootstrap_placeholder(
                     pipeline_manager
@@ -3199,7 +3350,18 @@ def _bootstrap_manager(
             if helper_callbacks:
                 callback_queue.extend(helper_callbacks)
             if callable(promote):
-                callback_queue.append(promote)
+                def _promote_with_extras(
+                    real_manager: Any,
+                    *,
+                    _promote: Callable[[Any], None] = promote,
+                    _extras: Iterable[Any] | None = fallback_manager_sentinels,
+                ) -> None:
+                    try:
+                        _promote(real_manager, extra_sentinels=_extras or None)
+                    except TypeError:
+                        _promote(real_manager)
+
+                callback_queue.append(_promote_with_extras)
             ordered_callbacks: list[Callable[[Any], None]] = []
             seen_callbacks: set[int] = set()
             for callback in callback_queue:
@@ -3219,7 +3381,11 @@ def _bootstrap_manager(
                     )
             mark_ready = getattr(bootstrap_owner, "mark_ready", None)
             if callable(mark_ready):
-                mark_ready(manager, sentinel=sentinel_manager)
+                mark_ready(
+                    manager,
+                    sentinel=sentinel_manager,
+                    extra_sentinels=fallback_manager_sentinels or None,
+                )
             logger.debug(
                 "bootstrap owner sentinel released for %s", name
             )
@@ -3541,10 +3707,27 @@ def self_coding_managed(
             parent_context = _current_bootstrap_context()
             contextual_manager = None
             contextual_placeholder: Any | None = None
-            if parent_context is not None and parent_context.manager is not None:
+            contextual_sentinel: Any | None = None
+            if parent_context is not None:
                 contextual_manager = parent_context.manager
-                if _is_bootstrap_placeholder(contextual_manager):
+                contextual_sentinel = getattr(parent_context, "sentinel", None)
+                if contextual_manager is not None and _is_bootstrap_placeholder(
+                    contextual_manager
+                ):
                     contextual_placeholder = contextual_manager
+                if (
+                    contextual_placeholder is None
+                    and contextual_sentinel is not None
+                    and _is_bootstrap_placeholder(contextual_sentinel)
+                ):
+                    contextual_placeholder = contextual_sentinel
+            depth_level = getattr(_BOOTSTRAP_STATE, "depth", 0)
+            if (
+                depth_level > 0
+                and contextual_sentinel is not None
+                and contextual_sentinel is not contextual_manager
+            ):
+                contextual_manager = contextual_sentinel
             try:
                 registry_obj = _resolve_candidate(bot_registry)
                 data_bot_obj = _resolve_candidate(data_bot)
@@ -3554,6 +3737,8 @@ def self_coding_managed(
                 if sentinel_manager is None and contextual_placeholder is not None:
                     sentinel_manager = contextual_placeholder
                 manager_for_context = contextual_manager
+                if manager_for_context is None and contextual_sentinel is not None:
+                    manager_for_context = contextual_sentinel
                 if manager_for_context is None:
                     manager_for_context = (
                         manager_instance

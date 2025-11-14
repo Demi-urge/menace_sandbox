@@ -1433,7 +1433,6 @@ def test_prebuilt_managerless_pipeline_promotes_helpers(
 
 def test_prebuilt_reentrant_pipeline_stabilises_manager(
     reentrant_prebuilt_pipeline_env: SimpleNamespace,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Regression test for helper decorators re-entering ``_bootstrap_manager``.
@@ -1447,21 +1446,15 @@ def test_prebuilt_reentrant_pipeline_stabilises_manager(
 
     import menace.coding_bot_interface as cbi
 
-    def _reuse_prebuilt_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
-        assert kwargs.get("pipeline_cls") is reentrant_prebuilt_pipeline_env.pipeline_cls
-        return (
-            reentrant_prebuilt_pipeline_env.pipeline,
-            reentrant_prebuilt_pipeline_env.promoter,
-        )
-
-    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_prebuilt_pipeline)
-
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
         manager = cbi._bootstrap_manager(
             "ReentrantOwner",
             reentrant_prebuilt_pipeline_env.registry,
             reentrant_prebuilt_pipeline_env.data_bot,
+            pipeline=reentrant_prebuilt_pipeline_env.pipeline,
+            pipeline_manager=reentrant_prebuilt_pipeline_env.pipeline.manager,
+            pipeline_promoter=reentrant_prebuilt_pipeline_env.promoter,
         )
 
     assert manager
@@ -1495,21 +1488,11 @@ def test_prebuilt_reentrant_pipeline_stabilises_manager(
 
 def test_prebuilt_pipeline_helpers_receive_real_manager(
     reentrant_prebuilt_pipeline_env: SimpleNamespace,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Ensure pipelines constructed before bootstrap still see real managers."""
 
     import menace.coding_bot_interface as cbi
-
-    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
-        assert kwargs.get("pipeline_cls") is reentrant_prebuilt_pipeline_env.pipeline_cls
-        return (
-            reentrant_prebuilt_pipeline_env.pipeline,
-            reentrant_prebuilt_pipeline_env.promoter,
-        )
-
-    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
@@ -1517,6 +1500,9 @@ def test_prebuilt_pipeline_helpers_receive_real_manager(
             "PrebuiltManagerOwner",
             reentrant_prebuilt_pipeline_env.registry,
             reentrant_prebuilt_pipeline_env.data_bot,
+            pipeline=reentrant_prebuilt_pipeline_env.pipeline,
+            pipeline_manager=reentrant_prebuilt_pipeline_env.pipeline.manager,
+            pipeline_promoter=reentrant_prebuilt_pipeline_env.promoter,
         )
 
     assert manager
