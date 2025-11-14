@@ -126,6 +126,7 @@ class _BootstrapContext:
     data_bot: Any = None
     manager: Any = None
     sentinel: Any = None
+    pipeline: Any = None
 
 
 _BOOTSTRAP_THREAD_STATE = threading.local()
@@ -133,7 +134,7 @@ _SENTINEL_UNSET = object()
 
 
 def _push_bootstrap_context(
-    *, registry: Any, data_bot: Any, manager: Any
+    *, registry: Any, data_bot: Any, manager: Any, pipeline: Any | None = None
 ) -> _BootstrapContext:
     """Push a helper context onto the current thread's stack."""
 
@@ -141,11 +142,17 @@ def _push_bootstrap_context(
     if stack is None:
         stack = []
         _BOOTSTRAP_THREAD_STATE.stack = stack
+    if pipeline is None and stack:
+        try:
+            pipeline = stack[-1].pipeline
+        except Exception:
+            pipeline = None
     context = _BootstrapContext(
         registry=registry,
         data_bot=data_bot,
         manager=manager,
         sentinel=manager,
+        pipeline=pipeline,
     )
     stack.append(context)
     return context
@@ -2266,6 +2273,46 @@ def _looks_like_helper_candidate(candidate: Any) -> bool:
     return True
 
 
+def _looks_like_pipeline_candidate(candidate: Any) -> bool:
+    """Return ``True`` when *candidate* resembles a pipeline instance."""
+
+    if candidate is None:
+        return False
+    cls = getattr(candidate, "__class__", None)
+    name = getattr(cls, "__name__", "")
+    if not name or "Pipeline" not in name:
+        return False
+    if not name.endswith("ModelAutomationPipeline"):
+        return False
+    for attr in ("context_builder", "manager", "_bot_attribute_order"):
+        if not hasattr(candidate, attr):
+            return False
+    return True
+
+
+def _is_model_automation_pipeline_class(candidate: Any) -> bool:
+    """Return ``True`` when *candidate* represents the pipeline class."""
+
+    name = getattr(candidate, "__name__", "")
+    if not name:
+        return False
+    return name == "ModelAutomationPipeline" or name.endswith("ModelAutomationPipeline")
+
+
+def _resolve_bootstrap_pipeline_candidate(pipeline: Any | None) -> Any | None:
+    """Return an existing pipeline involved in the current bootstrap flow."""
+
+    if _looks_like_pipeline_candidate(pipeline):
+        return pipeline
+    context = _current_bootstrap_context()
+    if context is None:
+        return None
+    candidate = getattr(context, "pipeline", None)
+    if _looks_like_pipeline_candidate(candidate):
+        return candidate
+    return None
+
+
 def _propagate_placeholder_to_helpers(
     root: Any,
     placeholder: Any,
@@ -2340,6 +2387,30 @@ def _assign_bootstrap_manager_placeholder(
         visited = _visited or set()
         visited.add(id(target))
         _propagate_placeholder_to_helpers(target, placeholder, visited)
+
+
+def _seed_existing_pipeline_placeholder(
+    pipeline: Any, placeholder: Any
+) -> contextvars.Token[Any] | None:
+    """Install *placeholder* on *pipeline* and expose it via ``MANAGER_CONTEXT``."""
+
+    if pipeline is None or placeholder is None:
+        return None
+    _assign_bootstrap_manager_placeholder(
+        pipeline,
+        placeholder,
+        propagate_nested=True,
+    )
+    context_manager = _resolve_bootstrap_owner(placeholder) or placeholder
+    if context_manager is None:
+        return None
+    try:
+        return MANAGER_CONTEXT.set(context_manager)
+    except Exception:  # pragma: no cover - MANAGER_CONTEXT best effort
+        logger.debug(
+            "failed to expose pipeline manager placeholder via context", exc_info=True
+        )
+        return None
 
 
 def _resolve_bootstrap_owner(candidate: Any) -> Any | None:
@@ -2986,6 +3057,8 @@ def prepare_pipeline_for_bootstrap(
             manager_placeholder,
             propagate_nested=True,
         )
+        if context is not None and context.pipeline is None:
+            context.pipeline = pipeline
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
@@ -3098,6 +3171,13 @@ def _bootstrap_manager(
         )
         sentinel_active = True
 
+    pipeline = _resolve_bootstrap_pipeline_candidate(pipeline)
+    if pipeline_manager is None and pipeline is not None:
+        try:
+            pipeline_manager = getattr(pipeline, "manager", None)
+        except Exception:
+            pipeline_manager = None
+
     sentinel_manager = _create_bootstrap_manager_sentinel(
         bot_registry=bot_registry,
         data_bot=data_bot,
@@ -3202,6 +3282,7 @@ def _bootstrap_manager(
                 registry=bot_registry,
                 data_bot=data_bot,
                 manager=sentinel_manager,
+                pipeline=pipeline,
             )
             manager = manager_cls(  # type: ignore[call-arg]
                 bot_registry=bot_registry,
@@ -3251,6 +3332,7 @@ def _bootstrap_manager(
             placeholder_manager = bootstrap_owner
         _link_bootstrap_owner(sentinel_manager)
         owner_sentinel_restore: Callable[[], None] | None = None
+        pipeline_placeholder_token = None
         try:
             owner_sentinel_restore = _activate_bootstrap_sentinel(placeholder_manager)
         except Exception:  # pragma: no cover - bootstrap guard best effort
@@ -3272,9 +3354,12 @@ def _bootstrap_manager(
                 registry=bot_registry,
                 data_bot=data_bot,
                 manager=placeholder_manager,
+                pipeline=pipeline,
             )
             if owner_context is not None:
                 owner_context.sentinel = reentrant_manager or placeholder_manager
+                if pipeline is not None and owner_context.pipeline is None:
+                    owner_context.pipeline = pipeline
             try:
                 code_db_cls = _load_optional_module("code_database").CodeDB
                 memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
@@ -3314,7 +3399,24 @@ def _bootstrap_manager(
                             fallback_manager_sentinels or None
                         ),
                     )
-                elif not callable(promote):
+                else:
+                    placeholder_for_pipeline = (
+                        placeholder_manager or sentinel_manager
+                    )
+                    pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
+                        local_pipeline,
+                        placeholder_for_pipeline,
+                    )
+                    if (
+                        pipeline_placeholder_token is None
+                        and placeholder_for_pipeline is not placeholder_manager
+                        and placeholder_manager is not None
+                    ):
+                        pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
+                            local_pipeline,
+                            placeholder_manager,
+                        )
+                if not callable(promote):
                     def _default_promote(
                         real_manager: Any,
                         *,
@@ -3459,6 +3561,13 @@ def _bootstrap_manager(
         finally:
             if owner_sentinel_restore is not None:
                 owner_sentinel_restore()
+            if pipeline_placeholder_token is not None:
+                try:
+                    MANAGER_CONTEXT.reset(pipeline_placeholder_token)
+                except Exception:  # pragma: no cover - context vars best effort
+                    logger.debug(
+                        "failed to reset existing pipeline manager context", exc_info=True
+                    )
     except RuntimeError:
         raise
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
@@ -3615,7 +3724,19 @@ def _resolve_helpers(
                     "name",
                     getattr(obj, "bot_name", obj.__class__.__name__),
                 )
-                manager = _bootstrap_manager(name_local, registry, data_bot)
+                pipeline_hint = None
+                if _looks_like_pipeline_candidate(obj):
+                    pipeline_hint = obj
+                else:
+                    candidate_pipeline = getattr(obj, "pipeline", None)
+                    if _looks_like_pipeline_candidate(candidate_pipeline):
+                        pipeline_hint = candidate_pipeline
+                manager = _bootstrap_manager(
+                    name_local,
+                    registry,
+                    data_bot,
+                    pipeline=pipeline_hint,
+                )
             except Exception as exc:
                 print(
                     f"[debug] Bootstrap failed during _resolve_helpers for {name_local} due to: {exc}"
@@ -3723,6 +3844,7 @@ def self_coding_managed(
         decision: _BootstrapDecision | None = None
         resolved_registry: BotRegistry | None = None
         resolved_data_bot: DataBot | None = None
+        is_pipeline_cls = _is_model_automation_pipeline_class(cls)
         # ``ModelAutomationPipeline`` and other decorated bots lazily resolve
         # their helpers which can trigger nested bootstrap invocations within
         # the same thread (for example, when an orchestrator loads additional
@@ -3742,7 +3864,9 @@ def self_coding_managed(
                 return candidate()
             return candidate
 
-        def _bootstrap_helpers() -> tuple[BotRegistry, DataBot]:
+        def _bootstrap_helpers(
+            *, pipeline: Any | None = None
+        ) -> tuple[BotRegistry, DataBot]:
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
             nonlocal bootstrap_in_progress, bootstrap_error
@@ -3778,9 +3902,14 @@ def self_coding_managed(
             contextual_manager = None
             contextual_placeholder: Any | None = None
             contextual_sentinel: Any | None = None
+            pipeline_for_context = None
+            if pipeline is not None and _looks_like_pipeline_candidate(pipeline):
+                pipeline_for_context = pipeline
             if parent_context is not None:
                 contextual_manager = parent_context.manager
                 contextual_sentinel = getattr(parent_context, "sentinel", None)
+                if pipeline_for_context is None:
+                    pipeline_for_context = getattr(parent_context, "pipeline", None)
                 if contextual_manager is not None and _is_bootstrap_placeholder(
                     contextual_manager
                 ):
@@ -3819,7 +3948,10 @@ def self_coding_managed(
                     registry=registry_obj,
                     data_bot=data_bot_obj,
                     manager=manager_for_context,
+                    pipeline=pipeline_for_context,
                 )
+                if context is not None and context.pipeline is None:
+                    context.pipeline = pipeline_for_context
                 if registry_obj is None or data_bot_obj is None:
                     raise RuntimeError("BotRegistry and DataBot instances are required")
 
@@ -3986,10 +4118,16 @@ def self_coding_managed(
                     if ready:
                         try:
                             if manager_local is None:
+                                context_pipeline = (
+                                    getattr(context, "pipeline", None)
+                                    if context is not None
+                                    else None
+                                )
                                 manager_local = _bootstrap_manager(
                                     name,
                                     registry_obj,
                                     data_bot_obj,
+                                    pipeline=context_pipeline,
                                 )
                         except RuntimeError as exc:
                             register_as_coding_local = False
@@ -4404,8 +4542,11 @@ def self_coding_managed(
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
             registry_obj: BotRegistry | None = None
             data_bot_obj: DataBot | None = None
+            pipeline_ref: Any | None = self if is_pipeline_cls else None
             if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
-                registry_obj, data_bot_obj = _bootstrap_helpers()
+                registry_obj, data_bot_obj = _bootstrap_helpers(
+                    pipeline=pipeline_ref
+                )
             else:
                 registry_obj = resolved_registry
                 data_bot_obj = resolved_data_bot
@@ -4427,7 +4568,9 @@ def self_coding_managed(
                 manager_default = manager_instance
 
             if registry_obj is None or data_bot_obj is None:
-                registry_obj, data_bot_obj = _bootstrap_helpers()
+                registry_obj, data_bot_obj = _bootstrap_helpers(
+                    pipeline=pipeline_ref
+                )
             init_kwargs = dict(kwargs)
             orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
                 "evolution_orchestrator"
