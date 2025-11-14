@@ -2110,7 +2110,122 @@ def _claim_bootstrap_owner_guard(
     return owner_guard_attached, release_owner_guard
 
 
-def _assign_bootstrap_manager_placeholder(target: Any, placeholder: Any) -> None:
+_BOOTSTRAP_HELPER_ATTR_HINTS = (
+    "comms_bot",
+    "synthesis_bot",
+    "diagnostic_manager",
+    "planner",
+    "aggregator",
+    "helper",
+    "helpers",
+    "_helpers",
+    "bots",
+    "_bots",
+)
+
+
+def _iter_nested_bootstrap_values(value: Any) -> Iterator[Any]:
+    if value is None:
+        return
+    if isinstance(value, Mapping):
+        for nested in value.values():
+            yield from _iter_nested_bootstrap_values(nested)
+        return
+    if isinstance(value, (list, tuple, set, frozenset, deque)):
+        for nested in value:
+            yield from _iter_nested_bootstrap_values(nested)
+        return
+    yield value
+
+
+def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
+    if root is None:
+        return
+    for attr in _BOOTSTRAP_HELPER_ATTR_HINTS:
+        try:
+            value = getattr(root, attr)
+        except Exception:
+            continue
+        for candidate in _iter_nested_bootstrap_values(value):
+            yield candidate
+    mapping = getattr(root, "__dict__", None)
+    if isinstance(mapping, dict):
+        for value in mapping.values():
+            for candidate in _iter_nested_bootstrap_values(value):
+                yield candidate
+
+
+def _looks_like_helper_candidate(candidate: Any) -> bool:
+    if candidate is None:
+        return False
+    if isinstance(candidate, (str, bytes, bytearray, int, float, complex, bool)):
+        return False
+    if isinstance(candidate, (list, tuple, set, frozenset, Mapping)):
+        return False
+    for attr in ("manager", "initial_manager", "bot_registry", "data_bot"):
+        try:
+            if hasattr(candidate, attr):
+                return True
+        except Exception:
+            continue
+    try:
+        getattr(candidate, "_self_coding_pending_manager")
+    except Exception:
+        return False
+    return True
+
+
+def _propagate_placeholder_to_helpers(
+    root: Any,
+    placeholder: Any,
+    visited: set[int],
+) -> None:
+    pending: deque[Any] = deque()
+    for candidate in _iter_bootstrap_helper_candidates(root):
+        pending.append(candidate)
+    while pending:
+        candidate = pending.popleft()
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in visited:
+            continue
+        visited.add(key)
+        if not _looks_like_helper_candidate(candidate):
+            continue
+        updated = False
+        for attr in ("manager", "initial_manager"):
+            try:
+                current = getattr(candidate, attr)
+            except Exception:
+                current = None
+            if current is placeholder:
+                continue
+            if current is not None and not _is_bootstrap_placeholder(current):
+                continue
+            try:
+                setattr(candidate, attr, placeholder)
+            except Exception:  # pragma: no cover - best effort assignment
+                logger.debug(
+                    "failed to propagate %s placeholder on %s",
+                    attr,
+                    candidate,
+                    exc_info=True,
+                )
+            else:
+                updated = True
+        if updated:
+            for nested in _iter_bootstrap_helper_candidates(candidate):
+                pending.append(nested)
+
+
+def _assign_bootstrap_manager_placeholder(
+    target: Any,
+    placeholder: Any,
+    *,
+    propagate_nested: bool = False,
+    _visited: set[int] | None = None,
+) -> None:
     """Assign *placeholder* to ``manager`` and ``initial_manager`` on *target*."""
 
     if placeholder is None or target is None:
@@ -2122,12 +2237,18 @@ def _assign_bootstrap_manager_placeholder(target: Any, placeholder: Any) -> None
             current = None
         if current is placeholder:
             continue
+        if current is not None and not _is_bootstrap_placeholder(current):
+            continue
         try:
             setattr(target, attr, placeholder)
         except Exception:  # pragma: no cover - best effort assignment
             logger.debug(
                 "failed to assign %s placeholder on %s", attr, target, exc_info=True
             )
+    if propagate_nested:
+        visited = _visited or set()
+        visited.add(id(target))
+        _propagate_placeholder_to_helpers(target, placeholder, visited)
 
 
 def _resolve_bootstrap_owner(candidate: Any) -> Any | None:
@@ -2231,10 +2352,32 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
             sentinel_candidates.append(delegate)
     sentinel_ids = {id(candidate) for candidate in sentinel_candidates}
 
+    helper_promotions: list[str] = []
+
     if sentinel is not None:
         logger.debug(
             "promoting bootstrap sentinel %s for pipeline %s", sentinel, pipeline
         )
+
+    def _describe_helper(target: Any) -> str:
+        if target is None:
+            return "<unknown>"
+        for attr in ("name", "bot_name"):
+            try:
+                value = getattr(target, attr)
+            except Exception:
+                continue
+            if value:
+                return str(value)
+        try:
+            return target.__class__.__name__
+        except Exception:
+            return repr(target)
+
+    def _record_helper(target: Any) -> None:
+        if target is None:
+            return
+        helper_promotions.append(_describe_helper(target))
 
     def _refresh_placeholder_reference(placeholder: Any) -> None:
         if placeholder is None or placeholder is manager:
@@ -2377,8 +2520,10 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                 logger.debug("failed to promote manager on %s", target, exc_info=True)
             else:
                 finalizer_targets.append(target)
+                _record_helper(target)
         elif manager_rewired:
             finalizer_targets.append(target)
+            _record_helper(target)
         owner = getattr(target, "__class__", None)
         if owner is not None:
             try:
@@ -2397,6 +2542,7 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                         )
                     else:
                         finalizer_targets.append(owner)
+                        _record_helper(owner)
         if getattr(target, "_self_coding_pending_manager", False):
             finalizer_targets.append(target)
         if owner is not None and getattr(owner, "_self_coding_pending_manager", False):
@@ -2405,19 +2551,6 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
             _invoke_finalizer(final_target)
 
     _swap_manager(pipeline)
-
-    def _iter_related_values(value: Any) -> Iterator[Any]:
-        if value is None:
-            return
-        if isinstance(value, Mapping):
-            for nested in value.values():
-                yield from _iter_related_values(nested)
-            return
-        if isinstance(value, (list, tuple, set, frozenset)):
-            for nested in value:
-                yield from _iter_related_values(nested)
-            return
-        yield value
 
     def _should_queue_candidate(candidate: Any) -> bool:
         if candidate is None:
@@ -2442,32 +2575,9 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
         related: list[Any] = []
         if root is None:
             return related
-        attr_hints = (
-            "comms_bot",
-            "synthesis_bot",
-            "diagnostic_manager",
-            "planner",
-            "aggregator",
-            "helper",
-            "helpers",
-            "_helpers",
-            "bots",
-            "_bots",
-        )
-        for attr in attr_hints:
-            try:
-                value = getattr(root, attr)
-            except Exception:
-                continue
-            for candidate in _iter_related_values(value):
-                if _should_queue_candidate(candidate):
-                    related.append(candidate)
-        mapping = getattr(root, "__dict__", None)
-        if isinstance(mapping, dict):
-            for value in mapping.values():
-                for candidate in _iter_related_values(value):
-                    if _should_queue_candidate(candidate):
-                        related.append(candidate)
+        for candidate in _iter_bootstrap_helper_candidates(root):
+            if _should_queue_candidate(candidate):
+                related.append(candidate)
         return related
 
     seen: set[int] = {id(pipeline)}
@@ -2538,8 +2648,11 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
     _promote_registry_metadata()
 
     if sentinel is not None:
+        helper_summary = ", ".join(dict.fromkeys(helper_promotions))
         logger.debug(
-            "bootstrap sentinel promotion completed for %s", pipeline
+            "bootstrap sentinel promotion completed for %s (helpers=%s)",
+            pipeline,
+            helper_summary or "<none>",
         )
 
     # Allow downstream consumers to refresh their cached manager reference when
@@ -2675,7 +2788,11 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
-        _assign_bootstrap_manager_placeholder(pipeline, manager_placeholder)
+        _assign_bootstrap_manager_placeholder(
+            pipeline,
+            manager_placeholder,
+            propagate_nested=True,
+        )
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
@@ -2710,12 +2827,18 @@ def _bootstrap_manager(
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
-    def _disabled_manager(reason: str) -> Any:
-        guidance = (
-            "Re-entrant bootstrap detected; returning disabled manager "
-            "temporarily—internalisation will retry after "
-            f"{name} completes."
-        )
+    def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
+        if reentrant:
+            guidance = (
+                "Re-entrant bootstrap detected; returning disabled manager "
+                "temporarily—internalisation will retry after "
+                f"{name} completes."
+            )
+        else:
+            guidance = (
+                "Bootstrap already active; returning disabled manager "
+                "until the current owner finishes."
+            )
         message = (
             f"SelfCodingManager bootstrap skipped for {name}: {reason}. {guidance}"
         )
@@ -2731,7 +2854,9 @@ def _bootstrap_manager(
         getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     )
     if depth > 0 and not sentinel_active:
-        return _disabled_manager(f"re-entrant initialisation depth={depth}")
+        return _disabled_manager(
+            f"re-entrant initialisation depth={depth}", reentrant=True
+        )
 
     sentinel_manager = _create_bootstrap_manager_sentinel(
         bot_registry=bot_registry,
@@ -2756,7 +2881,7 @@ def _bootstrap_manager(
                 pass
         else:
             _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
-        return _disabled_manager("bootstrap already in progress")
+        return _disabled_manager("bootstrap already in progress", reentrant=False)
 
     active.add(name)
     _BOOTSTRAP_STATE.names = active
@@ -2781,6 +2906,11 @@ def _bootstrap_manager(
             return
         if not _is_bootstrap_placeholder(candidate):
             return
+        _assign_bootstrap_manager_placeholder(
+            candidate,
+            bootstrap_owner,
+            propagate_nested=True,
+        )
         try:
             setattr(candidate, "_bootstrap_owner_delegate", bootstrap_owner)
         except Exception:  # pragma: no cover - best effort linkage
@@ -2834,12 +2964,28 @@ def _bootstrap_manager(
             if context is not None:
                 _pop_bootstrap_context(context)
 
-        bootstrap_owner = _BootstrapOwnerSentinel(
-            bot_registry=bot_registry,
-            data_bot=data_bot,
-        )
+        try:
+            bootstrap_owner = _BootstrapOwnerSentinel(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+        except Exception as exc:  # pragma: no cover - sentinel creation must succeed
+            bootstrap_owner = None
+            logger.warning(
+                "failed to construct bootstrap owner sentinel for %s; falling back to disabled placeholder",
+                name,
+                exc_info=exc,
+            )
+        if bootstrap_owner is None:
+            placeholder_manager = _DisabledSelfCodingManager(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                bootstrap_owner=True,
+            )
+            bootstrap_owner = placeholder_manager
+        else:
+            placeholder_manager = bootstrap_owner
         _link_bootstrap_owner(sentinel_manager)
-        placeholder_manager = bootstrap_owner or sentinel_manager
         owner_sentinel_restore: Callable[[], None] | None = None
         try:
             owner_sentinel_restore = _activate_bootstrap_sentinel(placeholder_manager)
@@ -2882,17 +3028,25 @@ def _bootstrap_manager(
                     manager_override=placeholder_manager,
                     manager_sentinel=placeholder_manager,
                 )
-                bootstrap_owner.bind_pipeline_promoter(promote)
+                bind_promoter = getattr(bootstrap_owner, "bind_pipeline_promoter", None)
+                if callable(bind_promoter):
+                    bind_promoter(promote)
                 pipeline_manager = getattr(pipeline, "manager", None)
                 if pipeline_manager is None and placeholder_manager is not None:
                     _assign_bootstrap_manager_placeholder(
-                        pipeline, placeholder_manager
+                        pipeline,
+                        placeholder_manager,
+                        propagate_nested=True,
                     )
                     pipeline_manager = getattr(pipeline, "manager", None)
                 if _is_bootstrap_placeholder(pipeline_manager):
                     _link_bootstrap_owner(pipeline_manager)
                     if pipeline_manager is not bootstrap_owner:
-                        _assign_bootstrap_manager_placeholder(pipeline, bootstrap_owner)
+                        _assign_bootstrap_manager_placeholder(
+                            pipeline,
+                            bootstrap_owner,
+                            propagate_nested=True,
+                        )
             finally:
                 if owner_context is not None:
                     _pop_bootstrap_context(owner_context)
@@ -2925,7 +3079,9 @@ def _bootstrap_manager(
                     attach_delegate(manager)
                 except Exception:  # pragma: no cover - best effort bridge
                     logger.debug("sentinel delegate attachment failed", exc_info=True)
-            bootstrap_owner.mark_ready(manager, sentinel=sentinel_manager)
+            mark_ready = getattr(bootstrap_owner, "mark_ready", None)
+            if callable(mark_ready):
+                mark_ready(manager, sentinel=sentinel_manager)
             logger.debug(
                 "bootstrap owner sentinel released for %s", name
             )
