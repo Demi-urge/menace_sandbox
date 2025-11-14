@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from collections import Counter
 from types import ModuleType, SimpleNamespace
@@ -167,6 +168,21 @@ def _prepare_runtime_stubs(monkeypatch):
         sys.modules, "menace_sandbox.universal_retriever", universal_retriever
     )
 
+    intent_clusterer = _module("menace_sandbox.intent_clusterer")
+
+    class IntentClusterer:
+        def __init__(self, *_args, **_kwargs):
+            counters["IntentClusterer"] += 1
+
+        def find_modules_related_to(self, *_args, **_kwargs):  # pragma: no cover - stub
+            counters["find_modules_related_to"] += 1
+            return []
+
+    intent_clusterer.IntentClusterer = IntentClusterer
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.intent_clusterer", intent_clusterer
+    )
+
     # Ensure a clean import each time.
     sys.modules.pop("menace_sandbox.workflow_evolution_bot", None)
 
@@ -207,3 +223,65 @@ def test_helper_bootstraps_runtime(monkeypatch):
 
     bot = module.WorkflowEvolutionBot()
     assert bot.data_bot is runtime["data_bot"]
+
+
+def test_runtime_promotes_manager_without_reentrancy(monkeypatch, caplog):
+    counters = _prepare_runtime_stubs(monkeypatch)
+    import menace_sandbox.coding_bot_interface as coding_bot_interface
+
+    helper_calls = 0
+    promoted_managers: list[object] = []
+
+    def _spy_prepare_pipeline_for_bootstrap(**_kwargs):
+        nonlocal helper_calls
+        helper_calls += 1
+
+        def _promote(manager):
+            promoted_managers.append(manager)
+
+        dummy_pipeline = SimpleNamespace(name="WorkflowPipeline")
+        return dummy_pipeline, _promote
+
+    def _forbidden_bootstrap(*_args, **_kwargs):  # pragma: no cover - guard
+        raise AssertionError("_bootstrap_manager should not be re-invoked during runtime bootstrap")
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "prepare_pipeline_for_bootstrap",
+        _spy_prepare_pipeline_for_bootstrap,
+    )
+    monkeypatch.setattr(coding_bot_interface, "_bootstrap_manager", _forbidden_bootstrap)
+
+    module = importlib.import_module("menace_sandbox.workflow_evolution_bot")
+
+    emitted_managers: list[object] = []
+
+    def _spy_internalize_coding_bot(*_args, **_kwargs):
+        counters["internalize_coding_bot"] += 1
+        manager = SimpleNamespace(marker="manager")
+        emitted_managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(module, "internalize_coding_bot", _spy_internalize_coding_bot)
+
+    caplog.set_level(logging.WARNING)
+    cached_runtime = None
+    try:
+        runtime = module._ensure_runtime_dependencies()
+        cached_runtime = module._ensure_runtime_dependencies()
+    finally:
+        module._RUNTIME_CACHE = None
+
+    assert helper_calls == 1
+    assert len(emitted_managers) == 1
+    assert len(promoted_managers) == 1
+    assert promoted_managers[0] is emitted_managers[0]
+    assert runtime["manager"] is emitted_managers[0]
+    assert counters["internalize_coding_bot"] == 1
+    assert not any(
+        "re-entrant initialisation depth" in record.message for record in caplog.records
+    )
+    assert runtime["manager"] is not None
+    assert cached_runtime is runtime
+    assert counters["BotRegistry"] == 1
+    assert counters["DataBot"] == 1
