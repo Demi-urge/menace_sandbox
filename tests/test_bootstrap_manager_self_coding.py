@@ -476,6 +476,81 @@ def fallback_pipeline_env(
     )
 
 
+def test_reentrant_helper_instantiated_before_manager_assignment(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force placeholder pipeline bootstrap")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="pre-init placeholder")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_name = "PreInitHelper"
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PreInitHelper:
+        name = helper_name
+
+        def __init__(self, manager: object | None = None) -> None:
+            self.bot_name = self.name
+            self.initial_manager = manager
+            self.manager = manager
+
+    class PreInitPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            placeholder = getattr(self, "manager", None)
+            self.initial_manager = placeholder
+            self.helper = PreInitHelper(manager=placeholder)
+            self.manager = manager
+            self._bots = [self.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        PreInitPipeline
+    )
+
+    caplog.clear()
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    manager = cbi._bootstrap_manager("PreInitOwner", registry, data_bot)
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert pipeline.helper.manager is manager
+    assert pipeline.initial_manager is not None
+    assert cbi._is_bootstrap_placeholder(pipeline.initial_manager)
+    assert pipeline.helper.initial_manager is pipeline.initial_manager
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
 @pytest.fixture
 def managerless_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
