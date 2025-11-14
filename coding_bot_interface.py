@@ -1943,6 +1943,7 @@ class _ManagerBootstrapPlan:
     sentinel: Any | None
     defer: bool
     should_bootstrap: bool
+    seed_owner_sentinel: bool = False
 
 
 def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
@@ -1957,6 +1958,18 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
         defer=False,
         should_bootstrap=candidate is None,
     )
+    if candidate is None and bootstrap_depth > 0:
+        placeholder = None
+        if _is_bootstrap_placeholder(sentinel_manager):
+            placeholder = sentinel_manager
+        if placeholder is not None:
+            plan.manager = placeholder
+            plan.sentinel = placeholder
+        else:
+            plan.seed_owner_sentinel = True
+        plan.defer = True
+        plan.should_bootstrap = False
+        return plan
     if candidate_sentinel is None:
         return plan
     owner_active = bool(getattr(candidate_sentinel, "bootstrap_owner_active", False))
@@ -1978,6 +1991,28 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
     plan.manager = None
     plan.should_bootstrap = True
     return plan
+
+
+def _spawn_nested_bootstrap_owner(
+    bot_registry: Any, data_bot: Any
+) -> Any:
+    """Return a bootstrap owner sentinel for nested helper bootstrap flows."""
+
+    try:
+        return _BootstrapOwnerSentinel(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+    except Exception:  # pragma: no cover - fallback to disabled sentinel
+        logger.debug(
+            "failed to construct bootstrap owner sentinel; falling back to disabled manager",
+            exc_info=True,
+        )
+        return _DisabledSelfCodingManager(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            bootstrap_owner=True,
+        )
 
 
 def _using_bootstrap_sentinel(candidate: Any | None = None) -> bool:
@@ -3735,6 +3770,10 @@ def self_coding_managed(
                 return resolved_registry, resolved_data_bot
 
             context: _BootstrapContext | None = None
+            nested_owner_placeholder: Any | None = None
+            nested_owner_token = None
+            nested_owner_previous = _SENTINEL_UNSET
+            nested_owner_installed = False
             parent_context = _current_bootstrap_context()
             contextual_manager = None
             contextual_placeholder: Any | None = None
@@ -3808,6 +3847,69 @@ def self_coding_managed(
                 register_deferred_local = register_deferred
                 sentinel_in_use = False
                 owner_sentinel_active = False
+                if (
+                    strategy.seed_owner_sentinel
+                    and manager_local is None
+                    and registry_obj is not None
+                    and data_bot_obj is not None
+                ):
+                    nested_owner_placeholder = _spawn_nested_bootstrap_owner(
+                        registry_obj,
+                        data_bot_obj,
+                    )
+                    manager_local = nested_owner_placeholder
+                    strategy.manager = nested_owner_placeholder
+                    strategy.sentinel = nested_owner_placeholder
+                    sentinel_placeholder = True
+                    strategy.defer = True
+                    sentinel_manager = nested_owner_placeholder
+                    nested_owner_previous = getattr(
+                        _BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET
+                    )
+                    try:
+                        _BOOTSTRAP_STATE.sentinel_manager = nested_owner_placeholder
+                    except Exception:  # pragma: no cover - best effort exposure
+                        logger.debug(
+                            "%s: failed to expose nested bootstrap sentinel",
+                            name,
+                            exc_info=True,
+                        )
+                        nested_owner_installed = False
+                    else:
+                        nested_owner_installed = True
+                    try:
+                        nested_owner_token = MANAGER_CONTEXT.set(
+                            nested_owner_placeholder
+                        )
+                    except Exception:  # pragma: no cover - context vars best effort
+                        nested_owner_token = None
+                    logger.debug(
+                        "%s: installed nested bootstrap owner sentinel at depth=%s",
+                        name,
+                        getattr(_BOOTSTRAP_STATE, "depth", 0),
+                    )
+                    if context is not None:
+                        context.manager = nested_owner_placeholder
+                        context.sentinel = nested_owner_placeholder
+                    register_as_coding_local = False
+                    register_deferred_local = True
+
+                    def _deferred_finalize(
+                        real_manager: Any,
+                        *,
+                        _registry: Any = registry_obj,
+                        _data_bot: Any = data_bot_obj,
+                    ) -> None:
+                        try:
+                            _finalize_self_coding_bootstrap(
+                                real_manager,
+                                registry=_registry,
+                                data_bot=_data_bot,
+                            )
+                        except TypeError:
+                            _finalize_self_coding_bootstrap(real_manager)
+
+                    _register_bootstrap_helper_callback(_deferred_finalize)
                 if strategy.defer and strategy.sentinel is not None:
                     logger.debug(
                         "%s: sentinel manager active at bootstrap depth=%s; deferring real manager promotion",
@@ -3823,6 +3925,8 @@ def self_coding_managed(
                         subscribe(strategy.sentinel)
                     if context is not None:
                         context.manager = manager_local
+                        if _is_bootstrap_placeholder(manager_local):
+                            context.sentinel = manager_local
                     register_as_coding_local = False
                     register_deferred_local = True
                     sentinel_in_use = True
@@ -3863,6 +3967,8 @@ def self_coding_managed(
                     manager_local = strategy.manager
                 if context is not None:
                     context.manager = manager_local
+                    if _is_bootstrap_placeholder(manager_local):
+                        context.sentinel = manager_local
                 if (not sentinel_in_use) and strategy.should_bootstrap and runtime_available:
                     ready = True
                     missing: Iterable[str] = ()
@@ -4114,6 +4220,22 @@ def self_coding_managed(
                     bootstrap_event.set()
                 raise
             finally:
+                if nested_owner_token is not None:
+                    try:
+                        MANAGER_CONTEXT.reset(nested_owner_token)
+                    except Exception:  # pragma: no cover - best effort reset
+                        logger.debug(
+                            "%s: failed to reset nested manager context", name,
+                            exc_info=True,
+                        )
+                if nested_owner_installed:
+                    if nested_owner_previous is _SENTINEL_UNSET:
+                        try:
+                            delattr(_BOOTSTRAP_STATE, "sentinel_manager")
+                        except AttributeError:
+                            pass
+                    else:
+                        _BOOTSTRAP_STATE.sentinel_manager = nested_owner_previous
                 if context is not None:
                     _pop_bootstrap_context(context)
 
