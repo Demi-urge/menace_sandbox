@@ -1003,6 +1003,10 @@ from menace_sandbox.model_automation_pipeline import (
 )
 _qfe_log("SI-2f.2 menace_sandbox.model_automation_pipeline imported")
 
+_qfe_log("SI-2f.2a importing menace_sandbox.coding_bot_interface")
+from menace_sandbox.coding_bot_interface import prepare_pipeline_for_bootstrap
+_qfe_log("SI-2f.2a menace_sandbox.coding_bot_interface imported")
+
 _qfe_log("SI-2f.3 importing context_builder_util")
 from context_builder_util import create_context_builder
 _qfe_log("SI-2f.3 context_builder_util imported")
@@ -1303,11 +1307,20 @@ class SelfImprovementEngine:
         self.aggregator = ResearchAggregatorBot(
             [bot_name], info_db=self.info_db, context_builder=context_builder
         )
-        self.pipeline = pipeline or ModelAutomationPipeline(
-            aggregator=self.aggregator,
-            action_planner=action_planner,
-            context_builder=context_builder,
-        )
+        self._pipeline_promoter: Callable[[Any], None] | None = None
+        if pipeline is None:
+            pipeline, promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=None,
+                data_bot=data_bot,
+                aggregator=self.aggregator,
+                action_planner=action_planner,
+            )
+            self.pipeline = pipeline
+            self._pipeline_promoter = promoter
+        else:
+            self.pipeline = pipeline
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
@@ -4665,6 +4678,23 @@ class SelfImprovementEngine:
                 should_run = False
 
         return should_run
+
+    @property
+    def pipeline_promoter(self) -> Callable[[Any], None] | None:
+        """Expose the pending bootstrap promoter for ``self.pipeline`` if any."""
+
+        return self._pipeline_promoter
+
+    def promote_pipeline_manager(self, manager: Any) -> None:
+        """Promote pipeline helpers to the concrete ``SelfCodingManager``."""
+
+        promoter = self._pipeline_promoter
+        if promoter is None or manager is None:
+            return
+        try:
+            promoter(manager)
+        finally:
+            self._pipeline_promoter = None
 
     def _record_state(self) -> None:
         """Store metrics and discrepancies as research items."""

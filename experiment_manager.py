@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterable, Dict, List
+from typing import Iterable, Dict, List, Callable, Any
 import math
 import logging
 from scipy import stats
 
 from .mutation_lineage import MutationLineage
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from .coding_bot_interface import prepare_pipeline_for_bootstrap
 try:  # pragma: no cover - fallback for light imports in tests
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - best effort
@@ -54,12 +55,17 @@ class ExperimentManager:
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("context builder refresh failed: %s", exc)
         self.context_builder = context_builder
+        self._pipeline_promoter: Callable[[Any], None] | None = None
         if pipeline is None:
-            self.pipeline = ModelAutomationPipeline(
+            pipeline, promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=self.context_builder,
+                bot_registry=None,
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
-                context_builder=self.context_builder,
             )
+            self.pipeline = pipeline
+            self._pipeline_promoter = promoter
         else:
             if not hasattr(pipeline, "context_builder"):
                 raise ValueError("pipeline must expose a context_builder")
@@ -70,6 +76,23 @@ class ExperimentManager:
         self.experiment_db = experiment_db or ExperimentHistoryDB()
         self.p_threshold = p_threshold
         self.lineage = lineage or MutationLineage()
+
+    @property
+    def pipeline_promoter(self) -> Callable[[Any], None] | None:
+        """Return the pending bootstrap promoter for ``self.pipeline`` if any."""
+
+        return self._pipeline_promoter
+
+    def promote_pipeline_manager(self, manager: Any) -> None:
+        """Promote bootstrap helpers to the provided real *manager*."""
+
+        promoter = self._pipeline_promoter
+        if promoter is None or manager is None:
+            return
+        try:
+            promoter(manager)
+        finally:
+            self._pipeline_promoter = None
 
     async def _run_variant(self, name: str, energy: int) -> AutomationResult:
         try:

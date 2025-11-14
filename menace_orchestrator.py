@@ -30,6 +30,7 @@ from .oversight_bots import (
     H3OversightBot,
 )
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from .coding_bot_interface import prepare_pipeline_for_bootstrap
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
@@ -159,11 +160,16 @@ class MenaceOrchestrator:
             self.context_builder.refresh_db_weights()
         except Exception:
             self.logger.exception("context builder refresh failed")
-        self.pipeline = ModelAutomationPipeline(
+        pipeline, promoter = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=self.context_builder,
+            bot_registry=None,
+            data_bot=None,
             pathway_db=pathway_db,
             myelination_threshold=myelination_threshold,
-            context_builder=self.context_builder,
         )
+        self.pipeline = pipeline
+        self._pipeline_promoter: Callable[[object], None] | None = promoter
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.ad_client = ad_client or AdIntegration()
@@ -224,6 +230,24 @@ class MenaceOrchestrator:
         self.last_plan: str | None = None
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
+
+    # ------------------------------------------------------------------
+    @property
+    def pipeline_promoter(self) -> Callable[[object], None] | None:
+        """Return the pending bootstrap promoter for ``self.pipeline`` if any."""
+
+        return self._pipeline_promoter
+
+    def promote_pipeline_manager(self, manager: object) -> None:
+        """Promote helpers created during bootstrap to the concrete *manager*."""
+
+        promoter = self._pipeline_promoter
+        if promoter is None or manager is None:
+            return
+        try:
+            promoter(manager)
+        finally:
+            self._pipeline_promoter = None
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:
