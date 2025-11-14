@@ -2503,28 +2503,56 @@ def _inject_manager_placeholder_during_init(
             )
 
 
+@dataclass(slots=True)
+class _PipelineShimHandle:
+    """Tracks shim instrumentation state and its cleanup callback."""
+
+    applied: bool
+    release: Callable[[], None] | None = None
+
+
 @contextlib.contextmanager
 def _pipeline_manager_placeholder_shim(
     pipeline_cls: type[Any], placeholder: Any
-) -> Iterator[bool]:
+) -> Iterator[_PipelineShimHandle]:
     """Assign *placeholder* early and expose a consistent bootstrap sentinel."""
 
     owner_sentinel = _resolve_bootstrap_owner(placeholder)
+    release_callbacks: list[Callable[[], None]] = []
+    released = False
+
+    def _release_state() -> None:
+        nonlocal released
+        if released:
+            return
+        released = True
+        while release_callbacks:
+            callback = release_callbacks.pop()
+            try:
+                callback()
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug("pipeline shim cleanup failed", exc_info=True)
+
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
-    sentinel_applied = False
-    manager_token = None
     depth_missing = not hasattr(_BOOTSTRAP_STATE, "depth")
     previous_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     depth_overridden = previous_depth <= 0
-    context_manager = owner_sentinel or placeholder
+    sentinel_candidate = owner_sentinel or placeholder
+    context_manager = sentinel_candidate
     if context_manager is not None:
         try:
-            manager_token = MANAGER_CONTEXT.set(context_manager)
+            token = MANAGER_CONTEXT.set(context_manager)
         except Exception:  # pragma: no cover - MANAGER_CONTEXT may be absent
-            manager_token = None
+            token = None
+        else:
+            release_callbacks.append(lambda tok=token: _reset_manager_context(tok))
     if depth_overridden:
         _BOOTSTRAP_STATE.depth = 1
-    sentinel_candidate = owner_sentinel or placeholder
+        release_callbacks.append(
+            lambda missing=depth_missing, previous=previous_depth: _restore_bootstrap_depth(
+                missing, previous
+            )
+        )
     if sentinel_candidate is not None:
         try:
             _BOOTSTRAP_STATE.sentinel_manager = sentinel_candidate
@@ -2533,7 +2561,9 @@ def _pipeline_manager_placeholder_shim(
                 "failed to seed sentinel manager placeholder during shim", exc_info=True
             )
         else:
-            sentinel_applied = True
+            release_callbacks.append(
+                lambda previous=previous_sentinel: _restore_bootstrap_sentinel(previous)
+            )
     exit_stack = contextlib.ExitStack()
     patched_any = False
     try:
@@ -2561,30 +2591,49 @@ def _pipeline_manager_placeholder_shim(
                 _inject_manager_placeholder_during_init(candidate_cls, placeholder)
             )
             patched_any = patched_any or bool(patched)
-        yield patched_any
+        handle = _PipelineShimHandle(
+            applied=patched_any,
+            release=_release_state if release_callbacks else None,
+        )
+        yield handle
     finally:
         exit_stack.close()
-        if manager_token is not None:
-            try:
-                MANAGER_CONTEXT.reset(manager_token)
-            except Exception:  # pragma: no cover - defensive cleanup
-                logger.debug("manager context reset failed after pipeline shim", exc_info=True)
-        if sentinel_applied:
-            if previous_sentinel is _SENTINEL_UNSET:
-                try:
-                    delattr(_BOOTSTRAP_STATE, "sentinel_manager")
-                except AttributeError:  # pragma: no cover - best effort cleanup
-                    pass
-            else:
-                _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
-        if depth_overridden:
-            if depth_missing:
-                try:
-                    delattr(_BOOTSTRAP_STATE, "depth")
-                except AttributeError:  # pragma: no cover - best effort cleanup
-                    pass
-            else:
-                _BOOTSTRAP_STATE.depth = previous_depth
+        _release_state()
+
+
+def _reset_manager_context(token: contextvars.Token[Any] | None) -> None:
+    """Reset ``MANAGER_CONTEXT`` back to *token* if provided."""
+
+    if token is None:
+        return
+    try:
+        MANAGER_CONTEXT.reset(token)
+    except Exception:  # pragma: no cover - defensive cleanup
+        logger.debug("manager context reset failed after pipeline shim", exc_info=True)
+
+
+def _restore_bootstrap_depth(depth_missing: bool, previous_depth: int) -> None:
+    """Restore bootstrap depth bookkeeping after shim finalises."""
+
+    if depth_missing:
+        try:
+            delattr(_BOOTSTRAP_STATE, "depth")
+        except AttributeError:  # pragma: no cover - best effort cleanup
+            pass
+        return
+    _BOOTSTRAP_STATE.depth = previous_depth
+
+
+def _restore_bootstrap_sentinel(previous_sentinel: Any) -> None:
+    """Restore the previously active bootstrap sentinel placeholder."""
+
+    if previous_sentinel is _SENTINEL_UNSET:
+        try:
+            delattr(_BOOTSTRAP_STATE, "sentinel_manager")
+        except AttributeError:  # pragma: no cover - best effort cleanup
+            pass
+        return
+    _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
 
 
 def _promote_pipeline_manager(
@@ -2973,12 +3022,6 @@ def prepare_pipeline_for_bootstrap(
                 return candidate
         return None
 
-    def _resolve_disabled_placeholder(*candidates: Any) -> Any | None:
-        for candidate in candidates:
-            if isinstance(candidate, _DisabledSelfCodingManager):
-                return candidate
-        return None
-
     sentinel_manager = _select_placeholder(
         manager_override,
         manager_sentinel,
@@ -2994,17 +3037,21 @@ def prepare_pipeline_for_bootstrap(
             data_bot=data_bot,
         )
     manager_placeholder = sentinel_manager
-    shim_manager_placeholder = _resolve_disabled_placeholder(
+    shim_manager_placeholder = _select_placeholder(
         manager_override,
         manager_sentinel,
         bootstrap_manager,
         manager_placeholder,
     )
-    if shim_manager_placeholder is None:
-        shim_manager_placeholder = _DisabledSelfCodingManager(
+    if not _is_bootstrap_placeholder(shim_manager_placeholder):
+        owner_candidate = _spawn_nested_bootstrap_owner(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
+        if _is_bootstrap_placeholder(owner_candidate):
+            shim_manager_placeholder = owner_candidate
+        else:
+            shim_manager_placeholder = manager_placeholder
     managed_extra_manager_sentinels: tuple[Any, ...] | None = None
     extra_candidates: list[Any] = []
     if extra_manager_sentinels:
@@ -3026,6 +3073,7 @@ def prepare_pipeline_for_bootstrap(
     ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
     manual_restore_pending = not owner_guard_attached
     sentinel_state_released = False
+    shim_release_callback: Callable[[], None] | None = None
 
     def _finalize_bootstrap_state(*, due_to_failure: bool = False) -> None:
         nonlocal manual_restore_pending, owner_guard_attached, sentinel_state_released
@@ -3090,12 +3138,20 @@ def prepare_pipeline_for_bootstrap(
                     call_kwargs.update(static_items)
                     shim_context: contextlib.AbstractContextManager[Any]
                     if shim_manager_placeholder is None:
-                        shim_context = contextlib.nullcontext(False)
+                        shim_context = contextlib.nullcontext(
+                            _PipelineShimHandle(False, None)
+                        )
                     else:
                         shim_context = _pipeline_manager_placeholder_shim(
                             pipeline_cls, shim_manager_placeholder
                         )
-                    with shim_context as shim_applied:
+                    shim_release_candidate: Callable[[], None] | None = None
+                    with shim_context as shim_handle:
+                        if isinstance(shim_handle, _PipelineShimHandle):
+                            shim_applied = shim_handle.applied
+                            shim_release_candidate = shim_handle.release
+                        else:
+                            shim_applied = bool(shim_handle)
                         pipeline = pipeline_cls(**call_kwargs)
                         if (
                             pipeline is not None
@@ -3111,11 +3167,20 @@ def prepare_pipeline_for_bootstrap(
                                 propagate_nested=True,
                             )
                 except TypeError as exc:
+                    if callable(shim_release_candidate):
+                        try:
+                            shim_release_candidate()
+                        except Exception:  # pragma: no cover - cleanup best effort
+                            logger.debug(
+                                "failed to release pipeline shim placeholder", exc_info=True
+                            )
                     last_error = exc
                     if not managerless_unlocked and _typeerror_rejects_manager(exc):
                         managerless_unlocked = True
                     continue
                 else:
+                    if callable(shim_release_candidate):
+                        shim_release_callback = shim_release_candidate
                     break
             if pipeline is not None or pass_index == 1 or not managerless_unlocked:
                 break
@@ -3153,6 +3218,7 @@ def prepare_pipeline_for_bootstrap(
         *,
         extra_sentinels: Iterable[Any] | None = None,
     ) -> None:
+        nonlocal shim_release_callback
         try:
             combined: list[Any] = []
             seen: set[int] = set()
@@ -3186,6 +3252,12 @@ def prepare_pipeline_for_bootstrap(
                 extra_sentinels=placeholder_extras or None,
             )
         finally:
+            if callable(shim_release_callback):
+                try:
+                    shim_release_callback()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    logger.debug("pipeline shim release failed", exc_info=True)
+                shim_release_callback = None
             _deregister_bootstrap_helper_callback(_promote)
             _finalize_bootstrap_state()
 
