@@ -1025,6 +1025,45 @@ def real_pipeline_env(
 
 
 @pytest.fixture
+def prebuilt_real_pipeline_env(real_pipeline_env: SimpleNamespace) -> SimpleNamespace:
+    """Expose a prebuilt pipeline instance before ``_bootstrap_manager`` runs."""
+
+    import menace.coding_bot_interface as cbi
+
+    pipeline = real_pipeline_env.pipeline
+
+    pipeline.manager = None
+    pipeline.initial_manager = None
+    for attr in ("comms_bot", "db_bot", "monitor_bot"):
+        helper = getattr(pipeline, attr, None)
+        if helper is None:
+            continue
+        helper.manager = None
+        helper.initial_manager = None
+        nested = getattr(helper, "helper", None)
+        if nested is not None:
+            nested.manager = None
+            nested.initial_manager = None
+
+    for helper in getattr(real_pipeline_env, "helpers", ()):  # pragma: no branch - defensive copy
+        if helper is None:
+            continue
+        helper.manager = None
+        helper.initial_manager = None
+
+    return SimpleNamespace(
+        registry=real_pipeline_env.registry,
+        data_bot=real_pipeline_env.data_bot,
+        builder=real_pipeline_env.builder,
+        pipeline_cls=real_pipeline_env.pipeline_cls,
+        pipeline=pipeline,
+        promoter=real_pipeline_env.promoter,
+        helpers=tuple(getattr(real_pipeline_env, "helpers", ())),
+        manager_cls=getattr(cbi, "_SELF_CODING_MANAGER_CLS", None),
+    )
+
+
+@pytest.fixture
 def fallback_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -2319,6 +2358,35 @@ def test_real_pipeline_prebuilt_bootstrap_promotes_manager(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
     )
+
+
+def test_prebuilt_real_pipeline_argument_promotes_manager(
+    prebuilt_real_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = prebuilt_real_pipeline_env
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ScriptedBot",
+            env.registry,
+            env.data_bot,
+            pipeline=env.pipeline,
+            pipeline_promoter=env.promoter,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    if env.manager_cls is not None:
+        assert isinstance(manager, env.manager_cls)
+    assert env.pipeline.manager is manager
+    assert env.pipeline.comms_bot.manager is manager
+    assert env.pipeline.comms_bot.helper.manager is manager
+    assert all(getattr(helper, "manager", manager) is manager for helper in env.helpers)
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 def test_managerless_pipeline_bootstrap_avoids_reentrant_warning(
