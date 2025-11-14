@@ -403,6 +403,105 @@ def reentrant_prebuilt_pipeline_env(
 
 
 @pytest.fixture
+def direct_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build a pipeline directly so helpers bootstrap themselves mid-build."""
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("direct pipeline fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="direct-prebuilt")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("DirectComms", "DirectNestedHelper")
+    placeholder_manager = cbi._DisabledSelfCodingManager(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    bootstrap_attempts: list[str] = []
+
+    with monkeypatch.context() as patch_context:
+        def _placeholder_bootstrap(name: str, *_args: object, **_kwargs: object) -> object:
+            bootstrap_attempts.append(name)
+            return placeholder_manager
+
+        patch_context.setattr(cbi, "_bootstrap_manager", _placeholder_bootstrap)
+
+        @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+        class DirectNestedHelper:
+            name = helper_names[1]
+
+            def __init__(self) -> None:
+                self.bot_name = self.name
+
+        @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+        class DirectCommunicationMaintenanceBot:
+            name = helper_names[0]
+
+            def __init__(self) -> None:
+                self.bot_name = self.name
+                self.helper = DirectNestedHelper()
+
+        class DirectPipeline:
+            def __init__(
+                self,
+                *,
+                context_builder: object,
+                bot_registry: object,
+                data_bot: object,
+                manager: object,
+            ) -> None:
+                self.context_builder = context_builder
+                self.bot_registry = bot_registry
+                self.data_bot = data_bot
+                self.manager = manager
+                self.initial_manager = manager
+                self.comms_bot = DirectCommunicationMaintenanceBot()
+                self._bots = [self.comms_bot, self.comms_bot.helper]
+
+        pipeline = DirectPipeline(
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+            manager=placeholder_manager,
+        )
+
+    assert bootstrap_attempts  # ensure helpers attempted bootstrap eagerly
+
+    def _promote(manager: object) -> None:
+        cbi._promote_pipeline_manager(pipeline, manager, placeholder_manager)
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = DirectPipeline  # type: ignore[attr-defined]
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline=pipeline,
+        pipeline_cls=DirectPipeline,
+        promoter=_promote,
+        helper_names=helper_names,
+        bootstrap_attempts=tuple(bootstrap_attempts),
+        placeholder=placeholder_manager,
+    )
+
+
+@pytest.fixture
 def real_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -1436,6 +1535,60 @@ def test_prebuilt_pipeline_helpers_receive_real_manager(
         initial = getattr(helper, "initial_manager", manager)
         assert initial is manager
         assert not isinstance(helper.manager, cbi._DisabledSelfCodingManager)
+
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
+def test_direct_pipeline_promotes_prebuilt_helpers(
+    direct_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    assert set(direct_pipeline_env.bootstrap_attempts) == set(
+        direct_pipeline_env.helper_names
+    )
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is direct_pipeline_env.pipeline_cls
+        return direct_pipeline_env.pipeline, direct_pipeline_env.promoter
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    real_bootstrap = cbi._bootstrap_manager
+    call_depth = 0
+
+    def _guarded_bootstrap(*args: object, **kwargs: object) -> object:
+        nonlocal call_depth
+        if call_depth:
+            raise AssertionError("_bootstrap_manager re-entered during direct pipeline bootstrap")
+        call_depth += 1
+        try:
+            return real_bootstrap(*args, **kwargs)
+        finally:
+            call_depth -= 1
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _guarded_bootstrap)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "DirectPipelineOwner",
+            direct_pipeline_env.registry,
+            direct_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+
+    pipeline = direct_pipeline_env.pipeline
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
 
     assert not any(
         "re-entrant initialisation depth" in record.message
