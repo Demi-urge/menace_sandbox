@@ -3022,10 +3022,12 @@ def prepare_pipeline_for_bootstrap(
                 return candidate
         return None
 
+    manager_kwarg_placeholder = pipeline_kwargs.get("manager")
     sentinel_manager = _select_placeholder(
         manager_override,
         manager_sentinel,
         bootstrap_manager,
+        manager_kwarg_placeholder,
     )
     if sentinel_manager is None and sentinel_factory is not None:
         candidate = sentinel_factory()
@@ -3125,69 +3127,68 @@ def prepare_pipeline_for_bootstrap(
             if key
             not in {"context_builder", "bot_registry", "data_bot", "manager"}
         }
+        available_variants: tuple[tuple[str, ...], ...] = tuple(
+            keys for keys in variants if all(key in init_kwargs for key in keys)
+        )
+        manager_variants = tuple(keys for keys in available_variants if "manager" in keys)
+        managerless_variants = tuple(
+            keys for keys in available_variants if "manager" not in keys
+        )
 
-        managerless_unlocked = False
-        for pass_index in range(2):
-            for keys in variants:
-                if not all(key in init_kwargs for key in keys):
-                    continue
-                if "manager" not in keys and not managerless_unlocked:
-                    continue
-                try:
-                    call_kwargs = {key: init_kwargs[key] for key in keys}
-                    call_kwargs.update(static_items)
-                    shim_context: contextlib.AbstractContextManager[Any]
-                    if shim_manager_placeholder is None:
-                        shim_context = contextlib.nullcontext(
-                            _PipelineShimHandle(False, None)
-                        )
-                    else:
-                        shim_context = _pipeline_manager_placeholder_shim(
-                            pipeline_cls, shim_manager_placeholder
-                        )
-                    shim_release_candidate: Callable[[], None] | None = None
-                    with shim_context as shim_handle:
-                        if isinstance(shim_handle, _PipelineShimHandle):
-                            shim_applied = shim_handle.applied
-                            shim_release_candidate = shim_handle.release
-                        else:
-                            shim_applied = bool(shim_handle)
-                        pipeline = pipeline_cls(**call_kwargs)
-                        if (
-                            pipeline is not None
-                            and manager_placeholder is not None
-                            and (
-                                (managerless_unlocked and "manager" not in keys)
-                                or not shim_applied
-                            )
-                        ):
-                            _assign_bootstrap_manager_placeholder(
-                                pipeline,
-                                manager_placeholder,
-                                propagate_nested=True,
-                            )
-                except TypeError as exc:
-                    if callable(shim_release_candidate):
-                        try:
-                            shim_release_candidate()
-                        except Exception:  # pragma: no cover - cleanup best effort
-                            logger.debug(
-                                "failed to release pipeline shim placeholder", exc_info=True
-                            )
-                    last_error = exc
-                    if not managerless_unlocked and _typeerror_rejects_manager(exc):
-                        managerless_unlocked = True
-                    continue
-                else:
-                    if callable(shim_release_candidate):
-                        shim_release_callback = shim_release_candidate
+        manager_rejected = False
+
+        def _attempt_constructor(keys: tuple[str, ...]) -> bool:
+            nonlocal pipeline, last_error, manager_rejected
+            call_kwargs = {key: init_kwargs[key] for key in keys}
+            call_kwargs.update(static_items)
+            try:
+                pipeline = pipeline_cls(**call_kwargs)
+            except TypeError as exc:
+                last_error = exc
+                if (
+                    not manager_rejected
+                    and "manager" in keys
+                    and _typeerror_rejects_manager(exc)
+                ):
+                    manager_rejected = True
+                return False
+            return True
+
+        shim_context: contextlib.AbstractContextManager[Any]
+        if shim_manager_placeholder is None:
+            shim_context = contextlib.nullcontext(_PipelineShimHandle(False, None))
+        else:
+            shim_context = _pipeline_manager_placeholder_shim(
+                pipeline_cls, shim_manager_placeholder
+            )
+        shim_release_candidate: Callable[[], None] | None = None
+        with shim_context as shim_handle:
+            if isinstance(shim_handle, _PipelineShimHandle):
+                shim_release_candidate = shim_handle.release
+            else:
+                candidate_release = getattr(shim_handle, "release", None)
+                if callable(candidate_release):
+                    shim_release_candidate = candidate_release
+            for keys in manager_variants:
+                if _attempt_constructor(keys):
                     break
-            if pipeline is not None or pass_index == 1 or not managerless_unlocked:
-                break
+            if pipeline is None and manager_rejected:
+                for keys in managerless_variants:
+                    if _attempt_constructor(keys):
+                        break
         if pipeline is None:
+            if callable(shim_release_candidate):
+                try:
+                    shim_release_candidate()
+                except Exception:  # pragma: no cover - cleanup best effort
+                    logger.debug(
+                        "failed to release pipeline shim placeholder", exc_info=True
+                    )
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
+        if callable(shim_release_candidate):
+            shim_release_callback = shim_release_candidate
         _assign_bootstrap_manager_placeholder(
             pipeline,
             manager_placeholder,
@@ -3544,7 +3545,7 @@ def _bootstrap_manager(
                         bootstrap_manager=placeholder_manager,
                         manager_override=placeholder_manager,
                         manager_sentinel=placeholder_manager,
-                        manager=placeholder_manager,
+                        manager=sentinel_manager,
                         extra_manager_sentinels=(
                             tuple(dict.fromkeys(fallback_manager_sentinels))
                             if fallback_manager_sentinels
@@ -3552,7 +3553,7 @@ def _bootstrap_manager(
                         ),
                     )
                 else:
-                    placeholder_for_pipeline = placeholder_manager or sentinel_manager
+                    placeholder_for_pipeline = sentinel_manager or placeholder_manager
                     pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
                         local_pipeline,
                         placeholder_for_pipeline,
@@ -3579,7 +3580,7 @@ def _bootstrap_manager(
                         _promote_pipeline_manager(
                             local_pipeline,
                             real_manager,
-                            placeholder_manager,
+                            sentinel_manager,
                             extra_sentinels=combined or None,
                         )
 
