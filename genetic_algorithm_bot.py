@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from .bot_registry import BotRegistry
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import (
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 import random
 from dataclasses import dataclass, field
 import logging
@@ -66,7 +69,12 @@ def _build_manager():
         engine = SelfCodingEngine(
             CodeDB(), GPTMemoryManager(), context_builder=ga_context_builder
         )
-        pipeline = ModelAutomationPipeline(context_builder=ga_context_builder)
+        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=ga_context_builder,
+            bot_registry=_get_registry(),
+            data_bot=_get_data_bot(),
+        )
         thresholds = get_thresholds("GeneticAlgorithmBot")
         persist_sc_thresholds(
             "GeneticAlgorithmBot",
@@ -75,7 +83,7 @@ def _build_manager():
             test_failure_increase=thresholds.test_failure_increase,
         )
         orchestrator = get_orchestrator("GeneticAlgorithmBot", _get_data_bot(), engine)
-        return internalize_coding_bot(
+        manager = internalize_coding_bot(
             "GeneticAlgorithmBot",
             engine,
             pipeline,
@@ -87,6 +95,8 @@ def _build_manager():
             error_threshold=thresholds.error_increase,
             test_failure_threshold=thresholds.test_failure_increase,
         )
+        promote_pipeline(manager)
+        return manager
     except Exception:  # pragma: no cover - fall back to manual mode
         logger.warning(
             "GeneticAlgorithmBot self-coding manager initialisation failed; running without autonomous patching",

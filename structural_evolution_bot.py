@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import normalise_manager_arg, self_coding_managed
+from .coding_bot_interface import (
+    normalise_manager_arg,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -49,15 +53,20 @@ _context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 
 
-def _build_pipeline() -> "ModelAutomationPipeline":
+def _build_pipeline() -> tuple["ModelAutomationPipeline", Callable[[object], None]]:
     """Construct the automation pipeline without triggering circular imports."""
 
     from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
 
-    return _Pipeline(context_builder=_context_builder)
+    return prepare_pipeline_for_bootstrap(
+        pipeline_cls=_Pipeline,
+        context_builder=_context_builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
 
 
-pipeline = _build_pipeline()
+pipeline, _promote_pipeline = _build_pipeline()
 evolution_orchestrator = get_orchestrator("StructuralEvolutionBot", data_bot, engine)
 _th = get_thresholds("StructuralEvolutionBot")
 persist_sc_thresholds(
@@ -78,6 +87,7 @@ manager = internalize_coding_bot(
     error_threshold=_th.error_increase,
     test_failure_threshold=_th.test_failure_increase,
 )
+_promote_pipeline(manager)
 
 @dataclass
 class SystemSnapshot:

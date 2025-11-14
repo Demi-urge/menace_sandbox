@@ -235,6 +235,7 @@ from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
+from menace.coding_bot_interface import prepare_pipeline_for_bootstrap
 try:  # optional metrics exporter
     from metrics_exporter import (
         sandbox_cpu_percent,
@@ -809,6 +810,60 @@ class SandboxContext:
     orphan_traces: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
+def _bootstrap_sandbox_manager(
+    *,
+    context_builder: ContextBuilder,
+    gpt_memory: Any,
+    data_bot: DataBot,
+    registry: "BotRegistry",
+    event_bus: UnifiedEventBus,
+    suggestion_db: "PatchSuggestionDB | None" = None,
+) -> tuple["SelfCodingEngine", "SelfCodingManager"]:
+    """Build the sandbox SelfCodingManager using the bootstrap sentinel."""
+
+    from menace.self_coding_engine import SelfCodingEngine
+    from menace.menace_memory_manager import MenaceMemoryManager
+    from menace.self_coding_manager import internalize_coding_bot
+    from menace.model_automation_pipeline import ModelAutomationPipeline
+
+    engine = SelfCodingEngine(
+        CodeDB(),
+        MenaceMemoryManager(),
+        llm_client=None,
+        patch_suggestion_db=suggestion_db,
+        gpt_memory=gpt_memory,
+        context_builder=context_builder,
+    )
+    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=context_builder,
+        event_bus=event_bus,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    thresholds = get_thresholds("menace")
+    persist_sc_thresholds(
+        "menace",
+        roi_drop=thresholds.roi_drop,
+        error_increase=thresholds.error_increase,
+        test_failure_increase=thresholds.test_failure_increase,
+        event_bus=event_bus,
+    )
+    manager = internalize_coding_bot(
+        "menace",
+        engine,
+        pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        event_bus=event_bus,
+        roi_threshold=thresholds.roi_drop,
+        error_threshold=thresholds.error_increase,
+        test_failure_threshold=thresholds.test_failure_increase,
+    )
+    promote_pipeline(manager)
+    return engine, manager
+
+
 def _sandbox_init(
     preset: Dict[str, Any],
     args: argparse.Namespace,
@@ -991,54 +1046,27 @@ def _sandbox_init(
             cur = self.db.conn.execute(query, [*params, limit])
             return [str(r[0]) for r in cur.fetchall()]
 
-    from menace.self_coding_engine import SelfCodingEngine
-    from menace.menace_memory_manager import MenaceMemoryManager
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
-
-    # ``suggestion_db`` is assigned later once paths are available but it is
-    # passed into ``SelfCodingEngine`` below, so initialise it here to avoid an
-    # UnboundLocalError during argument evaluation.
-    suggestion_db: PatchSuggestionDB | None = None
-
-    engine = SelfCodingEngine(
-        CodeDB(),
-        MenaceMemoryManager(),
-        llm_client=None,
-        patch_suggestion_db=suggestion_db,
-        gpt_memory=gpt_memory,
-        context_builder=context_builder,
-    )
-    from menace.self_coding_manager import (
-        SelfCodingManager,
-        internalize_coding_bot,
-    )
     from menace.self_coding_manager import (
         _manager_generate_helper_with_builder as _helper_fn,
     )
-    from menace.model_automation_pipeline import ModelAutomationPipeline
     from menace.bot_registry import BotRegistry
+
+    # ``suggestion_db`` is assigned later once paths are available but it is
+    # passed into ``SelfCodingEngine`` during quick manager bootstrap, so
+    # initialise it here to avoid an UnboundLocalError during argument
+    # evaluation.
+    suggestion_db: PatchSuggestionDB | None = None
 
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
-    _th = get_thresholds("menace")
-    persist_sc_thresholds(
-        "menace",
-        roi_drop=_th.roi_drop,
-        error_increase=_th.error_increase,
-        test_failure_increase=_th.test_failure_increase,
-    )
-    quick_manager = internalize_coding_bot(
-        "menace",
-        engine,
-        ModelAutomationPipeline(
-            context_builder=context_builder, event_bus=bus, bot_registry=registry
-        ),
+    engine, quick_manager = _bootstrap_sandbox_manager(
+        context_builder=context_builder,
+        gpt_memory=gpt_memory,
         data_bot=data_bot,
-        bot_registry=registry,
+        registry=registry,
         event_bus=bus,
-        roi_threshold=_th.roi_drop,
-        error_threshold=_th.error_increase,
-        test_failure_threshold=_th.test_failure_increase,
+        suggestion_db=suggestion_db,
     )
     quick_fix_engine = QuickFixEngine(
         telem_db,

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Type, Callable
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -208,7 +208,17 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
     )
 
     pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
-    pipe = pipeline if pipeline is not None else pipeline_cls(context_builder=ctx_builder)
+    promote_pipeline: Callable[[SelfCodingManager | None], None]
+    if pipeline is not None:
+        pipe = pipeline
+        promote_pipeline = lambda *_args: None
+    else:
+        pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
+            context_builder=ctx_builder,
+            bot_registry=reg,
+            data_bot=dbot,
+        )
 
     try:
         orchestrator = (
@@ -251,6 +261,8 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
             "Self-coding manager unavailable for ResearchAggregatorBot: %s", exc
         )
         mgr = None
+    else:
+        promote_pipeline(mgr)
 
     registry = reg
     data_bot = dbot
