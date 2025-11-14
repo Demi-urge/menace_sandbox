@@ -158,3 +158,28 @@ def test_run_experiments_from_parent(tmp_path):
     )
     res = asyncio.run(mgr.run_experiments_from_parent(root_id))
     assert {r.variant for r in res} == {"A", "B"}
+
+
+def test_pipeline_bootstrap_promotion(monkeypatch, caplog):
+    import menace.experiment_manager as exp_mod
+
+    builder = DummyBuilder()
+    pipeline = types.SimpleNamespace(manager="sentinel", context_builder=builder)
+    promote_calls: list[object] = []
+
+    def _fake_prepare(**kwargs):
+        def _promote(manager):
+            promote_calls.append(manager)
+            pipeline.manager = manager
+
+        return pipeline, _promote
+
+    monkeypatch.setattr(exp_mod, "prepare_pipeline_for_bootstrap", _fake_prepare, raising=False)
+    mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), context_builder=builder)
+    assert mgr.pipeline is pipeline
+    assert callable(mgr.pipeline_promoter)
+    mgr.promote_pipeline_manager("manager")
+    assert pipeline.manager == "manager"
+    assert promote_calls == ["manager"]
+    assert mgr.pipeline_promoter is None
+    assert "re-entrant initialisation depth" not in caplog.text

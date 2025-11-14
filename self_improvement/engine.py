@@ -34,6 +34,7 @@ import logging
 _qfe_log("logging imported")
 
 from pathlib import Path
+from types import SimpleNamespace
 _qfe_log("pathlib.Path imported")
 
 try:
@@ -1001,6 +1002,7 @@ from menace_sandbox.model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
+from menace_sandbox.coding_bot_interface import prepare_pipeline_for_bootstrap
 _qfe_log("SI-2f.2 menace_sandbox.model_automation_pipeline imported")
 
 _qfe_log("SI-2f.3 importing context_builder_util")
@@ -1303,11 +1305,25 @@ class SelfImprovementEngine:
         self.aggregator = ResearchAggregatorBot(
             [bot_name], info_db=self.info_db, context_builder=context_builder
         )
-        self.pipeline = pipeline or ModelAutomationPipeline(
-            aggregator=self.aggregator,
-            action_planner=action_planner,
-            context_builder=context_builder,
-        )
+        self.pipeline_promoter: Callable[[Any], None] | None = None
+        if pipeline is None:
+            bootstrap_registry = SimpleNamespace(__name__="self_improvement.registry")
+            bootstrap_data_bot = data_bot or SimpleNamespace(
+                __name__="self_improvement.data_bot"
+            )
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=bootstrap_registry,
+                data_bot=bootstrap_data_bot,
+                aggregator=self.aggregator,
+                action_planner=action_planner,
+            )
+            self.pipeline = pipeline
+            self.pipeline_promoter = promote_pipeline
+        else:
+            self.pipeline = pipeline
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
@@ -1826,6 +1842,17 @@ class SelfImprovementEngine:
             self._start_meta_planning_loop(
                 float(PLANNER_INTERVAL), float(META_IMPROVEMENT_THRESHOLD)
             )
+
+    def promote_pipeline_manager(self, manager: Any) -> None:
+        """Promote bootstrap helpers to the real *manager* when available."""
+
+        promoter = self.pipeline_promoter
+        if callable(promoter):
+            try:
+                promoter(manager)
+            finally:
+                self.pipeline_promoter = None
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
 
     def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
         """Use meta planner to suggest new cross-domain workflow chains."""

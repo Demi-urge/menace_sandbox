@@ -361,6 +361,11 @@ for name in [
                 pass
 
         mod.DataBot = DataBot
+        class MetricsDB:
+            def __init__(self, *a, **k):
+                pass
+
+        mod.MetricsDB = MetricsDB
     sys.modules[name] = mod
     sys.modules[f"menace.{name}"] = mod
 
