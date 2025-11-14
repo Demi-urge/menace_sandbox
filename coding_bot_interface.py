@@ -2368,6 +2368,7 @@ def _assign_bootstrap_manager_placeholder(
 
     if placeholder is None or target is None:
         return
+    propagate_immediately = propagate_nested or _is_bootstrap_placeholder(placeholder)
     for attr in ("manager", "initial_manager"):
         try:
             current = getattr(target, attr)
@@ -2383,7 +2384,7 @@ def _assign_bootstrap_manager_placeholder(
             logger.debug(
                 "failed to assign %s placeholder on %s", attr, target, exc_info=True
             )
-    if propagate_nested:
+    if propagate_immediately:
         visited = _visited or set()
         visited.add(id(target))
         _propagate_placeholder_to_helpers(target, placeholder, visited)
@@ -2518,12 +2519,36 @@ def _pipeline_manager_placeholder_shim(
             )
         else:
             sentinel_applied = True
+    exit_stack = contextlib.ExitStack()
+    patched_any = False
     try:
-        with _inject_manager_placeholder_during_init(
-            pipeline_cls, placeholder
-        ) as patched:
-            yield patched
+        candidates: list[type[Any]] = []
+        if isinstance(pipeline_cls, type):
+            candidates.append(pipeline_cls)
+            try:
+                for base_cls in getattr(pipeline_cls, "__mro__", ()):
+                    if not isinstance(base_cls, type):
+                        continue
+                    if base_cls is pipeline_cls:
+                        continue
+                    if not _is_model_automation_pipeline_class(base_cls):
+                        continue
+                    if any(existing is base_cls for existing in candidates):
+                        continue
+                    candidates.append(base_cls)
+            except Exception:  # pragma: no cover - MRO inspection best effort
+                logger.debug(
+                    "failed to inspect %s MRO for bootstrap instrumentation", pipeline_cls,
+                    exc_info=True,
+                )
+        for candidate_cls in candidates:
+            patched = exit_stack.enter_context(
+                _inject_manager_placeholder_during_init(candidate_cls, placeholder)
+            )
+            patched_any = patched_any or bool(patched)
+        yield patched_any
     finally:
+        exit_stack.close()
         if manager_token is not None:
             try:
                 MANAGER_CONTEXT.reset(manager_token)
@@ -2933,6 +2958,12 @@ def prepare_pipeline_for_bootstrap(
                 return candidate
         return None
 
+    def _resolve_disabled_placeholder(*candidates: Any) -> Any | None:
+        for candidate in candidates:
+            if isinstance(candidate, _DisabledSelfCodingManager):
+                return candidate
+        return None
+
     sentinel_manager = _select_placeholder(
         manager_override,
         manager_sentinel,
@@ -2948,6 +2979,31 @@ def prepare_pipeline_for_bootstrap(
             data_bot=data_bot,
         )
     manager_placeholder = sentinel_manager
+    shim_manager_placeholder = _resolve_disabled_placeholder(
+        manager_override,
+        manager_sentinel,
+        bootstrap_manager,
+        manager_placeholder,
+    )
+    if shim_manager_placeholder is None:
+        shim_manager_placeholder = _DisabledSelfCodingManager(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+    managed_extra_manager_sentinels: tuple[Any, ...] | None = None
+    extra_candidates: list[Any] = []
+    if extra_manager_sentinels:
+        for candidate in extra_manager_sentinels:
+            if candidate is None:
+                continue
+            extra_candidates.append(candidate)
+    if (
+        shim_manager_placeholder is not None
+        and shim_manager_placeholder is not manager_placeholder
+    ):
+        extra_candidates.append(shim_manager_placeholder)
+    if extra_candidates:
+        managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -3018,11 +3074,11 @@ def prepare_pipeline_for_bootstrap(
                     call_kwargs = {key: init_kwargs[key] for key in keys}
                     call_kwargs.update(static_items)
                     shim_context: contextlib.AbstractContextManager[Any]
-                    if manager_placeholder is None:
+                    if shim_manager_placeholder is None:
                         shim_context = contextlib.nullcontext(False)
                     else:
                         shim_context = _pipeline_manager_placeholder_shim(
-                            pipeline_cls, manager_placeholder
+                            pipeline_cls, shim_manager_placeholder
                         )
                     with shim_context as shim_applied:
                         pipeline = pipeline_cls(**call_kwargs)
@@ -3085,7 +3141,11 @@ def prepare_pipeline_for_bootstrap(
         try:
             combined: list[Any] = []
             seen: set[int] = set()
-            for group in (extra_manager_sentinels, extra_sentinels):
+            sentinel_groups: tuple[Iterable[Any] | None, ...] = (
+                managed_extra_manager_sentinels,
+                extra_sentinels,
+            )
+            for group in sentinel_groups:
                 if not group:
                     continue
                 for candidate in group:
@@ -3096,11 +3156,19 @@ def prepare_pipeline_for_bootstrap(
                         continue
                     seen.add(key)
                     combined.append(candidate)
+            placeholder_extras: list[Any] = []
+            if (
+                shim_manager_placeholder is not None
+                and shim_manager_placeholder is not manager_placeholder
+            ):
+                placeholder_extras.append(shim_manager_placeholder)
+            if combined:
+                placeholder_extras.extend(combined)
             _promote_pipeline_manager(
                 pipeline,
                 manager,
                 manager_placeholder,
-                extra_sentinels=combined or None,
+                extra_sentinels=placeholder_extras or None,
             )
         finally:
             _deregister_bootstrap_helper_callback(_promote)
@@ -3113,6 +3181,7 @@ def prepare_pipeline_for_bootstrap(
             bootstrap_manager,
             manager_override,
             sentinel_manager,
+            shim_manager_placeholder,
         )
     )
     if register_callback:
@@ -3330,6 +3399,7 @@ def _bootstrap_manager(
             bootstrap_owner = placeholder_manager
         else:
             placeholder_manager = bootstrap_owner
+        _track_extra_sentinel(placeholder_manager)
         _link_bootstrap_owner(sentinel_manager)
         owner_sentinel_restore: Callable[[], None] | None = None
         pipeline_placeholder_token = None
@@ -3343,13 +3413,6 @@ def _bootstrap_manager(
                 placeholder_manager,
                 name,
             )
-            reentrant_manager = pipeline_manager
-            if reentrant_manager is None and getattr(_BOOTSTRAP_STATE, "depth", 0) > 0:
-                reentrant_manager = _DisabledSelfCodingManager(
-                    bot_registry=bot_registry,
-                    data_bot=data_bot,
-                )
-                _track_extra_sentinel(reentrant_manager)
             owner_context = _push_bootstrap_context(
                 registry=bot_registry,
                 data_bot=data_bot,
@@ -3357,7 +3420,7 @@ def _bootstrap_manager(
                 pipeline=pipeline,
             )
             if owner_context is not None:
-                owner_context.sentinel = reentrant_manager or placeholder_manager
+                owner_context.sentinel = placeholder_manager
                 if pipeline is not None and owner_context.pipeline is None:
                     owner_context.pipeline = pipeline
             try:
@@ -3391,31 +3454,22 @@ def _bootstrap_manager(
                         context_builder=ctx_builder,
                         bot_registry=bot_registry,
                         data_bot=data_bot,
-                        bootstrap_manager=reentrant_manager or placeholder_manager,
+                        bootstrap_manager=placeholder_manager,
                         manager_override=placeholder_manager,
                         manager_sentinel=placeholder_manager,
-                        manager=reentrant_manager or placeholder_manager,
+                        manager=placeholder_manager,
                         extra_manager_sentinels=(
-                            fallback_manager_sentinels or None
+                            tuple(dict.fromkeys(fallback_manager_sentinels))
+                            if fallback_manager_sentinels
+                            else None
                         ),
                     )
                 else:
-                    placeholder_for_pipeline = (
-                        placeholder_manager or sentinel_manager
-                    )
+                    placeholder_for_pipeline = placeholder_manager or sentinel_manager
                     pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
                         local_pipeline,
                         placeholder_for_pipeline,
                     )
-                    if (
-                        pipeline_placeholder_token is None
-                        and placeholder_for_pipeline is not placeholder_manager
-                        and placeholder_manager is not None
-                    ):
-                        pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
-                            local_pipeline,
-                            placeholder_manager,
-                        )
                 if not callable(promote):
                     def _default_promote(
                         real_manager: Any,
