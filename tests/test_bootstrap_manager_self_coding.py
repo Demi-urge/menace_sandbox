@@ -1122,7 +1122,79 @@ def test_bootstrap_manager_handles_truthy_owner_sentinel(
     )
 
 
-def test_bootstrap_manager_warns_when_owner_sentinel_is_falsy(
+def test_fallback_pipeline_without_manager_argument_installs_owner_sentinel(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("manager bootstrap fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="ownerless-fallback")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_name = "OwnerlessFallbackHelper"
+    owner_name = "OwnerlessFallbackPipeline"
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class OwnerlessFallbackHelper:
+        name = helper_name
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    class OwnerlessFallbackPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.initial_manager = getattr(self, "manager", None)
+            self.helper = OwnerlessFallbackHelper()
+            self._bots = [self.helper]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        OwnerlessFallbackPipeline
+    )
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    manager = cbi._bootstrap_manager(owner_name, registry, data_bot)
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.helper.manager is manager
+
+    registered = {name: payload for name, payload in registry.registered}
+    assert helper_name in registered
+    assert registered[helper_name]["manager"] is manager
+    assert any(entry == (helper_name, manager) for entry in registry.promotions)
+
+
+def test_bootstrap_manager_handles_falsy_owner_sentinel(
     fallback_pipeline_env: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1148,17 +1220,21 @@ def test_bootstrap_manager_warns_when_owner_sentinel_is_falsy(
         fallback_pipeline_env.data_bot,
     )
 
-    assert any(
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert not any(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
     )
 
     pipeline = getattr(manager, "pipeline", None)
     assert pipeline is not None
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
 
     registered_names = {entry[0] for entry in fallback_pipeline_env.registry.registered}
     assert registered_names == set(fallback_pipeline_env.helper_names)
     assert all(
-        isinstance(entry[1].get("manager"), cbi._DisabledSelfCodingManager)
+        entry[1].get("manager") is manager
         for entry in fallback_pipeline_env.registry.registered
     )
