@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional, Callable
 import logging
 import os
@@ -30,6 +31,7 @@ from .oversight_bots import (
     H3OversightBot,
 )
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from .coding_bot_interface import prepare_pipeline_for_bootstrap
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
@@ -126,6 +128,12 @@ class BotNode:
     dependencies: List[str] = field(default_factory=list)
 
 
+def _bootstrap_helper_stub(name: str) -> SimpleNamespace:
+    """Return a lightweight placeholder used during bootstrap."""
+
+    return SimpleNamespace(__name__=name)
+
+
 class MenaceOrchestrator:
     """Drive the entire Menace workflow using a hierarchical structure."""
 
@@ -159,11 +167,20 @@ class MenaceOrchestrator:
             self.context_builder.refresh_db_weights()
         except Exception:
             self.logger.exception("context builder refresh failed")
-        self.pipeline = ModelAutomationPipeline(
+        self.pipeline_promoter: Callable[[Any], None] | None = None
+        placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
+        placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
+        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=self.context_builder,
+            bot_registry=placeholder_registry,
+            data_bot=placeholder_data_bot,
             pathway_db=pathway_db,
             myelination_threshold=myelination_threshold,
-            context_builder=self.context_builder,
         )
+        self.pipeline = pipeline
+        self.pipeline_promoter = promote_pipeline
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.ad_client = ad_client or AdIntegration()
@@ -224,6 +241,17 @@ class MenaceOrchestrator:
         self.last_plan: str | None = None
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
+
+    def promote_pipeline_manager(self, manager: Any) -> None:
+        """Promote the bootstrap pipeline helpers to *manager* when ready."""
+
+        promoter = self.pipeline_promoter
+        if callable(promoter):
+            try:
+                promoter(manager)
+            finally:
+                self.pipeline_promoter = None
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:

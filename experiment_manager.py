@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterable, Dict, List
+from types import SimpleNamespace
+from typing import Iterable, Dict, List, Callable
 import math
 import logging
 from scipy import stats
 
 from .mutation_lineage import MutationLineage
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from .coding_bot_interface import prepare_pipeline_for_bootstrap
 try:  # pragma: no cover - fallback for light imports in tests
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - best effort
@@ -54,22 +56,40 @@ class ExperimentManager:
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("context builder refresh failed: %s", exc)
         self.context_builder = context_builder
+        self.pipeline_promoter: Callable[[object], None] | None = None
         if pipeline is None:
-            self.pipeline = ModelAutomationPipeline(
+            bootstrap_registry = SimpleNamespace(__name__="experiment_manager.registry")
+            pipeline, promote = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=self.context_builder,
+                bot_registry=bootstrap_registry,
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
-                context_builder=self.context_builder,
             )
+            self.pipeline = pipeline
+            self.pipeline_promoter = promote
         else:
             if not hasattr(pipeline, "context_builder"):
                 raise ValueError("pipeline must expose a context_builder")
             if pipeline.context_builder is not self.context_builder:
                 raise ValueError("pipeline and context_builder must match")
             self.pipeline = pipeline
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.prediction_manager = prediction_manager
         self.experiment_db = experiment_db or ExperimentHistoryDB()
         self.p_threshold = p_threshold
         self.lineage = lineage or MutationLineage()
+
+    def promote_pipeline_manager(self, manager: object) -> None:
+        """Promote helpers seeded via ``prepare_pipeline_for_bootstrap``."""
+
+        promoter = self.pipeline_promoter
+        if callable(promoter):
+            try:
+                promoter(manager)
+            finally:
+                self.pipeline_promoter = None
+        self.pipeline_manager = getattr(self.pipeline, "manager", None)
 
     async def _run_variant(self, name: str, energy: int) -> AutomationResult:
         try:
