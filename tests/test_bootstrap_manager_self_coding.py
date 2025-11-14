@@ -4,7 +4,7 @@ import importlib
 import logging
 import sys
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -1749,6 +1749,93 @@ def test_prebuilt_managerless_pipeline_promotes_helpers(
         for entry in prebuilt_managerless_pipeline_env.registry.promotions
     )
     assert not prebuilt_managerless_pipeline_env.bootstrap_attempts
+
+
+def test_pipeline_shim_seeds_placeholder_before_init(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    builder = SimpleNamespace(label="shim-preseed")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_inits: list[str] = []
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ShimSeedHelper:
+        name = "ShimSeedHelper"
+
+        def __init__(self) -> None:
+            helper_inits.append(self.name)
+
+    class ShimSeedPipeline:
+        _BOT_ATTRIBUTE_ORDER: tuple[str, ...] = ("helper",)
+
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self._pending_manager_helpers: dict[str, Callable[..., Any]] = {}
+            self._lazy_helper_attrs: set[str] = set()
+            self._bot_attribute_order = self._BOT_ATTRIBUTE_ORDER
+            self._registered_bot_attrs: set[str] = set()
+            self._bots: list[Any] = []
+            self._should_defer_manager_helpers = (
+                bot_registry is not None and manager is None
+            )
+            self._manager: Any | None = None
+            self.initial_manager = manager
+            self.manager = manager
+            self.helper = ShimSeedHelper()
+            self._bots.append(self.helper)
+
+        def _activate_deferred_helpers(self) -> None:
+            pending = getattr(self, "_pending_manager_helpers")
+            for attr_name, builder in list(pending.items()):
+                builder(manager=self._manager)
+                pending.pop(attr_name, None)
+
+        @property
+        def manager(self) -> Any | None:
+            return self._manager
+
+        @manager.setter
+        def manager(self, value: Any | None) -> None:
+            self._manager = value
+            if value is not None:
+                self._should_defer_manager_helpers = False
+            self._activate_deferred_helpers()
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=ShimSeedPipeline,
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+
+    assert helper_inits == ["ShimSeedHelper"]
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert pipeline.helper.manager is pipeline.manager
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    real_manager = SimpleNamespace(bot_registry=registry, data_bot=data_bot)
+    promote(real_manager)
+
+    assert pipeline.manager is real_manager
+    assert pipeline.helper.manager is real_manager
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 def test_prebuilt_managerless_pipeline_defers_helpers_until_manager(

@@ -2372,17 +2372,99 @@ def _propagate_placeholder_to_helpers(
                 pending.append(nested)
 
 
+def _seed_placeholder_bootstrap_fields(target: Any, placeholder: Any) -> bool:
+    """Ensure *target* can accept *placeholder* even before ``__init__`` runs.
+
+    The shim installs manager placeholders twice: once before ``__init__`` to
+    prevent recursive helper bootstrap and once afterwards when the pipeline
+    propagates the sentinel through its hierarchy.  Pre-seeding the internal
+    bookkeeping structures keeps `_activate_deferred_helpers` and related
+    routines safe to call even though the pipeline has not finished
+    initialising yet.
+    """
+
+    if target is None or placeholder is None:
+        return False
+    seeded = False
+    defaults: tuple[tuple[str, Callable[[], Any]], ...] = (
+        ("_pending_manager_helpers", dict),
+        ("_lazy_helper_attrs", set),
+        ("_registered_bot_attrs", set),
+        ("_bots", list),
+    )
+    for attr, factory in defaults:
+        if hasattr(target, attr):
+            continue
+        try:
+            object.__setattr__(target, attr, factory())
+        except Exception:  # pragma: no cover - best effort defaults
+            logger.debug(
+                "failed to seed %s before manager placeholder injection on %s",
+                attr,
+                target,
+                exc_info=True,
+            )
+        else:
+            seeded = True
+    if not hasattr(target, "_bot_attribute_order"):
+        order = tuple(getattr(target, "_BOT_ATTRIBUTE_ORDER", ()))
+        try:
+            object.__setattr__(target, "_bot_attribute_order", order)
+        except Exception:  # pragma: no cover - best effort defaults
+            logger.debug(
+                "failed to seed _bot_attribute_order before bootstrap on %s",
+                target,
+                exc_info=True,
+            )
+        else:
+            seeded = True
+    if not hasattr(target, "_should_defer_manager_helpers"):
+        try:
+            object.__setattr__(target, "_should_defer_manager_helpers", False)
+        except Exception:
+            logger.debug(
+                "failed to seed _should_defer_manager_helpers on %s",
+                target,
+                exc_info=True,
+            )
+        else:
+            seeded = True
+    try:
+        object.__setattr__(target, "_manager", placeholder)
+    except Exception:  # pragma: no cover - direct assignment best effort
+        logger.debug(
+            "failed to bind bootstrap placeholder directly on %s", target, exc_info=True
+        )
+    else:
+        seeded = True
+    if hasattr(target, "initial_manager"):
+        try:
+            object.__setattr__(target, "initial_manager", placeholder)
+        except Exception:  # pragma: no cover - best effort linkage
+            logger.debug(
+                "failed to seed initial_manager placeholder on %s",
+                target,
+                exc_info=True,
+            )
+    logger.debug(
+        "pre-seeding manager placeholder state for %s to avoid recursive bootstrap",
+        target,
+    )
+    return seeded
+
+
 def _assign_bootstrap_manager_placeholder(
     target: Any,
     placeholder: Any,
     *,
     propagate_nested: bool = False,
     _visited: set[int] | None = None,
-) -> None:
+) -> bool:
     """Assign *placeholder* to ``manager`` and ``initial_manager`` on *target*."""
 
     if placeholder is None or target is None:
-        return
+        return False
+    assigned_any = False
     propagate_immediately = propagate_nested or _is_bootstrap_placeholder(placeholder)
     for attr in ("manager", "initial_manager"):
         try:
@@ -2399,19 +2481,38 @@ def _assign_bootstrap_manager_placeholder(
             logger.debug(
                 "failed to assign %s placeholder on %s", attr, target, exc_info=True
             )
+        else:
+            assigned_any = True
+    if not assigned_any:
+        seeded = _seed_placeholder_bootstrap_fields(target, placeholder)
+        if not seeded:
+            try:
+                object.__setattr__(target, "_should_defer_manager_helpers", False)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to disable helper deferral after placeholder fallback on %s",
+                    target,
+                    exc_info=True,
+                )
     if propagate_immediately:
         visited = _visited or set()
         visited.add(id(target))
         _propagate_placeholder_to_helpers(target, placeholder, visited)
+    return assigned_any
 
 
 def _seed_existing_pipeline_placeholder(
     pipeline: Any, placeholder: Any
 ) -> contextvars.Token[Any] | None:
-    """Install *placeholder* on *pipeline* and expose it via ``MANAGER_CONTEXT``."""
+    """Install *placeholder* on *pipeline* and expose it via ``MANAGER_CONTEXT``.
+
+    Existing pipelines may be upgraded after construction, so the sentinel is
+    applied again to keep the bootstrap shim and the runtime hierarchy in sync.
+    """
 
     if pipeline is None or placeholder is None:
         return None
+    _seed_placeholder_bootstrap_fields(pipeline, placeholder)
     _assign_bootstrap_manager_placeholder(
         pipeline,
         placeholder,
@@ -2446,7 +2547,13 @@ def _resolve_bootstrap_owner(candidate: Any) -> Any | None:
 def _inject_manager_placeholder_during_init(
     pipeline_cls: type[Any], placeholder: Any
 ) -> Iterator[bool]:
-    """Temporarily inject *placeholder* before ``pipeline_cls.__init__`` executes."""
+    """Temporarily inject *placeholder* before ``pipeline_cls.__init__`` executes.
+
+    The placeholder is installed before ``__init__`` and again afterwards when
+    helper promotion walks the hierarchy.  Seeding the internal fields before
+    the first assignment prevents recursive bootstrap attempts from helpers
+    constructed during ``__init__``.
+    """
 
     if placeholder is None:
         yield False
@@ -2467,6 +2574,7 @@ def _inject_manager_placeholder_during_init(
         )
         token = None
         if local_placeholder is not None:
+            _seed_placeholder_bootstrap_fields(self, local_placeholder)
             _assign_bootstrap_manager_placeholder(self, local_placeholder)
             try:
                 token = MANAGER_CONTEXT.set(local_placeholder)
