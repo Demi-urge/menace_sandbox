@@ -2329,7 +2329,7 @@ def _inject_manager_placeholder_during_init(
 def _pipeline_manager_placeholder_shim(
     pipeline_cls: type[Any], placeholder: Any
 ) -> Iterator[bool]:
-    """Assign *placeholder* early and expose the bootstrap owner sentinel."""
+    """Assign *placeholder* early and expose a consistent bootstrap sentinel."""
 
     owner_sentinel = _resolve_bootstrap_owner(placeholder)
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
@@ -2341,8 +2341,11 @@ def _pipeline_manager_placeholder_shim(
             manager_token = MANAGER_CONTEXT.set(context_manager)
         except Exception:  # pragma: no cover - MANAGER_CONTEXT may be absent
             manager_token = None
-    if owner_sentinel is not None:
-        _BOOTSTRAP_STATE.sentinel_manager = owner_sentinel
+    sentinel_candidate = owner_sentinel
+    if sentinel_candidate is None and _is_bootstrap_placeholder(placeholder):
+        sentinel_candidate = placeholder
+    if sentinel_candidate is not None:
+        _BOOTSTRAP_STATE.sentinel_manager = sentinel_candidate
         sentinel_applied = True
     try:
         with _inject_manager_placeholder_during_init(
@@ -2749,7 +2752,7 @@ def prepare_pipeline_for_bootstrap(
         lowered = message.lower()
         return "manager" in lowered and "unexpected" in lowered
 
-    sentinel_manager = manager_override or bootstrap_manager
+    sentinel_manager = manager_override or manager_sentinel or bootstrap_manager
     if sentinel_manager is None and sentinel_factory is not None:
         sentinel_manager = sentinel_factory()
     if sentinel_manager is None:
@@ -2757,9 +2760,9 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-    manager_placeholder = manager_sentinel
+    manager_placeholder = manager_sentinel or bootstrap_manager or sentinel_manager
     if manager_placeholder is None:
-        manager_placeholder = bootstrap_manager or sentinel_manager
+        manager_placeholder = sentinel_manager
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -2796,7 +2799,7 @@ def prepare_pipeline_for_bootstrap(
         context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
-            manager=bootstrap_manager or sentinel_manager,
+            manager=bootstrap_manager or manager_placeholder,
         )
         init_kwargs = dict(pipeline_kwargs)
         init_kwargs.setdefault("context_builder", context_builder)
@@ -3092,6 +3095,7 @@ def _bootstrap_manager(
                     bootstrap_manager=placeholder_manager,
                     manager_override=placeholder_manager,
                     manager_sentinel=placeholder_manager,
+                    manager=placeholder_manager,
                 )
                 bind_promoter = getattr(bootstrap_owner, "bind_pipeline_promoter", None)
                 if callable(bind_promoter):
