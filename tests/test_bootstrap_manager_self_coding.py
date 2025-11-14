@@ -476,6 +476,179 @@ def fallback_pipeline_env(
     )
 
 
+@pytest.fixture
+def prebuilt_communication_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> SimpleNamespace:
+    """Build a pipeline whose communication bot instantiates helpers eagerly."""
+
+    import menace.coding_bot_interface as cbi
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("MENACE_MODE", "development")
+
+    import menace.communication_maintenance_bot as comms_mod
+
+    comms_mod = importlib.reload(comms_mod)
+
+    class _StubContextBuilder:
+        def query(self, *_args: object, **_kwargs: object) -> str:
+            return ""
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - trivial stub
+            return None
+
+    monkeypatch.setattr(comms_mod, "ContextBuilder", _StubContextBuilder)
+    monkeypatch.setattr(comms_mod, "load_templates", lambda: {})
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "flush_queue",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "fetch_cluster_data",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_ensure_repo",
+        lambda self, repo_path: SimpleNamespace(path=repo_path),
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_create_scheduler",
+        lambda self, _broker: SimpleNamespace(),
+    )
+
+    class _StubMaintenanceDB:
+        def __init__(self) -> None:
+            self._state: dict[str, object] = {}
+
+        def get_state(self, key: str) -> object | None:
+            return self._state.get(key)
+
+        def set_state(self, key: str, value: object) -> None:
+            self._state[key] = value
+
+    class _StubDBRouter:
+        def query_all(self, _term: str) -> None:  # pragma: no cover - noop
+            return None
+
+        def get_connection(self, _name: str) -> SimpleNamespace:  # pragma: no cover - noop
+            class _Conn(SimpleNamespace):
+                def execute(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+                    return None
+
+                def close(self) -> None:  # pragma: no cover - noop
+                    return None
+
+            return _Conn()
+
+    class _StubCommStore:
+        def cleanup(self) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubEventBus:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubMemoryMgr:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force communication pipeline bootstrap")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = _StubContextBuilder()
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    class PrebuiltCommunicationPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            comm_store = _StubCommStore()
+            config = comms_mod.MaintenanceBotConfig(
+                comm_log_path=tmp_path / "comm.log",
+                message_queue=tmp_path / "queue.jsonl",
+                error_db_path=tmp_path / "errors.db",
+                log_dir=tmp_path,
+                comm_log_max_size_mb=1.0,
+            )
+            self.comms_bot = comms_mod.CommunicationMaintenanceBot(
+                db=_StubMaintenanceDB(),
+                error_bot=None,
+                repo_path=tmp_path,
+                broker=None,
+                db_router=_StubDBRouter(),
+                event_bus=_StubEventBus(),
+                memory_mgr=_StubMemoryMgr(),
+                context_builder=context_builder,
+                webhook_urls=[],
+                comm_store=comm_store,
+                config=config,
+                admin_tokens=[],
+                manager=manager,
+            )
+            self._bots = [self.comms_bot]
+            helper = getattr(self.comms_bot, "error_bot", None)
+            if helper is not None:
+                self._bots.append(helper)
+                self.error_helper = helper
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        PrebuiltCommunicationPipeline
+    )
+
+    def _build_pipeline() -> tuple[object, Callable[[object], None]]:
+        pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=PrebuiltCommunicationPipeline,
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+        assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+        assert pipeline.comms_bot.manager is pipeline.manager
+        helper = getattr(pipeline.comms_bot, "error_bot", None)
+        if helper is not None:
+            assert helper.manager is pipeline.manager
+        return pipeline, promoter
+
+    pipeline, promoter = _build_pipeline()
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=PrebuiltCommunicationPipeline,
+        pipeline=pipeline,
+        promoter=promoter,
+        rebuild_pipeline=_build_pipeline,
+    )
+
+
 def test_reentrant_helper_instantiated_before_manager_assignment(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -1193,6 +1366,95 @@ def test_fallback_pipeline_without_manager_argument_installs_owner_sentinel(
     assert registered[helper_name]["manager"] is manager
     assert any(entry == (helper_name, manager) for entry in registry.promotions)
 
+
+def test_prebuilt_communication_pipeline_promotes_eager_helpers(
+    prebuilt_communication_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is prebuilt_communication_pipeline_env.pipeline_cls
+        return (
+            prebuilt_communication_pipeline_env.pipeline,
+            prebuilt_communication_pipeline_env.promoter,
+        )
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "PrebuiltCommsOwner",
+            prebuilt_communication_pipeline_env.registry,
+            prebuilt_communication_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert prebuilt_communication_pipeline_env.pipeline.manager is manager
+    assert getattr(manager, "pipeline", None) is prebuilt_communication_pipeline_env.pipeline
+
+    helpers = [prebuilt_communication_pipeline_env.pipeline.comms_bot]
+    helper = getattr(prebuilt_communication_pipeline_env.pipeline.comms_bot, "error_bot", None)
+    if helper is not None:
+        helpers.append(helper)
+
+    for candidate in helpers:
+        assert getattr(candidate, "manager", None) is manager
+        assert not isinstance(candidate.manager, cbi._DisabledSelfCodingManager)
+
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
+def test_prebuilt_communication_pipeline_logs_warning_without_sentinel(
+    prebuilt_communication_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    original_activate = cbi._activate_bootstrap_sentinel
+
+    def _activate_and_drop(manager: object | None) -> Callable[[], None]:
+        restore = original_activate(manager)
+        try:
+            delattr(cbi._BOOTSTRAP_STATE, "sentinel_manager")
+        except AttributeError:
+            pass
+        return restore
+
+    monkeypatch.setattr(cbi, "_activate_bootstrap_sentinel", _activate_and_drop)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        pipeline, promoter = prebuilt_communication_pipeline_env.rebuild_pipeline()
+        helper = getattr(pipeline.comms_bot, "error_bot", None)
+        assert helper is not None
+
+        def _reuse_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+            assert kwargs.get("pipeline_cls") is prebuilt_communication_pipeline_env.pipeline_cls
+            return pipeline, promoter
+
+        monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
+
+        manager = cbi._bootstrap_manager(
+            "MissingSentinelOwner",
+            prebuilt_communication_pipeline_env.registry,
+            prebuilt_communication_pipeline_env.data_bot,
+        )
+
+    assert isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    assert isinstance(helper.manager, (cbi._DisabledSelfCodingManager, cbi._BootstrapManagerSentinel))
 
 def test_bootstrap_manager_handles_falsy_owner_sentinel(
     fallback_pipeline_env: SimpleNamespace,
