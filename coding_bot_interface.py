@@ -2840,86 +2840,99 @@ def _bootstrap_manager(
         )
         _link_bootstrap_owner(sentinel_manager)
         placeholder_manager = bootstrap_owner or sentinel_manager
-        _BOOTSTRAP_STATE.sentinel_manager = bootstrap_owner
-        logger.debug(
-            "activated bootstrap owner sentinel %s for %s",
-            bootstrap_owner,
-            name,
-        )
-        owner_context = _push_bootstrap_context(
-            registry=bot_registry,
-            data_bot=data_bot,
-            manager=bootstrap_owner,
-        )
+        owner_sentinel_restore: Callable[[], None] | None = None
         try:
-            code_db_cls = _load_optional_module("code_database").CodeDB
-            memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
-            engine_mod = _load_optional_module(
-                "self_coding_engine", fallback="menace.self_coding_engine"
-            )
-            pipeline_mod = _load_optional_module(
-                "model_automation_pipeline", fallback="menace.model_automation_pipeline"
-            )
-            ctx_builder = create_context_builder()
-            engine = engine_mod.SelfCodingEngine(
-                code_db_cls(),
-                memory_cls(),
-                context_builder=ctx_builder,
-            )
-            pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
-            if pipeline_cls is None:
-                raise RuntimeError("ModelAutomationPipeline is unavailable")
-            pipeline, promote = prepare_pipeline_for_bootstrap(
-                pipeline_cls=pipeline_cls,
-                context_builder=ctx_builder,
-                bot_registry=bot_registry,
-                data_bot=data_bot,
-                manager_override=bootstrap_owner,
-                manager_sentinel=bootstrap_owner,
-            )
-            bootstrap_owner.bind_pipeline_promoter(promote)
-            pipeline_manager = getattr(pipeline, "manager", None)
-            if _is_bootstrap_placeholder(pipeline_manager):
-                _link_bootstrap_owner(pipeline_manager)
-                if pipeline_manager is not bootstrap_owner:
-                    _assign_bootstrap_manager_placeholder(pipeline, bootstrap_owner)
-        finally:
-            if owner_context is not None:
-                _pop_bootstrap_context(owner_context)
-        manager_mod = _load_optional_module(
-            "self_coding_manager", fallback="menace.self_coding_manager"
-        )
-        manager = manager_mod.SelfCodingManager(
-            engine,
-            pipeline,
-            bot_name=name,
-            data_bot=data_bot,
-            bot_registry=bot_registry,
-        )
+            owner_sentinel_restore = _activate_bootstrap_sentinel(placeholder_manager)
+        except Exception:  # pragma: no cover - bootstrap guard best effort
+            owner_sentinel_restore = None
         try:
-            _promote_pipeline_manager(pipeline, manager, placeholder_manager)
-        except Exception:  # pragma: no cover - promotion must stay best-effort
             logger.debug(
-                "fallback pipeline promotion failed for %s", name, exc_info=True
+                "activated bootstrap owner sentinel %s for %s",
+                placeholder_manager,
+                name,
             )
-        else:
+            owner_context = _push_bootstrap_context(
+                registry=bot_registry,
+                data_bot=data_bot,
+                manager=placeholder_manager,
+            )
             try:
-                promote(manager)
+                code_db_cls = _load_optional_module("code_database").CodeDB
+                memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
+                engine_mod = _load_optional_module(
+                    "self_coding_engine", fallback="menace.self_coding_engine"
+                )
+                pipeline_mod = _load_optional_module(
+                    "model_automation_pipeline", fallback="menace.model_automation_pipeline"
+                )
+                ctx_builder = create_context_builder()
+                engine = engine_mod.SelfCodingEngine(
+                    code_db_cls(),
+                    memory_cls(),
+                    context_builder=ctx_builder,
+                )
+                pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
+                if pipeline_cls is None:
+                    raise RuntimeError("ModelAutomationPipeline is unavailable")
+                pipeline, promote = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=pipeline_cls,
+                    context_builder=ctx_builder,
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                    manager_override=placeholder_manager,
+                    manager_sentinel=placeholder_manager,
+                )
+                bootstrap_owner.bind_pipeline_promoter(promote)
+                pipeline_manager = getattr(pipeline, "manager", None)
+                if pipeline_manager is None and placeholder_manager is not None:
+                    _assign_bootstrap_manager_placeholder(
+                        pipeline, placeholder_manager
+                    )
+                    pipeline_manager = getattr(pipeline, "manager", None)
+                if _is_bootstrap_placeholder(pipeline_manager):
+                    _link_bootstrap_owner(pipeline_manager)
+                    if pipeline_manager is not bootstrap_owner:
+                        _assign_bootstrap_manager_placeholder(pipeline, bootstrap_owner)
+            finally:
+                if owner_context is not None:
+                    _pop_bootstrap_context(owner_context)
+            manager_mod = _load_optional_module(
+                "self_coding_manager", fallback="menace.self_coding_manager"
+            )
+            manager = manager_mod.SelfCodingManager(
+                engine,
+                pipeline,
+                bot_name=name,
+                data_bot=data_bot,
+                bot_registry=bot_registry,
+            )
+            try:
+                _promote_pipeline_manager(pipeline, manager, placeholder_manager)
             except Exception:  # pragma: no cover - promotion must stay best-effort
                 logger.debug(
-                    "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                    "fallback pipeline promotion failed for %s", name, exc_info=True
                 )
-        attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
-        if callable(attach_delegate):
-            try:
-                attach_delegate(manager)
-            except Exception:  # pragma: no cover - best effort bridge
-                logger.debug("sentinel delegate attachment failed", exc_info=True)
-        bootstrap_owner.mark_ready(manager, sentinel=sentinel_manager)
-        logger.debug(
-            "bootstrap owner sentinel released for %s", name
-        )
-        return manager
+            else:
+                try:
+                    promote(manager)
+                except Exception:  # pragma: no cover - promotion must stay best-effort
+                    logger.debug(
+                        "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                    )
+            attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
+            if callable(attach_delegate):
+                try:
+                    attach_delegate(manager)
+                except Exception:  # pragma: no cover - best effort bridge
+                    logger.debug("sentinel delegate attachment failed", exc_info=True)
+            bootstrap_owner.mark_ready(manager, sentinel=sentinel_manager)
+            logger.debug(
+                "bootstrap owner sentinel released for %s", name
+            )
+            return manager
+        finally:
+            if owner_sentinel_restore is not None:
+                owner_sentinel_restore()
     except RuntimeError:
         raise
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
