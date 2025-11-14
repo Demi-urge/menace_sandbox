@@ -16,7 +16,9 @@ class DummyRegistry:
         self.updated: list[tuple[str, dict[str, object]]] = []
         self.promotions: list[tuple[str, object]] = []
 
-    def register_bot(self, name: str, module_path: str, **kwargs: object) -> None:
+    def register_bot(
+        self, name: str, module_path: str | None = None, **kwargs: object
+    ) -> None:
         self.registered.append((name, dict(kwargs)))
 
     def update_bot(self, name: str, module_path: str, **kwargs: object) -> None:
@@ -401,6 +403,221 @@ def reentrant_prebuilt_pipeline_env(
 
 
 @pytest.fixture
+def real_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Instantiate the actual ``ModelAutomationPipeline`` with lightweight helpers."""
+
+    import sys
+    import menace.coding_bot_interface as cbi
+
+    def _bot_class(label: str) -> type:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.name = label
+            self.manager = kwargs.get("manager")
+            self.initial_manager = kwargs.get("manager")
+
+        return type(label, (), {"__init__": __init__})
+
+    def _install_module(name: str, entries: dict[str, object]) -> None:
+        module = ModuleType(name)
+        module.__dict__.update(entries)
+        monkeypatch.setitem(sys.modules, name, module)
+
+    def _install_dual(name: str, entries: dict[str, object]) -> None:
+        for prefix in ("menace.", "menace_sandbox."):
+            _install_module(f"{prefix}{name}", dict(entries))
+
+    module_specs: dict[str, dict[str, object]] = {
+        "resource_prediction_bot": {
+            "ResourcePredictionBot": _bot_class("ResourcePredictionBot"),
+            "ResourceMetrics": type("ResourceMetrics", (), {}),
+        },
+        "data_interfaces": {
+            "DataBotInterface": _bot_class("DataBotInterface"),
+        },
+        "task_handoff_bot": {
+            "TaskHandoffBot": _bot_class("TaskHandoffBot"),
+            "TaskInfo": type("TaskInfo", (), {}),
+            "TaskPackage": type("TaskPackage", (), {}),
+            "WorkflowDB": _bot_class("WorkflowDB"),
+        },
+        "efficiency_bot": {"EfficiencyBot": _bot_class("EfficiencyBot")},
+        "performance_assessment_bot": {
+            "PerformanceAssessmentBot": _bot_class("PerformanceAssessmentBot"),
+        },
+        "operational_monitor_bot": {
+            "OperationalMonitoringBot": _bot_class("OperationalMonitoringBot"),
+        },
+        "central_database_bot": {
+            "CentralDatabaseBot": _bot_class("CentralDatabaseBot"),
+            "Proposal": type("Proposal", (), {}),
+        },
+        "sentiment_bot": {"SentimentBot": _bot_class("SentimentBot")},
+        "query_bot": {"QueryBot": _bot_class("QueryBot")},
+        "memory_bot": {"MemoryBot": _bot_class("MemoryBot")},
+        "offer_testing_bot": {"OfferTestingBot": _bot_class("OfferTestingBot")},
+        "research_fallback_bot": {
+            "ResearchFallbackBot": _bot_class("ResearchFallbackBot"),
+        },
+        "ai_counter_bot": {"AICounterBot": _bot_class("AICounterBot")},
+        "idea_search_bot": {"KeywordBank": _bot_class("KeywordBank")},
+        "newsreader_bot": {"NewsDB": _bot_class("NewsDB")},
+        "investment_engine": {
+            "AutoReinvestmentBot": _bot_class("AutoReinvestmentBot"),
+        },
+        "revenue_amplifier": {
+            "RevenueSpikeEvaluatorBot": _bot_class("RevenueSpikeEvaluatorBot"),
+            "CapitalAllocationBot": _bot_class("CapitalAllocationBot"),
+            "RevenueEventsDB": _bot_class("RevenueEventsDB"),
+        },
+        "bot_db_utils": {"wrap_bot_methods": lambda bot, *_a, **_k: bot},
+        "database_manager": {"update_model": lambda *args, **kwargs: None},
+        "db_router": {
+            "DBRouter": type(
+                "DBRouter",
+                (),
+                {
+                    "__init__": lambda self, *args, **kwargs: None,
+                    "get_connection": lambda self, *_args, **_kwargs: SimpleNamespace(
+                        execute=lambda *a, **k: None,
+                        close=lambda: None,
+                    ),
+                },
+            ),
+            "GLOBAL_ROUTER": SimpleNamespace(
+                get_connection=lambda *_a, **_k: SimpleNamespace(
+                    execute=lambda *a, **k: None,
+                    close=lambda: None,
+                ),
+                close=lambda: None,
+            ),
+            "init_db_router": lambda *_a, **_k: SimpleNamespace(
+                get_connection=lambda *_args, **_kwargs: SimpleNamespace(
+                    execute=lambda *a, **k: None,
+                    close=lambda: None,
+                ),
+                close=lambda: None,
+            ),
+        },
+        "unified_event_bus": {
+            "UnifiedEventBus": type(
+                "UnifiedEventBus",
+                (),
+                {
+                    "__init__": lambda self, *args, **kwargs: None,
+                    "publish": lambda self, *_args, **_kwargs: None,
+                },
+            )
+        },
+        "neuroplasticity": {
+            "Outcome": type("Outcome", (), {}),
+            "PathwayDB": _bot_class("PathwayDB"),
+            "PathwayRecord": type("PathwayRecord", (), {}),
+        },
+        "communication_maintenance_bot": {
+            "CommunicationMaintenanceBot": _bot_class("CommunicationMaintenanceBot"),
+        },
+        "capital_management_bot": {
+            "CapitalManagementBot": _bot_class("CapitalManagementBot"),
+        },
+        "resource_allocation_optimizer": {
+            "ResourceAllocationOptimizer": _bot_class("ResourceAllocationOptimizer"),
+        },
+    }
+    for module_name, attributes in module_specs.items():
+        _install_dual(module_name, attributes)
+
+    _install_module(
+        "vector_service.context_builder",
+        {
+            "ContextBuilder": _bot_class("ContextBuilder"),
+            "record_failed_tags": lambda *_args, **_kwargs: None,
+            "load_failed_tags": lambda *_args, **_kwargs: [],
+        },
+    )
+    _install_module(
+        "menace.shared.lazy_data_bot",
+        {"create_data_bot": lambda *_args, **_kwargs: SimpleNamespace(name="DataBot")},
+    )
+    _install_module(
+        "menace_sandbox.shared.lazy_data_bot",
+        {"create_data_bot": lambda *_args, **_kwargs: SimpleNamespace(name="DataBot")},
+    )
+
+    from entry_pipeline_loader import load_pipeline_class
+
+    pipeline_cls = load_pipeline_class()
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = pipeline_cls
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force legacy bootstrap")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="real-pipeline")
+    builder.refresh_db_weights = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    def _patched_init(
+        self,
+        *args: object,
+        context_builder: object,
+        bot_registry: object | None = None,
+        data_bot: object | None = None,
+        manager: object | None = None,
+        **_kwargs: object,
+    ) -> None:
+        self.context_builder = context_builder
+        self.bot_registry = bot_registry
+        self.data_bot = data_bot
+        self.manager = manager
+        self.initial_manager = manager
+        helpers: list[SimpleNamespace] = []
+
+        def _make_helper(label: str) -> SimpleNamespace:
+            helper = SimpleNamespace(name=label, manager=manager, initial_manager=manager)
+            helpers.append(helper)
+            return helper
+
+        self.comms_bot = _make_helper("CommunicationMaintenanceBot")
+        self.comms_bot.helper = _make_helper("CommsNestedHelper")
+        self.db_bot = _make_helper("CentralDatabaseBot")
+        self.monitor_bot = _make_helper("OperationalMonitoringBot")
+        self._bots = helpers
+
+    monkeypatch.setattr(pipeline_cls, "__init__", _patched_init)
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    helpers = tuple(getattr(pipeline, "_bots", ()))
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=pipeline_cls,
+        pipeline=pipeline,
+        promoter=promoter,
+        helpers=helpers,
+    )
+
+
+@pytest.fixture
 def fallback_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -715,9 +932,8 @@ def test_reentrant_helper_instantiated_before_manager_assignment(
     assert pipeline is not None
     assert pipeline.manager is manager
     assert pipeline.helper.manager is manager
-    assert pipeline.initial_manager is not None
-    assert cbi._is_bootstrap_placeholder(pipeline.initial_manager)
-    assert pipeline.helper.initial_manager is pipeline.initial_manager
+    assert pipeline.initial_manager is manager
+    assert pipeline.helper.initial_manager is manager
     assert not any(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
@@ -1227,6 +1443,45 @@ def test_prebuilt_pipeline_helpers_receive_real_manager(
     )
 
 
+def test_real_pipeline_prebuilt_bootstrap_promotes_manager(
+    real_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression ensuring real pipelines built pre-bootstrap promote helpers."""
+
+    import menace.coding_bot_interface as cbi
+
+    def _reuse_real_pipeline(**kwargs: object) -> tuple[object, Callable[[object], None]]:
+        assert kwargs.get("pipeline_cls") is real_pipeline_env.pipeline_cls
+        return real_pipeline_env.pipeline, real_pipeline_env.promoter
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_real_pipeline)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "RealPipelineOwner",
+            real_pipeline_env.registry,
+            real_pipeline_env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    pipeline = real_pipeline_env.pipeline
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.db_bot.manager is manager
+    assert all(
+        getattr(helper, "manager", manager) is manager
+        for helper in real_pipeline_env.helpers
+    )
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+
 def test_managerless_pipeline_bootstrap_avoids_reentrant_warning(
     managerless_pipeline_env: SimpleNamespace, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1448,13 +1703,14 @@ def test_prebuilt_communication_pipeline_logs_warning_without_sentinel(
             prebuilt_communication_pipeline_env.data_bot,
         )
 
-    assert isinstance(manager, cbi._DisabledSelfCodingManager)
-    assert any(
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert not any(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
     )
 
-    assert isinstance(helper.manager, (cbi._DisabledSelfCodingManager, cbi._BootstrapManagerSentinel))
+    assert helper.manager is manager
 
 def test_bootstrap_manager_handles_falsy_owner_sentinel(
     fallback_pipeline_env: SimpleNamespace,
