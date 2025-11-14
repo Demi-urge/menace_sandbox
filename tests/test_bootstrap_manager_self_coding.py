@@ -101,6 +101,17 @@ def stub_bootstrap_env(monkeypatch) -> dict[str, ModuleType]:
 
     manager_mod.SelfCodingManager = _StubManager  # type: ignore[attr-defined]
     _install("self_coding_manager", manager_mod)
+    monkeypatch.setattr(cbi, "_SELF_CODING_MANAGER_CLS", _StubManager)
+    try:  # pragma: no branch - mirror both import paths during tests
+        import menace_sandbox.coding_bot_interface as sandbox_cbi
+    except ImportError:  # pragma: no cover - optional alias may not exist
+        sandbox_cbi = None
+    if sandbox_cbi is not None and sandbox_cbi is not cbi:
+        monkeypatch.setattr(
+            sandbox_cbi,
+            "_SELF_CODING_MANAGER_CLS",
+            _StubManager,
+        )
 
     pipeline_mod = ModuleType("model_automation_pipeline")
     _install("model_automation_pipeline", pipeline_mod)
@@ -687,6 +698,7 @@ def script_fallback_pipeline_env(
         communication_cls=ScriptFallbackCommunicationBot,
         nested_cls=ScriptFallbackNestedHelper,
         bootstrap_calls=bootstrap_calls,
+        manager_cls=stub_bootstrap_env["self_coding_manager"].SelfCodingManager,
     )
 
 
@@ -1991,7 +2003,9 @@ def test_script_fallback_pipeline_shim_handles_managerless_constructor(
         )
 
     assert manager_rejections  # ensure constructor rejected the manager kwarg
+    assert env.bootstrap_calls == ["ScriptFallbackShimOwner"]
     assert manager
+    assert isinstance(manager, env.manager_cls)
     assert not isinstance(manager, cbi._DisabledSelfCodingManager)
     pipeline = getattr(manager, "pipeline", None)
     assert pipeline is not None
