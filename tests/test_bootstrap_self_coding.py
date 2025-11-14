@@ -2864,6 +2864,10 @@ def test_cli_bootstrap_promotes_helper_graphs(
 
     manager = internalize_state["manager"]
     pipeline_manager = getattr(env.pipeline, "manager", None)
+    promote_calls = getattr(env, "promote_calls", None)
+    if promote_calls is not None:
+        assert promote_calls, "expected prepare_pipeline_for_bootstrap to promote manager"
+        assert manager in promote_calls
     if pipeline_manager is not None:
         assert pipeline_manager is manager
     for helper in helpers_before:

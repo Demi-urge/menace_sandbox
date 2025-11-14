@@ -233,7 +233,13 @@ def prebuilt_managerless_pipeline_env(
     builder = SimpleNamespace(label="prebuilt-managerless")
     monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
 
-    helper_names = ("PrebuiltManagerlessComms", "PrebuiltManagerlessNested")
+    helper_names = (
+        "PrebuiltManagerlessComms",
+        "PrebuiltManagerlessNested",
+        "PrebuiltManagerlessPredictor",
+        "PrebuiltManagerlessHandoff",
+        "PrebuiltManagerlessDB",
+    )
     placeholder_manager = cbi._DisabledSelfCodingManager(
         bot_registry=registry,
         data_bot=data_bot,
@@ -255,6 +261,30 @@ def prebuilt_managerless_pipeline_env(
             self.bot_name = self.name
             self.helper = PrebuiltManagerlessNestedHelper()
 
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PrebuiltManagerlessPredictor:
+        name = helper_names[2]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+            self.data_bot = None
+            self.capital_bot = None
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PrebuiltManagerlessHandoff:
+        name = helper_names[3]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+            self.event_bus = None
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class PrebuiltManagerlessDatabaseBot:
+        name = helper_names[4]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
     class PrebuiltManagerlessPipeline:
         def __init__(
             self,
@@ -262,14 +292,74 @@ def prebuilt_managerless_pipeline_env(
             context_builder: object,
             bot_registry: object | None = None,
             data_bot: object | None = None,
+            manager: object | None = None,
         ) -> None:
             self.context_builder = context_builder
             self.bot_registry = bot_registry
             self.data_bot = data_bot
-            self.manager = None
-            self.initial_manager = None
-            self.comms_bot = PrebuiltManagerlessCommunicationBot()
-            self._bots = [self.comms_bot, self.comms_bot.helper]
+            self.manager = manager
+            self.initial_manager = manager
+            self._comms_builder = PrebuiltManagerlessCommunicationBot
+            self._predictor_builder = PrebuiltManagerlessPredictor
+            self._handoff_builder = PrebuiltManagerlessHandoff
+            self._db_builder = PrebuiltManagerlessDatabaseBot
+            self.comms_bot: PrebuiltManagerlessCommunicationBot | None = None
+            self.predictor: PrebuiltManagerlessPredictor | None = None
+            self.handoff: PrebuiltManagerlessHandoff | None = None
+            self.db_bot: PrebuiltManagerlessDatabaseBot | None = None
+            self._bots: list[object] = []
+            self._maybe_build_helpers(manager)
+
+        def _maybe_build_helpers(self, manager: object | None) -> None:
+            if manager is None:
+                return
+
+            def _register_helper(helper: object | None) -> None:
+                if helper is None or self.bot_registry is None:
+                    return
+                name = getattr(helper, "bot_name", getattr(helper, "name", None))
+                if not name:
+                    return
+                self.bot_registry.register_bot(
+                    name,
+                    module_path=None,
+                    manager=manager,
+                    data_bot=self.data_bot,
+                )
+
+            if self.comms_bot is None:
+                comms_bot = self._comms_builder()
+                comms_bot.manager = manager
+                comms_bot.helper.manager = manager
+                self.comms_bot = comms_bot
+                _register_helper(comms_bot)
+                _register_helper(getattr(comms_bot, "helper", None))
+            if self.predictor is None:
+                predictor = self._predictor_builder()
+                predictor.manager = manager
+                self.predictor = predictor
+                _register_helper(predictor)
+            if self.handoff is None:
+                handoff = self._handoff_builder()
+                handoff.manager = manager
+                self.handoff = handoff
+                _register_helper(handoff)
+            if self.db_bot is None:
+                db_bot = self._db_builder()
+                db_bot.manager = manager
+                self.db_bot = db_bot
+                _register_helper(db_bot)
+            self._bots = [
+                helper
+                for helper in (
+                    self.comms_bot,
+                    getattr(self.comms_bot, "helper", None),
+                    self.predictor,
+                    self.handoff,
+                    self.db_bot,
+                )
+                if helper is not None
+            ]
 
     stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
         PrebuiltManagerlessPipeline
@@ -287,12 +377,30 @@ def prebuilt_managerless_pipeline_env(
             context_builder=builder,
             bot_registry=registry,
             data_bot=data_bot,
+            manager=None,
         )
 
-    assert bootstrap_attempts  # ensure nested helpers attempted to bootstrap
+    assert not bootstrap_attempts  # helpers should defer until manager exists
+
+    promote_calls: list[object] = []
 
     def _promote(manager: object) -> None:
+        promote_calls.append(manager)
+        sentinel_types: tuple[type[object], ...] = ()
+        sentinel_cls = getattr(cbi, "_BootstrapOwnerSentinel", None)
+        if sentinel_cls is not None:
+            sentinel_types = (sentinel_cls, cbi._DisabledSelfCodingManager)
+        current_manager = pipeline.manager
+        is_placeholder = (
+            current_manager in (None, placeholder_manager)
+            or isinstance(current_manager, sentinel_types)
+        )
+        if not is_placeholder and manager is not current_manager:
+            return
         cbi._promote_pipeline_manager(pipeline, manager, placeholder_manager)
+        pipeline.manager = manager
+        pipeline.initial_manager = manager
+        pipeline._maybe_build_helpers(manager)
 
     return SimpleNamespace(
         registry=registry,
@@ -301,6 +409,7 @@ def prebuilt_managerless_pipeline_env(
         pipeline_cls=PrebuiltManagerlessPipeline,
         pipeline=pipeline,
         promoter=_promote,
+        promote_calls=promote_calls,
         helper_names=helper_names,
         bootstrap_attempts=tuple(bootstrap_attempts),
         placeholder=placeholder_manager,
@@ -1393,6 +1502,14 @@ def test_prebuilt_managerless_pipeline_promotes_helpers(
 
     monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _reuse_pipeline)
 
+    pipeline = prebuilt_managerless_pipeline_env.pipeline
+    assert pipeline.manager is None
+    assert pipeline.comms_bot is None
+    assert pipeline.predictor is None
+    assert pipeline.handoff is None
+    assert pipeline.db_bot is None
+    assert pipeline._bots == []
+
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
         manager = cbi._bootstrap_manager(
@@ -1412,6 +1529,12 @@ def test_prebuilt_managerless_pipeline_promotes_helpers(
     assert pipeline.manager is manager
     assert pipeline.comms_bot.manager is manager
     assert pipeline.comms_bot.helper.manager is manager
+    assert pipeline.predictor.manager is manager
+    assert pipeline.handoff.manager is manager
+    assert pipeline.db_bot.manager is manager
+    assert [helper.bot_name for helper in pipeline._bots] == list(
+        prebuilt_managerless_pipeline_env.helper_names
+    )
 
     helper_names = set(prebuilt_managerless_pipeline_env.helper_names)
     registered_names = {
@@ -1426,9 +1549,22 @@ def test_prebuilt_managerless_pipeline_promotes_helpers(
         entry[1] is manager
         for entry in prebuilt_managerless_pipeline_env.registry.promotions
     )
-    assert helper_names.issubset(
-        set(prebuilt_managerless_pipeline_env.bootstrap_attempts)
-    )
+    assert not prebuilt_managerless_pipeline_env.bootstrap_attempts
+
+
+def test_prebuilt_managerless_pipeline_defers_helpers_until_manager(
+    prebuilt_managerless_pipeline_env: SimpleNamespace,
+) -> None:
+    pipeline = prebuilt_managerless_pipeline_env.pipeline
+
+    assert pipeline.manager is None
+    assert pipeline.initial_manager is None
+    assert pipeline.comms_bot is None
+    assert pipeline.predictor is None
+    assert pipeline.handoff is None
+    assert pipeline.db_bot is None
+    assert pipeline._bots == []
+    assert not prebuilt_managerless_pipeline_env.bootstrap_attempts
 
 
 def test_prebuilt_reentrant_pipeline_stabilises_manager(
