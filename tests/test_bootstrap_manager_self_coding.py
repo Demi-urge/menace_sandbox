@@ -512,6 +512,98 @@ def reentrant_prebuilt_pipeline_env(
 
 
 @pytest.fixture
+def script_fallback_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Minimal fallback pipeline whose helpers re-enter ``_bootstrap_manager``.
+
+    The pipeline class is intentionally lightweight so tests can simulate the
+    user's "one-off script" where helper bootstrap re-enters
+    :func:`coding_bot_interface._bootstrap_manager` while the fallback pipeline
+    is still being assembled.  ``ModelAutomationPipeline`` is registered on the
+    stub module but **not** instantiated via ``prepare_pipeline_for_bootstrap``
+    so the tests exercise the full bootstrap flow end-to-end.
+    """
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("fallback to sentinel pipeline")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="script-fallback")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("ScriptFallbackComms", "ScriptFallbackNestedHelper")
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ScriptFallbackNestedHelper:
+        name = helper_names[1]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ScriptFallbackCommunicationBot:
+        name = helper_names[0]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+            self.helper = ScriptFallbackNestedHelper()
+
+    class ScriptFallbackPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = ScriptFallbackCommunicationBot()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    pipeline_mod = stub_bootstrap_env["model_automation_pipeline"]
+    pipeline_mod.ModelAutomationPipeline = ScriptFallbackPipeline  # type: ignore[attr-defined]
+
+    bootstrap_calls: list[str] = []
+    real_bootstrap = cbi._bootstrap_manager
+
+    def _tracking_bootstrap(name: str, *args: object, **kwargs: object) -> object:
+        bootstrap_calls.append(name)
+        return real_bootstrap(name, *args, **kwargs)
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _tracking_bootstrap)
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        helper_names=helper_names,
+        pipeline_cls=ScriptFallbackPipeline,
+        pipeline_module=pipeline_mod,
+        communication_cls=ScriptFallbackCommunicationBot,
+        nested_cls=ScriptFallbackNestedHelper,
+        bootstrap_calls=bootstrap_calls,
+    )
+
+
+@pytest.fixture
 def direct_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -1662,6 +1754,109 @@ def test_prebuilt_pipeline_helpers_receive_real_manager(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
     )
+
+
+def test_script_fallback_pipeline_bootstrap_promotes_helpers(
+    script_fallback_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = script_fallback_pipeline_env
+    env.bootstrap_calls.clear()
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ScriptFallbackOwner",
+            env.registry,
+            env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    helper_names = set(env.helper_names)
+    assert helper_names.issubset(env.bootstrap_calls)
+    assert {entry[0] for entry in env.registry.registered} == helper_names
+    assert {entry[0] for entry in env.registry.promotions} == helper_names
+    assert all(entry[1] is manager for entry in env.registry.promotions)
+
+
+def test_script_fallback_pipeline_shim_handles_managerless_constructor(
+    script_fallback_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = script_fallback_pipeline_env
+    env.bootstrap_calls.clear()
+
+    manager_rejections: list[object] = []
+
+    class ManagerlessScriptPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            **kwargs: object,
+        ) -> None:
+            if "manager" in kwargs:
+                manager_rejections.append(kwargs["manager"])
+                raise TypeError("unexpected manager kwarg for script pipeline")
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = None
+            self.initial_manager = None
+            self.comms_bot = env.communication_cls()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    monkeypatch.setattr(
+        env.pipeline_module,
+        "ModelAutomationPipeline",
+        ManagerlessScriptPipeline,
+        raising=False,
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ScriptFallbackShimOwner",
+            env.registry,
+            env.data_bot,
+        )
+
+    assert manager_rejections  # ensure constructor rejected the manager kwarg
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert pipeline.manager is manager
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
+    )
+
+    helper_names = set(env.helper_names)
+    assert helper_names.issubset(env.bootstrap_calls)
+    assert {entry[0] for entry in env.registry.registered} == helper_names
+    assert {entry[0] for entry in env.registry.promotions} == helper_names
+    assert all(entry[1] is manager for entry in env.registry.promotions)
 
 
 def test_direct_pipeline_promotes_prebuilt_helpers(
