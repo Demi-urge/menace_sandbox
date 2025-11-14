@@ -2657,15 +2657,14 @@ def prepare_pipeline_for_bootstrap(
             try:
                 call_kwargs = {key: init_kwargs[key] for key in keys}
                 call_kwargs.update(static_items)
-                requires_injection = (
-                    "manager" not in call_kwargs and manager_placeholder is not None
-                )
-                if requires_injection:
-                    with _pipeline_manager_placeholder_shim(
-                        pipeline_cls, manager_placeholder
-                    ):
-                        pipeline = pipeline_cls(**call_kwargs)
+                shim_context: contextlib.AbstractContextManager[Any]
+                if manager_placeholder is None:
+                    shim_context = contextlib.nullcontext(False)
                 else:
+                    shim_context = _pipeline_manager_placeholder_shim(
+                        pipeline_cls, manager_placeholder
+                    )
+                with shim_context:
                     pipeline = pipeline_cls(**call_kwargs)
             except TypeError as exc:
                 last_error = exc
