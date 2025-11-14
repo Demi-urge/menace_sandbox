@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import traceback
+import weakref
 
 
 def _trace(message: str) -> None:
@@ -169,7 +170,14 @@ from ..offer_testing_bot import OfferTestingBot
 _trace("Successfully imported OfferTestingBot from menace_sandbox.offer_testing_bot")
 _trace("Importing ResearchFallbackBot from menace_sandbox.research_fallback_bot...")
 from ..research_fallback_bot import ResearchFallbackBot
-from ..coding_bot_interface import normalise_manager_arg
+from ..coding_bot_interface import MANAGER_CONTEXT, normalise_manager_arg
+try:  # pragma: no cover - defensive import for stripped down tests
+    from ..coding_bot_interface import _BOOTSTRAP_STATE, _is_bootstrap_placeholder
+except Exception:  # pragma: no cover - fallback when self-coding engine absent
+    _BOOTSTRAP_STATE = SimpleNamespace()  # type: ignore[assignment]
+
+    def _is_bootstrap_placeholder(_candidate: object) -> bool:  # type: ignore[no-redef]
+        return False
 _trace("Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
 _trace("Preparing lazy import for ResourceAllocationOptimizer...")
 
@@ -495,6 +503,46 @@ def _discrepancy_detection_bot_cls() -> type["DiscrepancyDetectionBot"]:
     return _DiscrepancyDetectionBot
 
 
+class _LazyHelperProxy:
+    """Placeholder that defers helper construction until a manager is ready."""
+
+    __slots__ = ("_pipeline_ref", "attr_name")
+
+    def __init__(self, pipeline: "ModelAutomationPipeline", attr_name: str) -> None:
+        self._pipeline_ref = weakref.ref(pipeline)
+        self.attr_name = attr_name
+
+    def resolve(self, *, force: bool = False) -> Any | None:
+        pipeline = self._pipeline_ref()
+        if pipeline is None:
+            return None
+        current = getattr(pipeline, self.attr_name, None)
+        if current is not self:
+            return current
+        builder = pipeline._pending_manager_helpers.get(self.attr_name)
+        if builder is None:
+            return None
+        manager = pipeline._effective_manager()
+        if not force:
+            if pipeline._should_defer_manager_helpers and manager is None:
+                return None
+            if pipeline._is_placeholder_manager(manager):
+                return None
+        return builder(manager=manager)
+
+    def __getattr__(self, item: str) -> Any:
+        helper = self.resolve()
+        if helper is None:
+            raise AttributeError(
+                f"helper '{self.attr_name}' is not available until the manager attaches"
+            )
+        return getattr(helper, item)
+
+    def __bool__(self) -> bool:  # pragma: no cover - simple delegation
+        helper = self.resolve()
+        return bool(helper)
+
+
 class ModelAutomationPipeline:
     """Orchestrate bots to automate a model end-to-end."""
 
@@ -618,6 +666,7 @@ class ModelAutomationPipeline:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
         self._pending_manager_helpers: dict[str, Callable[..., Any]] = {}
+        self._lazy_helper_attrs: set[str] = set()
         self._bot_attribute_order: tuple[str, ...] = self._BOT_ATTRIBUTE_ORDER
         self._registered_bot_attrs: set[str] = set()
         self._bots: list[Any] = []
@@ -795,24 +844,54 @@ class ModelAutomationPipeline:
                 context_builder=self.context_builder,
             )
         self.allocator = self._bind_manager(allocator)
-        if diagnostic_manager is None:
+        def _diagnostic_builder(*, manager: Any) -> DiagnosticManager | None:
             DiagnosticManagerCls = get_diagnostic_manager_cls()
-            diagnostic_manager = self._call_with_manager(
-                DiagnosticManagerCls, context_builder=self.context_builder
+            return self._call_with_manager(
+                DiagnosticManagerCls,
+                context_builder=self.context_builder,
+                manager=manager,
             )
-        self.diagnostic_manager = self._bind_manager(diagnostic_manager)
+
+        self.diagnostic_manager = self._lazy_helper(
+            "diagnostic_manager",
+            _diagnostic_builder,
+            existing=diagnostic_manager,
+        )
         self.idea_bank = idea_bank or KeywordBank()
         self.news_db = news_db or NewsDB()
-        self.reinvestment_bot = reinvestment_bot or self._call_with_manager(
-            AutoReinvestmentBot
+
+        def _reinvest_builder(*, manager: Any) -> AutoReinvestmentBot | None:
+            return self._call_with_manager(AutoReinvestmentBot, manager=manager)
+
+        self.reinvestment_bot = self._lazy_helper(
+            "reinvestment_bot",
+            _reinvest_builder,
+            existing=reinvestment_bot,
         )
-        self.reinvestment_bot = self._bind_manager(self.reinvestment_bot)
-        self.spike_bot = spike_bot or self._call_with_manager(
-            RevenueSpikeEvaluatorBot, RevenueEventsDB()
+
+        revenue_db = RevenueEventsDB()
+
+        def _spike_builder(*, manager: Any) -> RevenueSpikeEvaluatorBot | None:
+            return self._call_with_manager(
+                RevenueSpikeEvaluatorBot,
+                revenue_db,
+                manager=manager,
+            )
+
+        self.spike_bot = self._lazy_helper(
+            "spike_bot",
+            _spike_builder,
+            existing=spike_bot,
         )
-        self.spike_bot = self._bind_manager(self.spike_bot)
-        self.allocation_bot = allocation_bot or self._call_with_manager(CapitalAllocationBot)
-        self.allocation_bot = self._bind_manager(self.allocation_bot)
+
+        def _allocation_builder(*, manager: Any) -> CapitalAllocationBot | None:
+            return self._call_with_manager(CapitalAllocationBot, manager=manager)
+
+        self.allocation_bot = self._lazy_helper(
+            "allocation_bot",
+            _allocation_builder,
+            existing=allocation_bot,
+        )
         if bot_registry is None:
             from ..bot_registry import BotRegistry as _BotRegistry
 
@@ -884,7 +963,7 @@ class ModelAutomationPipeline:
                 )
                 return self._call_with_manager(comms_bot_cls, manager=manager)
 
-        return self._build_or_defer_helper("comms_bot", comms_bot, _builder)
+        return self._lazy_helper("comms_bot", _builder, existing=comms_bot)
 
     def _build_or_defer_db_bot(self, db_bot: CentralDatabaseBot | None) -> CentralDatabaseBot | None:
         def _builder(*, manager: Any) -> CentralDatabaseBot | None:
@@ -916,8 +995,85 @@ class ModelAutomationPipeline:
         setattr(self, attr_name, helper)
         return helper
 
+    def _lazy_helper(
+        self,
+        attr_name: str,
+        builder: Callable[..., Any],
+        *,
+        existing: Any | None = None,
+    ) -> Any | None:
+        if existing is not None:
+            helper = self._bind_manager(existing)
+            setattr(self, attr_name, helper)
+            return helper
+        manager = self._effective_manager()
+        defer = self._should_defer_manager_helpers or self._is_placeholder_manager(manager)
+        if defer:
+            self._pending_manager_helpers[attr_name] = builder
+            proxy = _LazyHelperProxy(self, attr_name)
+            self._lazy_helper_attrs.add(attr_name)
+            setattr(self, attr_name, proxy)
+            return proxy
+        helper = builder(manager=manager)
+        helper = self._bind_manager(helper)
+        setattr(self, attr_name, helper)
+        return helper
+
+    def _attach_helper(self, attr_name: str, helper: Any, *, register: bool) -> Any:
+        setattr(self, attr_name, helper)
+        self._lazy_helper_attrs.discard(attr_name)
+        if register:
+            self._register_bot_attr(attr_name)
+        return helper
+
+    def _resolve_lazy_helper_attr(
+        self,
+        attr_name: str,
+        *,
+        force: bool = False,
+        register: bool = True,
+    ) -> Any | None:
+        candidate = getattr(self, attr_name, None)
+        if not isinstance(candidate, _LazyHelperProxy):
+            return candidate
+        helper = candidate.resolve(force=force)
+        if helper is None:
+            return None
+        helper = self._bind_manager(helper)
+        return self._attach_helper(attr_name, helper, register=register)
+
+    def _resolve_helper_candidate(self, candidate: Any) -> Any:
+        if isinstance(candidate, _LazyHelperProxy):
+            return self._resolve_lazy_helper_attr(candidate.attr_name)
+        return candidate
+
+    def _resolve_all_lazy_helpers(self, *, force: bool = False) -> None:
+        for attr_name in list(self._lazy_helper_attrs):
+            helper = self._resolve_lazy_helper_attr(attr_name, force=force)
+            if helper is None and force:
+                self._lazy_helper_attrs.discard(attr_name)
+
     def _effective_manager(self, manager: Any | None = None) -> Any | None:
         return normalise_manager_arg(manager, None, fallback=self._manager)
+
+    def _is_placeholder_manager(self, manager: Any | None) -> bool:
+        if manager is None:
+            return False
+        try:
+            return _is_bootstrap_placeholder(manager)
+        except Exception:  # pragma: no cover - defensive guard
+            return False
+
+    def _bootstrap_manager_candidate(self) -> Any | None:
+        candidate: Any | None = None
+        if MANAGER_CONTEXT is not None:
+            try:
+                candidate = MANAGER_CONTEXT.get()
+            except LookupError:  # pragma: no cover - context var not initialised
+                candidate = None
+        if candidate is None:
+            candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+        return candidate
 
     def _call_with_manager(
         self,
@@ -929,6 +1085,8 @@ class ModelAutomationPipeline:
         if factory is None:
             raise ValueError("factory is required")
         effective_manager = self._effective_manager(manager)
+        if effective_manager is None:
+            effective_manager = self._bootstrap_manager_candidate()
         if effective_manager is None:
             return factory(*args, **kwargs)
         try:
@@ -972,17 +1130,22 @@ class ModelAutomationPipeline:
             return
         pending = list(self._pending_manager_helpers.items())
         self._pending_manager_helpers.clear()
+        placeholder_active = self._is_placeholder_manager(manager)
         for attr_name, builder in pending:
+            if placeholder_active and attr_name in self._lazy_helper_attrs:
+                self._pending_manager_helpers[attr_name] = builder
+                continue
             helper = builder(manager=manager)
             helper = self._bind_manager(helper)
-            setattr(self, attr_name, helper)
-            self._register_bot_attr(attr_name)
+            self._attach_helper(attr_name, helper, register=True)
 
     def _register_bot_attr(self, attr_name: str) -> None:
         if attr_name in self._registered_bot_attrs:
             return
         bot = getattr(self, attr_name, None)
         if bot is None:
+            return
+        if isinstance(bot, _LazyHelperProxy):
             return
         bot = self._bind_manager(bot)
         setattr(self, attr_name, bot)
@@ -1012,6 +1175,24 @@ class ModelAutomationPipeline:
         if value is not None:
             self._should_defer_manager_helpers = False
         self._activate_deferred_helpers()
+
+    def finalize_helpers(self, manager: Any | None) -> None:
+        effective = self._effective_manager(manager)
+        if effective is None or self._is_placeholder_manager(effective):
+            return
+        if self._manager is not effective:
+            try:
+                self.manager = effective
+            except Exception:  # pragma: no cover - fallback when setter fails
+                self._manager = effective
+        self._should_defer_manager_helpers = False
+        self._activate_deferred_helpers()
+        self._resolve_all_lazy_helpers(force=True)
+        for attr_name in self._bot_attribute_order:
+            bot = getattr(self, attr_name, None)
+            if bot is None or isinstance(bot, _LazyHelperProxy):
+                continue
+            self._bind_manager(bot)
 
     def _ensure_pre_execution_components(
         self,
@@ -1387,7 +1568,9 @@ class ModelAutomationPipeline:
         ]
 
         def call(entry: tuple) -> None:
-            bot = entry[0]
+            bot = self._resolve_helper_candidate(entry[0])
+            if bot is None:
+                return
             method = entry[1]
             args = entry[2] if len(entry) > 2 else ()
             kwargs_local = entry[3] if len(entry) > 3 else {}
