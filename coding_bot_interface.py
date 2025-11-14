@@ -2368,12 +2368,17 @@ def _pipeline_manager_placeholder_shim(
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
     sentinel_applied = False
     manager_token = None
+    depth_missing = not hasattr(_BOOTSTRAP_STATE, "depth")
+    previous_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    depth_overridden = previous_depth <= 0
     context_manager = owner_sentinel or placeholder
     if context_manager is not None:
         try:
             manager_token = MANAGER_CONTEXT.set(context_manager)
         except Exception:  # pragma: no cover - MANAGER_CONTEXT may be absent
             manager_token = None
+    if depth_overridden:
+        _BOOTSTRAP_STATE.depth = 1
     sentinel_candidate = owner_sentinel
     if sentinel_candidate is None and _is_bootstrap_placeholder(placeholder):
         sentinel_candidate = placeholder
@@ -2399,6 +2404,14 @@ def _pipeline_manager_placeholder_shim(
                     pass
             else:
                 _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+        if depth_overridden:
+            if depth_missing:
+                try:
+                    delattr(_BOOTSTRAP_STATE, "depth")
+                except AttributeError:  # pragma: no cover - best effort cleanup
+                    pass
+            else:
+                _BOOTSTRAP_STATE.depth = previous_depth
 
 
 def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> None:
@@ -2760,17 +2773,27 @@ def prepare_pipeline_for_bootstrap(
         lowered = message.lower()
         return "manager" in lowered and "unexpected" in lowered
 
-    sentinel_manager = manager_override or manager_sentinel or bootstrap_manager
+    def _select_placeholder(*candidates: Any) -> Any | None:
+        for candidate in candidates:
+            if _is_bootstrap_placeholder(candidate):
+                return candidate
+        return None
+
+    sentinel_manager = _select_placeholder(
+        manager_override,
+        manager_sentinel,
+        bootstrap_manager,
+    )
     if sentinel_manager is None and sentinel_factory is not None:
-        sentinel_manager = sentinel_factory()
+        candidate = sentinel_factory()
+        if _is_bootstrap_placeholder(candidate):
+            sentinel_manager = candidate
     if sentinel_manager is None:
         sentinel_manager = _create_bootstrap_manager_sentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
-    manager_placeholder = manager_sentinel or bootstrap_manager or sentinel_manager
-    if manager_placeholder is None:
-        manager_placeholder = sentinel_manager
+    manager_placeholder = sentinel_manager
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -3135,7 +3158,9 @@ def _bootstrap_manager(
                 if callable(bind_promoter):
                     bind_promoter(promote)
                 pipeline_manager = getattr(pipeline, "manager", None)
-                if pipeline_manager is None and placeholder_manager is not None:
+                if placeholder_manager is not None and not _is_bootstrap_placeholder(
+                    pipeline_manager
+                ):
                     _assign_bootstrap_manager_placeholder(
                         pipeline,
                         placeholder_manager,
