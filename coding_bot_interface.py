@@ -2402,12 +2402,16 @@ def _pipeline_manager_placeholder_shim(
             manager_token = None
     if depth_overridden:
         _BOOTSTRAP_STATE.depth = 1
-    sentinel_candidate = owner_sentinel
-    if sentinel_candidate is None and _is_bootstrap_placeholder(placeholder):
-        sentinel_candidate = placeholder
+    sentinel_candidate = owner_sentinel or placeholder
     if sentinel_candidate is not None:
-        _BOOTSTRAP_STATE.sentinel_manager = sentinel_candidate
-        sentinel_applied = True
+        try:
+            _BOOTSTRAP_STATE.sentinel_manager = sentinel_candidate
+        except Exception:  # pragma: no cover - best effort override
+            logger.debug(
+                "failed to seed sentinel manager placeholder during shim", exc_info=True
+            )
+        else:
+            sentinel_applied = True
     try:
         with _inject_manager_placeholder_during_init(
             pipeline_cls, placeholder
@@ -2907,8 +2911,21 @@ def prepare_pipeline_for_bootstrap(
                         shim_context = _pipeline_manager_placeholder_shim(
                             pipeline_cls, manager_placeholder
                         )
-                    with shim_context:
+                    with shim_context as shim_applied:
                         pipeline = pipeline_cls(**call_kwargs)
+                        if (
+                            pipeline is not None
+                            and manager_placeholder is not None
+                            and (
+                                (managerless_unlocked and "manager" not in keys)
+                                or not shim_applied
+                            )
+                        ):
+                            _assign_bootstrap_manager_placeholder(
+                                pipeline,
+                                manager_placeholder,
+                                propagate_nested=True,
+                            )
                 except TypeError as exc:
                     last_error = exc
                     if not managerless_unlocked and _typeerror_rejects_manager(exc):
@@ -3001,9 +3018,13 @@ def _bootstrap_manager(
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
+        placeholder: Any | None = None
         if reentrant:
+            placeholder = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+            if placeholder is None:
+                placeholder = sentinel_manager
             guidance = (
-                "Re-entrant bootstrap detected; returning disabled manager "
+                "Re-entrant bootstrap detected; reusing bootstrap sentinel "
                 "temporarily—internalisation will retry after "
                 f"{name} completes."
             )
@@ -3017,6 +3038,9 @@ def _bootstrap_manager(
         )
         print(message)
         logger.warning(message)
+        if reentrant and placeholder is not None:
+            _track_extra_sentinel(placeholder)
+            return placeholder
         return _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
@@ -3066,7 +3090,7 @@ def _bootstrap_manager(
                 pass
         else:
             _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
-        return _disabled_manager("bootstrap already in progress", reentrant=False)
+        return _disabled_manager("bootstrap already in progress", reentrant=True)
 
     active.add(name)
     _BOOTSTRAP_STATE.names = active
