@@ -1881,6 +1881,39 @@ _BOOTSTRAP_STATE = threading.local()
 _DEFERRED_SENTINEL_CALLBACKS: set[int] = set()
 
 
+def _register_bootstrap_helper_callback(callback: Callable[[Any], None]) -> None:
+    if not callable(callback):
+        return
+    callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        _BOOTSTRAP_STATE.helper_promotion_callbacks = callbacks
+    callbacks.append(callback)
+
+
+def _deregister_bootstrap_helper_callback(callback: Callable[[Any], None]) -> None:
+    callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+    if not callbacks:
+        return
+    try:
+        callbacks.remove(callback)
+    except ValueError:
+        return
+    if not callbacks and hasattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks"):
+        delattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks")
+
+
+def _consume_bootstrap_helper_callbacks() -> list[Callable[[Any], None]]:
+    callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+    if not callbacks:
+        return []
+    try:
+        delattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks")
+    except AttributeError:
+        pass
+    return list(callbacks)
+
+
 @dataclass
 class _ManagerBootstrapPlan:
     manager: Any | None
@@ -2585,55 +2618,30 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
 
     _swap_manager(pipeline)
 
-    def _should_queue_candidate(candidate: Any) -> bool:
-        if candidate is None:
-            return False
-        if id(candidate) in sentinel_ids:
-            return False
-        if isinstance(candidate, (str, bytes, bytearray, int, float, complex, bool)):
-            return False
-        try:
-            manager_candidate = getattr(candidate, "manager", None)
-        except Exception:
-            manager_candidate = None
-        if _is_placeholder(manager_candidate):
-            return True
-        try:
-            initial_candidate = getattr(candidate, "initial_manager", None)
-        except Exception:
-            initial_candidate = None
-        return _is_placeholder(initial_candidate)
-
-    def _collect_related_targets(root: Any) -> list[Any]:
-        related: list[Any] = []
-        if root is None:
-            return related
-        for candidate in _iter_bootstrap_helper_candidates(root):
-            if _should_queue_candidate(candidate):
-                related.append(candidate)
-        return related
-
     seen: set[int] = {id(pipeline)}
     pending: deque[Any] = deque()
 
-    def _enqueue(candidate: Any) -> None:
-        if candidate is None:
+    def _enqueue_helpers(root: Any) -> None:
+        if root is None:
             return
-        key = id(candidate)
-        if key in seen:
-            return
-        seen.add(key)
-        pending.append(candidate)
+        for candidate in _iter_bootstrap_helper_candidates(root):
+            if candidate is None:
+                continue
+            key = id(candidate)
+            if key in seen or key in sentinel_ids:
+                continue
+            if isinstance(candidate, (str, bytes, bytearray, int, float, complex, bool)):
+                continue
+            seen.add(key)
+            pending.append(candidate)
 
-    for candidate in _collect_related_targets(pipeline):
-        _enqueue(candidate)
+    _enqueue_helpers(pipeline)
 
     while pending:
         candidate = pending.popleft()
         _swap_manager(candidate)
         _invoke_finalizer(candidate)
-        for nested in _collect_related_targets(candidate):
-            _enqueue(nested)
+        _enqueue_helpers(candidate)
 
     def _promote_registry_metadata() -> None:
         if registry_ref is None:
@@ -2881,7 +2889,20 @@ def prepare_pipeline_for_bootstrap(
         try:
             _promote_pipeline_manager(pipeline, manager, manager_placeholder)
         finally:
+            _deregister_bootstrap_helper_callback(_promote)
             _finalize_bootstrap_state()
+
+    register_callback = any(
+        _is_bootstrap_placeholder(candidate)
+        for candidate in (
+            manager_placeholder,
+            bootstrap_manager,
+            manager_override,
+            sentinel_manager,
+        )
+    )
+    if register_callback:
+        _register_bootstrap_helper_callback(_promote)
 
     return pipeline, _promote
 
@@ -2973,11 +2994,24 @@ def _bootstrap_manager(
             return
         if not _is_bootstrap_placeholder(candidate):
             return
+        sentinel_candidate: _BootstrapManagerSentinel | None = None
+        if isinstance(candidate, _BootstrapManagerSentinel):
+            sentinel_candidate = candidate
         _assign_bootstrap_manager_placeholder(
             candidate,
             bootstrap_owner,
             propagate_nested=True,
         )
+        if sentinel_candidate is not None:
+            attach_delegate = getattr(sentinel_candidate, "attach_delegate", None)
+            if callable(attach_delegate):
+                try:
+                    attach_delegate(bootstrap_owner)
+                except Exception:  # pragma: no cover - best effort linkage
+                    logger.debug(
+                        "failed to rebind bootstrap sentinel %s to owner", sentinel_candidate,
+                        exc_info=True,
+                    )
         try:
             setattr(candidate, "_bootstrap_owner_delegate", bootstrap_owner)
         except Exception:  # pragma: no cover - best effort linkage
@@ -3129,18 +3163,35 @@ def _bootstrap_manager(
                 data_bot=data_bot,
                 bot_registry=bot_registry,
             )
-            try:
-                promote(manager)
-            except Exception:  # pragma: no cover - promotion must stay best-effort
-                logger.debug(
-                    "legacy bootstrap failed to promote pipeline helpers", exc_info=True
-                )
+            helper_callbacks = _consume_bootstrap_helper_callbacks()
             attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
             if callable(attach_delegate):
                 try:
                     attach_delegate(manager)
                 except Exception:  # pragma: no cover - best effort bridge
                     logger.debug("sentinel delegate attachment failed", exc_info=True)
+            callback_queue: list[Callable[[Any], None]] = []
+            if helper_callbacks:
+                callback_queue.extend(helper_callbacks)
+            if callable(promote):
+                callback_queue.append(promote)
+            ordered_callbacks: list[Callable[[Any], None]] = []
+            seen_callbacks: set[int] = set()
+            for callback in callback_queue:
+                if not callable(callback):
+                    continue
+                key = id(callback)
+                if key in seen_callbacks:
+                    continue
+                seen_callbacks.add(key)
+                ordered_callbacks.append(callback)
+            for callback in ordered_callbacks:
+                try:
+                    callback(manager)
+                except Exception:  # pragma: no cover - promotion must stay best-effort
+                    logger.debug(
+                        "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                    )
             mark_ready = getattr(bootstrap_owner, "mark_ready", None)
             if callable(mark_ready):
                 mark_ready(manager, sentinel=sentinel_manager)
