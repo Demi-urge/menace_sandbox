@@ -9,6 +9,7 @@ import menace.bot_planning_bot as bpb  # noqa: E402
 import menace.pre_execution_roi_bot as prb  # noqa: E402
 import menace.implementation_optimiser_bot as iob  # noqa: E402
 import menace.resource_prediction_bot as rpb  # noqa: E402
+import menace.shared.pipeline_base as pipeline_base  # noqa: E402
 import types  # noqa: E402
 
 
@@ -116,3 +117,201 @@ def test_reuse_granular(monkeypatch, tmp_path):
     descs = captured.get("desc", [])
     assert "Reuse workflow step1" in descs
     assert "Reuse workflow step2" in descs
+
+
+def test_lazy_helpers_resolve_after_manager(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
+    def _registry_factory():
+        return types.SimpleNamespace(
+            register_bot=lambda *a, **k: None,
+            register_interaction=lambda *a, **k: None,
+            save=lambda *a, **k: None,
+            graph=types.SimpleNamespace(nodes={}),
+        )
+
+    class DummyCommsBot:
+        created = 0
+
+        def __init__(self, *, manager=None, context_builder=None):
+            type(self).created += 1
+            self.manager = manager
+            self.context_builder = context_builder
+
+        def update(self, *_args, **_kwargs):
+            return None
+
+    class DummyDiagnosticManager:
+        created = 0
+
+        def __init__(self, *, manager=None, context_builder=None):
+            type(self).created += 1
+            self.manager = manager
+            self.context_builder = context_builder
+
+        def diagnose(self, *_args, **_kwargs):
+            return None
+
+    class DummyReinvestBot:
+        created = 0
+
+        def __init__(self, *, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def reinvest(self, *_args, **_kwargs):
+            return 0.0
+
+    class DummySpikeBot:
+        created = 0
+
+        def __init__(self, *_args, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def detect_spike(self, *_args, **_kwargs):
+            return False
+
+    class DummyAllocationBot:
+        created = 0
+
+        def __init__(self, *, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def rebalance(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        pipeline_base, "get_communication_maintenance_bot_cls", lambda: DummyCommsBot
+    )
+    monkeypatch.setattr(
+        pipeline_base, "get_diagnostic_manager_cls", lambda: DummyDiagnosticManager
+    )
+    monkeypatch.setattr(pipeline_base, "AutoReinvestmentBot", DummyReinvestBot)
+    monkeypatch.setattr(
+        pipeline_base, "RevenueSpikeEvaluatorBot", DummySpikeBot
+    )
+    monkeypatch.setattr(pipeline_base, "CapitalAllocationBot", DummyAllocationBot)
+
+    agg = DummyAggregator()
+    pipeline = mapl.ModelAutomationPipeline(
+        aggregator=agg,
+        synthesis_bot=isb.InformationSynthesisBot(
+            db_url="sqlite:///:memory:", aggregator=agg, context_builder=builder
+        ),
+        validator=tvb.TaskValidationBot(["model"]),
+        planner=bpb.BotPlanningBot(),
+        hierarchy=mapl.HierarchyAssessmentBot(),
+        predictor=rpb.ResourcePredictionBot(),
+        roi_bot=prb.PreExecutionROIBot(prb.ROIHistoryDB(tmp_path / "hist.csv")),
+        handoff=thb.TaskHandoffBot(api_url="http://localhost"),
+        optimiser=iob.ImplementationOptimiserBot(context_builder=builder),
+        workflow_db=thb.WorkflowDB(tmp_path / "wf.db"),
+        funds=100.0,
+        context_builder=builder,
+        bot_registry=_registry_factory(),
+    )
+
+    assert "comms_bot" in pipeline._lazy_helper_attrs
+    assert "reinvestment_bot" in pipeline._lazy_helper_attrs
+    pipeline._run_support_bots("model")
+    assert DummyCommsBot.created == 0
+    manager = types.SimpleNamespace()
+    pipeline.finalize_helpers(manager)
+    assert DummyCommsBot.created == 1
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.reinvestment_bot.manager is manager
+    assert pipeline.diagnostic_manager.manager is manager
+    assert pipeline._lazy_helper_attrs == set()
+
+
+def test_lazy_helpers_eager_without_registry(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
+    class DummyCommsBot:
+        created = 0
+
+        def __init__(self, *, manager=None, context_builder=None):
+            type(self).created += 1
+            self.manager = manager
+            self.context_builder = context_builder
+
+        def update(self, *_args, **_kwargs):
+            return None
+
+    class DummyDiagnosticManager:
+        created = 0
+
+        def __init__(self, *, manager=None, context_builder=None):
+            type(self).created += 1
+            self.manager = manager
+            self.context_builder = context_builder
+
+        def diagnose(self, *_args, **_kwargs):
+            return None
+
+    class DummyReinvestBot:
+        created = 0
+
+        def __init__(self, *, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def reinvest(self, *_args, **_kwargs):
+            return 0.0
+
+    class DummySpikeBot:
+        created = 0
+
+        def __init__(self, *_args, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def detect_spike(self, *_args, **_kwargs):
+            return False
+
+    class DummyAllocationBot:
+        created = 0
+
+        def __init__(self, *, manager=None):
+            type(self).created += 1
+            self.manager = manager
+
+        def rebalance(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        pipeline_base, "get_communication_maintenance_bot_cls", lambda: DummyCommsBot
+    )
+    monkeypatch.setattr(
+        pipeline_base, "get_diagnostic_manager_cls", lambda: DummyDiagnosticManager
+    )
+    monkeypatch.setattr(pipeline_base, "AutoReinvestmentBot", DummyReinvestBot)
+    monkeypatch.setattr(
+        pipeline_base, "RevenueSpikeEvaluatorBot", DummySpikeBot
+    )
+    monkeypatch.setattr(pipeline_base, "CapitalAllocationBot", DummyAllocationBot)
+
+    agg = DummyAggregator()
+    pipeline = mapl.ModelAutomationPipeline(
+        aggregator=agg,
+        synthesis_bot=isb.InformationSynthesisBot(
+            db_url="sqlite:///:memory:", aggregator=agg, context_builder=builder
+        ),
+        validator=tvb.TaskValidationBot(["model"]),
+        planner=bpb.BotPlanningBot(),
+        hierarchy=mapl.HierarchyAssessmentBot(),
+        predictor=rpb.ResourcePredictionBot(),
+        roi_bot=prb.PreExecutionROIBot(prb.ROIHistoryDB(tmp_path / "hist.csv")),
+        handoff=thb.TaskHandoffBot(api_url="http://localhost"),
+        optimiser=iob.ImplementationOptimiserBot(context_builder=builder),
+        workflow_db=thb.WorkflowDB(tmp_path / "wf.db"),
+        funds=100.0,
+        context_builder=builder,
+    )
+
+    assert DummyCommsBot.created == 1
+    assert DummyReinvestBot.created == 1
+    assert "comms_bot" not in pipeline._lazy_helper_attrs
+    assert isinstance(pipeline.comms_bot, DummyCommsBot)

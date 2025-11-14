@@ -2760,6 +2760,13 @@ def _promote_pipeline_manager(
             helper_summary or "<none>",
         )
 
+    finalize_helpers = getattr(pipeline, "finalize_helpers", None)
+    if callable(finalize_helpers):
+        try:
+            finalize_helpers(manager)
+        except Exception:  # pragma: no cover - finalizer failures are non-fatal
+            logger.debug("pipeline finalize_helpers hook failed", exc_info=True)
+
     # Allow downstream consumers to refresh their cached manager reference when
     # promotion succeeds without importing heavy modules eagerly.
     refresh = getattr(pipeline, "_attach_information_synthesis_manager", None)
