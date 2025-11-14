@@ -2505,3 +2505,221 @@ def test_resolve_helpers_promotes_managerless_registry(monkeypatch):
     assert node["selfcoding_manager"] is helper.manager
     assert pipeline_helper_states
     assert all(state is not None for state in pipeline_helper_states)
+
+
+def test_prepare_pipeline_avoids_nested_bootstrap_manager(monkeypatch):
+    registry = SimpleNamespace(name="registry")
+    data_bot = SimpleNamespace(name="data")
+    builder = SimpleNamespace(name="ctx")
+
+    bootstrap_calls: list[str] = []
+
+    def _forbidden_bootstrap(name, *_args, **_kwargs):
+        bootstrap_calls.append(name)
+        raise AssertionError("_bootstrap_manager should not be re-invoked")
+
+    monkeypatch.setattr(coding_bot_interface, "_bootstrap_manager", _forbidden_bootstrap)
+
+    class _StubHelper:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            if manager is None:
+                coding_bot_interface._bootstrap_manager("NestedHelper", bot_registry, data_bot)
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+
+    class _StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            helper = _StubHelper(
+                manager=manager, bot_registry=bot_registry, data_bot=data_bot
+            )
+            self.helper = helper
+            self._bots = [helper]
+
+        def _attach_information_synthesis_manager(self):
+            return None
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_StubPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+    manager = SimpleNamespace(bot_registry=registry, data_bot=data_bot)
+    promote(manager)
+    assert pipeline.manager is manager
+    assert bootstrap_calls == []
+
+
+def test_bootstrap_entrypoint_handles_stubbed_communication_bot(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    import menace_sandbox.bootstrap_self_coding as bootstrap_self_coding
+
+    bootstrap_self_coding = importlib.reload(bootstrap_self_coding)
+
+    builder = SimpleNamespace(name="context")
+    monkeypatch.setattr(
+        "menace_sandbox.context_builder_util.create_context_builder",
+        lambda: builder,
+    )
+
+    class _Registry:
+        def register_bot(self, *_args, **_kwargs):
+            return None
+
+        def update_bot(self, *_args, **_kwargs):
+            return None
+
+    class _DataBot:
+        def __init__(self, *_, **__):
+            self.thresholds = {}
+
+        def reload_thresholds(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                roi_drop=0.1, error_threshold=0.2, test_failure_threshold=0.3
+            )
+
+        def schedule_monitoring(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr("menace_sandbox.bot_registry.BotRegistry", _Registry)
+    monkeypatch.setattr("menace_sandbox.data_bot.DataBot", _DataBot)
+    monkeypatch.setattr("menace_sandbox.code_database.CodeDB", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        "menace_sandbox.menace_memory_manager.MenaceMemoryManager",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.self_coding_engine.SelfCodingEngine",
+        lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs),
+    )
+    thresholds = SimpleNamespace(
+        roi_drop=0.1, error_increase=0.2, test_failure_increase=0.3
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.self_coding_thresholds.get_thresholds",
+        lambda _name: thresholds,
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.data_bot.persist_sc_thresholds", lambda *_, **__: None
+    )
+
+    reentrant_state = {"triggered": False}
+
+    class _StubCommunicationMaintenanceBot:
+        def __init__(self, *, manager=None, bot_registry=None, data_bot=None):
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            if manager is None:
+                reentrant_state["triggered"] = True
+                coding_bot_interface.logger.warning(
+                    "re-entrant initialisation depth=1"
+                )
+                self.manager = coding_bot_interface._DisabledSelfCodingManager(
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                )
+
+    comms_module = types.ModuleType("menace_sandbox.communication_maintenance_bot")
+    comms_module.CommunicationMaintenanceBot = _StubCommunicationMaintenanceBot
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.communication_maintenance_bot", comms_module
+    )
+    monkeypatch.setitem(sys.modules, "communication_maintenance_bot", comms_module)
+
+    class _StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            helper = comms_module.CommunicationMaintenanceBot(
+                manager=manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            self.communication_helper = helper
+            self._bots = [helper]
+            self.reattach_calls = 0
+
+        def _attach_information_synthesis_manager(self):
+            self.reattach_calls += 1
+
+    pipeline_module = types.ModuleType("menace_sandbox.model_automation_pipeline")
+    pipeline_module.ModelAutomationPipeline = _StubPipeline
+    pipeline_module.AutomationResult = object
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.model_automation_pipeline", pipeline_module
+    )
+    monkeypatch.setitem(sys.modules, "model_automation_pipeline", pipeline_module)
+
+    class _StubManager:
+        def __init__(self, *, pipeline, bot_registry, data_bot, bot_name):
+            self.pipeline = pipeline
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.bot_name = bot_name
+            self.quick_fix = object()
+            self.logger = logging.getLogger("stub-manager")
+
+        def __bool__(self):
+            return True
+
+    manager_box: dict[str, _StubManager] = {}
+
+    def _internalize_coding_bot(
+        *,
+        bot_name,
+        pipeline,
+        bot_registry,
+        data_bot,
+        **_kwargs,
+    ):
+        if reentrant_state["triggered"]:
+            result = coding_bot_interface._DisabledSelfCodingManager(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+        else:
+            result = _StubManager(
+                pipeline=pipeline,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                bot_name=bot_name,
+            )
+        manager_box["manager"] = result
+        return result
+
+    monkeypatch.setattr(
+        "menace_sandbox.self_coding_manager.internalize_coding_bot",
+        _internalize_coding_bot,
+    )
+
+    bootstrap_self_coding.bootstrap_self_coding("ExampleBot")
+
+    assert reentrant_state["triggered"] is False
+    assert "re-entrant initialisation depth=1" not in caplog.text
+    manager = manager_box["manager"]
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
