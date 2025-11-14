@@ -129,6 +129,21 @@ class _BootstrapContext:
     pipeline: Any = None
 
 
+@dataclass(eq=False)
+class _BootstrapContextGuard:
+    """Defers popping a ``_BootstrapContext`` until explicitly released."""
+
+    context: _BootstrapContext | None
+    released: bool = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.released = True
+        if self.context is not None:
+            _pop_bootstrap_context(self.context)
+
+
 _BOOTSTRAP_THREAD_STATE = threading.local()
 _SENTINEL_UNSET = object()
 
@@ -3741,8 +3756,14 @@ def _resolve_helpers(
     any mandatory helper cannot be resolved.
     """
 
+    context = _current_bootstrap_context()
+
     if manager is None:
         manager = getattr(obj, "manager", None)
+        if manager is None and context is not None:
+            context_manager = getattr(context, "manager", None)
+            if context_manager is not None:
+                manager = context_manager
         if manager is None and _using_bootstrap_sentinel():
             manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
 
@@ -3783,6 +3804,10 @@ def _resolve_helpers(
                     pipeline_hint = obj
                 else:
                     candidate_pipeline = getattr(obj, "pipeline", None)
+                    if _looks_like_pipeline_candidate(candidate_pipeline):
+                        pipeline_hint = candidate_pipeline
+                if pipeline_hint is None and context is not None:
+                    candidate_pipeline = getattr(context, "pipeline", None)
                     if _looks_like_pipeline_candidate(candidate_pipeline):
                         pipeline_hint = candidate_pipeline
                 manager = _bootstrap_manager(
@@ -3920,19 +3945,19 @@ def self_coding_managed(
 
         def _bootstrap_helpers(
             *, pipeline: Any | None = None
-        ) -> tuple[BotRegistry, DataBot]:
+        ) -> tuple[BotRegistry, DataBot, _BootstrapContextGuard | None]:
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
             nonlocal bootstrap_in_progress, bootstrap_error
             nonlocal register_deferred, deferred_registration
 
             if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
-                return resolved_registry, resolved_data_bot
+                return resolved_registry, resolved_data_bot, None
 
             wait_for_completion = False
             with bootstrap_lock:
                 if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
-                    return resolved_registry, resolved_data_bot
+                    return resolved_registry, resolved_data_bot, None
                 if bootstrap_in_progress:
                     wait_for_completion = True
                 else:
@@ -3945,9 +3970,11 @@ def self_coding_managed(
                     raise bootstrap_error
                 if not bootstrap_done or resolved_registry is None or resolved_data_bot is None:
                     raise RuntimeError("Bot helper bootstrap did not complete successfully")
-                return resolved_registry, resolved_data_bot
+                return resolved_registry, resolved_data_bot, None
 
             context: _BootstrapContext | None = None
+            context_guard: _BootstrapContextGuard | None = None
+            context_guard_transferred = False
             nested_owner_placeholder: Any | None = None
             nested_owner_token = None
             nested_owner_previous = _SENTINEL_UNSET
@@ -4004,6 +4031,12 @@ def self_coding_managed(
                     manager=manager_for_context,
                     pipeline=pipeline_for_context,
                 )
+                if (
+                    context is not None
+                    and pipeline_for_context is not None
+                    and _looks_like_pipeline_candidate(pipeline_for_context)
+                ):
+                    context_guard = _BootstrapContextGuard(context)
                 if context is not None and context.pipeline is None:
                     context.pipeline = pipeline_for_context
                 if registry_obj is None or data_bot_obj is None:
@@ -4404,7 +4437,8 @@ def self_coding_managed(
                     bootstrap_error = None
                     bootstrap_in_progress = False
                     bootstrap_event.set()
-                return registry_obj, data_bot_obj
+                context_guard_transferred = bool(context_guard)
+                return registry_obj, data_bot_obj, context_guard
             except BaseException as exc:
                 with bootstrap_lock:
                     bootstrap_error = exc
@@ -4428,7 +4462,7 @@ def self_coding_managed(
                             pass
                     else:
                         _BOOTSTRAP_STATE.sentinel_manager = nested_owner_previous
-                if context is not None:
+                if not context_guard_transferred and context is not None:
                     _pop_bootstrap_context(context)
 
         cls.bot_registry = None  # type: ignore[attr-defined]
@@ -4597,64 +4631,72 @@ def self_coding_managed(
             registry_obj: BotRegistry | None = None
             data_bot_obj: DataBot | None = None
             pipeline_ref: Any | None = self if is_pipeline_cls else None
-            if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
-                registry_obj, data_bot_obj = _bootstrap_helpers(
-                    pipeline=pipeline_ref
-                )
-            else:
-                registry_obj = resolved_registry
-                data_bot_obj = resolved_data_bot
-
-            context = _current_bootstrap_context()
-            if (
-                context is not None
-                and context.registry is not None
-                and context.data_bot is not None
-            ):
-                registry_obj = context.registry
-                data_bot_obj = context.data_bot
-                manager_default = (
-                    context.manager
-                    if context.manager is not None
-                    else manager_instance
-                )
-            else:
-                manager_default = manager_instance
-
-            if registry_obj is None or data_bot_obj is None:
-                registry_obj, data_bot_obj = _bootstrap_helpers(
-                    pipeline=pipeline_ref
-                )
-            init_kwargs = dict(kwargs)
-            orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
-                "evolution_orchestrator"
-            )
-            manager_local: SelfCodingManager | None = init_kwargs.get(
-                "manager", manager_default
-            )
-
-            cooperative_init_call(
-                orig_init,
-                self,
-                *args,
-                injected_keywords=COOPERATIVE_INIT_KWARGS,
-                logger=logger,
-                cls=cls,
-                kwarg_trace=_record_cooperative_init_trace,
-                **init_kwargs,
-            )
+            context_guard: _BootstrapContextGuard | None = None
             try:
-                (
-                    registry,
-                    d_bot,
-                    orchestrator,
-                    _module_path,
-                    manager_local,
-                ) = _resolve_helpers(
-                    self, registry_obj, data_bot_obj, orchestrator, manager_local
+                if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
+                    registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
+                        pipeline=pipeline_ref
+                    )
+                else:
+                    registry_obj = resolved_registry
+                    data_bot_obj = resolved_data_bot
+
+                context = _current_bootstrap_context()
+                if (
+                    context is not None
+                    and context.registry is not None
+                    and context.data_bot is not None
+                ):
+                    registry_obj = context.registry
+                    data_bot_obj = context.data_bot
+                    manager_default = (
+                        context.manager
+                        if context.manager is not None
+                        else manager_instance
+                    )
+                else:
+                    manager_default = manager_instance
+
+                if registry_obj is None or data_bot_obj is None:
+                    if context_guard is not None:
+                        context_guard.release()
+                        context_guard = None
+                    registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
+                        pipeline=pipeline_ref
+                    )
+                init_kwargs = dict(kwargs)
+                orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
+                    "evolution_orchestrator"
                 )
-            except RuntimeError as exc:
-                raise RuntimeError(f"{cls.__name__}: {exc}") from exc
+                manager_local: SelfCodingManager | None = init_kwargs.get(
+                    "manager", manager_default
+                )
+
+                cooperative_init_call(
+                    orig_init,
+                    self,
+                    *args,
+                    injected_keywords=COOPERATIVE_INIT_KWARGS,
+                    logger=logger,
+                    cls=cls,
+                    kwarg_trace=_record_cooperative_init_trace,
+                    **init_kwargs,
+                )
+                try:
+                    (
+                        registry,
+                        d_bot,
+                        orchestrator,
+                        _module_path,
+                        manager_local,
+                    ) = _resolve_helpers(
+                        self, registry_obj, data_bot_obj, orchestrator, manager_local
+                    )
+                except RuntimeError as exc:
+                    raise RuntimeError(f"{cls.__name__}: {exc}") from exc
+            finally:
+                if context_guard is not None:
+                    context_guard.release()
 
             name_local = getattr(self, "name", getattr(self, "bot_name", name))
             thresholds = None
