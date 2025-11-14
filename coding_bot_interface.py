@@ -2631,17 +2631,31 @@ def _promote_pipeline_manager(pipeline: Any, manager: Any, sentinel: Any) -> Non
                         "failed to inspect registry node %s", key, exc_info=True
                     )
         for _name, payload in entries:
-            if not isinstance(payload, Mapping):
+            if isinstance(payload, Mapping):
+                for attr in ("selfcoding_manager", "manager"):
+                    current = payload.get(attr)
+                    if not _is_placeholder(current):
+                        continue
+                    try:
+                        payload[attr] = manager
+                    except Exception:  # pragma: no cover - registry mutation best effort
+                        logger.debug(
+                            "failed to promote %s on registry entry %s", attr, _name,
+                            exc_info=True,
+                        )
                 continue
             for attr in ("selfcoding_manager", "manager"):
-                current = payload.get(attr)
+                try:
+                    current = getattr(payload, attr)
+                except Exception:
+                    continue
                 if not _is_placeholder(current):
                     continue
                 try:
-                    payload[attr] = manager
-                except Exception:  # pragma: no cover - registry mutation best effort
+                    setattr(payload, attr, manager)
+                except Exception:  # pragma: no cover - best effort
                     logger.debug(
-                        "failed to promote %s on registry entry %s", attr, _name,
+                        "failed to promote %s on registry payload %s", attr, payload,
                         exc_info=True,
                     )
 
@@ -2693,6 +2707,13 @@ def prepare_pipeline_for_bootstrap(
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
+
+    def _typeerror_rejects_manager(exc: TypeError) -> bool:
+        message = str(exc)
+        if not message:
+            return False
+        lowered = message.lower()
+        return "manager" in lowered and "unexpected" in lowered
 
     sentinel_manager = manager_override
     if sentinel_manager is None and sentinel_factory is not None:
@@ -2764,25 +2785,33 @@ def prepare_pipeline_for_bootstrap(
             not in {"context_builder", "bot_registry", "data_bot", "manager"}
         }
 
-        for keys in variants:
-            if not all(key in init_kwargs for key in keys):
-                continue
-            try:
-                call_kwargs = {key: init_kwargs[key] for key in keys}
-                call_kwargs.update(static_items)
-                shim_context: contextlib.AbstractContextManager[Any]
-                if manager_placeholder is None:
-                    shim_context = contextlib.nullcontext(False)
+        managerless_unlocked = False
+        for pass_index in range(2):
+            for keys in variants:
+                if not all(key in init_kwargs for key in keys):
+                    continue
+                if "manager" not in keys and not managerless_unlocked:
+                    continue
+                try:
+                    call_kwargs = {key: init_kwargs[key] for key in keys}
+                    call_kwargs.update(static_items)
+                    shim_context: contextlib.AbstractContextManager[Any]
+                    if manager_placeholder is None:
+                        shim_context = contextlib.nullcontext(False)
+                    else:
+                        shim_context = _pipeline_manager_placeholder_shim(
+                            pipeline_cls, manager_placeholder
+                        )
+                    with shim_context:
+                        pipeline = pipeline_cls(**call_kwargs)
+                except TypeError as exc:
+                    last_error = exc
+                    if not managerless_unlocked and _typeerror_rejects_manager(exc):
+                        managerless_unlocked = True
+                    continue
                 else:
-                    shim_context = _pipeline_manager_placeholder_shim(
-                        pipeline_cls, manager_placeholder
-                    )
-                with shim_context:
-                    pipeline = pipeline_cls(**call_kwargs)
-            except TypeError as exc:
-                last_error = exc
-                continue
-            else:
+                    break
+            if pipeline is not None or pass_index == 1 or not managerless_unlocked:
                 break
         if pipeline is None:
             if last_error is None:
