@@ -89,7 +89,7 @@ try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - gracefully degrade in tests
     UnifiedEventBus = None  # type: ignore
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
 from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_engine import SelfCodingEngine
 from .self_coding_manager import internalize_coding_bot
@@ -294,10 +294,12 @@ class Watchdog:
             event_bus=bus_local,
             context_builder=self.context_builder,
         )
-        pipeline = ModelAutomationPipeline(
+        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
             context_builder=self.context_builder,
             event_bus=bus_local,
             bot_registry=self.registry,
+            data_bot=DATA_BOT,
         )
         persist_sc_thresholds(
             self.__class__.__name__,
@@ -315,6 +317,7 @@ class Watchdog:
             error_threshold=self.thresholds.error_trend,
             event_bus=bus_local,
         )
+        promote_pipeline(self.manager)
         self.evolution_orchestrator = self.manager.evolution_orchestrator
         self.quick_fix = self.manager.quick_fix
 

@@ -67,6 +67,8 @@ except Exception as exc:  # pragma: no cover - critical dependency
         "stripe_watchdog requires SelfCodingManager; install self-coding dependencies."
     ) from exc
 
+from coding_bot_interface import prepare_pipeline_for_bootstrap
+
 try:  # pragma: no cover - best effort to import sanity layer
     import menace_sanity_layer
     from menace_sanity_layer import (
@@ -1939,8 +1941,12 @@ def main(
                 bus = _SHARED_EVENT_BUS
                 registry = BotRegistry(event_bus=bus) if BotRegistry else None
                 data_bot = DataBot(event_bus=bus) if DataBot else None
-                pipeline = ModelAutomationPipeline(
-                    context_builder=builder, event_bus=bus, bot_registry=registry
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=builder,
+                    event_bus=bus,
+                    bot_registry=registry,
+                    data_bot=data_bot,
                 )
                 _th = get_thresholds("StripeWatchdog")
                 persist_sc_thresholds(
@@ -1965,6 +1971,7 @@ def main(
                     raise RuntimeError(
                         "internalize_coding_bot failed to return a SelfCodingManager"
                     )
+                promote_pipeline(manager)
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder),
                     manager,
