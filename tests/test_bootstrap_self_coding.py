@@ -16,10 +16,81 @@ import pytest
 
 import menace_sandbox.coding_bot_interface as coding_bot_interface
 import bootstrap_self_coding
+import tests.test_bootstrap_manager_self_coding as manager_tests
 
 pytest_plugins = ("tests.test_bootstrap_manager_self_coding",)
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+
+@pytest.fixture
+def eager_helper_stub_env(monkeypatch, tmp_path):
+    stub_env = manager_tests.stub_bootstrap_env.__wrapped__(monkeypatch)
+    return manager_tests.eager_helper_pipeline_env.__wrapped__(
+        stub_env, monkeypatch, tmp_path
+    )
+
+
+def test_prepare_pipeline_promotes_eager_helper_stub(
+    eager_helper_stub_env, caplog
+):
+    env = eager_helper_stub_env
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+    pipeline, promoter = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=env.pipeline_cls,
+        context_builder=env.builder,
+        bot_registry=env.registry,
+        data_bot=env.data_bot,
+    )
+
+    helper = env.helper_instances[-1]
+    assert helper is pipeline.comms_bot
+    assert env.helper_init_managers
+    runtime_manager = env.helper_init_managers[-1]
+    assert isinstance(runtime_manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "PreparedEagerHelperStub",
+        env.registry,
+        env.data_bot,
+        pipeline=pipeline,
+        pipeline_manager=pipeline.manager,
+        pipeline_promoter=promoter,
+    )
+
+    assert manager
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+    assert helper.manager is manager
+    assert env.helper_final_managers and env.helper_final_managers[-1] is manager
+    assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_bootstrap_manager_promotes_eager_helper_stub(
+    eager_helper_stub_env, monkeypatch, caplog
+):
+    env = eager_helper_stub_env
+
+    _install_managerless_bootstrap(monkeypatch, env.pipeline_cls)
+    monkeypatch.setattr(
+        coding_bot_interface, "create_context_builder", lambda: env.builder
+    )
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "FallbackEagerHelperStub",
+        env.registry,
+        env.data_bot,
+    )
+
+    assert manager
+    assert not isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
+    helper = env.helper_instances[-1]
+    assert helper.manager is manager
+    assert env.helper_final_managers and env.helper_final_managers[-1] is manager
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 @dataclass(frozen=True)
