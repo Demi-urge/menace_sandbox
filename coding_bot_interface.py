@@ -157,6 +157,10 @@ def _push_bootstrap_context(
     if stack is None:
         stack = []
         _BOOTSTRAP_THREAD_STATE.stack = stack
+    if pipeline is None:
+        pipeline = getattr(_BOOTSTRAP_STATE, "pipeline", None)
+    if pipeline is None:
+        pipeline = _current_pipeline_context()
     if pipeline is None and stack:
         try:
             pipeline = stack[-1].pipeline

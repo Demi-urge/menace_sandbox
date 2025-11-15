@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
+import contextlib
 from collections import Counter
 from types import ModuleType, SimpleNamespace
 
@@ -13,6 +14,19 @@ def _prepare_runtime_stubs(monkeypatch):
     def _module(name: str) -> ModuleType:
         mod = ModuleType(name)
         return mod
+
+    pandas_mod = _module("pandas")
+
+    class _StubDataFrame:  # pragma: no cover - simple placeholder
+        pass
+
+    pandas_mod.DataFrame = _StubDataFrame  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pandas", pandas_mod)
+
+    psutil_mod = _module("psutil")
+    psutil_mod.Process = type("Process", (), {})
+    psutil_mod.cpu_count = lambda *_a, **_k: 1
+    monkeypatch.setitem(sys.modules, "psutil", psutil_mod)
 
     bot_registry = _module("menace_sandbox.bot_registry")
 
@@ -112,6 +126,8 @@ def _prepare_runtime_stubs(monkeypatch):
         )
 
     self_coding_thresholds.get_thresholds = get_thresholds
+    self_coding_thresholds.update_thresholds = lambda *_a, **_k: None
+    self_coding_thresholds._load_config = lambda *_a, **_k: {}
     monkeypatch.setitem(
         sys.modules, "menace_sandbox.self_coding_thresholds", self_coding_thresholds
     )
@@ -285,3 +301,135 @@ def test_runtime_promotes_manager_without_reentrancy(monkeypatch, caplog):
     assert cached_runtime is runtime
     assert counters["BotRegistry"] == 1
     assert counters["DataBot"] == 1
+
+
+def test_helper_bootstrap_context_exposes_pipeline(monkeypatch):
+    counters = _prepare_runtime_stubs(monkeypatch)
+    import menace_sandbox.coding_bot_interface as coding_bot_interface
+
+    module = importlib.import_module("menace_sandbox.workflow_evolution_bot")
+
+    context_pipelines: list[object | None] = []
+    state_pipelines: list[object | None] = []
+
+    model_pipeline_module = sys.modules["menace_sandbox.model_automation_pipeline"]
+
+    @contextlib.contextmanager
+    def _scoped_pipeline(pipeline):
+        sentinel = object()
+        with coding_bot_interface.pipeline_context_scope(pipeline):
+            previous = getattr(
+                coding_bot_interface._BOOTSTRAP_STATE, "pipeline", sentinel
+            )
+            coding_bot_interface._BOOTSTRAP_STATE.pipeline = pipeline
+            try:
+                yield
+            finally:
+                state = coding_bot_interface._BOOTSTRAP_STATE
+                if previous is sentinel:
+                    if hasattr(state, "pipeline"):
+                        delattr(state, "pipeline")
+                else:
+                    state.pipeline = previous
+
+    class ModelAutomationPipeline:
+        def __init__(self, *, context_builder, **_kwargs):
+            counters["ModelAutomationPipeline"] += 1
+            self.context_builder = context_builder
+            self.manager = None
+            self._bot_attribute_order = ()
+            with _scoped_pipeline(self):
+                helper_context = coding_bot_interface._push_bootstrap_context(
+                    registry=SimpleNamespace(),
+                    data_bot=SimpleNamespace(),
+                    manager=SimpleNamespace(),
+                )
+                try:
+                    context_pipelines.append(helper_context.pipeline)
+                    state_pipelines.append(
+                        getattr(coding_bot_interface._BOOTSTRAP_STATE, "pipeline", None)
+                    )
+                finally:
+                    coding_bot_interface._pop_bootstrap_context(helper_context)
+
+    monkeypatch.setattr(
+        model_pipeline_module, "ModelAutomationPipeline", ModelAutomationPipeline
+    )
+
+    runtime = module._ensure_runtime_dependencies()
+    try:
+        pipeline = runtime["pipeline"]
+        assert pipeline is not None
+        assert context_pipelines and context_pipelines[0] is pipeline
+        assert state_pipelines and state_pipelines[0] is pipeline
+    finally:
+        module._RUNTIME_CACHE = None
+
+    assert counters["ModelAutomationPipeline"] == 1
+
+
+def test_runtime_bootstrap_manager_receives_pipeline(monkeypatch):
+    counters = _prepare_runtime_stubs(monkeypatch)
+    import menace_sandbox.coding_bot_interface as coding_bot_interface
+
+    module = importlib.import_module("menace_sandbox.workflow_evolution_bot")
+
+    captured_pipelines: list[object | None] = []
+
+    def _recording_bootstrap_manager(name, bot_registry, data_bot, **kwargs):
+        pipeline_hint = kwargs.get("pipeline")
+        if pipeline_hint is None:
+            pipeline_hint = coding_bot_interface._resolve_bootstrap_pipeline_candidate(
+                None
+            )
+        captured_pipelines.append(pipeline_hint)
+        return SimpleNamespace(name=name, bot_registry=bot_registry, data_bot=data_bot)
+
+    monkeypatch.setattr(
+        coding_bot_interface, "_bootstrap_manager", _recording_bootstrap_manager
+    )
+
+    model_pipeline_module = sys.modules["menace_sandbox.model_automation_pipeline"]
+
+    @contextlib.contextmanager
+    def _scoped_pipeline(pipeline):
+        sentinel = object()
+        with coding_bot_interface.pipeline_context_scope(pipeline):
+            previous = getattr(
+                coding_bot_interface._BOOTSTRAP_STATE, "pipeline", sentinel
+            )
+            coding_bot_interface._BOOTSTRAP_STATE.pipeline = pipeline
+            try:
+                yield
+            finally:
+                state = coding_bot_interface._BOOTSTRAP_STATE
+                if previous is sentinel:
+                    if hasattr(state, "pipeline"):
+                        delattr(state, "pipeline")
+                else:
+                    state.pipeline = previous
+
+    class ModelAutomationPipeline:
+        def __init__(self, *, context_builder, **kwargs):
+            counters["ModelAutomationPipeline"] += 1
+            self.context_builder = context_builder
+            self.manager = None
+            self._bot_attribute_order = ()
+            with _scoped_pipeline(self):
+                coding_bot_interface._bootstrap_manager(
+                    "RuntimeHelper",
+                    kwargs.get("bot_registry") or SimpleNamespace(),
+                    kwargs.get("data_bot") or SimpleNamespace(),
+                )
+
+    monkeypatch.setattr(
+        model_pipeline_module, "ModelAutomationPipeline", ModelAutomationPipeline
+    )
+
+    runtime = module._ensure_runtime_dependencies()
+    try:
+        pipeline = runtime["pipeline"]
+        assert pipeline is not None
+        assert captured_pipelines == [pipeline]
+    finally:
+        module._RUNTIME_CACHE = None
