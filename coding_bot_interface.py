@@ -3087,6 +3087,7 @@ def prepare_pipeline_for_bootstrap(
     bot_registry: Any,
     data_bot: Any,
     bootstrap_manager: Any | None = None,
+    bootstrap_runtime_manager: Any | None = None,
     manager_override: Any | None = None,
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
@@ -3102,7 +3103,10 @@ def prepare_pipeline_for_bootstrap(
     references are promoted atomically.
     ``bootstrap_manager`` ensures the supplied sentinel is treated as the active
     bootstrap manager for the duration of the pipeline construction even when a
-    different context already holds the guard.  ``manager_override`` allows
+    different context already holds the guard.  ``bootstrap_runtime_manager``
+    exposes a temporary concrete manager to nested helpers while the pipeline is
+    initialising so attribute lookups never encounter ``None`` even though the
+    sentinel placeholders remain authoritative.  ``manager_override`` allows
     callers to reuse an existing sentinel instead of creating a new one when
     nested helper bootstrap is already in progress.
     ``manager_sentinel`` forces a specific placeholder to be passed to the
@@ -3112,7 +3116,10 @@ def prepare_pipeline_for_bootstrap(
     so callers can track when bootstrap contexts adopt it.  When helpers attach
     temporary managers that should be promoted alongside the bootstrap sentinel,
     include them via ``extra_manager_sentinels`` so promotion callbacks replace
-    every placeholder atomically.
+    every placeholder atomically.  The runtime manager is only used during
+    construction; once the pipeline instance exists the sentinel bookkeeping is
+    reapplied so promotion callbacks behave as before.  Callers that need a
+    specific temporary manager can supply it via ``bootstrap_runtime_manager``.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -3130,7 +3137,15 @@ def prepare_pipeline_for_bootstrap(
                 return candidate
         return None
 
-    manager_kwarg_placeholder = pipeline_kwargs.get("manager")
+    def _concrete_runtime(candidate: Any | None) -> Any | None:
+        if candidate is None:
+            return None
+        if _is_bootstrap_placeholder(candidate):
+            return None
+        return candidate
+
+    manager_kwarg_value = pipeline_kwargs.get("manager")
+    manager_kwarg_placeholder = manager_kwarg_value
     sentinel_manager = _select_placeholder(
         manager_override,
         manager_sentinel,
@@ -3209,19 +3224,40 @@ def prepare_pipeline_for_bootstrap(
     context: _BootstrapContext | None = None
     pipeline: Any | None = None
     last_error: Exception | None = None
+    runtime_manager = bootstrap_runtime_manager
+    if _is_bootstrap_placeholder(runtime_manager):
+        runtime_manager = None
+    if runtime_manager is None:
+        runtime_manager = _concrete_runtime(manager_kwarg_value)
+    if runtime_manager is None:
+        runtime_manager = _concrete_runtime(bootstrap_manager)
+    if runtime_manager is None:
+        runtime_manager = _DisabledSelfCodingManager(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+        )
+
     try:
         context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
-            manager=bootstrap_manager or manager_placeholder,
+            manager=runtime_manager,
         )
+        if context is not None and sentinel_manager is not None:
+            context.sentinel = sentinel_manager
         init_kwargs = dict(pipeline_kwargs)
         init_kwargs.setdefault("context_builder", context_builder)
         if bot_registry is not None:
             init_kwargs.setdefault("bot_registry", bot_registry)
         if data_bot is not None:
             init_kwargs.setdefault("data_bot", data_bot)
-        init_kwargs.setdefault("manager", manager_placeholder)
+        current_manager_value = init_kwargs.get("manager")
+        if (
+            "manager" not in init_kwargs
+            or current_manager_value is None
+            or _is_bootstrap_placeholder(current_manager_value)
+        ):
+            init_kwargs["manager"] = runtime_manager
 
         variants: tuple[tuple[str, ...], ...] = (
             ("context_builder", "bot_registry", "data_bot", "manager"),
