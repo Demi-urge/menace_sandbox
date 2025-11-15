@@ -93,6 +93,14 @@ def test_bootstrap_manager_promotes_eager_helper_stub(
     assert "re-entrant initialisation depth" not in caplog.text
 
 
+def test_real_pipeline_bootstrap_manager_promotes_communication_helper(
+    real_pipeline_communication_bootstrap_env, caplog
+):
+    manager_tests._assert_real_pipeline_comm_helper_promotion(
+        real_pipeline_communication_bootstrap_env, caplog
+    )
+
+
 @dataclass(frozen=True)
 class _EntryPointCase:
     """Describe a bootstrap entry point for regression coverage."""
