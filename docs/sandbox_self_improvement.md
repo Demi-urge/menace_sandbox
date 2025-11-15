@@ -59,6 +59,8 @@ engine = SelfImprovementEngine(
 engine.run_cycle()
 ```
 
+> **Manager bootstrap note:** When the engine (or any maintenance script) instantiates `ModelAutomationPipeline` directly, pass the `SelfCodingManager` via the `manager` kwarg or create the pipeline through `coding_bot_interface.prepare_pipeline_for_bootstrap`. The helper installs a sentinel manager so nested helpers do not emit the "re-entrant initialisation depth" warning and so telemetry published through `self_coding.disabled_manager` pinpoints genuine configuration errors instead of expected bootstrap activity.
+
 ## Adaptive strategy
 
 Recent cycle scores are compared against a moving baseline. The window size is

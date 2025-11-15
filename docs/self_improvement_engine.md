@@ -25,6 +25,8 @@ for name, outcome in results.items():
     print(name, outcome.roi.roi_gain)
 ```
 
+When wiring the engine into orchestration services, pass an existing `SelfCodingManager` to the pipeline or create it with `coding_bot_interface.prepare_pipeline_for_bootstrap` so the sentinel manager can shield nested helpers. Otherwise the "re-entrant initialisation depth" warning will fire and the `self_coding.disabled_manager` telemetry stream will repeatedly flag false positives while the pipeline spins up.
+
 Set `MENACE_ROOT` or `SANDBOX_REPO_PATH` to direct `resolve_path` at a different
 checkout. For multi-root environments define `MENACE_ROOTS` or
 `SANDBOX_REPO_PATHS` and use `repo_hint` to select a specific root:
