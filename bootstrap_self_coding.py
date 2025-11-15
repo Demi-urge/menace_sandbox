@@ -234,7 +234,11 @@ def bootstrap_self_coding(bot_name: str) -> None:
             f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
         )
     promote_manager(manager)
-    LOGGER.info("Self-coding manager registered: \"%s\"", type(manager).__name__)
+    LOGGER.info(
+        "Promoted bootstrap pipeline manager for %s (%s)",
+        bot_name,
+        type(manager).__name__,
+    )
 
 
 def _parse_args() -> argparse.Namespace:
