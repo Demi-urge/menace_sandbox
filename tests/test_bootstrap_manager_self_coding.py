@@ -1579,17 +1579,6 @@ def real_pipeline_communication_bootstrap_env(
             setattr(helper, key, value)
         return helper
 
-    event_bus = SimpleNamespace(subscribe=lambda *a, **k: None)
-    workflow_db = SimpleNamespace(event_bus=event_bus, manager=None)
-    capital_manager = _helper("CapitalManager")
-    predictor = _helper(
-        "Predictor",
-        data_bot=data_bot,
-        capital_bot=capital_manager,
-    )
-    handoff = _helper("Handoff")
-    roi_bot = _helper("ROIBot", handoff=handoff)
-
     class _Connection(SimpleNamespace):
         def execute(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
             return None
@@ -1597,54 +1586,67 @@ def real_pipeline_communication_bootstrap_env(
         def close(self) -> None:  # pragma: no cover - noop
             return None
 
-    db_router = SimpleNamespace(
-        query_all=lambda *_a, **_k: None,
-        get_connection=lambda *_a, **_k: _Connection(),
-        close=lambda: None,
-    )
+    def _make_pipeline_kwargs() -> dict[str, object]:
+        event_bus = SimpleNamespace(subscribe=lambda *a, **k: None)
+        workflow_db = SimpleNamespace(event_bus=event_bus, manager=None)
+        capital_manager = _helper("CapitalManager")
+        predictor = _helper(
+            "Predictor",
+            data_bot=data_bot,
+            capital_bot=capital_manager,
+        )
+        handoff = _helper("Handoff")
+        roi_bot = _helper("ROIBot", handoff=handoff)
+        db_router = SimpleNamespace(
+            query_all=lambda *_a, **_k: None,
+            get_connection=lambda *_a, **_k: _Connection(),
+            close=lambda: None,
+        )
 
-    pipeline_kwargs = dict(
-        aggregator=_helper("Aggregator"),
-        synthesis_bot=_helper("Synthesis"),
-        validator=_helper("Validator"),
-        planner=_helper("Planner"),
-        hierarchy=_helper("Hierarchy"),
-        predictor=predictor,
-        capital_manager=capital_manager,
-        roi_bot=roi_bot,
-        handoff=handoff,
-        optimiser=_helper("Optimiser"),
-        workflow_db=workflow_db,
-        efficiency_bot=_helper("EfficiencyBot"),
-        performance_bot=_helper("PerformanceBot"),
-        comms_bot=None,
-        monitor_bot=_helper("MonitorBot"),
-        db_bot=_helper("DatabaseBot"),
-        sentiment_bot=_helper("SentimentBot"),
-        query_bot=_helper("QueryBot"),
-        memory_bot=_helper("MemoryBot"),
-        comms_test_bot=_helper("CommsTestBot"),
-        discrepancy_bot=_helper("DiscrepancyBot"),
-        finance_bot=_helper("FinanceBot"),
-        creation_bot=_helper("CreationBot"),
-        meta_ga_bot=_helper("MetaGABot"),
-        offer_bot=_helper("OfferBot"),
-        fallback_bot=_helper("FallbackBot"),
-        optimizer=_helper("OptimizerBot"),
-        ai_counter_bot=_helper("AICounterBot"),
-        allocator=_helper("AllocatorBot"),
-        diagnostic_manager=_helper("DiagnosticManager"),
-        idea_bank=_helper("IdeaBank"),
-        news_db=_helper("NewsDB"),
-        reinvestment_bot=_helper("ReinvestmentBot"),
-        spike_bot=_helper("SpikeBot"),
-        allocation_bot=_helper("AllocationBot"),
-        db_router=db_router,
-        pathway_db=SimpleNamespace(manager=None),
-        learning_engine=_helper("LearningEngine"),
-        action_planner=_helper("ActionPlanner"),
-        event_bus=event_bus,
-    )
+        return dict(
+            aggregator=_helper("Aggregator"),
+            synthesis_bot=_helper("Synthesis"),
+            validator=_helper("Validator"),
+            planner=_helper("Planner"),
+            hierarchy=_helper("Hierarchy"),
+            predictor=predictor,
+            capital_manager=capital_manager,
+            roi_bot=roi_bot,
+            handoff=handoff,
+            optimiser=_helper("Optimiser"),
+            workflow_db=workflow_db,
+            efficiency_bot=_helper("EfficiencyBot"),
+            performance_bot=_helper("PerformanceBot"),
+            comms_bot=None,
+            monitor_bot=_helper("MonitorBot"),
+            db_bot=_helper("DatabaseBot"),
+            sentiment_bot=_helper("SentimentBot"),
+            query_bot=_helper("QueryBot"),
+            memory_bot=_helper("MemoryBot"),
+            comms_test_bot=_helper("CommsTestBot"),
+            discrepancy_bot=_helper("DiscrepancyBot"),
+            finance_bot=_helper("FinanceBot"),
+            creation_bot=_helper("CreationBot"),
+            meta_ga_bot=_helper("MetaGABot"),
+            offer_bot=_helper("OfferBot"),
+            fallback_bot=_helper("FallbackBot"),
+            optimizer=_helper("OptimizerBot"),
+            ai_counter_bot=_helper("AICounterBot"),
+            allocator=_helper("AllocatorBot"),
+            diagnostic_manager=_helper("DiagnosticManager"),
+            idea_bank=_helper("IdeaBank"),
+            news_db=_helper("NewsDB"),
+            reinvestment_bot=_helper("ReinvestmentBot"),
+            spike_bot=_helper("SpikeBot"),
+            allocation_bot=_helper("AllocationBot"),
+            db_router=db_router,
+            pathway_db=SimpleNamespace(manager=None),
+            learning_engine=_helper("LearningEngine"),
+            action_planner=_helper("ActionPlanner"),
+            event_bus=event_bus,
+        )
+
+    pipeline_kwargs = _make_pipeline_kwargs()
 
     pipeline_cls = load_pipeline_class()
     pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
@@ -1661,6 +1663,8 @@ def real_pipeline_communication_bootstrap_env(
         builder=builder,
         pipeline=pipeline,
         promoter=promoter,
+        pipeline_cls=pipeline_cls,
+        pipeline_kwargs_factory=_make_pipeline_kwargs,
     )
 
 
@@ -1701,6 +1705,56 @@ def test_real_pipeline_bootstrap_manager_promotes_communication_helper(
 ) -> None:
     _assert_real_pipeline_comm_helper_promotion(
         real_pipeline_communication_bootstrap_env, caplog
+    )
+
+
+def test_model_automation_pipeline_helper_bootstrap_suppresses_reentrant_warning(
+    real_pipeline_communication_bootstrap_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Instantiate the real pipeline and ensure helper bootstrap avoids warnings."""
+
+    import menace.coding_bot_interface as cbi
+    from menace_sandbox.shared import pipeline_base
+    import menace_sandbox.self_coding_manager as manager_mod
+
+    env = real_pipeline_communication_bootstrap_env
+    pipeline_kwargs = env.pipeline_kwargs_factory()
+    pipeline_cls = env.pipeline_cls
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=env.builder,
+        bot_registry=env.registry,
+        data_bot=env.data_bot,
+        **pipeline_kwargs,
+    )
+
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert isinstance(pipeline.comms_bot, pipeline_base._LazyHelperProxy)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "RealPipelineHelperBootstrap",
+            env.registry,
+            env.data_bot,
+            pipeline=pipeline,
+            pipeline_manager=pipeline.manager,
+            pipeline_promoter=promoter,
+        )
+
+    assert isinstance(manager, manager_mod.SelfCodingManager)
+    assert pipeline.manager is manager
+    comms_bot = pipeline.comms_bot
+    assert not isinstance(comms_bot, pipeline_base._LazyHelperProxy)
+    assert getattr(comms_bot, "manager", None) is manager
+    helper = getattr(comms_bot, "helper", None)
+    assert helper is not None
+    assert getattr(helper, "manager", None) is manager
+    assert not any(
+        "re-entrant initialisation depth" in record.message
+        for record in caplog.records
     )
 
 
