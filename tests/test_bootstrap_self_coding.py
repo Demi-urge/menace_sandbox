@@ -2957,3 +2957,112 @@ def test_cli_bootstrap_promotes_helper_graphs(
         )
 
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_cli_script_fallback_pipeline_avoids_reentrant_warning(
+    monkeypatch, caplog, script_fallback_pipeline_env
+):
+    env = script_fallback_pipeline_env
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+    caplog.set_level(logging.WARNING, logger=bootstrap_self_coding.LOGGER.name)
+
+    threshold_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    internalize_state: dict[str, object] = {}
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.bot_registry",
+        BotRegistry=lambda: env.registry,
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.code_database",
+        CodeDB=lambda: SimpleNamespace(kind="code-db"),
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.context_builder_util",
+        create_context_builder=lambda: env.builder,
+    )
+
+    def _data_bot_factory(start_server: bool = False) -> object:
+        assert start_server is False
+        return env.data_bot
+
+    def _persist_sc_thresholds(*args: object, **kwargs: object) -> None:
+        threshold_calls.append((args, kwargs))
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.data_bot",
+        DataBot=_data_bot_factory,
+        persist_sc_thresholds=_persist_sc_thresholds,
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.menace_memory_manager",
+        MenaceMemoryManager=lambda: SimpleNamespace(kind="memory"),
+    )
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.model_automation_pipeline",
+        ModelAutomationPipeline=env.pipeline_cls,
+    )
+
+    class _StubEngine:
+        def __init__(self, *_args: object, context_builder: object, **_kwargs: object):
+            self.context_builder = context_builder
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_engine",
+        SelfCodingEngine=_StubEngine,
+    )
+
+    def _thresholds(_name: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            roi_drop=0.1,
+            error_increase=0.2,
+            test_failure_increase=0.3,
+        )
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_thresholds",
+        get_thresholds=_thresholds,
+    )
+
+    def _internalize_coding_bot(**kwargs: object) -> SimpleNamespace:
+        internalize_state["kwargs"] = kwargs
+        pipeline = kwargs["pipeline"]
+        internalize_state["pipeline_manager"] = getattr(pipeline, "manager", None)
+        manager = env.manager_cls(
+            kwargs["engine"],
+            pipeline,
+            bot_name=kwargs["bot_name"],
+            data_bot=kwargs["data_bot"],
+            bot_registry=kwargs["bot_registry"],
+        )
+        internalize_state["manager"] = manager
+        return manager
+
+    _install_stub_module(
+        monkeypatch,
+        "menace_sandbox.self_coding_manager",
+        internalize_coding_bot=_internalize_coding_bot,
+    )
+
+    bot_name = "CliScriptFallback"
+    bootstrap_self_coding.bootstrap_self_coding(bot_name)
+
+    assert threshold_calls, "persist_sc_thresholds should capture CLI thresholds"
+    assert internalize_state, "internalize_coding_bot should receive CLI payload"
+    assert internalize_state["kwargs"]["bot_name"] == bot_name
+    pipeline = internalize_state["kwargs"]["pipeline"]
+    manager = internalize_state["manager"]
+
+    assert env.bootstrap_calls == [], "helper bootstrap should never re-enter"
+    assert pipeline.comms_bot.manager is manager
+    assert pipeline.comms_bot.helper.manager is manager
+    assert "re-entrant initialisation depth" not in caplog.text

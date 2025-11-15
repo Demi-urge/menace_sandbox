@@ -1702,6 +1702,24 @@ def _reset_helper_manager_override(
         pass
 
 
+@contextlib.contextmanager
+def fallback_helper_manager(
+    *, bot_registry: Any, data_bot: Any
+) -> Iterator[Any]:
+    """Seed helper bootstrap with a disabled manager placeholder."""
+
+    manager = _DisabledSelfCodingManager(
+        bot_registry=bot_registry,
+        data_bot=data_bot,
+        bootstrap_placeholder=True,
+    )
+    token = _push_helper_manager_override(manager)
+    try:
+        yield manager
+    finally:
+        _reset_helper_manager_override(token)
+
+
 def _emit_disabled_manager_metric(payload: Mapping[str, Any]) -> None:
     """Emit telemetry for disabled-manager fallbacks via available hooks."""
 
