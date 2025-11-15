@@ -77,6 +77,37 @@ settings = SandboxSettings(
 )
 ```
 
+## Temporary manager example for maintenance scripts
+
+Ad-hoc maintenance often requires running scripts like `bootstrap_self_coding.py` or bespoke vacuum jobs directly from a shell where no `SelfCodingManager` has been initialised yet. Wrap `ModelAutomationPipeline` creation in `coding_bot_interface.prepare_pipeline_for_bootstrap` so helpers receive a sentinel manager until the real manager is ready:
+
+```python
+from coding_bot_interface import prepare_pipeline_for_bootstrap
+from model_automation_pipeline import ModelAutomationPipeline
+from self_coding_manager import SelfCodingManager
+from vector_service.context_builder import ContextBuilder
+from bot_registry import BotRegistry
+from data_bot import DataBot
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
+pipeline, promote_manager = prepare_pipeline_for_bootstrap(
+    pipeline_cls=ModelAutomationPipeline,
+    context_builder=builder,
+    bot_registry=registry,
+    data_bot=data_bot,
+)
+
+# ...run maintenance scripts that expect pipeline.manager to exist...
+
+manager = SelfCodingManager(pipeline=pipeline, bot_registry=registry, data_bot=data_bot)
+promote_manager(manager)
+```
+
+The sentinel manager returned during construction prevents nested helpers from trying to bootstrap themselves (which would trigger the "re-entrant initialisation depth" warning) while still letting manual scripts inspect or patch the pipeline before the concrete manager is promoted.
+
 ## Initialization order
 
 1. `auto_env_setup.ensure_env()` – create or load the `.env` file.
