@@ -115,6 +115,14 @@ from shared.provenance_state import (
     UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
 )
 
+try:  # pragma: no cover - shared bus optional during tests
+    from menace_sandbox.shared_event_bus import event_bus as _SHARED_EVENT_BUS
+except Exception:  # pragma: no cover - flat layout fallback
+    try:
+        from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency missing
+        _SHARED_EVENT_BUS = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -1656,6 +1664,42 @@ else:
 _PIPELINE_CONTEXT = contextvars.ContextVar("PIPELINE_CONTEXT", default=None)
 
 
+def _emit_disabled_manager_metric(payload: Mapping[str, Any]) -> None:
+    """Emit telemetry for disabled-manager fallbacks via available hooks."""
+
+    emitted = False
+    manager_context = None
+    if MANAGER_CONTEXT is not None:
+        try:
+            manager_context = MANAGER_CONTEXT.get()
+        except LookupError:  # pragma: no cover - unset context
+            manager_context = None
+    metric_hook = getattr(manager_context, "emit_metric", None)
+    if callable(metric_hook):
+        try:
+            metric_hook("self_coding.disabled_manager", payload)
+            emitted = True
+        except Exception:  # pragma: no cover - telemetry best effort
+            logger.debug("manager-context telemetry emission failed", exc_info=True)
+    if not emitted and _SHARED_EVENT_BUS is not None:
+        publish = getattr(_SHARED_EVENT_BUS, "publish", None)
+        if callable(publish):
+            try:
+                publish("self_coding.disabled_manager", payload)
+                emitted = True
+            except Exception:  # pragma: no cover - bus best effort
+                logger.debug("event bus telemetry emission failed", exc_info=True)
+    if emitted:
+        return
+    logger.info(
+        "disabled manager telemetry emitted via logger",
+        extra={
+            "disabled_manager": payload,
+            "event": "self_coding.disabled_manager",
+        },
+    )
+
+
 def _current_pipeline_context() -> Any | None:
     """Return the pipeline currently exposed via ``pipeline_context_scope``."""
 
@@ -1753,6 +1797,7 @@ class _DisabledSelfCodingManager:
         "_last_patch_id",
         "_last_commit_hash",
         "_bootstrap_owner_marker",
+        "_self_coding_bootstrap_placeholder",
     )
 
     def __init__(
@@ -1761,6 +1806,7 @@ class _DisabledSelfCodingManager:
         bot_registry: Any,
         data_bot: Any,
         bootstrap_owner: bool = False,
+        bootstrap_placeholder: bool = False,
     ) -> None:
         self.bot_registry = bot_registry
         self.data_bot = data_bot
@@ -1774,6 +1820,7 @@ class _DisabledSelfCodingManager:
         self._last_patch_id = None
         self._last_commit_hash = None
         self._bootstrap_owner_marker = bootstrap_owner
+        self._self_coding_bootstrap_placeholder = bootstrap_placeholder
 
     def __bool__(self) -> bool:
         """Return ``True`` only when acting as a bootstrap owner sentinel."""
@@ -2088,6 +2135,7 @@ def _spawn_nested_bootstrap_owner(
             bot_registry=bot_registry,
             data_bot=data_bot,
             bootstrap_owner=True,
+            bootstrap_placeholder=True,
         )
 
 
@@ -3301,6 +3349,7 @@ def prepare_pipeline_for_bootstrap(
         runtime_manager = _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
+            bootstrap_placeholder=True,
         )
 
     try:
@@ -3525,15 +3574,18 @@ def _bootstrap_manager(
     pipeline: Any | None = None,
     pipeline_manager: Any | None = None,
     pipeline_promoter: Callable[[Any], None] | None = None,
+    disabled_manager_callback: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None
+        sentinel_reused = False
         if reentrant:
             placeholder = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
             if placeholder is None:
                 placeholder = sentinel_manager
+            sentinel_reused = placeholder is not None
             guidance = (
                 "Re-entrant bootstrap detected; reusing bootstrap sentinel "
                 "temporarily—internalisation will retry after "
@@ -3544,18 +3596,36 @@ def _bootstrap_manager(
                 "Bootstrap already active; returning disabled manager "
                 "until the current owner finishes."
             )
+        depth_level = getattr(_BOOTSTRAP_STATE, "depth", 0)
         message = (
             f"SelfCodingManager bootstrap skipped for {name}: {reason}. {guidance}"
         )
+        payload = {
+            "owner": name,
+            "reason": reason,
+            "bootstrap_depth": depth_level,
+            "reentrant": bool(reentrant),
+            "sentinel_reused": sentinel_reused,
+            "message": message,
+        }
         print(message)
-        logger.warning(message)
+        logger.warning(message, extra={"disabled_manager": payload})
+        _emit_disabled_manager_metric(payload)
+        if callable(disabled_manager_callback):
+            try:
+                disabled_manager_callback(payload)
+            except Exception:  # pragma: no cover - callback best effort
+                logger.debug("disabled manager callback failed", exc_info=True)
         if reentrant and placeholder is not None:
             _track_extra_sentinel(placeholder)
             return placeholder
-        return _DisabledSelfCodingManager(
+        disabled_manager = _DisabledSelfCodingManager(
             bot_registry=bot_registry,
             data_bot=data_bot,
+            bootstrap_placeholder=True,
         )
+        _track_extra_sentinel(disabled_manager)
+        return disabled_manager
 
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     sentinel_active = _is_bootstrap_placeholder(
@@ -3778,6 +3848,7 @@ def _bootstrap_manager(
                 bot_registry=bot_registry,
                 data_bot=data_bot,
                 bootstrap_owner=True,
+                bootstrap_placeholder=True,
             )
             bootstrap_owner = placeholder_manager
         else:
@@ -3840,6 +3911,7 @@ def _bootstrap_manager(
                         fallback_runtime_manager = _DisabledSelfCodingManager(
                             bot_registry=bot_registry,
                             data_bot=data_bot,
+                            bootstrap_placeholder=True,
                         )
                     local_pipeline, promote = prepare_pipeline_for_bootstrap(
                         pipeline_cls=pipeline_cls,
