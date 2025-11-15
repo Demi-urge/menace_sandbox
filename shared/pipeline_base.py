@@ -180,17 +180,24 @@ from ..coding_bot_interface import (
 try:  # pragma: no cover - defensive import for stripped down tests
     from ..coding_bot_interface import (
         _BOOTSTRAP_STATE,
+        _DisabledSelfCodingManager,
         _is_bootstrap_placeholder,
         _seed_existing_pipeline_placeholder,
     )
 except Exception:  # pragma: no cover - fallback when self-coding engine absent
     _BOOTSTRAP_STATE = SimpleNamespace()  # type: ignore[assignment]
 
+    class _DisabledSelfCodingManager:  # type: ignore[no-redef]
+        pass
+
     def _is_bootstrap_placeholder(_candidate: object) -> bool:  # type: ignore[no-redef]
         return False
 
     def _seed_existing_pipeline_placeholder(  # type: ignore[no-redef]
-        _pipeline: object, _placeholder: object
+        _pipeline: object,
+        _placeholder: object,
+        *,
+        allow_disabled_manager: bool = False,
     ) -> None:
         return None
 
@@ -819,6 +826,13 @@ class ModelAutomationPipeline:
         placeholder_candidate = (
             initial_manager if self._is_placeholder_manager(initial_manager) else None
         )
+        disabled_manager_candidate: Any | None = None
+        if (
+            placeholder_candidate is None
+            and initial_manager is not None
+            and isinstance(initial_manager, _DisabledSelfCodingManager)
+        ):
+            disabled_manager_candidate = initial_manager
         if placeholder_candidate is None:
             placeholder_candidate = self._bootstrap_manager_candidate()
         if placeholder_candidate is not None and self._is_placeholder_manager(
@@ -832,6 +846,15 @@ class ModelAutomationPipeline:
                 self._placeholder_context_token = None
             if initial_manager is None:
                 initial_manager = placeholder_candidate
+        elif disabled_manager_candidate is not None:
+            try:
+                self._placeholder_context_token = _seed_existing_pipeline_placeholder(
+                    self,
+                    disabled_manager_candidate,
+                    allow_disabled_manager=True,
+                )
+            except Exception:  # pragma: no cover - placeholder seeding best effort
+                self._placeholder_context_token = None
         self._pending_manager_helpers: dict[str, Callable[..., Any]] = {}
         self._lazy_helper_attrs: set[str] = set()
         self._bot_attribute_order: tuple[str, ...] = self._BOT_ATTRIBUTE_ORDER

@@ -2707,7 +2707,10 @@ def _assign_bootstrap_manager_placeholder(
 
 
 def _seed_existing_pipeline_placeholder(
-    pipeline: Any, placeholder: Any
+    pipeline: Any,
+    placeholder: Any,
+    *,
+    allow_disabled_manager: bool = False,
 ) -> contextvars.Token[Any] | None:
     """Install *placeholder* on *pipeline* and expose it via ``MANAGER_CONTEXT``.
 
@@ -2717,13 +2720,17 @@ def _seed_existing_pipeline_placeholder(
 
     if pipeline is None or placeholder is None:
         return None
-    if not _is_bootstrap_placeholder(placeholder):
+    placeholder_is_bootstrap = _is_bootstrap_placeholder(placeholder)
+    disabled_manager_allowed = allow_disabled_manager and isinstance(
+        placeholder, _DisabledSelfCodingManager
+    )
+    if not placeholder_is_bootstrap and not disabled_manager_allowed:
         return None
     _seed_placeholder_bootstrap_fields(pipeline, placeholder)
     _assign_bootstrap_manager_placeholder(
         pipeline,
         placeholder,
-        propagate_nested=True,
+        propagate_nested=placeholder_is_bootstrap,
     )
     context_manager = _resolve_bootstrap_owner(placeholder) or placeholder
     if context_manager is None:
