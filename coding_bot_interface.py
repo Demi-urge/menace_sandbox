@@ -2269,6 +2269,99 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
                 logger.debug("sentinel delegate callback failed", exc_info=True)
 
 
+class _BootstrapManagerPromise:
+    """Coordinates re-entrant helpers awaiting an active bootstrap."""
+
+    __slots__ = ("waiters", "fallback_factory")
+
+    def __init__(
+        self, *, fallback_factory: Callable[[], Any] | None = None
+    ) -> None:
+        self.waiters: list[Any] = []
+        self.fallback_factory = fallback_factory
+
+    def add_waiter(self, sentinel: Any) -> bool:
+        """Register *sentinel* to be promoted once the owner resolves."""
+
+        if sentinel is None:
+            return False
+        attach_delegate = getattr(sentinel, "attach_delegate", None)
+        if not callable(attach_delegate):
+            return False
+        self.waiters.append(sentinel)
+        return True
+
+    def resolve(self, manager: Any | None) -> None:
+        """Promote all waiters with *manager* or the fallback placeholder."""
+
+        if manager is None and callable(self.fallback_factory):
+            try:
+                manager = self.fallback_factory()
+            except Exception:  # pragma: no cover - fallback must stay best-effort
+                logger.debug(
+                    "failed to construct fallback manager for re-entrant bootstrap waiters",
+                    exc_info=True,
+                )
+                manager = None
+        waiters = tuple(self.waiters)
+        self.waiters.clear()
+        if manager is None and not waiters:
+            return
+        for sentinel in waiters:
+            attach_delegate = getattr(sentinel, "attach_delegate", None)
+            if not callable(attach_delegate):
+                continue
+            try:
+                attach_delegate(manager)
+            except Exception:  # pragma: no cover - callbacks must be best-effort
+                logger.debug(
+                    "re-entrant bootstrap sentinel promotion failed", exc_info=True
+                )
+
+
+def _peek_owner_promise(owner_guard: Any) -> _BootstrapManagerPromise | None:
+    """Return the promise registered for *owner_guard* when present."""
+
+    promises = getattr(_BOOTSTRAP_STATE, "owner_promises", None)
+    if not promises:
+        return None
+    return promises.get(owner_guard)
+
+
+def _ensure_owner_promise(
+    owner_guard: Any, fallback_factory: Callable[[], Any] | None = None
+) -> _BootstrapManagerPromise:
+    """Return or create the promise coordinating re-entrant waiters."""
+
+    promises = getattr(_BOOTSTRAP_STATE, "owner_promises", None)
+    if promises is None:
+        promises = {}
+        _BOOTSTRAP_STATE.owner_promises = promises
+    promise = promises.get(owner_guard)
+    if promise is None:
+        promise = _BootstrapManagerPromise(fallback_factory=fallback_factory)
+        promises[owner_guard] = promise
+    elif promise.fallback_factory is None and callable(fallback_factory):
+        promise.fallback_factory = fallback_factory
+    return promise
+
+
+def _settle_owner_promise(owner_guard: Any, manager: Any | None) -> None:
+    """Resolve and discard the promise registered for *owner_guard*."""
+
+    promises = getattr(_BOOTSTRAP_STATE, "owner_promises", None)
+    if not promises:
+        return
+    promise = promises.pop(owner_guard, None)
+    if promise is None:
+        return
+    try:
+        promise.resolve(manager)
+    finally:
+        if not promises and hasattr(_BOOTSTRAP_STATE, "owner_promises"):
+            delattr(_BOOTSTRAP_STATE, "owner_promises")
+
+
 def _create_bootstrap_manager_sentinel(
     *, bot_registry: Any, data_bot: Any
 ) -> _BootstrapManagerSentinel:
@@ -3755,6 +3848,15 @@ def _bootstrap_manager(
     owner_guard = previous_sentinel
     if owner_guard is _SENTINEL_UNSET:
         owner_guard = name
+    owns_reentrant_promise = False
+    reentrant_promises_settled = False
+
+    def _settle_reentrant_promises(manager_value: Any | None) -> None:
+        nonlocal reentrant_promises_settled
+        if not owns_reentrant_promise or reentrant_promises_settled:
+            return
+        _settle_owner_promise(owner_guard, manager_value)
+        reentrant_promises_settled = True
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", None)
     if owner_depths is None:
         owner_depths = {}
@@ -3774,10 +3876,32 @@ def _bootstrap_manager(
         if fallback_owner is not None:
             _track_extra_sentinel(fallback_owner)
             return fallback_owner
+        promise = _peek_owner_promise(owner_guard)
+        placeholder_active = _is_bootstrap_placeholder(previous_sentinel)
+        if (
+            promise is not None
+            and placeholder_active
+            and promise.add_waiter(sentinel_manager)
+        ):
+            _track_extra_sentinel(sentinel_manager)
+            return sentinel_manager
         return _disabled_manager("bootstrap already in progress", reentrant=True)
 
     owner_depths[owner_guard] = current_owner_depth + 1
     _BOOTSTRAP_STATE.depth = next_depth
+
+    def _build_reentrant_placeholder() -> Any:
+        return _DisabledSelfCodingManager(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            bootstrap_placeholder=True,
+        )
+
+    owner_promise = _ensure_owner_promise(
+        owner_guard,
+        fallback_factory=_build_reentrant_placeholder,
+    )
+    owns_reentrant_promise = owner_promise is not None
 
     def _release_guard() -> None:
         owner_depths_local = getattr(_BOOTSTRAP_STATE, "owner_depths", None)
@@ -3871,6 +3995,7 @@ def _bootstrap_manager(
                 manager,
                 sentinel_manager,
             )
+            _settle_reentrant_promises(manager)
             return manager
         finally:
             if context is not None:
@@ -4131,6 +4256,7 @@ def _bootstrap_manager(
             logger.debug(
                 "bootstrap owner sentinel released for %s", name
             )
+            _settle_reentrant_promises(manager)
             return manager
         finally:
             if owner_sentinel_restore is not None:
@@ -4149,6 +4275,7 @@ def _bootstrap_manager(
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback
         raise RuntimeError(f"manager bootstrap failed: {exc}") from exc
     finally:
+        _settle_reentrant_promises(None)
         _release_guard()
         current_depth = getattr(_BOOTSTRAP_STATE, "depth", 1) - 1
         if current_depth > 0:

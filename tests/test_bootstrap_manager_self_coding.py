@@ -157,6 +157,17 @@ def prebuilt_pipeline_env(
     registry = DummyRegistry()
     data_bot = DummyDataBot()
 
+    real_loader = cbi._load_optional_module
+
+    def _pipeline_loader(name: str, *, fallback: str | None = None):
+        if name == "model_automation_pipeline":
+            module = ModuleType("model_automation_pipeline_stub")
+            module.ModelAutomationPipeline = type("UnusedPipeline", (), {})  # type: ignore[attr-defined]
+            return module
+        return real_loader(name, fallback=fallback)
+
+    monkeypatch.setattr(cbi, "_load_optional_module", _pipeline_loader)
+
     class _FailingManager:
         def __init__(self, *, bot_registry: object, data_bot: object) -> None:
             raise TypeError("fallback to manual pipeline")
@@ -239,6 +250,17 @@ def prebuilt_manager_kwarg_reject_env(
 
     registry = DummyRegistry()
     data_bot = DummyDataBot()
+
+    real_loader = cbi._load_optional_module
+
+    def _pipeline_loader(name: str, *, fallback: str | None = None):
+        if name == "model_automation_pipeline":
+            module = ModuleType("model_automation_pipeline_stub")
+            module.ModelAutomationPipeline = type("UnusedPipeline", (), {})  # type: ignore[attr-defined]
+            return module
+        return real_loader(name, fallback=fallback)
+
+    monkeypatch.setattr(cbi, "_load_optional_module", _pipeline_loader)
 
     class _FailingManager:
         def __init__(self, *, bot_registry: object, data_bot: object) -> None:
@@ -575,6 +597,7 @@ def reentrant_prebuilt_pipeline_env(
 
         def __init__(self) -> None:
             self.helper = ReentrantNestedHelper()
+            self.helper_request = getattr(self.helper, "manager", None)
 
     class ReentrantPipeline:
         def __init__(
@@ -613,6 +636,105 @@ def reentrant_prebuilt_pipeline_env(
         data_bot=data_bot,
         builder=builder,
         pipeline_cls=ReentrantPipeline,
+        pipeline=pipeline,
+        promoter=promoter,
+        helper_names=helper_names,
+    )
+
+
+@pytest.fixture
+def double_reentrant_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Fixture providing a pipeline with two nested re-entrant helpers."""
+
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("double re-entrant fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="double-reentrant")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    helper_names = ("DoubleReentrantPrimary", "DoubleReentrantSecondary")
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class DoubleReentrantPrimaryHelper:
+        name = helper_names[0]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class DoubleReentrantSecondaryHelper:
+        name = helper_names[1]
+
+        def __init__(self) -> None:
+            self.bot_name = self.name
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class DoubleReentrantCommunicationBot:
+        name = "DoubleReentrantComms"
+
+        def __init__(self) -> None:
+            self.primary_helper = DoubleReentrantPrimaryHelper()
+            self.secondary_helper = DoubleReentrantSecondaryHelper()
+            self.helper_requests = (
+                getattr(self.primary_helper, "manager", None),
+                getattr(self.secondary_helper, "manager", None),
+            )
+
+    class DoubleReentrantPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.comms_bot = DoubleReentrantCommunicationBot()
+            self._bots = [
+                self.comms_bot.primary_helper,
+                self.comms_bot.secondary_helper,
+            ]
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        DoubleReentrantPipeline
+    )
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=DoubleReentrantPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert pipeline.comms_bot.primary_helper.manager is pipeline.manager
+    assert pipeline.comms_bot.secondary_helper.manager is pipeline.manager
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=DoubleReentrantPipeline,
         pipeline=pipeline,
         promoter=promoter,
         helper_names=helper_names,
@@ -1903,6 +2025,67 @@ def test_reentrant_helper_instantiated_before_manager_assignment(
         "re-entrant initialisation depth" in record.message
         for record in caplog.records
     )
+
+
+def test_nested_bootstrap_promotes_reentrant_helper(
+    reentrant_prebuilt_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = reentrant_prebuilt_pipeline_env
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "NestedBootstrapOwner",
+            env.registry,
+            env.data_bot,
+            pipeline=env.pipeline,
+            pipeline_manager=env.pipeline.manager,
+            pipeline_promoter=env.promoter,
+        )
+
+    assert manager
+    helper_request = getattr(env.pipeline.comms_bot, "helper_request", None)
+    assert isinstance(helper_request, cbi._BootstrapManagerSentinel)
+    assert helper_request.resolve() is manager
+    helper = env.pipeline.comms_bot.helper
+    assert helper.manager is manager
+    assert helper.initial_manager is manager
+    assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_nested_bootstrap_promotes_multiple_helpers(
+    double_reentrant_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = double_reentrant_pipeline_env
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "DoubleReentrantOwner",
+            env.registry,
+            env.data_bot,
+            pipeline=env.pipeline,
+            pipeline_manager=env.pipeline.manager,
+            pipeline_promoter=env.promoter,
+        )
+
+    assert manager
+    helper_requests = getattr(env.pipeline.comms_bot, "helper_requests", None)
+    assert helper_requests
+    assert all(
+        isinstance(request, cbi._BootstrapManagerSentinel) and request.resolve() is manager
+        for request in helper_requests
+    )
+    primary = env.pipeline.comms_bot.primary_helper
+    secondary = env.pipeline.comms_bot.secondary_helper
+    for helper in (primary, secondary):
+        assert helper.manager is manager
+        assert helper.initial_manager is manager
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 @pytest.fixture
