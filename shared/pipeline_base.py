@@ -11,6 +11,7 @@ is preserved.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import traceback
 import weakref
@@ -57,6 +58,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Tuple,
     Type,
@@ -170,7 +172,11 @@ from ..offer_testing_bot import OfferTestingBot
 _trace("Successfully imported OfferTestingBot from menace_sandbox.offer_testing_bot")
 _trace("Importing ResearchFallbackBot from menace_sandbox.research_fallback_bot...")
 from ..research_fallback_bot import ResearchFallbackBot
-from ..coding_bot_interface import MANAGER_CONTEXT, normalise_manager_arg
+from ..coding_bot_interface import (
+    MANAGER_CONTEXT,
+    normalise_manager_arg,
+    pipeline_context_scope,
+)
 try:  # pragma: no cover - defensive import for stripped down tests
     from ..coding_bot_interface import (
         _BOOTSTRAP_STATE,
@@ -187,6 +193,10 @@ except Exception:  # pragma: no cover - fallback when self-coding engine absent
         _pipeline: object, _placeholder: object
     ) -> None:
         return None
+
+    @contextlib.contextmanager
+    def pipeline_context_scope(_pipeline: object) -> Iterator[None]:  # type: ignore[no-redef]
+        yield None
 _trace("Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
 _trace("Preparing lazy import for ResourceAllocationOptimizer...")
 
@@ -537,7 +547,8 @@ class _LazyHelperProxy:
                 return None
             if manager is None or pipeline._is_placeholder_manager(manager):
                 return None
-        return builder(manager=manager)
+        with pipeline_context_scope(pipeline):
+            return builder(manager=manager)
 
     def __getattr__(self, item: str) -> Any:
         helper = self.resolve()
@@ -1022,7 +1033,8 @@ class ModelAutomationPipeline:
             self._pending_manager_helpers[attr_name] = builder
             setattr(self, attr_name, None)
             return None
-        helper = builder(manager=manager)
+        with pipeline_context_scope(self):
+            helper = builder(manager=manager)
         helper = self._bind_manager(helper)
         setattr(self, attr_name, helper)
         return helper
@@ -1048,7 +1060,8 @@ class ModelAutomationPipeline:
             self._lazy_helper_attrs.add(attr_name)
             setattr(self, attr_name, proxy)
             return proxy
-        helper = builder(manager=manager)
+        with pipeline_context_scope(self):
+            helper = builder(manager=manager)
         helper = self._bind_manager(helper)
         setattr(self, attr_name, helper)
         return helper
@@ -1119,24 +1132,25 @@ class ModelAutomationPipeline:
         manager: Any | None = None,
         **kwargs: Any,
     ) -> Any:
-        if factory is None:
-            raise ValueError("factory is required")
-        effective_manager = self._effective_manager(manager)
-        if effective_manager is None:
-            effective_manager = self._bootstrap_manager_candidate()
-        if effective_manager is None:
-            return factory(*args, **kwargs)
-        try:
-            return factory(*args, **kwargs, manager=effective_manager)
-        except TypeError as exc:
-            if "manager" not in str(exc):
-                raise
-            _LOGGER.debug(
-                "%s rejected manager argument; continuing without manager",
-                getattr(factory, "__name__", repr(factory)),
-                exc_info=True,
-            )
-            return factory(*args, **kwargs)
+        with pipeline_context_scope(self):
+            if factory is None:
+                raise ValueError("factory is required")
+            effective_manager = self._effective_manager(manager)
+            if effective_manager is None:
+                effective_manager = self._bootstrap_manager_candidate()
+            if effective_manager is None:
+                return factory(*args, **kwargs)
+            try:
+                return factory(*args, **kwargs, manager=effective_manager)
+            except TypeError as exc:
+                if "manager" not in str(exc):
+                    raise
+                _LOGGER.debug(
+                    "%s rejected manager argument; continuing without manager",
+                    getattr(factory, "__name__", repr(factory)),
+                    exc_info=True,
+                )
+                return factory(*args, **kwargs)
 
     def _bind_manager(self, candidate: Any) -> Any:
         if candidate is None:
@@ -1172,7 +1186,8 @@ class ModelAutomationPipeline:
         pending = list(self._pending_manager_helpers.items())
         self._pending_manager_helpers.clear()
         for attr_name, builder in pending:
-            helper = builder(manager=manager)
+            with pipeline_context_scope(self):
+                helper = builder(manager=manager)
             helper = self._bind_manager(helper)
             self._attach_helper(attr_name, helper, register=True)
 
