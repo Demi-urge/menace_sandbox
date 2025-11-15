@@ -3578,6 +3578,42 @@ def _bootstrap_manager(
     _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
     fallback_manager_sentinels: list[Any] = []
 
+    def _resolve_fallback_owner(owner_token: Any) -> Any | None:
+        if owner_token in (None, _SENTINEL_UNSET):
+            return None
+        stack = getattr(_BOOTSTRAP_STATE, "fallback_owner_stack", None)
+        if not stack:
+            return None
+        for candidate in reversed(stack):
+            try:
+                delegate = getattr(candidate, "_bootstrap_owner_delegate", None)
+            except Exception:  # pragma: no cover - best effort attribute access
+                delegate = None
+            if delegate is owner_token:
+                return candidate
+        return None
+
+    def _push_fallback_owner(owner: Any) -> bool:
+        if not _is_bootstrap_owner(owner):
+            return False
+        stack = getattr(_BOOTSTRAP_STATE, "fallback_owner_stack", None)
+        if stack is None:
+            stack = []
+            _BOOTSTRAP_STATE.fallback_owner_stack = stack
+        stack.append(owner)
+        return True
+
+    def _pop_fallback_owner(owner: Any) -> None:
+        stack = getattr(_BOOTSTRAP_STATE, "fallback_owner_stack", None)
+        if not stack:
+            return
+        for index in range(len(stack) - 1, -1, -1):
+            if stack[index] is owner:
+                stack.pop(index)
+                break
+        if not stack and hasattr(_BOOTSTRAP_STATE, "fallback_owner_stack"):
+            delattr(_BOOTSTRAP_STATE, "fallback_owner_stack")
+
     def _track_extra_sentinel(candidate: Any) -> None:
         if candidate is None:
             return
@@ -3597,8 +3633,15 @@ def _bootstrap_manager(
         next_depth,
     )
 
-    active = set(getattr(_BOOTSTRAP_STATE, "names", set()))
-    if name in active:
+    owner_guard = previous_sentinel
+    if owner_guard is _SENTINEL_UNSET:
+        owner_guard = name
+    owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", None)
+    if owner_depths is None:
+        owner_depths = {}
+        _BOOTSTRAP_STATE.owner_depths = owner_depths
+    current_owner_depth = owner_depths.get(owner_guard, 0)
+    if current_owner_depth > 0:
         if previous_sentinel is _SENTINEL_UNSET:
             try:
                 delattr(_BOOTSTRAP_STATE, "sentinel_manager")
@@ -3606,19 +3649,30 @@ def _bootstrap_manager(
                 pass
         else:
             _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+        fallback_owner = None
+        if owner_guard is not name:
+            fallback_owner = _resolve_fallback_owner(owner_guard)
+        if fallback_owner is not None:
+            _track_extra_sentinel(fallback_owner)
+            return fallback_owner
         return _disabled_manager("bootstrap already in progress", reentrant=True)
 
-    active.add(name)
-    _BOOTSTRAP_STATE.names = active
+    owner_depths[owner_guard] = current_owner_depth + 1
     _BOOTSTRAP_STATE.depth = next_depth
 
     def _release_guard() -> None:
-        current = set(getattr(_BOOTSTRAP_STATE, "names", set()))
-        current.discard(name)
-        if current:
-            _BOOTSTRAP_STATE.names = current
-        elif hasattr(_BOOTSTRAP_STATE, "names"):
-            delattr(_BOOTSTRAP_STATE, "names")
+        owner_depths_local = getattr(_BOOTSTRAP_STATE, "owner_depths", None)
+        if not owner_depths_local:
+            return
+        depth_value = owner_depths_local.get(owner_guard, 0)
+        if depth_value <= 1:
+            owner_depths_local.pop(owner_guard, None)
+        else:
+            owner_depths_local[owner_guard] = depth_value - 1
+        if owner_depths_local:
+            _BOOTSTRAP_STATE.owner_depths = owner_depths_local
+        elif hasattr(_BOOTSTRAP_STATE, "owner_depths"):
+            delattr(_BOOTSTRAP_STATE, "owner_depths")
 
     bootstrap_owner: _BootstrapOwnerSentinel | None = None
     owner_context: _BootstrapContext | None = None
@@ -3728,6 +3782,7 @@ def _bootstrap_manager(
         _link_bootstrap_owner(sentinel_manager)
         owner_sentinel_restore: Callable[[], None] | None = None
         pipeline_placeholder_token = None
+        owner_placeholder_registered = _push_fallback_owner(placeholder_manager)
         try:
             owner_sentinel_restore = _activate_bootstrap_sentinel(placeholder_manager)
         except Exception:  # pragma: no cover - bootstrap guard best effort
@@ -3964,6 +4019,8 @@ def _bootstrap_manager(
                     logger.debug(
                         "failed to reset existing pipeline manager context", exc_info=True
                     )
+            if owner_placeholder_registered:
+                _pop_fallback_owner(placeholder_manager)
     except RuntimeError:
         raise
     except Exception as exc:  # pragma: no cover - heavy bootstrap fallback

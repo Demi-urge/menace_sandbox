@@ -2363,6 +2363,65 @@ def test_script_fallback_pipeline_bootstrap_promotes_helpers(
     assert all(entry[1] is manager for entry in env.registry.promotions)
 
 
+def test_script_fallback_pipeline_reuses_owner_sentinel_for_duplicate_helpers(
+    script_fallback_pipeline_env: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = script_fallback_pipeline_env
+    env.bootstrap_calls.clear()
+    nested_name = env.helper_names[1]
+
+    original_init = env.communication_cls.__init__
+    original_resolver = cbi._resolve_self_coding_manager_cls
+
+    class _HelperManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.pipeline = SimpleNamespace(manager=self)
+
+    def _double_helper_init(self: object) -> None:  # type: ignore[no-untyped-def]
+        original_init(self)
+        monkeypatch.setattr(cbi, "_resolve_self_coding_manager_cls", lambda: _HelperManager)
+        try:
+            first = cbi._bootstrap_manager(nested_name, env.registry, env.data_bot)
+            second = cbi._bootstrap_manager(nested_name, env.registry, env.data_bot)
+        finally:
+            monkeypatch.setattr(cbi, "_resolve_self_coding_manager_cls", original_resolver)
+        self.reentrant_helpers = (first, second)
+
+    monkeypatch.setattr(env.communication_cls, "__init__", _double_helper_init)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ScriptFallbackOwner",
+            env.registry,
+            env.data_bot,
+        )
+
+    assert manager
+    assert env.bootstrap_calls.count(nested_name) == 2
+    assert not any(
+        "Re-entrant bootstrap detected" in record.message for record in caplog.records
+    )
+
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    comms_bot = getattr(pipeline, "comms_bot", None)
+    assert comms_bot is not None
+    helper = getattr(comms_bot, "helper", None)
+    assert helper is not None
+    reentrant_helpers = getattr(comms_bot, "reentrant_helpers", None)
+    assert isinstance(reentrant_helpers, tuple) and len(reentrant_helpers) == 2
+    for placeholder in reentrant_helpers:
+        assert placeholder
+        assert getattr(placeholder, "bot_registry", None) is env.registry
+
+
 def test_script_fallback_pipeline_shim_handles_managerless_constructor(
     script_fallback_pipeline_env: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
