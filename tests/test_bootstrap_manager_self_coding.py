@@ -2802,6 +2802,67 @@ def test_prebuilt_reentrant_pipeline_stabilises_manager(
     )
 
 
+def test_disabled_manager_seed_blocks_reentrant_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _SeededPipeline:
+        name = "DisabledSeedPipeline"
+
+        def __init__(self) -> None:
+            self.bot_registry = registry
+            self.data_bot = data_bot
+            self.evolution_orchestrator = None
+            self.manager = None
+            self.initial_manager = None
+
+    pipeline = _SeededPipeline()
+    disabled_manager = cbi._DisabledSelfCodingManager(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    token = cbi._seed_existing_pipeline_placeholder(
+        pipeline,
+        disabled_manager,
+        allow_disabled_manager=True,
+    )
+    try:
+        assert pipeline.manager is disabled_manager
+        assert pipeline.initial_manager is disabled_manager
+
+        monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+
+        def _unexpected_bootstrap(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("_bootstrap_manager re-entered for disabled manager seed")
+
+        monkeypatch.setattr(cbi, "_bootstrap_manager", _unexpected_bootstrap)
+
+        registry_out, data_bot_out, orchestrator, module_path, manager = (
+            cbi._resolve_helpers(
+                pipeline,
+                registry,
+                data_bot,
+                None,
+                None,
+            )
+        )
+
+        assert registry_out is registry
+        assert data_bot_out is data_bot
+        assert manager is disabled_manager
+    finally:
+        if token is not None:
+            try:
+                cbi.MANAGER_CONTEXT.reset(token)
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+
+
 def test_prebuilt_pipeline_helpers_receive_real_manager(
     reentrant_prebuilt_pipeline_env: SimpleNamespace,
     caplog: pytest.LogCaptureFixture,
