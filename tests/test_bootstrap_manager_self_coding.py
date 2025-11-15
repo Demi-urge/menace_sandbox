@@ -1272,6 +1272,316 @@ def prebuilt_real_pipeline_env(real_pipeline_env: SimpleNamespace) -> SimpleName
 
 
 @pytest.fixture
+def real_pipeline_communication_bootstrap_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build the real pipeline with lightweight helpers and comm bot."""
+
+    import menace.coding_bot_interface as cbi
+    from entry_pipeline_loader import load_pipeline_class
+    from menace_sandbox.shared import pipeline_base
+    import menace_sandbox.communication_maintenance_bot as comms_mod
+    import menace_sandbox.self_coding_manager as manager_mod
+    import menace_sandbox.self_coding_engine as engine_mod
+    import menace_sandbox.capital_management_bot as capital_mod
+    import menace_sandbox.self_improvement.engine as improv_mod
+    import menace_sandbox.system_evolution_manager as evolution_mgr_mod
+    import menace_sandbox.evolution_orchestrator as orchestrator_mod
+    import menace_sandbox.coding_bot_interface as sandbox_cbi
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("MENACE_MODE", "development")
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    builder = SimpleNamespace(label="real-communication-pipeline")
+    builder.refresh_db_weights = lambda: None  # type: ignore[attr-defined]
+    builder.query = lambda *args, **kwargs: {"snippets": [], "metadata": {}}
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(
+        cbi,
+        "ensure_self_coding_ready",
+        lambda modules=None: (True, ()),
+    )
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: manager_mod.SelfCodingManager,
+    )
+
+    monkeypatch.setattr(
+        pipeline_base, "wrap_bot_methods", lambda bot, *_args, **_kwargs: bot
+    )
+
+    monkeypatch.setattr(comms_mod.registry, "register_bot", lambda *a, **k: None)
+    monkeypatch.setattr(comms_mod.registry, "update_bot", lambda *a, **k: None)
+    monkeypatch.setattr(
+        comms_mod.registry, "promote_self_coding_manager", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        comms_mod.data_bot,
+        "reload_thresholds",
+        lambda _name: SimpleNamespace(
+            roi_drop=0.0, error_threshold=0.0, test_failure_threshold=0.0
+        ),
+    )
+    monkeypatch.setattr(
+        comms_mod.data_bot, "subscribe_degradation", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        comms_mod.data_bot, "check_degradation", lambda *a, **k: None
+    )
+
+    class _StubSelfCodingEngine:
+        def __init__(
+            self,
+            *_args: object,
+            context_builder: object,
+            **_kwargs: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    monkeypatch.setattr(engine_mod, "SelfCodingEngine", _StubSelfCodingEngine)
+
+    class _StubCapitalManagementBot:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.data_bot = kwargs.get("data_bot")
+
+    monkeypatch.setattr(capital_mod, "CapitalManagementBot", _StubCapitalManagementBot)
+
+    class _StubSelfImprovementEngine:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.context_builder = kwargs.get("context_builder")
+
+    monkeypatch.setattr(improv_mod, "SelfImprovementEngine", _StubSelfImprovementEngine)
+
+    class _StubSystemEvolutionManager:
+        def __init__(self, bots: Any) -> None:
+            self.bots = list(bots)
+
+    monkeypatch.setattr(
+        evolution_mgr_mod, "SystemEvolutionManager", _StubSystemEvolutionManager
+    )
+
+    class _StubEvolutionOrchestrator:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.registered: list[str] = []
+
+        def register_bot(self, name: str) -> None:
+            self.registered.append(name)
+
+    monkeypatch.setattr(
+        orchestrator_mod, "EvolutionOrchestrator", _StubEvolutionOrchestrator
+    )
+
+    def _should_clear_manager(candidate: object | None) -> bool:
+        if candidate is None:
+            return False
+        for api in (sandbox_cbi, cbi):
+            try:
+                if api._is_bootstrap_placeholder(candidate):
+                    return True
+            except Exception:
+                continue
+        disabled_types: tuple[type, ...] = tuple(
+            cls
+            for api in (sandbox_cbi, cbi)
+            for cls in (getattr(api, "_DisabledSelfCodingManager", None),)
+            if isinstance(cls, type)
+        )
+        if disabled_types:
+            try:
+                if isinstance(candidate, disabled_types):
+                    return True
+            except Exception:
+                return False
+        manager_cls = getattr(candidate, "__class__", None)
+        manager_cls_name = getattr(manager_cls, "__name__", "")
+        return manager_cls_name == "_DisabledSelfCodingManager"
+
+    def _manager_property(attr_name: str) -> property:
+        storage_name = f"_{attr_name}_value"
+
+        def _getter(self: object) -> object | None:
+            return getattr(self, storage_name, None)
+
+        def _setter(self: object, value: object | None) -> None:
+            cleaned = None if _should_clear_manager(value) else value
+            object.__setattr__(self, storage_name, cleaned)
+
+        return property(_getter, _setter)
+
+    def _lightweight_comms_init(
+        self,
+        *args: object,
+        context_builder: object,
+        manager: object | None = None,
+        **_kwargs: object,
+    ) -> None:
+        self.context_builder = context_builder
+        self.bot_name = getattr(self, "name", "CommunicationMaintenanceBot")
+        effective_manager = None if _should_clear_manager(manager) else manager
+        self.manager = effective_manager
+        self.initial_manager = effective_manager
+        self.helper = SimpleNamespace(
+            bot_name=f"{self.bot_name}-helper",
+            manager=effective_manager,
+        )
+
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "__init__",
+        _lightweight_comms_init,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "manager",
+        _manager_property("manager"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "initial_manager",
+        _manager_property("initial_manager"),
+        raising=False,
+    )
+
+    def _helper(label: str, **extra: object) -> SimpleNamespace:
+        helper = SimpleNamespace(bot_name=label, name=label, manager=None)
+        for key, value in extra.items():
+            setattr(helper, key, value)
+        return helper
+
+    event_bus = SimpleNamespace(subscribe=lambda *a, **k: None)
+    workflow_db = SimpleNamespace(event_bus=event_bus, manager=None)
+    capital_manager = _helper("CapitalManager")
+    predictor = _helper(
+        "Predictor",
+        data_bot=data_bot,
+        capital_bot=capital_manager,
+    )
+    handoff = _helper("Handoff")
+    roi_bot = _helper("ROIBot", handoff=handoff)
+
+    class _Connection(SimpleNamespace):
+        def execute(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+        def close(self) -> None:  # pragma: no cover - noop
+            return None
+
+    db_router = SimpleNamespace(
+        query_all=lambda *_a, **_k: None,
+        get_connection=lambda *_a, **_k: _Connection(),
+        close=lambda: None,
+    )
+
+    pipeline_kwargs = dict(
+        aggregator=_helper("Aggregator"),
+        synthesis_bot=_helper("Synthesis"),
+        validator=_helper("Validator"),
+        planner=_helper("Planner"),
+        hierarchy=_helper("Hierarchy"),
+        predictor=predictor,
+        capital_manager=capital_manager,
+        roi_bot=roi_bot,
+        handoff=handoff,
+        optimiser=_helper("Optimiser"),
+        workflow_db=workflow_db,
+        efficiency_bot=_helper("EfficiencyBot"),
+        performance_bot=_helper("PerformanceBot"),
+        comms_bot=None,
+        monitor_bot=_helper("MonitorBot"),
+        db_bot=_helper("DatabaseBot"),
+        sentiment_bot=_helper("SentimentBot"),
+        query_bot=_helper("QueryBot"),
+        memory_bot=_helper("MemoryBot"),
+        comms_test_bot=_helper("CommsTestBot"),
+        discrepancy_bot=_helper("DiscrepancyBot"),
+        finance_bot=_helper("FinanceBot"),
+        creation_bot=_helper("CreationBot"),
+        meta_ga_bot=_helper("MetaGABot"),
+        offer_bot=_helper("OfferBot"),
+        fallback_bot=_helper("FallbackBot"),
+        optimizer=_helper("OptimizerBot"),
+        ai_counter_bot=_helper("AICounterBot"),
+        allocator=_helper("AllocatorBot"),
+        diagnostic_manager=_helper("DiagnosticManager"),
+        idea_bank=_helper("IdeaBank"),
+        news_db=_helper("NewsDB"),
+        reinvestment_bot=_helper("ReinvestmentBot"),
+        spike_bot=_helper("SpikeBot"),
+        allocation_bot=_helper("AllocationBot"),
+        db_router=db_router,
+        pathway_db=SimpleNamespace(manager=None),
+        learning_engine=_helper("LearningEngine"),
+        action_planner=_helper("ActionPlanner"),
+        event_bus=event_bus,
+    )
+
+    pipeline_cls = load_pipeline_class()
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        **pipeline_kwargs,
+    )
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline=pipeline,
+        promoter=promoter,
+    )
+
+
+def _assert_real_pipeline_comm_helper_promotion(
+    env: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    import menace.coding_bot_interface as cbi
+    from menace_sandbox.shared import pipeline_base
+    import menace_sandbox.self_coding_manager as manager_mod
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    comms_bot = env.pipeline.comms_bot
+    assert not isinstance(comms_bot, pipeline_base._LazyHelperProxy)
+    initial_helper_manager = getattr(comms_bot, "manager", None)
+    assert initial_helper_manager is None
+    manager = cbi._bootstrap_manager(
+        "RealPipelineCommunicationHelpers",
+        env.registry,
+        env.data_bot,
+        pipeline=env.pipeline,
+        pipeline_manager=env.pipeline.manager,
+        pipeline_promoter=env.promoter,
+    )
+    assert isinstance(manager, manager_mod.SelfCodingManager)
+    assert env.pipeline.manager is manager
+    comms_bot = env.pipeline.comms_bot
+    assert not isinstance(comms_bot, pipeline_base._LazyHelperProxy)
+    assert getattr(comms_bot, "manager", None) is manager
+    helper = getattr(comms_bot, "helper", None)
+    assert helper is not None
+    assert getattr(helper, "manager", None) is manager
+    assert "re-entrant initialisation depth=1" not in caplog.text
+
+
+def test_real_pipeline_bootstrap_manager_promotes_communication_helper(
+    real_pipeline_communication_bootstrap_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _assert_real_pipeline_comm_helper_promotion(
+        real_pipeline_communication_bootstrap_env, caplog
+    )
+
+
+@pytest.fixture
 def fallback_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
