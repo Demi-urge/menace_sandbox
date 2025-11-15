@@ -1856,6 +1856,7 @@ class _DisabledSelfCodingManager:
         "_bootstrap_owner_marker",
         "_self_coding_bootstrap_placeholder",
         "_bootstrap_owner_token",
+        "_bootstrap_runtime_marker",
     )
 
     def __init__(
@@ -1865,6 +1866,7 @@ class _DisabledSelfCodingManager:
         data_bot: Any,
         bootstrap_owner: bool = False,
         bootstrap_placeholder: bool = False,
+        bootstrap_runtime: bool = False,
     ) -> None:
         self.bot_registry = bot_registry
         self.data_bot = data_bot
@@ -1880,11 +1882,23 @@ class _DisabledSelfCodingManager:
         self._bootstrap_owner_marker = bootstrap_owner
         self._self_coding_bootstrap_placeholder = bootstrap_placeholder
         self._bootstrap_owner_token: Any | None = None
+        self._bootstrap_runtime_marker = bootstrap_runtime
 
     def __bool__(self) -> bool:
-        """Return ``True`` only when acting as a bootstrap owner sentinel."""
+        """Return ``True`` whenever acting as a bootstrap guard."""
 
-        return bool(self._bootstrap_owner_marker)
+        return bool(self._bootstrap_owner_marker or self._bootstrap_runtime_marker)
+
+    @property
+    def bootstrap_runtime_active(self) -> bool:
+        """Return ``True`` when the placeholder acts as a runtime shim."""
+
+        return bool(self._bootstrap_runtime_marker)
+
+    def mark_bootstrap_runtime(self) -> None:
+        """Flag this placeholder so helpers treat it as a runtime sentinel."""
+
+        self._bootstrap_runtime_marker = True
 
     def register_patch_cycle(self, *_args: Any, **_kwargs: Any) -> None:
         logger.debug(
@@ -3122,6 +3136,8 @@ def _promote_pipeline_manager(
             return False
         if id(value) in sentinel_ids:
             return True
+        if getattr(value, "bootstrap_runtime_active", False):
+            return True
         return _is_bootstrap_owner(value)
 
     def _invoke_finalizer(target: Any) -> None:
@@ -3477,7 +3493,6 @@ def prepare_pipeline_for_bootstrap(
             shim_manager_placeholder = owner_candidate
         else:
             shim_manager_placeholder = manager_placeholder
-    managed_extra_manager_sentinels: tuple[Any, ...] | None = None
     extra_candidates: list[Any] = []
     if extra_manager_sentinels:
         for candidate in extra_manager_sentinels:
@@ -3489,8 +3504,7 @@ def prepare_pipeline_for_bootstrap(
         and shim_manager_placeholder is not manager_placeholder
     ):
         extra_candidates.append(shim_manager_placeholder)
-    if extra_candidates:
-        managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
+    managed_extra_manager_sentinels: tuple[Any, ...] | None = None
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -3539,7 +3553,18 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
             bootstrap_placeholder=True,
+            bootstrap_runtime=True,
         )
+    runtime_manager_placeholder: Any | None = None
+    if runtime_manager is not None:
+        if getattr(runtime_manager, "bootstrap_runtime_active", False):
+            runtime_manager_placeholder = runtime_manager
+        elif _is_bootstrap_placeholder(runtime_manager):
+            runtime_manager_placeholder = runtime_manager
+    if runtime_manager_placeholder is not None:
+        extra_candidates.append(runtime_manager_placeholder)
+    if extra_candidates:
+        managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
     try:
         context = _push_bootstrap_context(
@@ -3774,6 +3799,7 @@ def prepare_pipeline_for_bootstrap(
             manager_override,
             sentinel_manager,
             shim_manager_placeholder,
+            runtime_manager_placeholder,
         )
     )
     if register_callback:
@@ -4218,11 +4244,22 @@ def _bootstrap_manager(
                     if _is_bootstrap_placeholder(fallback_runtime_manager):
                         fallback_runtime_manager = None
                     if fallback_runtime_manager is None:
-                        fallback_runtime_manager = _DisabledSelfCodingManager(
-                            bot_registry=bot_registry,
-                            data_bot=data_bot,
-                            bootstrap_placeholder=True,
+                        fallback_runtime_manager = placeholder_manager
+                    marker = None
+                    if fallback_runtime_manager is not None:
+                        marker = getattr(
+                            fallback_runtime_manager,
+                            "mark_bootstrap_runtime",
+                            None,
                         )
+                    if callable(marker):
+                        try:
+                            marker()
+                        except Exception:  # pragma: no cover - best effort flagging
+                            logger.debug(
+                                "failed to mark fallback runtime manager as bootstrap placeholder",
+                                exc_info=True,
+                            )
                     helper_override_token = None
                     comm_override_reset: Callable[[], None] | None = None
                     try:
@@ -4968,6 +5005,8 @@ def self_coding_managed(
                     sentinel_in_use = True
                 else:
                     sentinel_in_use = _using_bootstrap_sentinel(manager_local)
+                if getattr(manager_local, "bootstrap_runtime_active", False):
+                    sentinel_in_use = True
                 if _is_bootstrap_owner(manager_local):
                     owner_sentinel_active = bool(
                         getattr(manager_local, "bootstrap_owner_active", False)
