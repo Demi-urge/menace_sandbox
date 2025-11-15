@@ -22,7 +22,7 @@ import sys
 import traceback
 from pathlib import Path
 from textwrap import shorten
-from typing import Iterable
+from typing import Iterable, Iterator, Mapping, Any
 
 
 LOGGER = logging.getLogger(__name__)
@@ -78,6 +78,37 @@ def purge_stale_files() -> None:
 
     for candidate in _iter_cleanup_targets():
         _purge_path(candidate)
+
+
+@contextlib.contextmanager
+def _monitor_disabled_manager_stream() -> Iterator[list[Mapping[str, Any]]]:
+    """Capture ``self_coding.disabled_manager`` telemetry for diagnostics."""
+
+    events: list[Mapping[str, Any]] = []
+    try:  # Deferred import keeps script start-up lightweight.
+        from menace_sandbox import coding_bot_interface as _cbi
+    except Exception:  # pragma: no cover - import guard for exotic layouts
+        yield events
+        return
+
+    original_emit = getattr(_cbi, "_emit_disabled_manager_metric", None)
+    if not callable(original_emit):
+        yield events
+        return
+
+    def _tracking_emit(payload: Mapping[str, Any]) -> None:
+        try:
+            snapshot: Mapping[str, Any] = dict(payload)
+        except Exception:  # pragma: no cover - payload already concrete
+            snapshot = {"payload": payload}
+        events.append(snapshot)
+        original_emit(payload)
+
+    _cbi._emit_disabled_manager_metric = _tracking_emit  # type: ignore[attr-defined]
+    try:
+        yield events
+    finally:
+        _cbi._emit_disabled_manager_metric = original_emit  # type: ignore[attr-defined]
 
 
 def bootstrap_self_coding(bot_name: str) -> None:
@@ -154,19 +185,21 @@ def bootstrap_self_coding(bot_name: str) -> None:
     stdout_buffer = _Tee(sys.stdout)
     stderr_buffer = _Tee(sys.stderr)
     manager = None
-    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
-        stderr_buffer
-    ):
-        manager = internalize_coding_bot(
-            bot_name=bot_name,
-            engine=engine,
-            pipeline=pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            roi_threshold=roi_threshold,
-            error_threshold=error_threshold,
-            test_failure_threshold=test_failure_threshold,
-        )
+    disabled_manager_events: list[Mapping[str, Any]]
+    with _monitor_disabled_manager_stream() as disabled_manager_events:
+        with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
+            stderr_buffer
+        ):
+            manager = internalize_coding_bot(
+                bot_name=bot_name,
+                engine=engine,
+                pipeline=pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                roi_threshold=roi_threshold,
+                error_threshold=error_threshold,
+                test_failure_threshold=test_failure_threshold,
+            )
 
     captured_stdout = stdout_buffer.getvalue().strip()
     captured_stderr = stderr_buffer.getvalue().strip()
@@ -233,6 +266,28 @@ def bootstrap_self_coding(bot_name: str) -> None:
         raise RuntimeError(
             f"{disabled_summary}. Diagnostics: {diagnostic_summary}"
         )
+    sentinel_reused_events = [
+        payload
+        for payload in disabled_manager_events
+        if payload.get("sentinel_reused") or payload.get("reentrant")
+    ]
+    if sentinel_reused_events:
+        summary_bits = [
+            f"owner={payload.get('owner')}, reason={payload.get('reason')}, depth={payload.get('bootstrap_depth')}"
+            for payload in sentinel_reused_events
+        ]
+        summary = "; ".join(summary_bits) if summary_bits else "unknown sentinel reuse"
+        warning = (
+            "self_coding.disabled_manager telemetry reported sentinel reuse during bootstrap; "
+            f"investigate nested _bootstrap_manager invocations ({summary})"
+        )
+        _emit_diagnostics(
+            f"{warning}. Diagnostics: {_summarise_capture()}"
+        )
+        raise RuntimeError(
+            f"{warning}. Diagnostics: {_summarise_capture()}"
+        )
+
     promote_manager(manager)
     LOGGER.info(
         "Promoted bootstrap pipeline manager for %s (%s)",
