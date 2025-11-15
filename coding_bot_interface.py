@@ -1855,6 +1855,7 @@ class _DisabledSelfCodingManager:
         "_last_commit_hash",
         "_bootstrap_owner_marker",
         "_self_coding_bootstrap_placeholder",
+        "_bootstrap_owner_token",
     )
 
     def __init__(
@@ -1878,6 +1879,7 @@ class _DisabledSelfCodingManager:
         self._last_commit_hash = None
         self._bootstrap_owner_marker = bootstrap_owner
         self._self_coding_bootstrap_placeholder = bootstrap_placeholder
+        self._bootstrap_owner_token: Any | None = None
 
     def __bool__(self) -> bool:
         """Return ``True`` only when acting as a bootstrap owner sentinel."""
@@ -3841,6 +3843,16 @@ def _bootstrap_manager(
         _track_extra_sentinel(disabled_manager)
         return disabled_manager
 
+    def _resolve_owner_token(candidate: Any) -> Any | None:
+        if candidate in (None, _SENTINEL_UNSET):
+            return None
+        if isinstance(candidate, str):
+            return candidate
+        try:
+            return getattr(candidate, "_bootstrap_owner_token", None)
+        except Exception:  # pragma: no cover - attribute introspection best effort
+            return None
+
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     sentinel_active = _is_bootstrap_placeholder(
         getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
@@ -3862,6 +3874,10 @@ def _bootstrap_manager(
         bot_registry=bot_registry,
         data_bot=data_bot,
     )
+    try:
+        sentinel_manager._bootstrap_owner_token = name
+    except Exception:  # pragma: no cover - attribute assignment best effort
+        logger.debug("failed to assign bootstrap owner token", exc_info=True)
     previous_sentinel = getattr(_BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET)
     _BOOTSTRAP_STATE.sentinel_manager = sentinel_manager
     fallback_manager_sentinels: list[Any] = []
@@ -3975,6 +3991,8 @@ def _bootstrap_manager(
         owner_depths = {}
         _BOOTSTRAP_STATE.owner_depths = owner_depths
     current_owner_depth = owner_depths.get(owner_guard, 0)
+    guard_token = _resolve_owner_token(owner_guard)
+    guard_matches_owner = guard_token == name and _is_bootstrap_placeholder(owner_guard)
     if current_owner_depth > 0:
         if previous_sentinel is _SENTINEL_UNSET:
             try:
@@ -3983,6 +4001,15 @@ def _bootstrap_manager(
                 pass
         else:
             _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+        if guard_matches_owner:
+            logger.info(
+                "reusing bootstrap sentinel for %s (owner=%s depth=%s)",
+                name,
+                guard_token,
+                current_owner_depth,
+            )
+            _track_extra_sentinel(owner_guard)
+            return owner_guard
         fallback_owner = None
         if owner_guard is not name:
             fallback_owner = _resolve_fallback_owner(owner_guard)
