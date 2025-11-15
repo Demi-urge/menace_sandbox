@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import importlib
 import logging
 import sys
@@ -1973,6 +1974,85 @@ def managerless_pipeline_env(
         helper_names=helper_names,
         pipeline_cls=ManagerlessPipeline,
     )
+
+
+def test_managerless_fallback_helpers_observe_runtime_manager(
+    stub_bootstrap_env: dict[str, ModuleType],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    class _RuntimeManager:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+    runtime_manager = _RuntimeManager("managerless-runtime")
+    caplog.set_level(logging.WARNING)
+    observed: list[tuple[str, object | None]] = []
+    manager_context = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+    monkeypatch.setattr(cbi, "MANAGER_CONTEXT", manager_context, raising=False)
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ManagerlessFallbackNested:
+        name = "ManagerlessFallbackNested"
+
+        def __init__(self) -> None:
+            self.initial_manager = getattr(self, "manager", None)
+            self.context_manager = manager_context.get()
+            observed.append((self.name, self.context_manager))
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class ManagerlessFallbackComms:
+        name = "ManagerlessFallbackComms"
+
+        def __init__(self) -> None:
+            self.initial_manager = getattr(self, "manager", None)
+            self.context_manager = manager_context.get()
+            observed.append((self.name, self.context_manager))
+            self.helper = ManagerlessFallbackNested()
+
+    class ManagerlessFallbackPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = None
+            self.comms_bot = ManagerlessFallbackComms()
+            self._bots = [self.comms_bot, self.comms_bot.helper]
+
+    pipeline, _promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=ManagerlessFallbackPipeline,
+        context_builder=SimpleNamespace(label="managerless-runtime"),
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_runtime_manager=runtime_manager,
+    )
+    assert observed, "expected helper instantiation to record manager state"
+    helper = pipeline.comms_bot
+    nested_helper = helper.helper
+    helper_initial = getattr(helper, "initial_manager", None)
+    helper_context = getattr(helper, "context_manager", None)
+    nested_initial = getattr(nested_helper, "initial_manager", None)
+    nested_context = getattr(nested_helper, "context_manager", None)
+    assert nested_context is runtime_manager
+    assert any(
+        entry_name == nested_helper.name and entry_manager is runtime_manager
+        for entry_name, entry_manager in observed
+    )
+    assert any(
+        entry_name == helper.name and entry_manager is helper_context
+        for entry_name, entry_manager in observed
+    )
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 def test_pipeline_bootstrap_promotes_sentinel(stub_bootstrap_env: dict[str, ModuleType], caplog: pytest.LogCaptureFixture) -> None:
