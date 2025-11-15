@@ -3179,6 +3179,43 @@ def test_prepare_pipeline_managerless_constructor_prevents_reentrant_bootstrap_w
     assert pipeline.comms_bot.helper.manager is real_manager
 
 
+def test_prepare_pipeline_managerless_constructor_promotes_helpers_without_depth_log(
+    managerless_pipeline_env: SimpleNamespace, caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = managerless_pipeline_env
+    caplog.clear()
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=env.pipeline_cls,
+        context_builder=env.builder,
+        bot_registry=env.registry,
+        data_bot=env.data_bot,
+    )
+
+    assert pipeline is not None
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    placeholder_manager = getattr(pipeline, "manager", None)
+    assert placeholder_manager is not None
+    assert pipeline.comms_bot.manager is placeholder_manager
+    assert pipeline.comms_bot.helper.manager is placeholder_manager
+
+    real_manager = SimpleNamespace(
+        bot_registry=env.registry,
+        data_bot=env.data_bot,
+        pipeline=pipeline,
+    )
+    promote(real_manager)
+
+    assert pipeline.manager is real_manager
+    assert pipeline.comms_bot.manager is real_manager
+    assert pipeline.comms_bot.helper.manager is real_manager
+
+
+
 def test_preinstantiated_pipeline_bootstrap_promotes_without_reentrant_warning(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
