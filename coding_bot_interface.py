@@ -3642,18 +3642,30 @@ def prepare_pipeline_for_bootstrap(
                         "failed to release pipeline shim placeholder", exc_info=True
                     )
             shim_release_candidate = None
-        if pipeline is None and manager_rejected:
-            managerless_placeholder = runtime_manager
-            _mark_bootstrap_placeholder(managerless_placeholder)
-            managerless_context: contextlib.AbstractContextManager[Any]
+        if pipeline is None and manager_rejected and managerless_variants:
+            managerless_placeholder = _select_placeholder(
+                shim_manager_placeholder,
+                manager_placeholder,
+                sentinel_manager,
+            )
             if managerless_placeholder is None:
-                managerless_context = contextlib.nullcontext(
-                    _PipelineShimHandle(False, None)
+                managerless_placeholder = runtime_manager
+            if managerless_placeholder is None:
+                managerless_placeholder = _DisabledSelfCodingManager(
+                    bot_registry=bot_registry,
+                    data_bot=data_bot,
+                    bootstrap_placeholder=True,
                 )
-            else:
-                managerless_context = _pipeline_manager_placeholder_shim(
-                    pipeline_cls, managerless_placeholder
-                )
+            _mark_bootstrap_placeholder(managerless_placeholder)
+            logger.debug(
+                "retrying %s bootstrap without manager kwarg using placeholder %s",
+                pipeline_cls,
+                type(managerless_placeholder),
+            )
+            managerless_context: contextlib.AbstractContextManager[Any]
+            managerless_context = _pipeline_manager_placeholder_shim(
+                pipeline_cls, managerless_placeholder
+            )
             with managerless_context as shim_handle:
                 if isinstance(shim_handle, _PipelineShimHandle):
                     shim_release_candidate = shim_handle.release
