@@ -210,7 +210,22 @@ def _is_bootstrap_placeholder(candidate: Any) -> bool:
 
     if candidate is None:
         return False
-    return isinstance(candidate, _BootstrapManagerSentinel) or _is_bootstrap_owner(candidate)
+    if isinstance(candidate, _BootstrapManagerSentinel) or _is_bootstrap_owner(candidate):
+        return True
+    return bool(getattr(candidate, "_self_coding_bootstrap_placeholder", False))
+
+
+def _mark_bootstrap_placeholder(candidate: Any) -> None:
+    """Flag *candidate* so placeholder propagation can safely override it."""
+
+    if candidate is None:
+        return
+    try:
+        setattr(candidate, "_self_coding_bootstrap_placeholder", True)
+    except Exception:  # pragma: no cover - best effort marking
+        logger.debug(
+            "failed to mark %s as a bootstrap placeholder", candidate, exc_info=True
+        )
 
 
 def _record_cooperative_init_trace(
@@ -3318,9 +3333,38 @@ def prepare_pipeline_for_bootstrap(
             for keys in manager_variants:
                 if _attempt_constructor(keys):
                     break
-            if pipeline is None and manager_rejected:
+        managerless_placeholder = None
+        if pipeline is None:
+            if callable(shim_release_candidate):
+                try:
+                    shim_release_candidate()
+                except Exception:  # pragma: no cover - cleanup best effort
+                    logger.debug(
+                        "failed to release pipeline shim placeholder", exc_info=True
+                    )
+            shim_release_candidate = None
+        if pipeline is None and manager_rejected:
+            managerless_placeholder = runtime_manager
+            _mark_bootstrap_placeholder(managerless_placeholder)
+            managerless_context: contextlib.AbstractContextManager[Any]
+            if managerless_placeholder is None:
+                managerless_context = contextlib.nullcontext(
+                    _PipelineShimHandle(False, None)
+                )
+            else:
+                managerless_context = _pipeline_manager_placeholder_shim(
+                    pipeline_cls, managerless_placeholder
+                )
+            with managerless_context as shim_handle:
+                if isinstance(shim_handle, _PipelineShimHandle):
+                    shim_release_candidate = shim_handle.release
+                else:
+                    candidate_release = getattr(shim_handle, "release", None)
+                    if callable(candidate_release):
+                        shim_release_candidate = candidate_release
                 for keys in managerless_variants:
                     if _attempt_constructor(keys):
+                        shim_manager_placeholder = managerless_placeholder
                         break
         if pipeline is None:
             if callable(shim_release_candidate):
