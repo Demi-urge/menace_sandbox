@@ -1662,6 +1662,44 @@ else:
         )
 
 _PIPELINE_CONTEXT = contextvars.ContextVar("PIPELINE_CONTEXT", default=None)
+_HELPER_MANAGER_OVERRIDE = contextvars.ContextVar(
+    "SELF_CODING_HELPER_MANAGER_OVERRIDE", default=None
+)
+
+
+def _current_helper_manager_override() -> Any | None:
+    """Return the manager override active for helper bootstrap, if any."""
+
+    try:
+        return _HELPER_MANAGER_OVERRIDE.get()
+    except LookupError:  # pragma: no cover - unset context
+        return None
+
+
+def _push_helper_manager_override(
+    manager: Any | None,
+) -> contextvars.Token[Any] | None:
+    """Expose *manager* via the helper-override context variable."""
+
+    if manager is None:
+        return None
+    try:
+        return _HELPER_MANAGER_OVERRIDE.set(manager)
+    except LookupError:  # pragma: no cover - context var best effort
+        return None
+
+
+def _reset_helper_manager_override(
+    token: contextvars.Token[Any] | None,
+) -> None:
+    """Reset the helper override context to *token* when provided."""
+
+    if token is None:
+        return
+    try:
+        _HELPER_MANAGER_OVERRIDE.reset(token)
+    except LookupError:  # pragma: no cover - defensive reset
+        pass
 
 
 def _emit_disabled_manager_metric(payload: Mapping[str, Any]) -> None:
@@ -4090,23 +4128,34 @@ def _bootstrap_manager(
                             data_bot=data_bot,
                             bootstrap_placeholder=True,
                         )
-                    local_pipeline, promote = prepare_pipeline_for_bootstrap(
-                        pipeline_cls=pipeline_cls,
-                        context_builder=ctx_builder,
-                        bot_registry=bot_registry,
-                        data_bot=data_bot,
-                        bootstrap_manager=placeholder_manager,
-                        bootstrap_runtime_manager=fallback_runtime_manager,
-                        force_manager_kwarg=True,
-                        manager_override=placeholder_manager,
-                        manager_sentinel=placeholder_manager,
-                        extra_manager_sentinels=(
-                            tuple(dict.fromkeys(fallback_manager_sentinels))
-                            if fallback_manager_sentinels
-                            else None
-                        ),
-                        manager=fallback_runtime_manager,
-                    )
+                    helper_override_token = None
+                    try:
+                        if isinstance(
+                            fallback_runtime_manager, _DisabledSelfCodingManager
+                        ):
+                            helper_override_token = _push_helper_manager_override(
+                                fallback_runtime_manager
+                            )
+                        local_pipeline, promote = prepare_pipeline_for_bootstrap(
+                            pipeline_cls=pipeline_cls,
+                            context_builder=ctx_builder,
+                            bot_registry=bot_registry,
+                            data_bot=data_bot,
+                            bootstrap_manager=placeholder_manager,
+                            bootstrap_runtime_manager=fallback_runtime_manager,
+                            force_manager_kwarg=True,
+                            manager_override=placeholder_manager,
+                            manager_sentinel=placeholder_manager,
+                            extra_manager_sentinels=(
+                                tuple(dict.fromkeys(fallback_manager_sentinels))
+                                if fallback_manager_sentinels
+                                else None
+                            ),
+                            manager=fallback_runtime_manager,
+                        )
+                    finally:
+                        if helper_override_token is not None:
+                            _reset_helper_manager_override(helper_override_token)
                 else:
                     placeholder_for_pipeline = sentinel_manager or placeholder_manager
                     pipeline_placeholder_token = _seed_existing_pipeline_placeholder(
@@ -4585,7 +4634,9 @@ def self_coding_managed(
             return candidate
 
         def _bootstrap_helpers(
-            *, pipeline: Any | None = None
+            *,
+            pipeline: Any | None = None,
+            override_manager: Any | None = None,
         ) -> tuple[BotRegistry, DataBot, _BootstrapContextGuard | None]:
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
@@ -4624,6 +4675,9 @@ def self_coding_managed(
             contextual_manager = None
             contextual_placeholder: Any | None = None
             contextual_sentinel: Any | None = None
+            override_for_context = override_manager
+            if override_for_context is None:
+                override_for_context = _current_helper_manager_override()
             pipeline_for_context = _current_pipeline_context()
             if not _looks_like_pipeline_candidate(pipeline_for_context):
                 pipeline_for_context = None
@@ -4667,6 +4721,8 @@ def self_coding_managed(
                 if sentinel_manager is None and contextual_placeholder is not None:
                     sentinel_manager = contextual_placeholder
                 manager_for_context = contextual_manager
+                if manager_for_context is None and override_for_context is not None:
+                    manager_for_context = override_for_context
                 if manager_for_context is None and contextual_sentinel is not None:
                     manager_for_context = contextual_sentinel
                 if manager_for_context is None:
@@ -5290,7 +5346,8 @@ def self_coding_managed(
             try:
                 if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
                     registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
-                        pipeline=pipeline_ref
+                        pipeline=pipeline_ref,
+                        override_manager=_current_helper_manager_override(),
                     )
                 else:
                     registry_obj = resolved_registry
@@ -5317,7 +5374,8 @@ def self_coding_managed(
                         context_guard.release()
                         context_guard = None
                     registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
-                        pipeline=pipeline_ref
+                        pipeline=pipeline_ref,
+                        override_manager=_current_helper_manager_override(),
                     )
                 init_kwargs = dict(kwargs)
                 orchestrator: EvolutionOrchestrator | None = init_kwargs.get(
