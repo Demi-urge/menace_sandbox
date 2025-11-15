@@ -197,6 +197,31 @@ except Exception:  # pragma: no cover - fallback when self-coding engine absent
     @contextlib.contextmanager
     def pipeline_context_scope(_pipeline: object) -> Iterator[None]:  # type: ignore[no-redef]
         yield None
+
+
+_PIPELINE_STATE_UNSET = object()
+
+
+@contextlib.contextmanager
+def _pipeline_bootstrap_scope(pipeline: Any | None) -> Iterator[None]:
+    """Expose *pipeline* to bootstrap helpers via context vars and thread state."""
+
+    with pipeline_context_scope(pipeline):
+        if pipeline is None:
+            yield
+            return
+        previous_pipeline = getattr(_BOOTSTRAP_STATE, "pipeline", _PIPELINE_STATE_UNSET)
+        _BOOTSTRAP_STATE.pipeline = pipeline
+        try:
+            yield
+        finally:
+            if previous_pipeline is _PIPELINE_STATE_UNSET:
+                try:
+                    delattr(_BOOTSTRAP_STATE, "pipeline")
+                except AttributeError:  # pragma: no cover - cleanup best effort
+                    pass
+            else:
+                _BOOTSTRAP_STATE.pipeline = previous_pipeline
 _trace("Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
 _trace("Preparing lazy import for ResourceAllocationOptimizer...")
 
@@ -604,6 +629,110 @@ class ModelAutomationPipeline:
     )
 
     def __init__(
+        self,
+        aggregator: ResearchAggregatorBot | None = None,
+        synthesis_bot: "InformationSynthesisBot" | None = None,
+        validator: "TaskValidationBot" | None = None,
+        planner: BotPlanningBot | None = None,
+        hierarchy: HierarchyAssessmentBot | None = None,
+        predictor: ResourcePredictionBot | None = None,
+        data_bot: DataBotInterface | None = None,
+        capital_manager: "CapitalManagementBot" | None = None,
+        roi_bot: PreExecutionROIBot | None = None,
+        handoff: TaskHandoffBot | None = None,
+        optimiser: "ImplementationOptimiserBot" | None = None,
+        workflow_db: WorkflowDB | None = None,
+        funds: float = 100.0,
+        roi_threshold: float = 0.0,
+        efficiency_bot: EfficiencyBot | None = None,
+        performance_bot: PerformanceAssessmentBot | None = None,
+        comms_bot: "CommunicationMaintenanceBot | None" = None,
+        monitor_bot: OperationalMonitoringBot | None = None,
+        db_bot: CentralDatabaseBot | None = None,
+        sentiment_bot: SentimentBot | None = None,
+        query_bot: QueryBot | None = None,
+        memory_bot: MemoryBot | None = None,
+        comms_test_bot: CommunicationTestingBot | None = None,
+        discrepancy_bot: DiscrepancyDetectionBot | None = None,
+        finance_bot: FinanceRouterBot | None = None,
+        creation_bot: "BotCreationBot" | None = None,
+        meta_ga_bot: MetaGeneticAlgorithmBot | None = None,
+        offer_bot: OfferTestingBot | None = None,
+        fallback_bot: ResearchFallbackBot | None = None,
+        optimizer: ResourceAllocationOptimizer | None = None,
+        ai_counter_bot: AICounterBot | None = None,
+        allocator: "DynamicResourceAllocator" | None = None,
+        diagnostic_manager: DiagnosticManager | None = None,
+        idea_bank: KeywordBank | None = None,
+        news_db: NewsDB | None = None,
+        reinvestment_bot: AutoReinvestmentBot | None = None,
+        spike_bot: RevenueSpikeEvaluatorBot | None = None,
+        allocation_bot: CapitalAllocationBot | None = None,
+        db_router: DBRouter | None = None,
+        pathway_db: PathwayDB | None = None,
+        myelination_threshold: float = 1.0,
+        learning_engine: UnifiedLearningEngine | None = None,
+        action_planner: "ActionPlanner" | None = None,
+        *,
+        event_bus: UnifiedEventBus | None = None,
+        bot_registry: "BotRegistry | None" = None,
+        context_builder: ContextBuilder,
+        validator_factory: Callable[[], "TaskValidationBot"] | None = None,
+        manager: "SelfCodingManager | None" = None,
+    ) -> None:
+        with _pipeline_bootstrap_scope(self):
+            self._initialize_pipeline(
+                aggregator=aggregator,
+                synthesis_bot=synthesis_bot,
+                validator=validator,
+                planner=planner,
+                hierarchy=hierarchy,
+                predictor=predictor,
+                data_bot=data_bot,
+                capital_manager=capital_manager,
+                roi_bot=roi_bot,
+                handoff=handoff,
+                optimiser=optimiser,
+                workflow_db=workflow_db,
+                funds=funds,
+                roi_threshold=roi_threshold,
+                efficiency_bot=efficiency_bot,
+                performance_bot=performance_bot,
+                comms_bot=comms_bot,
+                monitor_bot=monitor_bot,
+                db_bot=db_bot,
+                sentiment_bot=sentiment_bot,
+                query_bot=query_bot,
+                memory_bot=memory_bot,
+                comms_test_bot=comms_test_bot,
+                discrepancy_bot=discrepancy_bot,
+                finance_bot=finance_bot,
+                creation_bot=creation_bot,
+                meta_ga_bot=meta_ga_bot,
+                offer_bot=offer_bot,
+                fallback_bot=fallback_bot,
+                optimizer=optimizer,
+                ai_counter_bot=ai_counter_bot,
+                allocator=allocator,
+                diagnostic_manager=diagnostic_manager,
+                idea_bank=idea_bank,
+                news_db=news_db,
+                reinvestment_bot=reinvestment_bot,
+                spike_bot=spike_bot,
+                allocation_bot=allocation_bot,
+                db_router=db_router,
+                pathway_db=pathway_db,
+                myelination_threshold=myelination_threshold,
+                learning_engine=learning_engine,
+                action_planner=action_planner,
+                event_bus=event_bus,
+                bot_registry=bot_registry,
+                context_builder=context_builder,
+                validator_factory=validator_factory,
+                manager=manager,
+            )
+
+    def _initialize_pipeline(
         self,
         aggregator: ResearchAggregatorBot | None = None,
         synthesis_bot: "InformationSynthesisBot" | None = None,
@@ -1223,10 +1352,11 @@ class ModelAutomationPipeline:
 
     @manager.setter
     def manager(self, value: "SelfCodingManager | None") -> None:
-        self._manager = value
-        self._should_defer_manager_helpers = self._should_defer_for_manager(value)
-        if not self._should_defer_manager_helpers:
-            self._activate_deferred_helpers()
+        with _pipeline_bootstrap_scope(self):
+            self._manager = value
+            self._should_defer_manager_helpers = self._should_defer_for_manager(value)
+            if not self._should_defer_manager_helpers:
+                self._activate_deferred_helpers()
 
     def finalize_helpers(self, manager: Any | None) -> None:
         effective = self._effective_manager(manager)
@@ -1236,7 +1366,8 @@ class ModelAutomationPipeline:
             try:
                 self.manager = effective
             except Exception:  # pragma: no cover - fallback when setter fails
-                self._manager = effective
+                with _pipeline_bootstrap_scope(self):
+                    self._manager = effective
         self._should_defer_manager_helpers = False
         self._activate_deferred_helpers()
         self._resolve_all_lazy_helpers(force=True)
