@@ -610,6 +610,205 @@ def reentrant_prebuilt_pipeline_env(
 
 
 @pytest.fixture
+def eager_helper_pipeline_env(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> SimpleNamespace:
+    """Pipeline that instantiates a managed helper inside ``__init__``."""
+
+    import menace.coding_bot_interface as cbi
+    import menace.communication_maintenance_bot as comms_mod
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("MENACE_MODE", "development")
+    comms_mod = importlib.reload(comms_mod)
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("recording pipeline fallback")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    class _StubContextBuilder:
+        def query(self, *_args: object, **_kwargs: object) -> str:
+            return ""
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - trivial stub
+            return None
+
+    monkeypatch.setattr(comms_mod, "ContextBuilder", _StubContextBuilder)
+    monkeypatch.setattr(comms_mod, "load_templates", lambda: {})
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "flush_queue",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "fetch_cluster_data",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_ensure_repo",
+        lambda self, repo_path: SimpleNamespace(path=repo_path),
+    )
+    monkeypatch.setattr(
+        comms_mod.CommunicationMaintenanceBot,
+        "_create_scheduler",
+        lambda self, _broker: SimpleNamespace(),
+    )
+
+    class _StubMaintenanceDB:
+        def __init__(self) -> None:
+            self._state: dict[str, object] = {}
+
+        def get_state(self, key: str) -> object | None:
+            return self._state.get(key)
+
+        def set_state(self, key: str, value: object) -> None:
+            self._state[key] = value
+
+    class _StubDBRouter:
+        def query_all(self, _term: str) -> None:  # pragma: no cover - noop
+            return None
+
+        def get_connection(self, _name: str) -> SimpleNamespace:  # pragma: no cover - noop
+            class _Conn(SimpleNamespace):
+                def execute(self, *_args: object, **_kwargs: object) -> None:
+                    return None
+
+                def close(self) -> None:
+                    return None
+
+            return _Conn()
+
+    class _StubCommStore:
+        def cleanup(self) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubEventBus:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    class _StubMemoryMgr:
+        def subscribe(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    helper_init_managers: list[object | None] = []
+    helper_final_managers: list[object] = []
+    helper_instances: list[Any] = []
+
+    original_comm_cls = comms_mod.CommunicationMaintenanceBot
+
+    class RecordingCommunicationMaintenanceBot(original_comm_cls):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            helper_init_managers.append(kwargs.get("manager"))
+            super().__init__(*args, **kwargs)
+            try:
+                self._self_coding_pending_manager = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            helper_instances.append(self)
+
+        def _finalize_self_coding_bootstrap(
+            self,
+            manager: object,
+            *,
+            registry: object | None = None,
+            data_bot: object | None = None,
+        ) -> None:
+            helper_final_managers.append(manager)
+            super()._finalize_self_coding_bootstrap(
+                manager,
+                registry=registry,
+                data_bot=data_bot,
+            )
+            self.manager = manager
+
+    monkeypatch.setattr(
+        comms_mod,
+        "CommunicationMaintenanceBot",
+        RecordingCommunicationMaintenanceBot,
+    )
+
+    builder = _StubContextBuilder()
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    class RecordingPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            comm_store = _StubCommStore()
+            config = comms_mod.MaintenanceBotConfig(
+                comm_log_path=tmp_path / "comm.log",
+                message_queue=tmp_path / "queue.jsonl",
+                error_db_path=tmp_path / "errors.db",
+                log_dir=tmp_path,
+                comm_log_max_size_mb=1.0,
+            )
+            self.comms_bot = RecordingCommunicationMaintenanceBot(
+                db=_StubMaintenanceDB(),
+                error_bot=None,
+                repo_path=tmp_path,
+                broker=None,
+                db_router=_StubDBRouter(),
+                event_bus=_StubEventBus(),
+                memory_mgr=_StubMemoryMgr(),
+                context_builder=context_builder,
+                webhook_urls=[],
+                comm_store=comm_store,
+                config=config,
+                admin_tokens=[],
+                manager=manager,
+            )
+            self._bots = [self.comms_bot]
+            helper = getattr(self.comms_bot, "error_bot", None)
+            if helper is not None:
+                self._bots.append(helper)
+                self.error_helper = helper
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = RecordingPipeline  # type: ignore[attr-defined]
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=RecordingPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    return SimpleNamespace(
+        registry=registry,
+        data_bot=data_bot,
+        builder=builder,
+        pipeline_cls=RecordingPipeline,
+        pipeline=pipeline,
+        promoter=promoter,
+        helper_instances=helper_instances,
+        helper_init_managers=helper_init_managers,
+        helper_final_managers=helper_final_managers,
+    )
+
+
+@pytest.fixture
 def script_fallback_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],
     monkeypatch: pytest.MonkeyPatch,
@@ -1890,6 +2089,80 @@ def test_prebuilt_managerless_pipeline_defers_helpers_until_manager(
     assert pipeline.db_bot is None
     assert pipeline._bots == []
     assert not prebuilt_managerless_pipeline_env.bootstrap_attempts
+
+
+def test_prepared_eager_helper_pipeline_promotes_runtime_manager(
+    eager_helper_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = eager_helper_pipeline_env
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=env.pipeline_cls,
+            context_builder=env.builder,
+            bot_registry=env.registry,
+            data_bot=env.data_bot,
+        )
+
+    helper = env.helper_instances[-1]
+    assert helper is pipeline.comms_bot
+    assert env.helper_init_managers
+    runtime_manager = env.helper_init_managers[-1]
+    assert isinstance(runtime_manager, cbi._DisabledSelfCodingManager)
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert "re-entrant initialisation depth" not in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "PreparedEagerHelperOwner",
+            env.registry,
+            env.data_bot,
+            pipeline=pipeline,
+            pipeline_manager=pipeline.manager,
+            pipeline_promoter=promoter,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert pipeline.manager is manager
+    assert env.helper_final_managers and env.helper_final_managers[-1] is manager
+    assert pipeline.comms_bot.manager is manager
+    assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_fallback_eager_helper_pipeline_promotes_runtime_manager(
+    eager_helper_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    env = eager_helper_pipeline_env
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "FallbackEagerHelperOwner",
+            env.registry,
+            env.data_bot,
+        )
+
+    assert manager
+    assert not isinstance(manager, cbi._DisabledSelfCodingManager)
+    assert env.helper_instances
+    helper = env.helper_instances[-1]
+    pipeline = getattr(manager, "pipeline", None)
+    assert pipeline is not None
+    assert helper is pipeline.comms_bot
+    assert pipeline.manager is manager
+    assert env.helper_final_managers and env.helper_final_managers[-1] is manager
+    assert helper.manager is manager
+    assert env.helper_init_managers
+    runtime_manager = env.helper_init_managers[-1]
+    assert isinstance(runtime_manager, cbi._DisabledSelfCodingManager)
+    assert "re-entrant initialisation depth" not in caplog.text
 
 
 def test_prebuilt_reentrant_pipeline_stabilises_manager(
