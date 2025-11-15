@@ -2997,6 +2997,32 @@ def test_script_fallback_pipeline_bootstrap_promotes_helpers(
     assert all(entry[1] is manager for entry in env.registry.promotions)
 
 
+def test_script_fallback_helper_override_prevents_reentrant_bootstrap(
+    script_fallback_pipeline_env: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ensure helper bootstrap reuses the disabled manager override."""
+
+    import menace.coding_bot_interface as cbi
+
+    env = script_fallback_pipeline_env
+    env.bootstrap_calls.clear()
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "ScriptFallbackOwner",
+            env.registry,
+            env.data_bot,
+        )
+
+    assert manager
+    # Helper construction occurs before the pipeline exposes a context.  The
+    # disabled runtime manager seeded by ``_bootstrap_manager`` should satisfy
+    # those helpers so ``_bootstrap_manager`` is never re-entered.
+    assert env.bootstrap_calls == ["ScriptFallbackOwner"]
+
+
 def test_script_fallback_pipeline_reuses_owner_sentinel_for_duplicate_helpers(
     script_fallback_pipeline_env: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

@@ -37,6 +37,52 @@ manager = internalize_coding_bot(
 Each coding bot should invoke this helper during initialisation to ensure
 recursive integrity and automatic patch cycles.
 
+## Constructing pipelines ahead of bootstrap
+
+Maintenance scripts often build a `ModelAutomationPipeline` before
+`internalize_coding_bot` starts the real bootstrap sequence.  Helper bootstrap
+will otherwise observe `manager=None` and attempt to call `_bootstrap_manager`
+again which emits "re-entrant initialisation depth" warnings and returns a
+disabled sentinel.  To avoid that recursion, always pass a manager (either a
+real `SelfCodingManager` or the fallback stub provided by
+`coding_bot_interface.fallback_helper_manager`) into the pipeline constructor
+and keep the helper override active while the pipeline wires up:
+
+```python
+from menace_sandbox.coding_bot_interface import (
+    fallback_helper_manager,
+    prepare_pipeline_for_bootstrap,
+)
+from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+
+builder = create_context_builder()
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
+with fallback_helper_manager(bot_registry=registry, data_bot=data_bot) as manager:
+    pipeline, promote = prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_runtime_manager=manager,
+        manager=manager,
+    )
+
+manager = internalize_coding_bot(
+    "example-bot",
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+)
+promote(manager)
+```
+
+The helper exposes a `_DisabledSelfCodingManager` placeholder so nested helpers
+observe a consistent manager and stay out of `_bootstrap_manager` until the real
+manager has been registered.
+
 ## Pre-commit check
 
 The pre-commit configuration ships with a `check-self-coding-registration`
