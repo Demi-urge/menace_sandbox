@@ -2045,8 +2045,8 @@ def _should_bootstrap_manager(candidate: Any) -> _ManagerBootstrapPlan:
     if candidate_sentinel is None:
         return plan
     owner_active = bool(getattr(candidate_sentinel, "bootstrap_owner_active", False))
-    owner_marker = bool(getattr(candidate_sentinel, "_bootstrap_owner_marker", False))
-    owner_registered = candidate_sentinel is sentinel_manager
+    owner_marker = _is_bootstrap_owner(candidate_sentinel)
+    owner_registered = owner_marker and candidate_sentinel is sentinel_manager
     owner_in_use = owner_active
     if owner_marker and (bootstrap_depth > 0 or owner_registered):
         owner_in_use = True
@@ -2090,15 +2090,22 @@ def _spawn_nested_bootstrap_owner(
 def _using_bootstrap_sentinel(candidate: Any | None = None) -> bool:
     """Return ``True`` when the current bootstrap flow relies on a sentinel."""
 
-    if _is_bootstrap_placeholder(candidate):
+    def _sentinel_guard_active(value: Any | None) -> bool:
+        if value is None:
+            return False
+        if not _is_bootstrap_owner(value):
+            return False
+        return bool(getattr(value, "bootstrap_owner_active", False))
+
+    if _is_bootstrap_placeholder(candidate) and _sentinel_guard_active(candidate):
         return True
     sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     if sentinel_manager is None:
         return False
-    if candidate is sentinel_manager:
+    if candidate is sentinel_manager and _sentinel_guard_active(candidate):
         return True
     depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    return depth > 0 and _is_bootstrap_placeholder(sentinel_manager)
+    return depth > 0 and _sentinel_guard_active(sentinel_manager)
 
 
 class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
@@ -4324,10 +4331,17 @@ def self_coding_managed(
                 ):
                     contextual_placeholder = contextual_sentinel
             depth_level = getattr(_BOOTSTRAP_STATE, "depth", 0)
+            sentinel_guard_active = False
+            if contextual_sentinel is not None:
+                sentinel_guard_active = bool(
+                    _is_bootstrap_owner(contextual_sentinel)
+                    and getattr(contextual_sentinel, "bootstrap_owner_active", False)
+                )
             if (
                 depth_level > 0
                 and contextual_sentinel is not None
                 and contextual_sentinel is not contextual_manager
+                and sentinel_guard_active
             ):
                 contextual_manager = contextual_sentinel
             try:
@@ -4381,9 +4395,16 @@ def self_coding_managed(
                         if manager_instance is not None
                         else sentinel_manager
                     )
-                strategy = _should_bootstrap_manager(manager_local)
-                manager_local = strategy.manager
-                sentinel_placeholder = strategy.sentinel is not None
+                sentinel_placeholder = False
+
+                def _refresh_bootstrap_strategy(candidate: Any) -> None:
+                    nonlocal manager_local, sentinel_placeholder, strategy
+                    strategy = _should_bootstrap_manager(candidate)
+                    manager_local = strategy.manager
+                    sentinel_placeholder = strategy.sentinel is not None
+
+                strategy: _ManagerBootstrapPlan
+                _refresh_bootstrap_strategy(manager_local)
                 runtime_available = _self_coding_runtime_available()
                 register_deferred_local = register_deferred
                 sentinel_in_use = False
@@ -4399,10 +4420,7 @@ def self_coding_managed(
                         data_bot_obj,
                     )
                     manager_local = nested_owner_placeholder
-                    strategy.manager = nested_owner_placeholder
-                    strategy.sentinel = nested_owner_placeholder
-                    sentinel_placeholder = True
-                    strategy.defer = True
+                    _refresh_bootstrap_strategy(manager_local)
                     sentinel_manager = nested_owner_placeholder
                     nested_owner_previous = getattr(
                         _BOOTSTRAP_STATE, "sentinel_manager", _SENTINEL_UNSET
@@ -4538,6 +4556,7 @@ def self_coding_managed(
                                     data_bot_obj,
                                     pipeline=context_pipeline,
                                 )
+                                _refresh_bootstrap_strategy(manager_local)
                         except RuntimeError as exc:
                             register_as_coding_local = False
                             logger.warning(
