@@ -2834,6 +2834,29 @@ def _reset_manager_context(token: contextvars.Token[Any] | None) -> None:
         logger.debug("manager context reset failed after pipeline shim", exc_info=True)
 
 
+@contextlib.contextmanager
+def _runtime_manager_context(
+    manager: Any,
+) -> Iterator[contextvars.Token[Any] | None]:
+    """Expose *manager* via ``MANAGER_CONTEXT`` for the duration of the block."""
+
+    if manager is None:
+        yield None
+        return
+    token: contextvars.Token[Any] | None
+    try:
+        token = MANAGER_CONTEXT.set(manager)
+    except Exception:  # pragma: no cover - MANAGER_CONTEXT best effort
+        logger.debug(
+            "failed to expose runtime manager during pipeline bootstrap", exc_info=True
+        )
+        token = None
+    try:
+        yield token
+    finally:
+        _reset_manager_context(token)
+
+
 def _restore_bootstrap_depth(depth_missing: bool, previous_depth: int) -> None:
     """Restore bootstrap depth bookkeeping after shim finalises."""
 
@@ -3421,6 +3444,14 @@ def prepare_pipeline_for_bootstrap(
                 pipeline_cls, shim_manager_placeholder
             )
         shim_release_candidate: Callable[[], None] | None = None
+
+        def _runtime_context_manager() -> contextlib.AbstractContextManager[
+            contextvars.Token[Any] | None
+        ]:
+            if runtime_manager is None:
+                return contextlib.nullcontext(None)
+            return _runtime_manager_context(runtime_manager)
+
         with shim_context as shim_handle:
             if isinstance(shim_handle, _PipelineShimHandle):
                 shim_release_candidate = shim_handle.release
@@ -3428,9 +3459,10 @@ def prepare_pipeline_for_bootstrap(
                 candidate_release = getattr(shim_handle, "release", None)
                 if callable(candidate_release):
                     shim_release_candidate = candidate_release
-            for keys in manager_variants:
-                if _attempt_constructor(keys):
-                    break
+            with _runtime_context_manager():
+                for keys in manager_variants:
+                    if _attempt_constructor(keys):
+                        break
         managerless_placeholder = None
         if pipeline is None:
             if callable(shim_release_candidate):
@@ -3460,10 +3492,11 @@ def prepare_pipeline_for_bootstrap(
                     candidate_release = getattr(shim_handle, "release", None)
                     if callable(candidate_release):
                         shim_release_candidate = candidate_release
-                for keys in managerless_variants:
-                    if _attempt_constructor(keys):
-                        shim_manager_placeholder = managerless_placeholder
-                        break
+                with _runtime_context_manager():
+                    for keys in managerless_variants:
+                        if _attempt_constructor(keys):
+                            shim_manager_placeholder = managerless_placeholder
+                            break
         if pipeline is None:
             if callable(shim_release_candidate):
                 try:
