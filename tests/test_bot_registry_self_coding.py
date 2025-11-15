@@ -41,6 +41,10 @@ def _force_reentrant_bootstrap_state(
             bot_registry=SimpleNamespace(),
             data_bot=SimpleNamespace(),
         )
+        try:
+            sentinel._bootstrap_owner_token = owner
+        except Exception:  # pragma: no cover - attribute assignment guard
+            pass
         guard_token = sentinel
         monkeypatch.setattr(
             coding_bot_interface._BOOTSTRAP_STATE,
@@ -1434,7 +1438,7 @@ def test_bootstrap_manager_fallback_promotes_registry_entries(monkeypatch, caplo
 
 
 def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
-    _force_reentrant_bootstrap_state(monkeypatch)
+    _force_reentrant_bootstrap_state(monkeypatch, owner="BusyBot")
 
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
@@ -1467,8 +1471,34 @@ def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
     }
 
 
+def test_bootstrap_manager_reuses_owner_sentinel_without_warning(monkeypatch, caplog):
+    sentinel = _force_reentrant_bootstrap_state(
+        monkeypatch,
+        owner="ExampleBot",
+        reuse_sentinel=True,
+    )
+
+    caplog.set_level(logging.INFO, logger=coding_bot_interface.logger.name)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ExampleBot",
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert manager is sentinel
+    assert any(
+        "reusing bootstrap sentinel" in record.message for record in caplog.records
+    )
+    assert not any(
+        "re-entrant" in record.message.lower() for record in caplog.records
+    )
+
+
 def test_bootstrap_manager_disabled_manager_callback_receives_metadata(monkeypatch):
-    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+    _force_reentrant_bootstrap_state(
+        monkeypatch, owner="BusyBot", reuse_sentinel=True
+    )
 
     received: list[dict[str, Any]] = []
 
@@ -1494,7 +1524,9 @@ def test_bootstrap_manager_disabled_manager_callback_receives_metadata(monkeypat
 
 
 def test_bootstrap_manager_disabled_manager_emits_metric_once(monkeypatch):
-    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+    _force_reentrant_bootstrap_state(
+        monkeypatch, owner="BusyBot", reuse_sentinel=True
+    )
 
     class _MetricContext:
         def __init__(self) -> None:
@@ -1525,7 +1557,9 @@ def test_bootstrap_manager_disabled_manager_emits_metric_once(monkeypatch):
 
 
 def test_bootstrap_manager_disabled_manager_uses_event_bus_when_available(monkeypatch):
-    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+    _force_reentrant_bootstrap_state(
+        monkeypatch, owner="BusyBot", reuse_sentinel=True
+    )
 
     class _EventBus:
         def __init__(self) -> None:
