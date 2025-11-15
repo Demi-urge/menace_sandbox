@@ -3225,6 +3225,7 @@ def prepare_pipeline_for_bootstrap(
     data_bot: Any,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
+    force_manager_kwarg: bool = False,
     manager_override: Any | None = None,
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
@@ -3243,8 +3244,11 @@ def prepare_pipeline_for_bootstrap(
     different context already holds the guard.  ``bootstrap_runtime_manager``
     exposes a temporary concrete manager to nested helpers while the pipeline is
     initialising so attribute lookups never encounter ``None`` even though the
-    sentinel placeholders remain authoritative.  ``manager_override`` allows
-    callers to reuse an existing sentinel instead of creating a new one when
+    sentinel placeholders remain authoritative.  ``force_manager_kwarg`` keeps
+    the ``manager`` keyword argument supplied via ``pipeline_kwargs`` intact so
+    constructors can observe the provided runtime manager even when bootstrap
+    sentinels are in play.  ``manager_override`` allows callers to reuse an
+    existing sentinel instead of creating a new one when
     nested helper bootstrap is already in progress.
     ``manager_sentinel`` forces a specific placeholder to be passed to the
     pipeline constructor even when a different sentinel guards the bootstrap
@@ -3362,6 +3366,9 @@ def prepare_pipeline_for_bootstrap(
     pipeline: Any | None = None
     last_error: Exception | None = None
     runtime_manager = bootstrap_runtime_manager
+    manager_kwarg_forced = bool(force_manager_kwarg and manager_kwarg_value is not None)
+    if manager_kwarg_forced:
+        runtime_manager = manager_kwarg_value
     if _is_bootstrap_placeholder(runtime_manager):
         runtime_manager = None
     if runtime_manager is None:
@@ -3390,11 +3397,16 @@ def prepare_pipeline_for_bootstrap(
         if data_bot is not None:
             init_kwargs.setdefault("data_bot", data_bot)
         current_manager_value = init_kwargs.get("manager")
-        if (
+        manager_kwarg_supplied = "manager" in pipeline_kwargs
+        should_override_manager = (
             "manager" not in init_kwargs
             or current_manager_value is None
-            or _is_bootstrap_placeholder(current_manager_value)
-        ):
+            or (
+                not (manager_kwarg_forced and manager_kwarg_supplied)
+                and _is_bootstrap_placeholder(current_manager_value)
+            )
+        )
+        if should_override_manager:
             init_kwargs["manager"] = runtime_manager
 
         variants: tuple[tuple[str, ...], ...] = (
@@ -3953,6 +3965,7 @@ def _bootstrap_manager(
                         data_bot=data_bot,
                         bootstrap_manager=placeholder_manager,
                         bootstrap_runtime_manager=fallback_runtime_manager,
+                        force_manager_kwarg=True,
                         manager_override=placeholder_manager,
                         manager_sentinel=placeholder_manager,
                         extra_manager_sentinels=(
@@ -3960,6 +3973,7 @@ def _bootstrap_manager(
                             if fallback_manager_sentinels
                             else None
                         ),
+                        manager=fallback_runtime_manager,
                     )
                 else:
                     placeholder_for_pipeline = sentinel_manager or placeholder_manager

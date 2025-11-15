@@ -3628,6 +3628,60 @@ def test_prepare_pipeline_managerless_constructor_prevents_reentrant_bootstrap_w
     assert pipeline.comms_bot.helper.manager is real_manager
 
 
+def test_prepare_pipeline_forced_manager_kwarg_reaches_constructor(
+    stub_bootstrap_env: dict[str, ModuleType], caplog: pytest.LogCaptureFixture
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    builder = SimpleNamespace(label="forced-manager-kwarg")
+    placeholder = cbi._create_bootstrap_manager_sentinel(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    observed: list[object | None] = []
+
+    class ForcedManagerKwargPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self._bots: list[object] = []
+            observed.append(manager)
+
+    fallback_manager = SimpleNamespace(label="forced-manager")
+
+    caplog.clear()
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    pipeline, _promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=ForcedManagerKwargPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_manager=placeholder,
+        bootstrap_runtime_manager=None,
+        force_manager_kwarg=True,
+        manager_override=placeholder,
+        manager_sentinel=placeholder,
+        manager=fallback_manager,
+    )
+
+    assert pipeline is not None
+    assert observed == [fallback_manager]
+    assert "re-entrant initialisation depth" not in caplog.text
+
+
 def test_prepare_pipeline_managerless_constructor_promotes_helpers_without_depth_log(
     managerless_pipeline_env: SimpleNamespace, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -4177,3 +4231,74 @@ def test_bootstrap_manager_handles_falsy_owner_sentinel(
         entry[1].get("manager") is manager
         for entry in fallback_pipeline_env.registry.registered
     )
+
+def test_bootstrap_manager_forwards_fallback_runtime_manager_kwarg(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    original_disabled_cls = cbi._DisabledSelfCodingManager
+
+    class RecordingDisabledManager(original_disabled_cls):
+        __slots__ = ()
+
+        instances: list[object] = []
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            RecordingDisabledManager.instances.append(self)
+
+    RecordingDisabledManager.instances = []
+    monkeypatch.setattr(cbi, "_DisabledSelfCodingManager", RecordingDisabledManager)
+
+    class _FailingManager:
+        def __init__(self, *, bot_registry: object, data_bot: object) -> None:
+            raise TypeError("force fallback pipeline manager kwarg")
+
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_self_coding_manager_cls",
+        lambda: _FailingManager,
+    )
+
+    builder = SimpleNamespace(label="forced-manager-bootstrap")
+    monkeypatch.setattr(cbi, "create_context_builder", lambda: builder)
+
+    observed: list[object | None] = []
+
+    class ForcedManagerPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object | None = None,
+            data_bot: object | None = None,
+            manager: object | None = None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self._bots: list[object] = []
+            observed.append(manager)
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = (  # type: ignore[attr-defined]
+        ForcedManagerPipeline
+    )
+
+    caplog.clear()
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    manager = cbi._bootstrap_manager("ForcedManagerOwner", registry, data_bot)
+
+    assert manager
+    assert observed, "pipeline constructor did not capture the manager kwarg"
+    assert RecordingDisabledManager.instances, "expected fallback manager to be created"
+    fallback_runtime_manager = RecordingDisabledManager.instances[0]
+    assert observed[0] is fallback_runtime_manager
+    assert "re-entrant initialisation depth" not in caplog.text
