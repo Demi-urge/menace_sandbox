@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import contextvars
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +26,43 @@ def disable_unmanaged_scan(monkeypatch):
 
 def _make_registry() -> bot_registry.BotRegistry:
     return bot_registry.BotRegistry(event_bus=None)
+
+
+def _force_reentrant_bootstrap_state(
+    monkeypatch,
+    *,
+    owner: str = "ExampleBot",
+    reuse_sentinel: bool = False,
+):
+    sentinel = None
+    guard_token: object = owner
+    if reuse_sentinel:
+        sentinel = coding_bot_interface._create_bootstrap_manager_sentinel(
+            bot_registry=SimpleNamespace(),
+            data_bot=SimpleNamespace(),
+        )
+        guard_token = sentinel
+        monkeypatch.setattr(
+            coding_bot_interface._BOOTSTRAP_STATE,
+            "sentinel_manager",
+            sentinel,
+            raising=False,
+        )
+    else:
+        monkeypatch.setattr(
+            coding_bot_interface._BOOTSTRAP_STATE,
+            "sentinel_manager",
+            coding_bot_interface._SENTINEL_UNSET,
+            raising=False,
+        )
+    monkeypatch.setattr(coding_bot_interface._BOOTSTRAP_STATE, "depth", 1, raising=False)
+    monkeypatch.setattr(
+        coding_bot_interface._BOOTSTRAP_STATE,
+        "owner_depths",
+        {guard_token: 1},
+        raising=False,
+    )
+    return sentinel
 
 
 def test_internal_self_coding_modules_not_transient():
@@ -1396,7 +1434,7 @@ def test_bootstrap_manager_fallback_promotes_registry_entries(monkeypatch, caplo
 
 
 def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
-    monkeypatch.setattr(coding_bot_interface._BOOTSTRAP_STATE, "depth", 1, raising=False)
+    _force_reentrant_bootstrap_state(monkeypatch)
 
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
@@ -1406,14 +1444,113 @@ def test_bootstrap_manager_logs_reentrant_warning(monkeypatch, caplog):
         data_bot=SimpleNamespace(),
     )
 
-    assert not manager
+    assert isinstance(manager, coding_bot_interface._DisabledSelfCodingManager)
     expected = (
         "SelfCodingManager bootstrap skipped for ExampleBot: "
-        "re-entrant initialisation depth=1. "
+        "bootstrap already in progress. "
         "Re-entrant bootstrap detected; returning disabled manager temporarily"
         "—internalisation will retry after ExampleBot completes."
     )
     assert expected in caplog.text
+    record = next(
+        rec
+        for rec in caplog.records
+        if rec.message.startswith("SelfCodingManager bootstrap skipped for ExampleBot")
+    )
+    assert record.disabled_manager == {
+        "owner": "ExampleBot",
+        "reason": "bootstrap already in progress",
+        "bootstrap_depth": 1,
+        "reentrant": True,
+        "sentinel_reused": False,
+        "message": record.message,
+    }
+
+
+def test_bootstrap_manager_disabled_manager_callback_receives_metadata(monkeypatch):
+    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+
+    received: list[dict[str, Any]] = []
+
+    def _callback(payload: dict[str, Any]) -> None:
+        received.append(payload)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ExampleBot",
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+        disabled_manager_callback=_callback,
+    )
+
+    assert isinstance(manager, coding_bot_interface._BootstrapManagerSentinel)
+    assert len(received) == 1
+    payload = received[0]
+    assert payload["owner"] == "ExampleBot"
+    assert payload["bootstrap_depth"] == 1
+    assert payload["sentinel_reused"] is True
+    assert payload["message"].startswith(
+        "SelfCodingManager bootstrap skipped for ExampleBot"
+    )
+
+
+def test_bootstrap_manager_disabled_manager_emits_metric_once(monkeypatch):
+    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+
+    class _MetricContext:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, Any]]] = []
+
+        def emit_metric(self, name: str, payload: dict[str, Any]) -> None:
+            self.events.append((name, payload))
+
+    ctx_var: contextvars.ContextVar[Any] = contextvars.ContextVar("MANAGER_CONTEXT")
+    token = ctx_var.set(_MetricContext())
+    monkeypatch.setattr(coding_bot_interface, "MANAGER_CONTEXT", ctx_var, raising=False)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ExampleBot",
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert isinstance(manager, coding_bot_interface._BootstrapManagerSentinel)
+    metric_context = ctx_var.get()
+    ctx_var.reset(token)
+    assert len(metric_context.events) == 1
+    event_name, payload = metric_context.events[0]
+    assert event_name == "self_coding.disabled_manager"
+    assert payload["owner"] == "ExampleBot"
+    assert payload["bootstrap_depth"] == 1
+    assert payload["sentinel_reused"] is True
+
+
+def test_bootstrap_manager_disabled_manager_uses_event_bus_when_available(monkeypatch):
+    _force_reentrant_bootstrap_state(monkeypatch, reuse_sentinel=True)
+
+    class _EventBus:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, Any]]] = []
+
+        def publish(self, topic: str, payload: dict[str, Any]) -> None:
+            self.events.append((topic, payload))
+
+    bus = _EventBus()
+    ctx_var = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+    monkeypatch.setattr(coding_bot_interface, "MANAGER_CONTEXT", ctx_var, raising=False)
+    monkeypatch.setattr(coding_bot_interface, "_SHARED_EVENT_BUS", bus, raising=False)
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "ExampleBot",
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert isinstance(manager, coding_bot_interface._BootstrapManagerSentinel)
+    assert len(bus.events) == 1
+    topic, payload = bus.events[0]
+    assert topic == "self_coding.disabled_manager"
+    assert payload["owner"] == "ExampleBot"
+    assert payload["sentinel_reused"] is True
 
 
 def test_transient_import_errors_eventually_disable_self_coding(monkeypatch):
