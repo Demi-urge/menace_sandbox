@@ -3311,6 +3311,182 @@ def test_preinstantiated_pipeline_bootstrap_promotes_without_reentrant_warning(
         assert pipeline_arg is pipeline
 
 
+def test_real_pipeline_helper_bootstrap_reuses_inflight_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import menace.coding_bot_interface as cbi
+    from menace_sandbox.shared import pipeline_base
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    class _ContextBuilder:
+        def refresh_db_weights(self) -> None:
+            return None
+
+    context_builder = _ContextBuilder()
+    monkeypatch.setattr(pipeline_base, "wrap_bot_methods", lambda bot, *_a, **_k: bot)
+    monkeypatch.setattr(cbi, "ensure_self_coding_ready", lambda: (True, ()))
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+
+    class _StubHelper:
+        def __init__(self, *args: object, manager: object | None = None, **_kwargs: object) -> None:
+            self.manager = manager
+            self.initial_manager = manager
+
+    def _stub_pipeline_helpers() -> dict[str, object]:
+        class _LazyAggregator:
+            def __init__(self, loader: Callable[[], object]) -> None:
+                self._loader = loader
+
+            def __call__(self) -> object:
+                return self._loader()
+
+        def _load_research_aggregator(_context_builder: object) -> SimpleNamespace:
+            return SimpleNamespace(name="aggregator")
+
+        def _capital_manager_cls() -> type:
+            return _StubHelper
+
+        def _planning_components() -> tuple[type, type, None]:
+            return _StubHelper, _StubHelper, None
+
+        def _create_synthesis_task(*_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace()
+
+        def _make_research_item(*_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace()
+
+        return {
+            "db_router": SimpleNamespace(memory_mgr=SimpleNamespace(subscribe=lambda *a, **k: None)),
+            "LazyAggregator": _LazyAggregator,
+            "build_default_hierarchy": lambda: SimpleNamespace(name="hierarchy"),
+            "build_default_validator": lambda: SimpleNamespace(name="validator"),
+            "capital_manager_cls": _capital_manager_cls,
+            "create_synthesis_task": _create_synthesis_task,
+            "implementation_optimiser_cls": lambda: _StubHelper,
+            "load_research_aggregator": _load_research_aggregator,
+            "make_research_item": _make_research_item,
+            "planning_components": _planning_components,
+        }
+
+    monkeypatch.setattr(pipeline_base, "_pipeline_helpers", _stub_pipeline_helpers)
+
+    class _StubRoiBot(_StubHelper):
+        pass
+
+    monkeypatch.setattr(
+        pipeline_base,
+        "_pre_execution_components",
+        lambda: (_StubRoiBot, SimpleNamespace, SimpleNamespace),
+    )
+
+    recorded_pipelines: list[tuple[str, object | None]] = []
+
+    def _recording_bootstrap_manager(
+        name: str,
+        bot_registry: object,
+        data_bot_obj: object,
+        *,
+        pipeline: object | None = None,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        recorded_pipelines.append((name, pipeline))
+        return SimpleNamespace(
+            name=name,
+            bot_registry=bot_registry,
+            data_bot=data_bot_obj,
+            pipeline=pipeline,
+            evolution_orchestrator=None,
+        )
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _recording_bootstrap_manager)
+
+    @cbi.self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class DecoratedComms:
+        name = "DecoratedComms"
+
+        def __init__(self, *, context_builder: object | None = None) -> None:
+            self.context_builder = context_builder
+            self.manager = None
+            self.initial_manager = None
+
+    monkeypatch.setattr(
+        pipeline_base,
+        "get_communication_maintenance_bot_cls",
+        lambda: DecoratedComms,
+    )
+
+    def _component(name: str, **extra: object) -> SimpleNamespace:
+        payload = dict(name=name, bot_name=name, manager=None, initial_manager=None)
+        payload.update(extra)
+        return SimpleNamespace(**payload)
+
+    predictor = _component("predictor", data_bot=None, capital_bot=None)
+    roi_bot = _component("roi_bot", handoff=None)
+    kwargs = {
+        "aggregator": _component("aggregator"),
+        "synthesis_bot": _component("synthesis_bot"),
+        "validator": _component("validator"),
+        "planner": _component("planner"),
+        "hierarchy": _component("hierarchy"),
+        "predictor": predictor,
+        "data_bot": data_bot,
+        "capital_manager": _component("capital_manager"),
+        "roi_bot": roi_bot,
+        "handoff": _component("handoff"),
+        "optimiser": _component("optimiser"),
+        "workflow_db": SimpleNamespace(name="workflow_db"),
+        "efficiency_bot": _component("efficiency_bot"),
+        "performance_bot": _component("performance_bot"),
+        "comms_bot": None,
+        "monitor_bot": _component("monitor_bot"),
+        "db_bot": _component("db_bot"),
+        "sentiment_bot": _component("sentiment_bot"),
+        "query_bot": _component("query_bot"),
+        "memory_bot": _component("memory_bot"),
+        "comms_test_bot": _component("comms_test_bot"),
+        "discrepancy_bot": _component("discrepancy_bot"),
+        "finance_bot": _component("finance_bot"),
+        "creation_bot": _component("creation_bot"),
+        "meta_ga_bot": _component("meta_ga_bot"),
+        "offer_bot": _component("offer_bot"),
+        "fallback_bot": _component("fallback_bot"),
+        "optimizer": _component("optimizer"),
+        "ai_counter_bot": _component("ai_counter_bot"),
+        "allocator": _component("allocator"),
+        "diagnostic_manager": _component("diagnostic_manager"),
+        "idea_bank": _component("idea_bank"),
+        "news_db": _component("news_db"),
+        "reinvestment_bot": _component("reinvestment_bot"),
+        "spike_bot": _component("spike_bot"),
+        "allocation_bot": _component("allocation_bot"),
+        "db_router": SimpleNamespace(),
+        "pathway_db": _component("pathway_db"),
+        "learning_engine": _component("learning_engine"),
+        "action_planner": _component("action_planner"),
+        "event_bus": SimpleNamespace(),
+        "bot_registry": registry,
+        "context_builder": context_builder,
+        "validator_factory": lambda: _component("validator_factory"),
+        "manager": None,
+    }
+
+    pipeline = pipeline_base.ModelAutomationPipeline(**kwargs)
+    helper_instance = None
+    with cbi.pipeline_context_scope(pipeline):
+        helper_instance = DecoratedComms()
+
+    helper_manager = getattr(helper_instance, "manager", None)
+    assert helper_manager
+    assert getattr(helper_manager, "pipeline", None) is pipeline
+
+    helper_calls = [
+        (name, pipe) for name, pipe in recorded_pipelines if name == "DecoratedComms"
+    ]
+    assert helper_calls and helper_calls[0][1] is pipeline
+
+
 def test_bootstrap_manager_handles_truthy_owner_sentinel(
     fallback_pipeline_env: SimpleNamespace,
     caplog: pytest.LogCaptureFixture,

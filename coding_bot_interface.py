@@ -1649,6 +1649,41 @@ else:
             "self_coding_engine.MANAGER_CONTEXT is not available"
         )
 
+_PIPELINE_CONTEXT = contextvars.ContextVar("PIPELINE_CONTEXT", default=None)
+
+
+def _current_pipeline_context() -> Any | None:
+    """Return the pipeline currently exposed via ``pipeline_context_scope``."""
+
+    try:
+        return _PIPELINE_CONTEXT.get()
+    except LookupError:  # pragma: no cover - context var unset
+        return None
+
+
+@contextlib.contextmanager
+def pipeline_context_scope(pipeline: Any | None) -> Iterator[None]:
+    """Temporarily expose *pipeline* to nested helper bootstrap logic."""
+
+    if pipeline is None:
+        yield None
+        return
+    token = None
+    try:
+        token = _PIPELINE_CONTEXT.set(pipeline)
+    except Exception:  # pragma: no cover - context vars best effort
+        token = None
+    try:
+        yield None
+    finally:
+        if token is not None:
+            try:
+                _PIPELINE_CONTEXT.reset(token)
+            except Exception:  # pragma: no cover - context vars best effort
+                logger.debug(
+                    "failed to reset pipeline context", exc_info=True
+                )
+
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from menace_sandbox.bot_registry import BotRegistry
     from menace_sandbox.data_bot import DataBot
@@ -2334,6 +2369,9 @@ def _resolve_bootstrap_pipeline_candidate(pipeline: Any | None) -> Any | None:
 
     if _looks_like_pipeline_candidate(pipeline):
         return pipeline
+    context_candidate = _current_pipeline_context()
+    if _looks_like_pipeline_candidate(context_candidate):
+        return context_candidate
     context = _current_bootstrap_context()
     if context is None:
         return None
@@ -4265,8 +4303,10 @@ def self_coding_managed(
             contextual_manager = None
             contextual_placeholder: Any | None = None
             contextual_sentinel: Any | None = None
-            pipeline_for_context = None
-            if pipeline is not None and _looks_like_pipeline_candidate(pipeline):
+            pipeline_for_context = _current_pipeline_context()
+            if not _looks_like_pipeline_candidate(pipeline_for_context):
+                pipeline_for_context = None
+            if pipeline_for_context is None and pipeline is not None and _looks_like_pipeline_candidate(pipeline):
                 pipeline_for_context = pipeline
             if parent_context is not None:
                 contextual_manager = parent_context.manager
