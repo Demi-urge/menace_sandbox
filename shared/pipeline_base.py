@@ -172,12 +172,21 @@ _trace("Importing ResearchFallbackBot from menace_sandbox.research_fallback_bot.
 from ..research_fallback_bot import ResearchFallbackBot
 from ..coding_bot_interface import MANAGER_CONTEXT, normalise_manager_arg
 try:  # pragma: no cover - defensive import for stripped down tests
-    from ..coding_bot_interface import _BOOTSTRAP_STATE, _is_bootstrap_placeholder
+    from ..coding_bot_interface import (
+        _BOOTSTRAP_STATE,
+        _is_bootstrap_placeholder,
+        _seed_existing_pipeline_placeholder,
+    )
 except Exception:  # pragma: no cover - fallback when self-coding engine absent
     _BOOTSTRAP_STATE = SimpleNamespace()  # type: ignore[assignment]
 
     def _is_bootstrap_placeholder(_candidate: object) -> bool:  # type: ignore[no-redef]
         return False
+
+    def _seed_existing_pipeline_placeholder(  # type: ignore[no-redef]
+        _pipeline: object, _placeholder: object
+    ) -> None:
+        return None
 _trace("Successfully imported ResearchFallbackBot from menace_sandbox.research_fallback_bot")
 _trace("Preparing lazy import for ResourceAllocationOptimizer...")
 
@@ -524,9 +533,9 @@ class _LazyHelperProxy:
             return None
         manager = pipeline._effective_manager()
         if not force:
-            if pipeline._should_defer_manager_helpers and manager is None:
+            if pipeline._should_defer_manager_helpers:
                 return None
-            if pipeline._is_placeholder_manager(manager):
+            if manager is None or pipeline._is_placeholder_manager(manager):
                 return None
         return builder(manager=manager)
 
@@ -665,14 +674,34 @@ class ModelAutomationPipeline:
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
+        initial_manager = normalise_manager_arg(manager, None, fallback=None)
+        self._placeholder_context_token = None
+        placeholder_candidate = (
+            initial_manager if self._is_placeholder_manager(initial_manager) else None
+        )
+        if placeholder_candidate is None:
+            placeholder_candidate = self._bootstrap_manager_candidate()
+        if placeholder_candidate is not None and self._is_placeholder_manager(
+            placeholder_candidate
+        ):
+            try:
+                self._placeholder_context_token = _seed_existing_pipeline_placeholder(
+                    self, placeholder_candidate
+                )
+            except Exception:  # pragma: no cover - placeholder seeding best effort
+                self._placeholder_context_token = None
+            if initial_manager is None:
+                initial_manager = placeholder_candidate
         self._pending_manager_helpers: dict[str, Callable[..., Any]] = {}
         self._lazy_helper_attrs: set[str] = set()
         self._bot_attribute_order: tuple[str, ...] = self._BOT_ATTRIBUTE_ORDER
         self._registered_bot_attrs: set[str] = set()
         self._bots: list[Any] = []
-        self._should_defer_manager_helpers = bot_registry is not None and manager is None
+        self._should_defer_manager_helpers = self._should_defer_for_manager(
+            initial_manager
+        )
         self._manager: "SelfCodingManager | None" = None
-        self.manager = manager
+        self.manager = initial_manager
 
         try:
             self.context_builder.refresh_db_weights()
@@ -986,7 +1015,10 @@ class ModelAutomationPipeline:
             setattr(self, attr_name, helper)
             return helper
         manager = self._effective_manager()
-        if manager is None and self._should_defer_manager_helpers:
+        defer = self._should_defer_manager_helpers or manager is None
+        if not defer and self._is_placeholder_manager(manager):
+            defer = True
+        if defer:
             self._pending_manager_helpers[attr_name] = builder
             setattr(self, attr_name, None)
             return None
@@ -1007,7 +1039,9 @@ class ModelAutomationPipeline:
             setattr(self, attr_name, helper)
             return helper
         manager = self._effective_manager()
-        defer = self._should_defer_manager_helpers or self._is_placeholder_manager(manager)
+        defer = self._should_defer_manager_helpers or manager is None
+        if not defer and self._is_placeholder_manager(manager):
+            defer = True
         if defer:
             self._pending_manager_helpers[attr_name] = builder
             proxy = _LazyHelperProxy(self, attr_name)
@@ -1063,6 +1097,9 @@ class ModelAutomationPipeline:
             return _is_bootstrap_placeholder(manager)
         except Exception:  # pragma: no cover - defensive guard
             return False
+
+    def _should_defer_for_manager(self, manager: Any | None) -> bool:
+        return manager is None or self._is_placeholder_manager(manager)
 
     def _bootstrap_manager_candidate(self) -> Any | None:
         candidate: Any | None = None
@@ -1126,15 +1163,15 @@ class ModelAutomationPipeline:
         if not self._pending_manager_helpers:
             return
         manager = self._effective_manager()
-        if manager is None:
+        if (
+            manager is None
+            or self._should_defer_manager_helpers
+            or self._is_placeholder_manager(manager)
+        ):
             return
         pending = list(self._pending_manager_helpers.items())
         self._pending_manager_helpers.clear()
-        placeholder_active = self._is_placeholder_manager(manager)
         for attr_name, builder in pending:
-            if placeholder_active and attr_name in self._lazy_helper_attrs:
-                self._pending_manager_helpers[attr_name] = builder
-                continue
             helper = builder(manager=manager)
             helper = self._bind_manager(helper)
             self._attach_helper(attr_name, helper, register=True)
@@ -1172,9 +1209,9 @@ class ModelAutomationPipeline:
     @manager.setter
     def manager(self, value: "SelfCodingManager | None") -> None:
         self._manager = value
-        if value is not None:
-            self._should_defer_manager_helpers = False
-        self._activate_deferred_helpers()
+        self._should_defer_manager_helpers = self._should_defer_for_manager(value)
+        if not self._should_defer_manager_helpers:
+            self._activate_deferred_helpers()
 
     def finalize_helpers(self, manager: Any | None) -> None:
         effective = self._effective_manager(manager)

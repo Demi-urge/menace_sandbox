@@ -31,12 +31,21 @@ class DummyRegistry:
 
 
 class DummyDataBot:
+    def __init__(self) -> None:
+        self._degradation_callbacks: list[Callable[[str], None]] = []
+
     def reload_thresholds(self, name: str) -> SimpleNamespace:  # pragma: no cover - simple data holder
         return SimpleNamespace(
             roi_drop=0.0,
             error_threshold=0.0,
             test_failure_threshold=0.0,
         )
+
+    def subscribe_degradation(self, callback: Callable[[str], None]) -> None:  # pragma: no cover - simple stub
+        self._degradation_callbacks.append(callback)
+
+    def check_degradation(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - simple stub
+        return None
 
 
 @pytest.fixture
@@ -2660,6 +2669,438 @@ def test_prebuilt_real_pipeline_argument_promotes_manager(
     assert env.pipeline.comms_bot.helper.manager is manager
     assert all(getattr(helper, "manager", manager) is manager for helper in env.helpers)
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_model_pipeline_defers_helpers_until_manager(monkeypatch, caplog):
+    import logging
+    import importlib.util
+    import sys
+    import types
+    from pathlib import Path
+
+    import import_compat as compat
+
+    def _stub_class(label: str):
+        class _Stub:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.name = label
+                self.bot_name = label
+                self.manager = kwargs.get("manager")
+
+        return _Stub
+
+    repo_root = Path(__file__).resolve().parents[1]
+    sandbox_pkg = types.ModuleType("menace_sandbox")
+    sandbox_pkg.__path__ = [str(repo_root)]
+    shared_pkg = types.ModuleType("menace_sandbox.shared")
+    shared_pkg.__path__ = [str(repo_root / "shared")]
+    sandbox_pkg.shared = shared_pkg
+    monkeypatch.setitem(sys.modules, "menace_sandbox", sandbox_pkg)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.shared", shared_pkg)
+
+    stubbed_modules: dict[str, types.ModuleType] = {}
+
+    def _install_stub_module(short_name: str, entries: dict[str, object]) -> types.ModuleType:
+        full_name = f"menace_sandbox.{short_name}"
+        module = types.ModuleType(full_name)
+        module.__dict__.update(entries)
+        stubbed_modules[short_name] = module
+        monkeypatch.setitem(sys.modules, full_name, module)
+        monkeypatch.setitem(sys.modules, short_name, module)
+        return module
+
+    class _StubManager:
+        def __init__(
+            self,
+            engine: object,
+            pipeline: object,
+            *,
+            bot_name: str,
+            data_bot: object,
+            bot_registry: object,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+            self.evolution_orchestrator = SimpleNamespace()
+
+        def register(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - noop
+            return None
+
+    db_router_stub = SimpleNamespace(
+        memory_mgr=SimpleNamespace(
+            subscribe=lambda *_a, **_k: None, search_by_tag=lambda *_a, **_k: []
+        ),
+        workflow_mgr=SimpleNamespace(exists=lambda *_a, **_k: False),
+    )
+    db_router_stub.get_connection = lambda *_a, **_k: SimpleNamespace(
+        execute=lambda *_a, **_k: None, close=lambda: None
+    )
+
+    def _planning_components_stub():
+        return (_stub_class("Planner"), type("PlanningTask", (), {}), None)
+
+    def _communication_bot_cls():
+        helper_cls = _stub_class("CommunicationMaintenanceHelper")
+
+        class _CommsBot:
+            name = "CommunicationMaintenanceBot"
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.bot_name = self.name
+                self.manager = kwargs.get("manager")
+                self.helper = helper_cls(manager=self.manager)
+
+        return _CommsBot
+
+    module_specs: dict[str, dict[str, object]] = {
+        "model_automation_dependencies": {
+            "DB_ROUTER": db_router_stub,
+            "_LazyAggregator": lambda factory=None: SimpleNamespace(
+                name="LazyAggregator"
+            ),
+            "_build_default_hierarchy": lambda: SimpleNamespace(
+                name="Hierarchy", manager=None
+            ),
+            "_build_default_validator": lambda: SimpleNamespace(
+                name="Validator", manager=None
+            ),
+            "_capital_manager_cls": lambda: _stub_class("CapitalManager"),
+            "_create_synthesis_task": lambda **kwargs: SimpleNamespace(**kwargs),
+            "_implementation_optimiser_cls": lambda: _stub_class(
+                "ImplementationOptimiserBot"
+            ),
+            "_load_research_aggregator": lambda *_a, **_k: SimpleNamespace(
+                name="Aggregator"
+            ),
+            "_make_research_item": lambda **kwargs: SimpleNamespace(**kwargs),
+            "_planning_components": _planning_components_stub,
+        },
+        "resource_prediction_bot": {
+            "ResourcePredictionBot": _stub_class("ResourcePredictionBot"),
+            "ResourceMetrics": type("ResourceMetrics", (), {}),
+        },
+        "data_interfaces": {
+            "DataBotInterface": _stub_class("DataBotInterface"),
+            "RawMetrics": type("RawMetrics", (), {}),
+        },
+        "task_handoff_bot": {
+            "TaskHandoffBot": _stub_class("TaskHandoffBot"),
+            "TaskInfo": type("TaskInfo", (), {}),
+            "TaskPackage": type("TaskPackage", (), {}),
+            "WorkflowDB": _stub_class("WorkflowDB"),
+        },
+        "efficiency_bot": {"EfficiencyBot": _stub_class("EfficiencyBot")},
+        "performance_assessment_bot": {
+            "PerformanceAssessmentBot": _stub_class("PerformanceAssessmentBot")
+        },
+        "operational_monitor_bot": {
+            "OperationalMonitoringBot": _stub_class("OperationalMonitoringBot")
+        },
+        "central_database_bot": {
+            "CentralDatabaseBot": _stub_class("CentralDatabaseBot"),
+            "Proposal": type("Proposal", (), {}),
+        },
+        "sentiment_bot": {"SentimentBot": _stub_class("SentimentBot")},
+        "query_bot": {"QueryBot": _stub_class("QueryBot")},
+        "memory_bot": {"MemoryBot": _stub_class("MemoryBot")},
+        "offer_testing_bot": {"OfferTestingBot": _stub_class("OfferTestingBot")},
+        "research_fallback_bot": {
+            "ResearchFallbackBot": _stub_class("ResearchFallbackBot")
+        },
+        "communication_maintenance_bot": {
+            "CommunicationMaintenanceBot": _communication_bot_cls()
+        },
+        "meta_genetic_algorithm_bot": {
+            "MetaGeneticAlgorithmBot": _stub_class("MetaGeneticAlgorithmBot")
+        },
+        "database_manager": {"update_model": lambda *_a, **_k: None},
+        "ai_counter_bot": {"AICounterBot": _stub_class("AICounterBot")},
+        "idea_search_bot": {"KeywordBank": _stub_class("KeywordBank")},
+        "newsreader_bot": {"NewsDB": _stub_class("NewsDB")},
+        "investment_engine": {
+            "AutoReinvestmentBot": _stub_class("AutoReinvestmentBot")
+        },
+        "revenue_amplifier": {
+            "RevenueSpikeEvaluatorBot": _stub_class("RevenueSpikeEvaluatorBot"),
+            "CapitalAllocationBot": _stub_class("CapitalAllocationBot"),
+            "RevenueEventsDB": _stub_class("RevenueEventsDB"),
+        },
+        "bot_db_utils": {
+            "wrap_bot_methods": lambda bot, db_router, bot_registry, *, event_bus=None: (
+                setattr(bot, "db_router", db_router),
+                setattr(bot, "bot_registry", bot_registry),
+            ),
+        },
+        "db_router": {"DBRouter": type("DBRouter", (), {})},
+        "unified_event_bus": {"UnifiedEventBus": _stub_class("UnifiedEventBus")},
+        "neuroplasticity": {
+            "Outcome": type("Outcome", (), {}),
+            "PathwayDB": _stub_class("PathwayDB"),
+            "PathwayRecord": type("PathwayRecord", (), {}),
+        },
+        "unified_learning_engine": {
+            "UnifiedLearningEngine": _stub_class("UnifiedLearningEngine")
+        },
+        "action_planner": {"ActionPlanner": _stub_class("ActionPlanner")},
+        "hierarchy_assessment_bot": {
+            "HierarchyAssessmentBot": _stub_class("HierarchyAssessmentBot")
+        },
+        "bot_planning_bot": {
+            "BotPlanningBot": _stub_class("BotPlanningBot"),
+            "PlanningTask": type("PlanningTask", (), {}),
+            "BotPlan": type("BotPlan", (), {}),
+        },
+        "bot_registry": {"BotRegistry": DummyRegistry},
+        "bot_creation_bot": {"BotCreationBot": _stub_class("BotCreationBot")},
+        "communication_testing_bot": {
+            "CommunicationTestingBot": _stub_class("CommunicationTestingBot")
+        },
+        "discrepancy_detection_bot": {
+            "DiscrepancyDetectionBot": _stub_class("DiscrepancyDetectionBot")
+        },
+        "finance_router_bot": {"FinanceRouterBot": _stub_class("FinanceRouterBot")},
+        "research_aggregator_bot": {
+            "ResearchAggregatorBot": _stub_class("ResearchAggregatorBot"),
+            "ResearchItem": type("ResearchItem", (), {}),
+        },
+        "information_synthesis_bot": {
+            "InformationSynthesisBot": _stub_class("InformationSynthesisBot")
+        },
+        "synthesis_models": {"SynthesisTask": type("SynthesisTask", (), {})},
+        "implementation_optimiser_bot": {
+            "ImplementationOptimiserBot": _stub_class("ImplementationOptimiserBot")
+        },
+        "resource_allocation_bot": {
+            "ResourceAllocationBot": _stub_class("ResourceAllocationBot"),
+            "AllocationDB": _stub_class("AllocationDB"),
+        },
+        "pre_execution_roi_bot": {
+            "PreExecutionROIBot": _stub_class("PreExecutionROIBot"),
+            "BuildTask": type("BuildTask", (), {}),
+            "ROIResult": type("ROIResult", (), {}),
+        },
+        "task_validation_bot": {
+            "TaskValidationBot": _stub_class("TaskValidationBot")
+        },
+        "code_database": {"CodeDB": type("CodeDB", (), {})},
+        "gpt_memory": {"GPTMemoryManager": type("GPTMemoryManager", (), {})},
+        "self_coding_engine": {
+            "SelfCodingEngine": _stub_class("SelfCodingEngine"),
+        },
+        "context_builder_util": {
+            "create_context_builder": lambda: SimpleNamespace(
+                refresh_db_weights=lambda: None,
+                build=lambda *a, **k: None,
+            ),
+            "ensure_fresh_weights": lambda *_a, **_k: None,
+        },
+        "self_coding_thresholds": {
+            "update_thresholds": lambda *_a, **_k: None,
+            "_load_config": lambda *_a, **_k: {},
+        },
+        "patch_provenance": {
+            "PatchProvenanceService": type(
+                "PatchProvenanceService",
+                (),
+                {"get": lambda *a, **k: {}},
+            )
+        },
+        "self_coding_manager": {"SelfCodingManager": _StubManager},
+    }
+
+    for short_name, entries in module_specs.items():
+        _install_stub_module(short_name, entries)
+
+    pika_stub = types.SimpleNamespace()
+
+    class _DummyChannel:
+        def basic_publish(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def queue_declare(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    class _DummyConnection:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self._channel = _DummyChannel()
+
+        def channel(self) -> _DummyChannel:
+            return self._channel
+
+        def close(self) -> None:
+            return None
+
+    class _DummyParameters:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    pika_stub.BlockingConnection = lambda *a, **k: _DummyConnection()
+    pika_stub.ConnectionParameters = _DummyParameters
+    pika_stub.URLParameters = _DummyParameters
+    pika_stub.BasicProperties = lambda *a, **k: SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "pika", pika_stub)
+
+    sandbox_pkg.import_compat = compat
+    monkeypatch.setitem(sys.modules, "menace_sandbox.import_compat", compat)
+
+    def _bootstrap_stub(name: str, module_file: str | None = None) -> types.ModuleType:
+        module = sys.modules.get(name)
+        if module is None:
+            module = types.ModuleType(name)
+            if module_file is not None:
+                module.__file__ = str(module_file)
+            sys.modules[name] = module
+        return module
+
+    def _load_internal_stub(name: str) -> types.ModuleType:
+        module = stubbed_modules.get(name)
+        if module is not None:
+            return module
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(compat, "bootstrap", _bootstrap_stub)
+    monkeypatch.setattr(compat, "load_internal", _load_internal_stub)
+
+    import menace.coding_bot_interface as cbi
+
+    pipeline_path = repo_root / "shared" / "pipeline_base.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_light_pipeline", pipeline_path
+    )
+    assert spec and spec.loader
+    pipeline_module = importlib.util.module_from_spec(spec)
+    pipeline_module.__package__ = "menace_sandbox.shared"
+    sys.modules[spec.name] = pipeline_module
+    spec.loader.exec_module(pipeline_module)
+    monkeypatch.setitem(sys.modules, spec.name, pipeline_module)
+    stubbed_modules["model_automation_pipeline"] = pipeline_module
+    monkeypatch.setitem(sys.modules, "model_automation_pipeline", pipeline_module)
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.model_automation_pipeline", pipeline_module
+    )
+
+    pipeline_cls = pipeline_module.ModelAutomationPipeline
+    _LazyHelperProxy = pipeline_module._LazyHelperProxy
+
+    try:
+        import menace.bot_registry as legacy_registry  # type: ignore
+    except ImportError:  # pragma: no cover - optional legacy namespace
+        legacy_registry = None
+
+    import menace_sandbox.bot_registry as sandbox_registry
+
+    monkeypatch.setattr(sandbox_registry, "BotRegistry", DummyRegistry)
+    if legacy_registry is not None:
+        monkeypatch.setattr(legacy_registry, "BotRegistry", DummyRegistry, raising=False)
+
+    def _simple_wrap(bot: object, db_router: object, bot_registry: object | None, *, event_bus=None):
+        setattr(bot, "db_router", db_router)
+        if bot_registry is not None:
+            setattr(bot, "bot_registry", bot_registry)
+        data_bot = getattr(bot, "data_bot", None)
+        if data_bot is None:
+            setattr(bot, "data_bot", getattr(db_router, "data_bot", None))
+
+    monkeypatch.setattr(pipeline_module, "wrap_bot_methods", _simple_wrap)
+
+    data_bot = DummyDataBot()
+
+    def _helper(name: str, **extra: object) -> SimpleNamespace:
+        payload = {"name": name, "bot_name": name, "manager": None}
+        payload.update(extra)
+        return SimpleNamespace(**payload)
+
+    context_builder = SimpleNamespace(refresh_db_weights=lambda: None)
+    memory_mgr = SimpleNamespace(
+        subscribe=lambda *_args, **_kwargs: None,
+        search_by_tag=lambda *_args, **_kwargs: [],
+    )
+    workflow_mgr = SimpleNamespace(exists=lambda *_args, **_kwargs: False)
+    db_router = SimpleNamespace(memory_mgr=memory_mgr, workflow_mgr=workflow_mgr)
+    db_router.get_connection = lambda *_args, **_kwargs: SimpleNamespace(
+        execute=lambda *_a, **_k: None,
+        close=lambda: None,
+    )
+    setattr(db_router, "data_bot", data_bot)
+
+    helper_kwargs = {
+        "aggregator": _helper("Aggregator"),
+        "synthesis_bot": _helper("SynthesisBot"),
+        "validator": _helper("Validator"),
+        "planner": _helper("Planner"),
+        "hierarchy": _helper("Hierarchy"),
+        "predictor": _helper("Predictor"),
+        "capital_manager": _helper("CapitalManager"),
+        "roi_bot": _helper("ROIBot"),
+        "handoff": _helper("Handoff"),
+        "optimiser": _helper("Optimiser"),
+        "workflow_db": _helper("WorkflowDB"),
+        "efficiency_bot": _helper("EfficiencyBot"),
+        "performance_bot": _helper("PerformanceBot"),
+        "monitor_bot": _helper("MonitorBot"),
+        "db_bot": _helper("CentralDatabaseBot"),
+        "sentiment_bot": _helper("SentimentBot"),
+        "query_bot": _helper("QueryBot"),
+        "comms_test_bot": _helper("CommsTestBot"),
+        "discrepancy_bot": _helper("DiscrepancyBot"),
+        "finance_bot": _helper("FinanceBot"),
+        "creation_bot": _helper("CreationBot"),
+        "meta_ga_bot": _helper("MetaGABot"),
+        "offer_bot": _helper("OfferBot"),
+        "fallback_bot": _helper("FallbackBot"),
+        "optimizer": _helper("Optimizer"),
+        "ai_counter_bot": _helper("AICounterBot"),
+        "allocator": _helper("Allocator"),
+        "diagnostic_manager": _helper("DiagnosticManager"),
+        "idea_bank": _helper("IdeaBank"),
+        "news_db": _helper("NewsDB"),
+        "reinvestment_bot": _helper("ReinvestmentBot"),
+        "spike_bot": _helper("SpikeBot"),
+        "allocation_bot": _helper("AllocationBot"),
+    }
+    memory_bot = _helper("MemoryBot", search=lambda *_args, **_kwargs: [])
+    helper_kwargs["memory_bot"] = memory_bot
+    helper_kwargs["data_bot"] = data_bot
+
+    pipeline = pipeline_cls(
+        **helper_kwargs,
+        db_router=db_router,
+        context_builder=context_builder,
+        manager=None,
+        bot_registry=None,
+    )
+
+    assert isinstance(pipeline.comms_bot, _LazyHelperProxy)
+    assert "comms_bot" in pipeline._pending_manager_helpers
+
+    monkeypatch.setattr(cbi, "_resolve_self_coding_manager_cls", lambda: _StubManager)
+
+    def _promote_manager(real_manager: object, *, extra_sentinels: object | None = None) -> None:
+        pipeline.finalize_helpers(real_manager)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
+        manager = cbi._bootstrap_manager(
+            "DeferredPipelineOwner",
+            pipeline.bot_registry,
+            data_bot,
+            pipeline=pipeline,
+            pipeline_promoter=_promote_manager,
+        )
+
+    assert manager
+    assert pipeline.manager is manager
+    assert not isinstance(pipeline.comms_bot, _LazyHelperProxy)
+    assert getattr(pipeline.comms_bot, "manager", None) is manager
+    assert getattr(pipeline.comms_bot, "bot_registry", None) is pipeline.bot_registry
+    assert getattr(pipeline.comms_bot, "data_bot", None) is data_bot
+    helper = getattr(pipeline.comms_bot, "helper", None)
+    assert helper is not None
+    assert getattr(helper, "manager", None) is manager
+    assert "re-entrant initialisation" not in caplog.text
 
 
 def test_managerless_pipeline_bootstrap_avoids_reentrant_warning(
