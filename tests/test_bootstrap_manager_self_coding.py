@@ -741,6 +741,43 @@ def double_reentrant_pipeline_env(
     )
 
 
+def test_comm_maintenance_import_honors_bootstrap_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import menace_sandbox.communication_maintenance_bot as comms_mod
+    import menace_sandbox.coding_bot_interface as cbi
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("MENACE_MODE", "development")
+
+    comms_mod = importlib.reload(comms_mod)
+
+    registry = comms_mod.BotRegistry()
+    data_bot = comms_mod.DataBot(start_server=False)
+    disabled_manager = cbi._DisabledSelfCodingManager(  # type: ignore[attr-defined]
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_placeholder=True,
+    )
+    comms_mod.set_bootstrap_manager_for_comm_bot(
+        disabled_manager,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    def _unexpected_bootstrap(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "_bootstrap_manager should not run during communication import"
+        )
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _unexpected_bootstrap)
+
+    try:
+        comms_mod = importlib.reload(comms_mod)
+    finally:
+        comms_mod.set_bootstrap_manager_for_comm_bot(None)
+
+
 @pytest.fixture
 def eager_helper_pipeline_env(
     stub_bootstrap_env: dict[str, ModuleType],

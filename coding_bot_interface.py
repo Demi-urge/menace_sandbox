@@ -124,6 +124,7 @@ except Exception:  # pragma: no cover - flat layout fallback
         _SHARED_EVENT_BUS = None
 
 logger = logging.getLogger(__name__)
+_COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 
 
 @dataclass(eq=False)
@@ -3868,6 +3869,43 @@ def _bootstrap_manager(
                 return candidate
         return None
 
+    def _seed_comm_bot_bootstrap_override(
+        runtime_manager: Any | None,
+    ) -> Callable[[], None] | None:
+        if runtime_manager is None:
+            return None
+        module = sys.modules.get(
+            "menace_sandbox.communication_maintenance_bot"
+        ) or sys.modules.get("communication_maintenance_bot")
+        if module is None:
+            return None
+        setter = getattr(module, "set_bootstrap_manager_for_comm_bot", None)
+        if not callable(setter):
+            return None
+        try:
+            setter(
+                runtime_manager,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+        except Exception:  # pragma: no cover - hook should stay best effort
+            logger.debug(
+                "failed to seed communication maintenance bootstrap override",
+                exc_info=True,
+            )
+            return None
+
+        def _reset() -> None:
+            try:
+                setter(None)
+            except Exception:  # pragma: no cover - hook cleanup best effort
+                logger.debug(
+                    "failed to clear communication maintenance bootstrap override",
+                    exc_info=True,
+                )
+
+        return _reset
+
     def _push_fallback_owner(owner: Any) -> bool:
         if not _is_bootstrap_owner(owner):
             return False
@@ -4147,6 +4185,7 @@ def _bootstrap_manager(
                             bootstrap_placeholder=True,
                         )
                     helper_override_token = None
+                    comm_override_reset: Callable[[], None] | None = None
                     try:
                         if isinstance(
                             fallback_runtime_manager, _DisabledSelfCodingManager
@@ -4154,6 +4193,9 @@ def _bootstrap_manager(
                             helper_override_token = _push_helper_manager_override(
                                 fallback_runtime_manager
                             )
+                        comm_override_reset = _seed_comm_bot_bootstrap_override(
+                            fallback_runtime_manager
+                        )
                         local_pipeline, promote = prepare_pipeline_for_bootstrap(
                             pipeline_cls=pipeline_cls,
                             context_builder=ctx_builder,
@@ -4174,6 +4216,14 @@ def _bootstrap_manager(
                     finally:
                         if helper_override_token is not None:
                             _reset_helper_manager_override(helper_override_token)
+                        if comm_override_reset is not None:
+                            try:
+                                comm_override_reset()
+                            except Exception:
+                                logger.debug(
+                                    "communication maintenance override cleanup failed",
+                                    exc_info=True,
+                                )
                 else:
                     placeholder_for_pipeline = sentinel_manager or placeholder_manager
                     pipeline_placeholder_token = _seed_existing_pipeline_placeholder(

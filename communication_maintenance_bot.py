@@ -6,6 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import normalise_manager_arg, self_coding_managed
+from . import coding_bot_interface as _coding_bot_interface
 # flake8: noqa
 import json
 import logging
@@ -41,6 +42,116 @@ import time
 import sqlite3
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+_DEFAULT_COMM_REGISTRY = registry
+_DEFAULT_COMM_DATA_BOT = data_bot
+
+_COMM_BOT_MANAGER_UNSET = object()
+
+
+class _CommBotBootstrapState:
+    __slots__ = ("registry", "data_bot", "manager")
+
+    def __init__(self) -> None:
+        self.registry = registry
+        self.data_bot = data_bot
+        self.manager = _COMM_BOT_MANAGER_UNSET
+
+
+_COMM_BOT_BOOTSTRAP_STATE = _CommBotBootstrapState()
+_COMM_BOT_MANAGED_CLASSES: list[type] = []
+
+
+def _apply_comm_bootstrap_state_from_interface() -> None:
+    state = getattr(_coding_bot_interface, "_COMM_BOT_BOOTSTRAP_STATE", None)
+    if not isinstance(state, dict):
+        return
+    comm_registry = state.get("registry")
+    comm_data_bot = state.get("data_bot")
+    comm_manager = state.get("manager", _COMM_BOT_MANAGER_UNSET)
+    if comm_registry is not None:
+        _COMM_BOT_BOOTSTRAP_STATE.registry = comm_registry
+    if comm_data_bot is not None:
+        _COMM_BOT_BOOTSTRAP_STATE.data_bot = comm_data_bot
+    if comm_manager is None:
+        _COMM_BOT_BOOTSTRAP_STATE.manager = _COMM_BOT_MANAGER_UNSET
+    elif comm_manager is not _COMM_BOT_MANAGER_UNSET:
+        _COMM_BOT_BOOTSTRAP_STATE.manager = comm_manager
+
+
+_apply_comm_bootstrap_state_from_interface()
+
+
+def _persist_comm_bootstrap_state() -> None:
+    manager = _COMM_BOT_BOOTSTRAP_STATE.manager
+    payload = {
+        "registry": _COMM_BOT_BOOTSTRAP_STATE.registry,
+        "data_bot": _COMM_BOT_BOOTSTRAP_STATE.data_bot,
+        "manager": None if manager is _COMM_BOT_MANAGER_UNSET else manager,
+    }
+    setattr(_coding_bot_interface, "_COMM_BOT_BOOTSTRAP_STATE", payload)
+
+
+def _apply_comm_manager_override(target: type | None = None) -> None:
+    manager = _COMM_BOT_BOOTSTRAP_STATE.manager
+    if target is None:
+        targets = list(_COMM_BOT_MANAGED_CLASSES)
+    else:
+        targets = [target]
+    for cls in targets:
+        if manager is _COMM_BOT_MANAGER_UNSET:
+            if hasattr(cls, "manager"):
+                try:
+                    delattr(cls, "manager")
+                except Exception:
+                    pass
+            continue
+        try:
+            setattr(cls, "manager", manager)
+        except Exception:
+            pass
+
+
+def _track_comm_managed_class(cls: type) -> type:
+    _COMM_BOT_MANAGED_CLASSES.append(cls)
+    _apply_comm_manager_override(cls)
+    return cls
+
+
+def _get_comm_bot_registry() -> BotRegistry:
+    return _COMM_BOT_BOOTSTRAP_STATE.registry
+
+
+def _get_comm_bot_data_bot() -> DataBot:
+    return _COMM_BOT_BOOTSTRAP_STATE.data_bot
+
+
+_get_comm_bot_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+_get_comm_bot_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+
+def set_bootstrap_manager_for_comm_bot(
+    manager: Any | None,
+    *,
+    bot_registry: BotRegistry | None = None,
+    data_bot: DataBot | None = None,
+) -> None:
+    """Expose sentinel overrides for ``CommunicationMaintenanceBot`` helpers."""
+
+    if bot_registry is not None:
+        _COMM_BOT_BOOTSTRAP_STATE.registry = bot_registry
+    elif manager is None and data_bot is None:
+        _COMM_BOT_BOOTSTRAP_STATE.registry = _DEFAULT_COMM_REGISTRY
+    if data_bot is not None:
+        _COMM_BOT_BOOTSTRAP_STATE.data_bot = data_bot
+    elif manager is None and bot_registry is None:
+        _COMM_BOT_BOOTSTRAP_STATE.data_bot = _DEFAULT_COMM_DATA_BOT
+    if manager is None:
+        _COMM_BOT_BOOTSTRAP_STATE.manager = _COMM_BOT_MANAGER_UNSET
+    else:
+        _COMM_BOT_BOOTSTRAP_STATE.manager = manager
+    _persist_comm_bootstrap_state()
+    _apply_comm_manager_override()
+
 
 try:  # optional dependency
     from sqlalchemy import Column, String, Text, Table, MetaData, create_engine
@@ -358,7 +469,11 @@ def _build_stub_error_components() -> tuple[type["ErrorBot"], type["ErrorDB"]]:
 
             return _Dummy()
 
-    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    @_track_comm_managed_class
+    @self_coding_managed(
+        bot_registry=_get_comm_bot_registry,
+        data_bot=_get_comm_bot_data_bot,
+    )
     class _StubErrorBot:
         def __init__(self, db: _StubErrorDB, context_builder: ContextBuilder) -> None:
             if not isinstance(context_builder, ContextBuilder):
@@ -1041,7 +1156,11 @@ def entry_expired(ts: str, threshold: timedelta = timedelta(hours=COMM_LOG_RETEN
     return datetime.utcnow() - dt > threshold
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@_track_comm_managed_class
+@self_coding_managed(
+    bot_registry=_get_comm_bot_registry,
+    data_bot=_get_comm_bot_data_bot,
+)
 class CommunicationMaintenanceBot(AdminBotBase):
     """Manage updates, patches and resource allocation for communication bots."""
 
