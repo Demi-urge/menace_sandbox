@@ -4,6 +4,7 @@ import logging
 import sys
 import types
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -392,7 +393,7 @@ def test_bootstrap_helpers_promotes_manager_with_reentrant_depth(monkeypatch, ca
 
     bootstrap_calls: dict[str, object] = {}
 
-    def _tracking_bootstrap_manager(name, bot_registry, data_bot):
+    def _tracking_bootstrap_manager(name, bot_registry, data_bot, **_kwargs):
         bootstrap_calls["depth_before"] = getattr(cbi._BOOTSTRAP_STATE, "depth", 0)
         manager = SimpleNamespace(
             bot_registry=bot_registry,
@@ -417,4 +418,63 @@ def test_bootstrap_helpers_promotes_manager_with_reentrant_depth(monkeypatch, ca
     assert bootstrap_calls["manager"] is bot.manager
     assert bootstrap_calls["depth_before"] == 1
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_prepare_pipeline_disabled_manager_skips_bootstrap(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    def _unexpected_bootstrap(*_args, **_kwargs):  # pragma: no cover - failure guard
+        raise AssertionError("_bootstrap_manager should not run during pipeline bootstrap")
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _unexpected_bootstrap)
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(cbi, "ensure_self_coding_ready", lambda: (True, ()))
+    monkeypatch.setattr(cbi, "_registry_hot_swap_active", lambda _registry: False)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1, raising=False)
+
+    runtime_manager = cbi._DisabledSelfCodingManager(
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
+
+    nested_state: dict[str, Any] = {}
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class NestedBot:
+        name = "NestedPipelineBot"
+
+        def __init__(self) -> None:
+            nested_state["manager"] = getattr(self, "manager", None)
+
+    class _PipelineProbe:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_kwargs,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self._bots: list[Any] = []
+            NestedBot()
+
+    pipeline, _promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_PipelineProbe,
+        context_builder=SimpleNamespace(),
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_runtime_manager=runtime_manager,
+    )
+
+    assert nested_state["manager"] is runtime_manager
+    assert isinstance(pipeline, _PipelineProbe)
+    assert "re-entrant" not in caplog.text
 
