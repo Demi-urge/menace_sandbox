@@ -2512,6 +2512,8 @@ def _seed_existing_pipeline_placeholder(
 
     if pipeline is None or placeholder is None:
         return None
+    if not _is_bootstrap_placeholder(placeholder):
+        return None
     _seed_placeholder_bootstrap_fields(pipeline, placeholder)
     _assign_bootstrap_manager_placeholder(
         pipeline,
@@ -3490,6 +3492,8 @@ def _bootstrap_manager(
     def _track_extra_sentinel(candidate: Any) -> None:
         if candidate is None:
             return
+        if not _is_bootstrap_placeholder(candidate):
+            return
         if any(existing is candidate for existing in fallback_manager_sentinels):
             return
         fallback_manager_sentinels.append(candidate)
@@ -3681,15 +3685,23 @@ def _bootstrap_manager(
                 local_pipeline = pipeline
                 promote: Callable[[Any], None] | None = pipeline_promoter
                 if local_pipeline is None:
+                    fallback_runtime_manager = pipeline_manager
+                    if _is_bootstrap_placeholder(fallback_runtime_manager):
+                        fallback_runtime_manager = None
+                    if fallback_runtime_manager is None:
+                        fallback_runtime_manager = _DisabledSelfCodingManager(
+                            bot_registry=bot_registry,
+                            data_bot=data_bot,
+                        )
                     local_pipeline, promote = prepare_pipeline_for_bootstrap(
                         pipeline_cls=pipeline_cls,
                         context_builder=ctx_builder,
                         bot_registry=bot_registry,
                         data_bot=data_bot,
                         bootstrap_manager=placeholder_manager,
+                        bootstrap_runtime_manager=fallback_runtime_manager,
                         manager_override=placeholder_manager,
                         manager_sentinel=placeholder_manager,
-                        manager=sentinel_manager,
                         extra_manager_sentinels=(
                             tuple(dict.fromkeys(fallback_manager_sentinels))
                             if fallback_manager_sentinels
@@ -3832,6 +3844,15 @@ def _bootstrap_manager(
                 except Exception:  # pragma: no cover - promotion must stay best-effort
                     logger.debug(
                         "legacy bootstrap failed to promote pipeline helpers", exc_info=True
+                    )
+            if pipeline is not None:
+                try:
+                    promoted_manager = getattr(pipeline, "manager", None)
+                except Exception:
+                    promoted_manager = None
+                if promoted_manager is not manager:
+                    raise AssertionError(
+                        "pipeline manager promotion failed to expose the real manager"
                     )
             mark_ready = getattr(bootstrap_owner, "mark_ready", None)
             if callable(mark_ready):
