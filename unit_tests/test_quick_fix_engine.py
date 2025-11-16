@@ -432,6 +432,17 @@ def test_module_level_validate_patch(qfe, monkeypatch, tmp_path):
     assert flags == ["flagged"]
 
 
+def test_module_level_validate_patch_missing_context(qfe):
+    # When no manager or context builder are provided, the shim should fail
+    # gracefully instead of raising.
+    valid, flags = qfe.quick_fix.validate_patch(
+        "module.py", provenance_token="tok", description="desc"
+    )
+
+    assert not valid
+    assert flags == ["missing_context"]
+
+
 def test_static_analysis_context_reaches_helper(qfe, tmp_path, monkeypatch):
     source = """\
 def process(items):

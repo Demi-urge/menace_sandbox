@@ -1688,12 +1688,20 @@ def validate_patch(
     engine normally receives.
     """
 
+    logger = logging.getLogger("QuickFixEngine")
     flags: list[str]
+    if manager is None and engine is not None:
+        manager = getattr(engine, "manager", None)
+    if context_builder is None:
+        context_builder = getattr(engine, "context_builder", None)
+        if context_builder is None and manager is not None:
+            context_builder = getattr(manager, "context_builder", None)
     if manager is None or context_builder is None:
-        raise ValueError(
-            "manager and context_builder are required for validate_patch; "
-            "invoke QuickFixEngine.validate_patch or provide both explicitly"
+        logger.warning(
+            "validate_patch missing manager/context_builder; returning missing_context",
+            extra={"target_module": module_name or module_path},
         )
+        return False, ["missing_context"]
     engine = engine or getattr(manager, "engine", None)
     module_name = module_name or module_path
     if not module_name:
