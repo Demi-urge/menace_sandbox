@@ -1,6 +1,7 @@
 import sys
 import types
 import contextvars
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -391,6 +392,44 @@ def test_high_risk_aborts_patch(qfe, monkeypatch):
 
     assert res == (None, ["danger"])
     assert patch_logger.flags == ["danger"]
+
+
+def test_module_level_validate_patch(qfe, monkeypatch, tmp_path):
+    calls: list[dict[str, object]] = []
+
+    def fake_generate_patch(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return 1, ["flagged"]
+
+    def fake_subprocess_run(*_a, **_k):
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    class DummyManager:
+        def __init__(self):
+            self.engine = object()
+
+    class DummyBuilder:
+        pass
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text("print('hi')\n")
+
+    monkeypatch.setattr(qfe, "generate_patch", fake_generate_patch)
+    monkeypatch.setattr(qfe, "resolve_path", lambda m: Path(m))
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    valid, flags = qfe.quick_fix.validate_patch(
+        str(module_path),
+        "desc",
+        repo_root=tmp_path,
+        provenance_token="tok",
+        manager=DummyManager(),
+        context_builder=DummyBuilder(),
+    )
+
+    assert calls  # validate the shim routed through generate_patch
+    assert not valid
+    assert flags == ["flagged"]
 
 
 def test_static_analysis_context_reaches_helper(qfe, tmp_path, monkeypatch):

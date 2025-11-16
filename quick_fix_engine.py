@@ -1661,6 +1661,68 @@ def quick_fix(*args: Any, **kwargs: Any) -> int | tuple[int | None, list[str]] |
     return generate_patch(*args, **kwargs)
 
 
+def validate_patch(
+    module_name: str,
+    description: str = "",
+    *,
+    target_region: "TargetRegion | None" = None,
+    repo_root: Path | str | None = None,
+    provenance_token: str,
+    manager: "SelfCodingManager",
+    context_builder: "ContextBuilder",
+    engine: "SelfCodingEngine | None" = None,
+    helper_fn: Callable[..., str] | None = None,
+    patch_logger: "PatchLogger | None" = None,
+    graph: "KnowledgeGraph | None" = None,
+) -> tuple[bool, list[str]]:
+    """Module-level wrapper for :meth:`QuickFixEngine.validate_patch`.
+
+    Some callers still reference ``quick_fix.validate_patch`` assuming the
+    legacy :func:`quick_fix` entry point exposes validation helpers. Adding this
+    wrapper preserves that compatibility by delegating to
+    :func:`generate_patch` while restoring the working tree afterwards.
+
+    Parameters mirror :meth:`QuickFixEngine.validate_patch`; ``manager`` and
+    ``context_builder`` are required to supply the same execution context the
+    engine normally receives.
+    """
+
+    flags: list[str]
+    engine = engine or getattr(manager, "engine", None)
+    try:
+        _pid, flags = generate_patch(
+            module_name,
+            manager,
+            engine=engine,
+            context_builder=context_builder,
+            provenance_token=provenance_token,
+            description=description,
+            target_region=target_region,
+            return_flags=True,
+            helper_fn=helper_fn,
+            patch_logger=patch_logger,
+            graph=graph,
+        )
+    except Exception:
+        logger.exception("quick fix validation failed")
+        flags = ["validation_error"]
+    finally:
+        try:
+            if repo_root is not None:
+                rel = Path(module_name).resolve().relative_to(Path(repo_root).resolve())
+                subprocess.run(
+                    ["git", "checkout", "--", str(rel)],
+                    check=True,
+                    cwd=str(repo_root),
+                )
+            else:
+                path = resolve_path(module_name)
+                subprocess.run(["git", "checkout", "--", str(path)], check=True)
+        except Exception:
+            logger.exception("failed to revert validation patch")
+    return (not bool(flags), flags)
+
+
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 
@@ -2399,4 +2461,13 @@ class QuickFixEngine:
         self.run(bot)
 
 
-__all__ = ["QuickFixEngine", "generate_patch", "QuickFixEngineError", "quick_fix"]
+quick_fix.validate_patch = validate_patch  # type: ignore[attr-defined]
+
+
+__all__ = [
+    "QuickFixEngine",
+    "generate_patch",
+    "QuickFixEngineError",
+    "quick_fix",
+    "validate_patch",
+]
