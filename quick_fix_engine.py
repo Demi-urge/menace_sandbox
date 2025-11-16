@@ -1694,7 +1694,7 @@ def apply_validated_patch(
         if context_builder is None and manager is not None:
             context_builder = getattr(manager, "context_builder", None)
     if manager is None or context_builder is None:
-        logger.warning(
+        logger.debug(
             "apply_validated_patch missing manager/context_builder; returning missing_context",
             extra={"target_module": module_path},
         )
@@ -1801,7 +1801,7 @@ def validate_patch(
         if context_builder is None and manager is not None:
             context_builder = getattr(manager, "context_builder", None)
     if manager is None or context_builder is None:
-        logger.warning(
+        logger.debug(
             "validate_patch missing manager/context_builder; returning missing_context",
             extra={"target_module": module_name or module_path},
         )
