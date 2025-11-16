@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any, NoReturn
 import logging
 
-from .context_builder_util import create_context_builder as _create_context_builder
+if __package__:
+    from .context_builder_util import create_context_builder as _create_context_builder
+else:  # pragma: no cover - fallback for direct module execution
+    from context_builder_util import create_context_builder as _create_context_builder
 
 
 class PromptBuildError(RuntimeError):
