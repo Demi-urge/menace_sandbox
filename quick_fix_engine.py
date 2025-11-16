@@ -1661,6 +1661,97 @@ def quick_fix(*args: Any, **kwargs: Any) -> int | tuple[int | None, list[str]] |
     return generate_patch(*args, **kwargs)
 
 
+def apply_validated_patch(
+    module_path: str | Path,
+    description: str = "",
+    context_meta: Dict[str, Any] | None = None,
+    *,
+    provenance_token: str,
+    manager: "SelfCodingManager | None" = None,
+    context_builder: "ContextBuilder | None" = None,
+    engine: "SelfCodingEngine | None" = None,
+    helper_fn: Callable[..., str] | None = None,
+    patch_logger: "PatchLogger | None" = None,
+    graph: "KnowledgeGraph | None" = None,
+) -> Tuple[bool, int | None, List[str]]:
+    """Module-level wrapper for :meth:`QuickFixEngine.apply_validated_patch`.
+
+    Some legacy callers import :func:`quick_fix` directly and then attempt to
+    call ``apply_validated_patch`` on that function object. Providing this
+    wrapper preserves that compatibility by delegating to
+    :func:`generate_patch` using the same inputs the engine method expects.
+    """
+
+    logger = logging.getLogger("QuickFixEngine")
+    ctx = context_meta or {}
+    if manager is None and engine is not None:
+        manager = getattr(engine, "manager", None)
+    if context_builder is None:
+        context_builder = getattr(engine, "context_builder", None)
+        if context_builder is None and manager is not None:
+            context_builder = getattr(manager, "context_builder", None)
+    if manager is None or context_builder is None:
+        logger.warning(
+            "apply_validated_patch missing manager/context_builder; returning missing_context",
+            extra={"target_module": module_path},
+        )
+        return False, None, ["missing_context"]
+    try:
+        patch_id, flags = generate_patch(
+            str(module_path),
+            manager,
+            engine=getattr(manager, "engine", None),
+            context_builder=context_builder,
+            provenance_token=provenance_token,
+            description=description,
+            context=ctx,
+            return_flags=True,
+            helper_fn=helper_fn,
+            patch_logger=patch_logger,
+            graph=graph,
+        )
+    except Exception:
+        logger.exception("quick fix patch failed")
+        return False, None, ["generation_error"]
+    flags_list = list(flags)
+    if flags_list:
+        try:
+            subprocess.run([
+                "git",
+                "checkout",
+                "--",
+                str(module_path),
+            ], check=True)
+        except Exception:
+            logger.exception("failed to revert invalid patch")
+        event_bus = getattr(manager, "event_bus", None)
+        if event_bus:
+            payload = {
+                "bot": getattr(manager, "bot_name", "quick_fix_engine"),
+                "module": str(module_path),
+                "flags": flags_list,
+            }
+            try:
+                event_bus.publish("self_coding:patch_rejected", payload)
+            except Exception:
+                logger.exception("failed to publish patch_rejected event")
+        data_bot = getattr(manager, "data_bot", None)
+        if data_bot:
+            try:
+                data_bot.record_validation(
+                    getattr(manager, "bot_name", "quick_fix_engine"),
+                    str(module_path),
+                    False,
+                    flags_list,
+                )
+            except Exception:
+                logger.exception("failed to record validation in DataBot")
+        return False, None, flags_list
+    return True, patch_id, []
+
+
+quick_fix.apply_validated_patch = apply_validated_patch  # type: ignore[attr-defined]
+
 def validate_patch(
     module_name: str | None = None,
     description: str = "",
