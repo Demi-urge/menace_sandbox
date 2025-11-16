@@ -1662,9 +1662,10 @@ def quick_fix(*args: Any, **kwargs: Any) -> int | tuple[int | None, list[str]] |
 
 
 def validate_patch(
-    module_name: str,
+    module_name: str | None = None,
     description: str = "",
     *,
+    module_path: str | None = None,
     target_region: "TargetRegion | None" = None,
     repo_root: Path | str | None = None,
     provenance_token: str,
@@ -1689,6 +1690,9 @@ def validate_patch(
 
     flags: list[str]
     engine = engine or getattr(manager, "engine", None)
+    module_name = module_name or module_path
+    if not module_name:
+        raise ValueError("module_name or module_path is required for validation")
     try:
         _pid, flags = generate_patch(
             module_name,
@@ -2405,9 +2409,10 @@ class QuickFixEngine:
     # ------------------------------------------------------------------
     def validate_patch(
         self,
-        module_name: str,
+        module_name: str | None = None,
         description: str = "",
         *,
+        module_path: str | None = None,
         target_region: "TargetRegion | None" = None,
         repo_root: Path | str | None = None,
         provenance_token: str,
@@ -2420,6 +2425,10 @@ class QuickFixEngine:
             Verified token ensuring the request originates from the active
             ``EvolutionOrchestrator``.
         """
+        module_name = module_name or module_path
+        if not module_name:
+            raise ValueError("module_name or module_path is required for validation")
+
         print(f"[QFE] validate_patch called for {module_name}", flush=True)
         flags: List[str]
         try:
