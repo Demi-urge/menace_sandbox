@@ -1,47 +1,120 @@
-from menace_sandbox.context_builder import create_context_builder
-from menace_sandbox.quick_fix_engine import quick_fix
-import pathlib
+"""Convenience wrapper around :mod:`quick_fix_engine` patch validation.
+
+Running this module from the repository root now behaves like a small CLI:
+
+```
+python patch_application.py --module path/to/file.py --description "Fix bug"
+```
+
+The script wires up the shared :func:`context_builder.create_context_builder`
+helper and forwards requests to :func:`quick_fix_engine.validate_patch`. When
+validation succeeds it immediately applies the validated patch, mirroring the
+behaviour used by the self-coding tooling while keeping the entry point small
+and explicit.
+"""
+
+from __future__ import annotations
+
+from argparse import ArgumentParser, Namespace
+from pathlib import Path
+import sys
 from types import SimpleNamespace
+from typing import Iterable, Tuple
 
-repo_root = pathlib.Path(__file__).parent.resolve()
-builder = create_context_builder(repo_root=repo_root)
-provenance = builder.provenance_token
 
-# Provide a lightweight manager stub so ``quick_fix.validate_patch`` receives
-# both the ``SelfCodingManager``-like object and the bound context builder it
-# expects. The real manager is much heavier to construct, but the stub is
-# sufficient for validation and patch application flows that only need a
-# context-aware object.
-manager = SimpleNamespace(context_builder=builder)
+def _add_repo_to_syspath(repo_root: Path) -> None:
+    """Ensure the repository parent is on ``sys.path`` for package imports."""
 
-module_path = str(repo_root / "menace_sandbox/modules/YOUR_MODULE.py")
-description = "Fix: patch logic for XYZ"  # customize this
+    parent = str(repo_root.parent)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
 
-valid, flags = quick_fix.validate_patch(
-    module_path=module_path,
-    description=description,
-    repo_root=repo_root,
-    provenance_token=provenance,
-    manager=manager,
-    context_builder=builder,
-)
 
-if "missing_context" in flags:
-    raise RuntimeError(
-        "Patch validation requires both a SelfCodingManager and ContextBuilder. "
-        "Provide a configured manager (with the builder attached) before running"
+def _parse_args() -> Namespace:
+    parser = ArgumentParser(description="Validate and apply a quick-fix patch")
+    parser.add_argument(
+        "--module",
+        dest="module_path",
+        required=True,
+        help="Target module path (relative to repo root or absolute)",
     )
+    parser.add_argument(
+        "--description",
+        default="",
+        help="Human-friendly description of the change",
+    )
+    return parser.parse_args()
 
-if valid:
-    quick_fix.apply_validated_patch(
-        module_path=module_path,
-        flags=flags,
-        context_meta={"description": description},
+
+def _resolve_module_path(repo_root: Path, raw_path: str) -> Path:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = repo_root / path
+    path = path.resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"module path does not exist: {path}")
+    return path
+
+
+def _validate_and_apply(
+    module_path: Path, description: str, repo_root: Path
+) -> Tuple[bool, Iterable[str]]:
+    """Run validation and apply the patch when safe."""
+
+    from menace_sandbox.context_builder import create_context_builder
+    from menace_sandbox.quick_fix_engine import quick_fix
+
+    builder = create_context_builder(repo_root=repo_root)
+    provenance = getattr(builder, "provenance_token", None)
+    if not provenance:
+        raise RuntimeError("ContextBuilder did not expose a provenance token")
+
+    valid, flags = quick_fix.validate_patch(
+        module_path=str(module_path),
+        description=description,
         repo_root=repo_root,
         provenance_token=provenance,
-        manager=manager,
+        manager=None,
         context_builder=builder,
     )
-    print("✅ Patch successfully applied to", module_path)
-else:
-    print("[!] Patch validation failed. Flags:", flags)
+
+    if "missing_context" in flags:
+        raise RuntimeError(
+            "Patch validation requires both a SelfCodingManager and ContextBuilder."
+            " Run this script from within a configured self-coding sandbox or"
+            " provide a manager via the higher-level orchestration tooling."
+        )
+
+    if valid:
+        quick_fix.apply_validated_patch(
+            module_path=str(module_path),
+            flags=flags,
+            context_meta={"description": description},
+            repo_root=repo_root,
+            provenance_token=provenance,
+            manager=None,
+            context_builder=builder,
+        )
+    return valid, flags
+
+
+def main() -> None:
+    repo_root = Path(__file__).parent.resolve()
+    _add_repo_to_syspath(repo_root)
+    args = _parse_args()
+    module_path = _resolve_module_path(repo_root, args.module_path)
+
+    try:
+        valid, flags = _validate_and_apply(module_path, args.description, repo_root)
+    except Exception as exc:  # pragma: no cover - CLI surface
+        print(f"Patch application failed: {exc}")
+        sys.exit(1)
+
+    if valid:
+        print(f"✅ Patch successfully applied to {module_path}")
+    else:
+        print(f"[!] Patch validation failed. Flags: {list(flags)}")
+
+
+if __name__ == "__main__":
+    main()
