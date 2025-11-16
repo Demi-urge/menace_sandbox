@@ -35,6 +35,7 @@ while attempt <= repair_limit:
         context_meta=context_meta,
         repo_root=str(repo_root),
         provenance_token=provenance,
+        context_builder=builder,
     )
 
     # Scoped test retry
