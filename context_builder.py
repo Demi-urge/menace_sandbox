@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Any, NoReturn
 import logging
+
+from .context_builder_util import create_context_builder as _create_context_builder
 
 
 class PromptBuildError(RuntimeError):
@@ -32,5 +34,17 @@ def handle_failure(
     raise PromptBuildError(message) from exc
 
 
-__all__ = ["PromptBuildError", "handle_failure"]
+def create_context_builder(*args: Any, **kwargs: Any):
+    """Proxy to :func:`context_builder_util.create_context_builder`.
+
+    Historically :mod:`menace_sandbox.context_builder` exposed
+    ``create_context_builder`` directly.  The implementation now lives in
+    :mod:`menace_sandbox.context_builder_util`, so this thin wrapper preserves
+    the public API for callers that still import from the original module.
+    """
+
+    return _create_context_builder(*args, **kwargs)
+
+
+__all__ = ["PromptBuildError", "handle_failure", "create_context_builder"]
 
