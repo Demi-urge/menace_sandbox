@@ -26,6 +26,7 @@ import importlib
 import importlib.util
 import sys
 import symtable
+import warnings
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
@@ -1643,6 +1644,23 @@ def generate_patch(
         return (None, [str(exc)]) if return_flags else None
 
 
+def quick_fix(*args: Any, **kwargs: Any) -> int | tuple[int | None, list[str]] | None:
+    """Backward-compatible wrapper for :func:`generate_patch`.
+
+    The legacy :func:`quick_fix` entry point previously routed directly to
+    :func:`generate_patch`. Keeping this thin shim ensures environments that
+    still import ``quick_fix`` continue to function while encouraging callers
+    to migrate to :func:`generate_patch`.
+    """
+
+    warnings.warn(
+        "`quick_fix` is deprecated; use `generate_patch` instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return generate_patch(*args, **kwargs)
+
+
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 
@@ -2381,4 +2399,4 @@ class QuickFixEngine:
         self.run(bot)
 
 
-__all__ = ["QuickFixEngine", "generate_patch", "QuickFixEngineError"]
+__all__ = ["QuickFixEngine", "generate_patch", "QuickFixEngineError", "quick_fix"]
