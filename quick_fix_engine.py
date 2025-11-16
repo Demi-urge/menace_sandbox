@@ -1667,6 +1667,7 @@ def apply_validated_patch(
     context_meta: Dict[str, Any] | None = None,
     *,
     provenance_token: str,
+    flags: List[str] | None = None,
     manager: "SelfCodingManager | None" = None,
     context_builder: "ContextBuilder | None" = None,
     engine: "SelfCodingEngine | None" = None,
@@ -1684,6 +1685,7 @@ def apply_validated_patch(
 
     logger = logging.getLogger("QuickFixEngine")
     ctx = context_meta or {}
+    _ = flags  # ignored for backward compatibility with older callers
     if manager is None and engine is not None:
         manager = getattr(engine, "manager", None)
     if context_builder is None:
@@ -2433,6 +2435,7 @@ class QuickFixEngine:
         context_meta: Dict[str, Any] | None = None,
         *,
         provenance_token: str,
+        flags: List[str] | None = None,
     ) -> Tuple[bool, int | None, List[str]]:
         """Generate and apply a patch returning its success status, id and flags.
 
@@ -2449,6 +2452,7 @@ class QuickFixEngine:
         """
 
         ctx = context_meta or {}
+        _ = flags  # ignored for backward compatibility with older callers
         try:
             patch_id, flags = generate_patch(
                 str(module_path),
