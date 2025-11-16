@@ -1,0 +1,10 @@
+{
+  "_doc": "Default synergy weights. Adjust values between 0.0 and 10.0.",
+  "roi": 1.0,
+  "efficiency": 1.0,
+  "resilience": 1.0,
+  "antifragility": 1.0,
+  "reliability": 1.0,
+  "maintainability": 1.0,
+  "throughput": 1.0
+}

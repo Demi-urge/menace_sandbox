@@ -1,11 +1,3 @@
-# Default thresholds and per-bot overrides for self-coding workflows.
-#
-# These values are consumed by ``menace_sandbox.self_coding_thresholds``
-# which merges the ``default`` section with any overrides in ``bots``.
-# Fields map directly to ``SelfCodingThresholds`` attributes and optional
-# forecasting configuration.  The ``stack`` section configures retrieval
-# of Stack dataset snippets used during planning.
-
 default:
   roi_drop: -0.1
   error_increase: 1.0
@@ -18,13 +10,13 @@ default:
   auto_recalibrate: true
   model: exponential
   confidence: 0.95
-  model_params: {alpha: 0.3}
+  model_params:
+    alpha: 0.3
   test_command:
-    - pytest
-    - -q
+  - pytest
+  - -q
   workflow_tests:
-    - tests/test_workflow_benchmark.py::test_benchmark_and_training
-
+  - tests/test_workflow_benchmark.py::test_benchmark_and_training
 bots:
   QuickFixEngine:
     roi_drop: -0.15
@@ -33,21 +25,23 @@ bots:
     patch_success_drop: -0.2
     model: arima
     confidence: 0.9
-    model_params: {order: [1, 1, 1]}
+    model_params:
+      order:
+      - 1
+      - 1
+      - 1
     test_command:
-      - pytest
-      - tests/quickfix
-      - -q
+    - pytest
+    - tests/quickfix
+    - -q
     workflow_tests:
-      - tests/workflows/test_quickfix.py::test_happy_path
-
+    - tests/workflows/test_quickfix.py::test_happy_path
   BotDevelopmentBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
     workflow_tests:
-      - scripts/run_botdev_workflow.py
-
+    - scripts/run_botdev_workflow.py
   ImplementationOptimiserBot:
     roi_drop: -0.2
     error_increase: 1.5
@@ -56,10 +50,9 @@ bots:
     model: exponential
     confidence: 0.9
     test_command:
-      - pytest
-      - tests/implementation
-      - -q
-
+    - pytest
+    - tests/implementation
+    - -q
   ResearchAggregatorBot:
     roi_drop: -0.12
     error_increase: 1.2
@@ -67,20 +60,28 @@ bots:
     model: exponential
     confidence: 0.9
     workflow_tests:
-      - tests/workflows/test_research.py::test_end_to_end
-
+    - tests/workflows/test_research.py::test_end_to_end
   AverageMetricBot:
     model: exponential
     confidence: 0.9
-    model_params: {alpha: 0.3}
-
+    model_params:
+      alpha: 0.3
+  InformationSynthesisBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params:
+      alpha: 0.3
 stack:
   enabled: true
   dataset_name: menace-stack
   split: train
   languages:
-    - python
-    - javascript
+  - python
+  - javascript
   max_lines: 400
   chunk_overlap: 20
   top_k: 10
