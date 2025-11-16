@@ -18,7 +18,10 @@ valid, flags = quick_fix.validate_patch(
 )
 
 if "missing_context" in flags:
-    raise RuntimeError("Context builder was missing — patch flow is invalid")
+    raise RuntimeError(
+        "Patch validation requires both a SelfCodingManager and ContextBuilder. "
+        "Provide a configured manager (with the builder attached) before running"
+    )
 
 if valid:
     quick_fix.apply_validated_patch(
