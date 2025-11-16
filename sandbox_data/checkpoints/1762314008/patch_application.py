@@ -16,6 +16,8 @@ import shutil
 
 from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
+from menace_sandbox.context_builder import create_context_builder
+from menace_sandbox.quick_fix_engine import quick_fix
 from menace_sandbox.sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - fallback for flat layout
@@ -140,3 +142,33 @@ def apply_patch(
 
 
 __all__ = ["generate_patch", "apply_patch"]
+
+
+def validate_patch_with_context(
+    module_path: str | Path,
+    description: str,
+    *,
+    repo_root: str | Path,
+) -> tuple[bool, list[str]]:
+    """Validate a patch using a context-aware builder.
+
+    Creating the :class:`~menace_sandbox.context_builder.ContextBuilder` here
+    ensures :func:`quick_fix_engine.validate_patch` receives both a provenance
+    token and a real context builder rather than logging a missing context
+    warning.
+    """
+
+    repo_root_path = Path(repo_root)
+    builder = create_context_builder(repo_root=repo_root_path)
+    provenance = builder.provenance_token
+    valid, flags = quick_fix.validate_patch(
+        module_path=str(module_path),
+        description=description,
+        repo_root=str(repo_root_path),
+        provenance_token=provenance,
+        context_builder=builder,
+    )
+    return valid, flags
+
+
+__all__ = ["generate_patch", "apply_patch", "validate_patch_with_context"]
