@@ -244,6 +244,12 @@ def main(argv: list[str] | None = None) -> None:
         logger.exception("Failed to launch sandbox", extra=log_record(event="failure"))
         sys.exit(1)
     finally:
+        try:
+            shutdown_autonomous_sandbox()
+        except Exception:
+            logger.exception(
+                "sandbox shutdown failed", extra=log_record(event="shutdown-error")
+            )
         set_correlation_id(None)
 
 
