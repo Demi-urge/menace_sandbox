@@ -17,6 +17,9 @@ flags, context_meta = quick_fix.validate_patch(
     context_builder=builder,
 )
 
+if context_meta.get("fallback") == "missing_context":
+    raise RuntimeError("Context builder was missing — patch flow is invalid")
+
 if not flags:
     quick_fix.apply_validated_patch(
         module_path=module_path,
