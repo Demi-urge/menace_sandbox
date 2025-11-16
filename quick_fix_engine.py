@@ -1668,6 +1668,7 @@ def apply_validated_patch(
     *,
     provenance_token: str,
     flags: List[str] | None = None,
+    repo_root: Path | str | None = None,
     manager: "SelfCodingManager | None" = None,
     context_builder: "ContextBuilder | None" = None,
     engine: "SelfCodingEngine | None" = None,
@@ -1718,12 +1719,22 @@ def apply_validated_patch(
     flags_list = list(flags)
     if flags_list:
         try:
-            subprocess.run([
-                "git",
-                "checkout",
-                "--",
-                str(module_path),
-            ], check=True)
+            if repo_root is not None:
+                rel = Path(module_path).resolve().relative_to(
+                    Path(repo_root).resolve()
+                )
+                subprocess.run(
+                    ["git", "checkout", "--", str(rel)],
+                    check=True,
+                    cwd=str(repo_root),
+                )
+            else:
+                subprocess.run([
+                    "git",
+                    "checkout",
+                    "--",
+                    str(module_path),
+                ], check=True)
         except Exception:
             logger.exception("failed to revert invalid patch")
         event_bus = getattr(manager, "event_bus", None)
@@ -2436,6 +2447,7 @@ class QuickFixEngine:
         *,
         provenance_token: str,
         flags: List[str] | None = None,
+        repo_root: Path | str | None = None,
     ) -> Tuple[bool, int | None, List[str]]:
         """Generate and apply a patch returning its success status, id and flags.
 
@@ -2477,12 +2489,22 @@ class QuickFixEngine:
         flags_list = list(flags)
         if flags_list:
             try:
-                subprocess.run([
-                    "git",
-                    "checkout",
-                    "--",
-                    str(module_path),
-                ], check=True)
+                if repo_root is not None:
+                    rel = Path(module_path).resolve().relative_to(
+                        Path(repo_root).resolve()
+                    )
+                    subprocess.run(
+                        ["git", "checkout", "--", str(rel)],
+                        check=True,
+                        cwd=str(repo_root),
+                    )
+                else:
+                    subprocess.run([
+                        "git",
+                        "checkout",
+                        "--",
+                        str(module_path),
+                    ], check=True)
             except Exception:
                 self.logger.exception("failed to revert invalid patch")
             event_bus = getattr(self.manager, "event_bus", None)
