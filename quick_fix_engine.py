@@ -1669,8 +1669,8 @@ def validate_patch(
     target_region: "TargetRegion | None" = None,
     repo_root: Path | str | None = None,
     provenance_token: str,
-    manager: "SelfCodingManager",
-    context_builder: "ContextBuilder",
+    manager: "SelfCodingManager | None" = None,
+    context_builder: "ContextBuilder | None" = None,
     engine: "SelfCodingEngine | None" = None,
     helper_fn: Callable[..., str] | None = None,
     patch_logger: "PatchLogger | None" = None,
@@ -1689,6 +1689,11 @@ def validate_patch(
     """
 
     flags: list[str]
+    if manager is None or context_builder is None:
+        raise ValueError(
+            "manager and context_builder are required for validate_patch; "
+            "invoke QuickFixEngine.validate_patch or provide both explicitly"
+        )
     engine = engine or getattr(manager, "engine", None)
     module_name = module_name or module_path
     if not module_name:
