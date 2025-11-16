@@ -15,7 +15,8 @@ flags, context_meta = quick_fix.validate_patch(
     module_path=module_path,
     description=description,
     repo_root=repo_root,
-    provenance_token=provenance
+    provenance_token=provenance,
+    context_builder=builder,
 )
 if flags:
     raise RuntimeError(f"Validation failed: flags present: {flags}")
