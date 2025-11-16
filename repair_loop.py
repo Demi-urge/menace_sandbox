@@ -1,3 +1,8 @@
+from pathlib import Path
+
+from menace_sandbox.context_builder import create_context_builder
+from menace_sandbox.quick_fix_engine import quick_fix
+
 repair_limit = 3
 attempt = 1
 diag = results.diagnostics[0]
@@ -5,14 +10,19 @@ real_path = diag["file"]
 test_name = diag["test_name"]
 description = f"Fix: {diag['error_summary']} in {diag['file']}"
 
+repo_root = Path(real_path).resolve().parent
+builder = create_context_builder(repo_root=repo_root)
+provenance = builder.provenance_token
+
 while attempt <= repair_limit:
     print(f"\n🔁 Repair attempt {attempt}...")
 
     flags, context_meta = quick_fix.validate_patch(
         module_path=real_path,
         description=description,
-        repo_root=None,
-        provenance_token=provenance
+        repo_root=str(repo_root),
+        provenance_token=provenance,
+        context_builder=builder,
     )
     if flags:
         raise RuntimeError(f"Repair validation failed (attempt {attempt}): {flags}")
@@ -23,8 +33,8 @@ while attempt <= repair_limit:
         module_path=real_path,
         flags=flags,
         context_meta=context_meta,
-        repo_root=None,
-        provenance_token=provenance
+        repo_root=str(repo_root),
+        provenance_token=provenance,
     )
 
     # Scoped test retry
