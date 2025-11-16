@@ -80,9 +80,10 @@ def _validate_and_apply(
 
     if "missing_context" in flags:
         raise RuntimeError(
-            "Patch validation requires both a SelfCodingManager and ContextBuilder."
-            " Run this script from within a configured self-coding sandbox or"
-            " provide a manager via the higher-level orchestration tooling."
+            "Patch validation requires both a SelfCodingManager and ContextBuilder. "
+            "The helper was unable to locate a SelfCodingManager in this environment; "
+            "start the sandbox via the self-coding entrypoints or provide a manager "
+            "instance when invoking quick_fix.validate_patch."
         )
 
     if valid:
