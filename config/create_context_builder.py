@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
+import uuid
 
 from vector_service.context_builder import ContextBuilder
 from vector_service.retriever import StackRetriever
@@ -103,6 +104,7 @@ def create_context_builder() -> ContextBuilder:
         class _StubContextBuilder:
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
+                self.provenance_token = kwargs.get("provenance_token") or uuid.uuid4().hex
 
             def build(self, *args: object, **kwargs: object) -> dict:
                 return {"context": [], "metadata": {}}

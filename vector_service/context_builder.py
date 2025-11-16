@@ -539,11 +539,13 @@ class ContextBuilder:
         stack_config: Any | None = None,
         stack_score_weight: float | None = None,
         stack_penalty_weight: float | None = None,
+        provenance_token: str | None = None,
         bots_db: str | os.PathLike[str] | None = None,
         code_db: str | os.PathLike[str] | None = None,
         errors_db: str | os.PathLike[str] | None = None,
         workflows_db: str | os.PathLike[str] | None = None,
     ) -> None:
+        self.provenance_token = provenance_token or uuid.uuid4().hex
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
         if patch_retriever is None:
