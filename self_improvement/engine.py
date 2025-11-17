@@ -2598,9 +2598,10 @@ class SelfImprovementEngine:
                                                 pass
 
                                             validation_flags: list[str] = []
+                                            validation_context: dict[str, Any] = {}
                                             if hasattr(quick_fix_engine, "validate_patch"):
                                                 try:
-                                                    valid, validation_flags = quick_fix_engine.validate_patch(
+                                                    validation_result = quick_fix_engine.validate_patch(
                                                         str(cloned_module),
                                                         description_text,
                                                         repo_root=clone_root,
@@ -2612,9 +2613,38 @@ class SelfImprovementEngine:
                                                             None,
                                                         ),
                                                     )
+                                                    try:
+                                                        (
+                                                            valid,
+                                                            validation_flags,
+                                                            *extras,
+                                                        ) = validation_result
+                                                    except Exception:
+                                                        raise RuntimeError(
+                                                            "quick_fix.validate_patch returned unexpected response format"
+                                                        )
+
+                                                    validation_context = (
+                                                        extras[0]
+                                                        if extras
+                                                        else {}
+                                                    ) or {}
+                                                    if not isinstance(
+                                                        validation_context, Mapping
+                                                    ):
+                                                        raise RuntimeError(
+                                                            "quick_fix validation context must be mapping-like"
+                                                        )
+                                                    validation_flags = list(
+                                                        validation_flags or []
+                                                    )
                                                     cloned_summary["validation_flags"] = list(
                                                         validation_flags
                                                     )
+                                                    if validation_context:
+                                                        cloned_summary[
+                                                            "validation_context"
+                                                        ] = dict(validation_context)
                                                     if not valid or validation_flags:
                                                         cloned_summary["passed"] = False
                                                         validation_failed = True
@@ -2642,6 +2672,10 @@ class SelfImprovementEngine:
                                                 "module": str(module_rel_path),
                                                 "description": description_text,
                                             }
+                                            if validation_context:
+                                                context_meta.update(
+                                                    dict(validation_context)
+                                                )
                                             passed, validated_patch_id, flags = (
                                                 quick_fix_engine.apply_validated_patch(
                                                     str(cloned_module),
