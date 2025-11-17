@@ -137,33 +137,47 @@ def run_repair_loop(
     for attempt in range(1, repair_limit + 1):
         print(f"\n🔁 Repair attempt {attempt}...")
 
-        valid, validation_flags = quick_fix.validate_patch(
-            module_path=str(target_path),
-            description=description,
-            repo_root=str(root),
-            provenance_token=provenance,
-            manager=manager,
-            context_builder=context_builder,
-        )
-        if not valid or validation_flags:
+        try:
+            valid, validation_flags = quick_fix.validate_patch(
+                module_path=str(target_path),
+                description=description,
+                repo_root=str(root),
+                provenance_token=provenance,
+                manager=manager,
+                context_builder=context_builder,
+            )
+        except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
             raise RepairLoopError(
-                f"Repair validation failed (attempt {attempt}): {list(validation_flags)}"
+                f"Repair validation raised an exception on attempt {attempt}: {exc}"
+            ) from exc
+
+        flags = list(validation_flags or [])
+        if not valid or flags:
+            raise RepairLoopError(
+                f"Repair validation failed (attempt {attempt}): {flags}"
             )
 
         context_meta = dict(base_context, repair_attempt=attempt)
-        passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
-            module_path=str(target_path),
-            description=description,
-            flags=validation_flags,
-            context_meta=context_meta,
-            repo_root=str(root),
-            provenance_token=provenance,
-            manager=manager,
-            context_builder=context_builder,
-        )
+        try:
+            passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
+                module_path=str(target_path),
+                description=description,
+                flags=flags,
+                context_meta=context_meta,
+                repo_root=str(root),
+                provenance_token=provenance,
+                manager=manager,
+                context_builder=context_builder,
+            )
+        except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
+            raise RepairLoopError(
+                f"Repair application raised an exception on attempt {attempt}: {exc}"
+            ) from exc
+
+        apply_flags = list(apply_flags or [])
         if not passed or apply_flags:
             raise RepairLoopError(
-                f"Patch application failed (attempt {attempt}): {list(apply_flags)}"
+                f"Patch application failed (attempt {attempt}): {apply_flags}"
             )
 
         results, _ = service.run_once(pytest_args=["-k", diag["test_name"]])
