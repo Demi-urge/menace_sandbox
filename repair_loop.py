@@ -11,6 +11,7 @@ properly vetted.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 from typing import Any, Mapping
@@ -162,41 +163,46 @@ def run_repair_loop(
     for attempt in range(1, repair_limit + 1):
         print(f"\n🔁 Repair attempt {attempt}...")
 
+        prev_cwd = os.getcwd()
+        os.chdir(str(root))
         try:
-            validation_result = quick_fix.validate_patch(
-                module_path=str(target_path),
-                description=description,
-                repo_root=str(root),
-                provenance_token=provenance,
-                manager=manager,
-                context_builder=context_builder,
-            )
-            valid, validation_flags, validation_context = _parse_validation_result(
-                validation_result
-            )
-        except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
-            raise RepairLoopError(
-                f"Repair validation raised an exception on attempt {attempt}: {exc}"
-            ) from exc
+            try:
+                validation_result = quick_fix.validate_patch(
+                    module_path=str(target_path),
+                    description=description,
+                    repo_root=str(root),
+                    provenance_token=provenance,
+                    manager=manager,
+                    context_builder=context_builder,
+                )
+                valid, validation_flags, validation_context = _parse_validation_result(
+                    validation_result
+                )
+            except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
+                raise RepairLoopError(
+                    f"Repair validation raised an exception on attempt {attempt}: {exc}"
+                ) from exc
 
-        context_meta = dict(validation_context or {})
-        context_meta.update(base_context)
-        context_meta["repair_attempt"] = attempt
-        try:
-            passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
-                module_path=str(target_path),
-                description=description,
-                flags=list(validation_flags),
-                context_meta=context_meta,
-                repo_root=str(root),
-                provenance_token=provenance,
-                manager=manager,
-                context_builder=context_builder,
-            )
-        except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
-            raise RepairLoopError(
-                f"Repair application raised an exception on attempt {attempt}: {exc}"
-            ) from exc
+            context_meta = dict(validation_context or {})
+            context_meta.update(base_context)
+            context_meta["repair_attempt"] = attempt
+            try:
+                passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
+                    module_path=str(target_path),
+                    description=description,
+                    flags=list(validation_flags),
+                    context_meta=context_meta,
+                    repo_root=str(root),
+                    provenance_token=provenance,
+                    manager=manager,
+                    context_builder=context_builder,
+                )
+            except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
+                raise RepairLoopError(
+                    f"Repair application raised an exception on attempt {attempt}: {exc}"
+                ) from exc
+        finally:
+            os.chdir(prev_cwd)
 
         apply_flags = list(apply_flags or [])
         combined_flags = list(validation_flags or []) + apply_flags
