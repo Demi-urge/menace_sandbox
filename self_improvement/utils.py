@@ -25,6 +25,7 @@ import inspect
 import random
 import threading
 import shutil
+import sys
 from pathlib import Path
 from functools import lru_cache
 from typing import Any, Callable
@@ -54,7 +55,9 @@ _diagnostics = {
 
 @lru_cache(maxsize=128)
 def _import_callable(module: str, attr: str) -> Callable[..., Any]:
-    mod = importlib.import_module(module)
+    mod = sys.modules.get(module)
+    if mod is None:
+        mod = importlib.import_module(module)
     return getattr(mod, attr)
 
 

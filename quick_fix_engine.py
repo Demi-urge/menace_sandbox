@@ -31,6 +31,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
+_FETCH_PATCH_DELEGATE = None
+_existing_qfe = sys.modules.get("quick_fix_engine")
+if _existing_qfe is not None and _existing_qfe is not sys.modules.get(__name__):
+    delegated = getattr(_existing_qfe, "fetch_patch", None)
+    if callable(delegated):
+        _FETCH_PATCH_DELEGATE = delegated
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .error_bot import ErrorDB
     from .self_coding_manager import SelfCodingManager
@@ -1770,6 +1777,51 @@ def apply_validated_patch(
 
 
 quick_fix.apply_validated_patch = apply_validated_patch  # type: ignore[attr-defined]
+
+
+def fetch_patch(
+    patch_id: int,
+    *,
+    patch_db: Any | None = None,
+) -> str:
+    """Return the stored diff for ``patch_id`` from ``PatchHistoryDB``.
+
+    The self-improvement tooling expects ``quick_fix_engine.fetch_patch`` to
+    retrieve the raw patch text for a given identifier. Providing the helper
+    here keeps the API consistent across environments where the C-extension is
+    unavailable by delegating to the Python ``PatchHistoryDB`` implementation.
+    """
+
+    if _FETCH_PATCH_DELEGATE is not None:
+        return _FETCH_PATCH_DELEGATE(patch_id)
+
+    alias = sys.modules.get("quick_fix_engine")
+    if alias is not None and alias is not sys.modules.get(__name__):
+        delegated = getattr(alias, "fetch_patch", None)
+        if callable(delegated):
+            return delegated(patch_id)
+
+    try:
+        from code_database import PatchHistoryDB  # type: ignore
+    except Exception as exc:  # pragma: no cover - dependency resolution
+        raise RuntimeError("PatchHistoryDB dependency is unavailable") from exc
+
+    db = patch_db or PatchHistoryDB()
+    try:
+        with db._connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT diff FROM patch_history WHERE id=?", (patch_id,)
+            ).fetchone()
+    except Exception as exc:  # pragma: no cover - defensive DB access
+        raise RuntimeError("Failed to read patch history") from exc
+
+    if not row or not row[0]:
+        raise RuntimeError(f"Patch {patch_id} not found or missing diff content")
+
+    diff = row[0]
+    if not isinstance(diff, str):
+        diff = str(diff)
+    return diff
 
 def validate_patch(
     module_name: str | None = None,
