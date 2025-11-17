@@ -15,10 +15,18 @@ try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LinearRegression
-import numpy as np
+
+try:  # pragma: no cover - optional heavy dependencies
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.cluster import KMeans
+    from sklearn.linear_model import LinearRegression
+except Exception:  # pragma: no cover - fallback when sklearn missing
+    TfidfVectorizer = KMeans = LinearRegression = None  # type: ignore[misc,assignment]
+
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    np = None  # type: ignore[assignment]
 
 from typing import TYPE_CHECKING
 
@@ -237,6 +245,9 @@ def cluster_events(events: List[Event], n_clusters: int = 2) -> List[List[Event]
     """Group similar events using TF-IDF and KMeans."""
     if not events:
         return []
+    if TfidfVectorizer is None or KMeans is None:
+        logger.warning("sklearn unavailable; returning unclustered events")
+        return [[e] for e in events]
     docs = [f"{e.title} {e.summary}" for e in events]
     vectorizer = TfidfVectorizer(stop_words="english")
     X = vectorizer.fit_transform(docs)
@@ -254,10 +265,17 @@ class ImpactPredictor:
     """Predict economic impact using a linear model."""
 
     def __init__(self) -> None:
-        self.model = LinearRegression()
-        self.trained = False
+        if LinearRegression is None or np is None:
+            self.model = None
+            self.trained = False
+            logger.warning("LinearRegression unavailable; impact predictions disabled")
+        else:
+            self.model = LinearRegression()
+            self.trained = False
 
     def train(self, events: Iterable[Event]) -> None:
+        if self.model is None or np is None:
+            return
         xs = [len(e.summary.split()) for e in events]
         ys = [e.sentiment for e in events]
         if len(xs) < 2:
@@ -268,7 +286,7 @@ class ImpactPredictor:
         self.trained = True
 
     def predict(self, event: Event) -> float:
-        if not self.trained:
+        if not self.trained or self.model is None or np is None:
             return 0.0
         X = np.array([[len(event.summary.split())]])
         return float(self.model.predict(X)[0])

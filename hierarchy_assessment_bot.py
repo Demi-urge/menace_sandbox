@@ -105,7 +105,10 @@ try:
     import zmq  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     zmq = None  # type: ignore
-import psutil
+try:
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None  # type: ignore
 import uuid
 try:
     import pika  # type: ignore
@@ -227,6 +230,11 @@ class HierarchyAssessmentBot:
         return scores
 
     def monitor_system(self, limit: float = 90.0) -> bool:
+        if psutil is None:
+            logger.info(
+                "psutil not available; skipping system monitoring safety check"
+            )
+            return False
         if psutil.cpu_percent() > limit:
             self.trigger_contingency()
             return True

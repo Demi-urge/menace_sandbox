@@ -274,15 +274,22 @@ def _fetch_remote_file(url: str) -> Path:
         return Path(tmp.name)
 
 
+
 def _define_fallback() -> None:
     """Define lightweight pipeline when scikit-learn is unavailable."""
     global np, _SimpleLogReg, _DictVectorizer, Pipeline
     if "_SimpleLogReg" in globals():
         return
-    import numpy as np
+    import math
+    import random
+
+    try:
+        import numpy as np  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover - optional dependency
+        np = None  # type: ignore[assignment]
 
     class _SimpleLogReg:
-        """Lightweight logistic regression using ``numpy``."""
+        """Lightweight logistic regression that works with or without numpy."""
 
         def __init__(
             self,
@@ -301,127 +308,85 @@ def _define_fallback() -> None:
             self.fit_intercept = fit_intercept
             self.shuffle = shuffle
             self.val_steps = val_steps or 0
-            self.coef_: np.ndarray | None = None
+            self.coef_: object | None = None
             self.intercept_: float = 0.0
+            self._numpy_enabled = np is not None
 
-        def _preprocess(self, X_arr: np.ndarray) -> np.ndarray:
-            """Clip extreme values and guard against NaN."""
-            X_arr = np.nan_to_num(X_arr, nan=0.0, posinf=0.0, neginf=0.0)
-            X_arr = np.clip(X_arr, -1e6, 1e6)
-            return X_arr
+        def _sigmoid(self, value: float) -> float:
+            return 1.0 / (1.0 + math.exp(-value))
 
-        # --------------------------------------------------
-        def _validate_data(self, X_arr: np.ndarray, y_arr: np.ndarray) -> None:
-            if X_arr.ndim != 2:
-                raise ValueError("X must be a 2D array")
-            if y_arr.ndim != 1:
-                raise ValueError("y must be a 1D array")
-            if len(X_arr) != len(y_arr):
-                raise ValueError("X and y size mismatch")
-            if not np.isfinite(X_arr).all() or not np.isfinite(y_arr).all():
-                raise ValueError("training data contains NaN or inf")
-            if np.any(np.var(X_arr, axis=0) == 0):
-                logger.debug("zero variance detected in features")
-
-        def _ensure_weights(self, n: int) -> None:
-            if self.coef_ is None:
-                self.coef_ = np.zeros(n, dtype=float)
-                self.intercept_ = 0.0
-
-        def _predict_logits(self, X: np.ndarray) -> np.ndarray:
-            logits = X @ self.coef_
+        def _prepare_rows(self, X: Iterable[Iterable[float]]) -> list[list[float]]:
+            rows = [list(map(float, row)) for row in X]
             if self.fit_intercept:
-                logits += self.intercept_
-            return logits
+                return [[1.0, *row] for row in rows]
+            return rows
 
-        def _sigmoid(self, z: np.ndarray) -> np.ndarray:
-            z = np.clip(z, -709, 709)  # avoid overflow
-            return 1.0 / (1.0 + np.exp(-z))
+        def fit(self, X: Iterable[Iterable[float]], y: Iterable[int]) -> "_SimpleLogReg":
+            X_rows = self._prepare_rows(X)
+            y_vals = [float(val) for val in y]
+            if not X_rows or not y_vals:
+                raise ValueError("Training data is empty")
 
-        def _log_loss(self, X: np.ndarray, y: np.ndarray) -> float:
-            p = self._sigmoid(self._predict_logits(X))
-            eps = 1e-15
-            p = np.clip(p, eps, 1 - eps)
-            loss = -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
-            loss += 0.5 * self.l2 * float(np.sum(self.coef_**2))
-            return float(loss)
+            if self._numpy_enabled:
+                X_arr = np.asarray(X_rows, dtype=float)
+                y_arr = np.asarray(y_vals, dtype=float)
+                n_features = X_arr.shape[1]
+                coef = np.zeros(n_features)
+                indices = np.arange(len(X_arr))
+                for i in range(self.iters):
+                    if self.shuffle:
+                        np.random.shuffle(indices)
+                    for batch_idx in np.array_split(indices, max(1, len(indices) // 10)):
+                        batch_X = X_arr[batch_idx]
+                        batch_y = y_arr[batch_idx]
+                        logits = batch_X.dot(coef)
+                        preds = 1.0 / (1.0 + np.exp(-logits))
+                        error = preds - batch_y
+                        grad = batch_X.T.dot(error) / len(batch_y)
+                        grad += self.l2 * coef
+                        coef -= self.lr * grad
+                    if self.val_steps and (i + 1) % self.val_steps == 0:
+                        preds = (1.0 / (1.0 + np.exp(-X_arr.dot(coef))) >= 0.5).astype(float)
+                        acc = float((preds == y_arr).mean())
+                        logger.debug("[fallback] iter=%s accuracy=%.3f", i + 1, acc)
+                self.coef_ = coef
+                return self
 
-        def fit(
-            self,
-            X: List[List[float]] | np.ndarray,
-            y: List[int] | np.ndarray,
-            *,
-            X_val: Iterable[List[float]] | np.ndarray | None = None,
-            y_val: Iterable[int] | np.ndarray | None = None,
-        ) -> None:
-            logger.info(
-                "training SimpleLogReg: iters=%s lr=%s l2=%s",
-                self.iters,
-                self.lr,
-                self.l2,
-            )
-            X_arr = np.asarray(X, dtype=float)
-            y_arr = np.asarray(y, dtype=float)
-            self._validate_data(X_arr, y_arr)
-            X_arr = self._preprocess(X_arr)
-            self._ensure_weights(X_arr.shape[1])
-            if X_val is not None and y_val is not None:
-                X_val = np.asarray(list(X_val), dtype=float)
-                y_val = np.asarray(list(y_val), dtype=float)
-                self._validate_data(X_val, y_val)
-                X_val = self._preprocess(X_val)
-
-            rng = np.random.default_rng()
-            for i in range(self.iters):
+            n_features = len(X_rows[0])
+            coef = [0.0] * n_features
+            indices = list(range(len(X_rows)))
+            for _ in range(self.iters):
                 if self.shuffle:
-                    perm = rng.permutation(len(X_arr))
-                    X_arr = X_arr[perm]
-                    y_arr = y_arr[perm]
+                    random.shuffle(indices)
+                for idx in indices:
+                    row = X_rows[idx]
+                    target = y_vals[idx]
+                    dot = sum(w * v for w, v in zip(coef, row))
+                    pred = self._sigmoid(dot)
+                    error = pred - target
+                    for i, val in enumerate(row):
+                        coef[i] -= self.lr * (error * val + self.l2 * coef[i])
+            self.coef_ = coef
+            return self
 
-                logits = self._predict_logits(X_arr)
-                preds = self._sigmoid(logits)
-                error = preds - y_arr
-                grad_w = X_arr.T @ error / len(X_arr) + self.l2 * self.coef_
-                self.coef_ -= self.lr * grad_w
-                if self.fit_intercept:
-                    grad_b = error.mean()
-                    self.intercept_ -= self.lr * grad_b
-
-                if self.val_steps and X_val is not None and y_val is not None:
-                    if (i + 1) % self.val_steps == 0:
-                        logger.debug(
-                            "validation loss at %s: %.4f",
-                            i + 1,
-                            self._log_loss(X_val, y_val),
-                        )
-            final_loss = self._log_loss(X_arr, y_arr)
-            logger.info("training finished with loss %.4f", final_loss)
-
-        def partial_fit(self, X: List[List[float]], y: List[int]) -> None:
-            if not X:
-                return
-            X_arr = np.asarray(X, dtype=float)
-            y_arr = np.asarray(y, dtype=float)
-            self._validate_data(X_arr, y_arr)
-            X_arr = self._preprocess(X_arr)
-            self._ensure_weights(X_arr.shape[1])
-            logits = self._predict_logits(X_arr)
-            preds = self._sigmoid(logits)
-            error = preds - y_arr
-            grad_w = X_arr.T @ error / len(X_arr) + self.l2 * self.coef_
-            self.coef_ -= self.lr * grad_w
-            if self.fit_intercept:
-                self.intercept_ -= self.lr * error.mean()
-
-        def predict_proba(self, X: List[List[float]] | np.ndarray):
+        def predict_proba(self, X: Iterable[Iterable[float]]) -> list[list[float]]:
             if self.coef_ is None:
-                return [[0.5, 0.5] for _ in X]
-            X_arr = np.asarray(list(X), dtype=float)
-            X_arr = self._preprocess(X_arr)
-            p = self._sigmoid(self._predict_logits(X_arr))
-            return np.column_stack([1 - p, p]).tolist()
+                raise ValueError("Model is not fitted yet")
+            rows = self._prepare_rows(X)
+            if self._numpy_enabled:
+                coef = np.asarray(self.coef_, dtype=float)
+                logits = np.asarray(rows, dtype=float).dot(coef)
+                probs = 1.0 / (1.0 + np.exp(-logits))
+                return np.column_stack([1 - probs, probs]).tolist()
+            coef = list(self.coef_)
+            result = []
+            for row in rows:
+                score = sum(w * v for w, v in zip(coef, row))
+                prob = self._sigmoid(score)
+                result.append([1 - prob, prob])
+            return result
 
-    class _DictVectorizer:
+class _DictVectorizer:
         """Very small dict vectorizer supporting numbers and categories."""
 
         def __init__(self) -> None:
@@ -462,96 +427,97 @@ def _define_fallback() -> None:
             self.fit(X)
             return self.transform(X)
 
-    def _generate_synthetic_data(n_samples: int = 50) -> Tuple[List[dict], List[int]]:
-        """Generate a simple synthetic training set."""
-        rng = np.random.default_rng()
-        market_types = ["tech", "finance", "health"]
-        monetization_models = ["ads", "subscription", "freemium"]
-        X: List[dict] = []
-        y: List[int] = []
-        for _ in range(n_samples):
-            mt = rng.choice(market_types)
-            mm = rng.choice(monetization_models)
-            startup = float(rng.uniform(0, 10))
-            skill = float(rng.uniform(0, 5))
-            competition = float(rng.uniform(0, 5))
-            uniqueness = float(rng.uniform(0, 5))
-            feat = {
-                "market_type": mt,
-                "monetization_model": mm,
-                "startup_cost": startup,
-                "skill": skill,
-                "competition": competition,
-                "uniqueness": uniqueness,
-            }
-            score = uniqueness + skill - competition - 0.1 * startup
-            prob = 1.0 / (1.0 + math.exp(-score))
-            label = 1 if rng.random() < prob else 0
-            X.append(feat)
-            y.append(label)
-        return X, y
+def _generate_synthetic_data(n_samples: int = 50) -> Tuple[List[dict], List[int]]:
+    """Generate a simple synthetic training set."""
+    import random
 
-    class DataIngestor:
-        """Load training data from file, API or database."""
+    market_types = ["tech", "finance", "health"]
+    monetization_models = ["ads", "subscription", "freemium"]
+    X: List[dict] = []
+    y: List[int] = []
+    for _ in range(n_samples):
+        mt = random.choice(market_types)
+        mm = random.choice(monetization_models)
+        startup = float(random.uniform(0, 10))
+        skill = float(random.uniform(0, 5))
+        competition = float(random.uniform(0, 5))
+        uniqueness = float(random.uniform(0, 5))
+        feat = {
+            "market_type": mt,
+            "monetization_model": mm,
+            "startup_cost": startup,
+            "skill": skill,
+            "competition": competition,
+            "uniqueness": uniqueness,
+        }
+        score = uniqueness + skill - competition - 0.1 * startup
+        prob = 1.0 / (1.0 + math.exp(-score))
+        label = int(prob > 0.5)
+        X.append(feat)
+        y.append(label)
+    return X, y
 
-        def __init__(self, source: str | Path, router: DBRouter | None = None) -> None:
-            self.source = str(source)
-            self.router = router or GLOBAL_ROUTER
+class DataIngestor:
+    """Load training data from file, API or database."""
 
-        # --------------------------------------------------
-        def load(self) -> Tuple[List[dict], List[int]]:
-            if self.source.startswith("http://") or self.source.startswith("https://"):
-                return self._from_api(self.source)
-            if self.source.startswith("sqlite://"):
-                return self._from_db(self.source[len("sqlite://"):])
-            return self._from_file(self.source)
+    def __init__(self, source: str | Path, router: DBRouter | None = None) -> None:
+        self.source = str(source)
+        self.router = router or GLOBAL_ROUTER
 
-        def _from_file(self, path: str) -> Tuple[List[dict], List[int]]:
-            p = Path(path)
-            if p.suffix.lower() == ".csv":
-                X: List[dict] = []
-                y: List[int] = []
-                with p.open("r", encoding="utf-8", newline="") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        if "label" not in row:
-                            raise ValueError("CSV missing label column")
-                        label = row.pop("label")
-                        y.append(int(float(label)))
-                        feat: dict[str, int | float | str] = {}
-                        for k, v in row.items():
-                            if v is None or v == "":
-                                continue
-                            try:
-                                num = float(v)
-                                feat[k] = int(num) if num.is_integer() else num
-                            except ValueError:
-                                feat[k] = v
-                        X.append(feat)
-                return X, y
-            with p.open("r", encoding="utf-8") as f:
-                payload = json.load(f)
-            return payload.get("X", []), payload.get("y", [])
+    # --------------------------------------------------
+    def load(self) -> Tuple[List[dict], List[int]]:
+        if self.source.startswith("http://") or self.source.startswith("https://"):
+            return self._from_api(self.source)
+        if self.source.startswith("sqlite://"):
+            return self._from_db(self.source[len("sqlite://"):])
+        return self._from_file(self.source)
 
-        def _from_api(self, url: str) -> Tuple[List[dict], List[int]]:
-            if not requests:
-                raise RuntimeError("requests not available")
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            payload = resp.json()
-            return payload.get("X", []), payload.get("y", [])
-
-        def _from_db(self, path: str) -> Tuple[List[dict], List[int]]:
-            if not self.router:
-                raise RuntimeError("DBRouter not initialised")
-            conn = self.router.get_connection("training_data")
-            cur = conn.execute("SELECT features, label FROM training_data")
+    def _from_file(self, path: str) -> Tuple[List[dict], List[int]]:
+        p = Path(path)
+        if p.suffix.lower() == ".csv":
             X: List[dict] = []
             y: List[int] = []
-            for row in cur.fetchall():
-                X.append(json.loads(row[0]))
-                y.append(int(row[1]))
+            with p.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if "label" not in row:
+                        raise ValueError("CSV missing label column")
+                    label = row.pop("label")
+                    y.append(int(float(label)))
+                    feat: dict[str, int | float | str] = {}
+                    for k, v in row.items():
+                        if v is None or v == "":
+                            continue
+                        try:
+                            num = float(v)
+                            feat[k] = int(num) if num.is_integer() else num
+                        except ValueError:
+                            feat[k] = v
+                    X.append(feat)
             return X, y
+        with p.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload.get("X", []), payload.get("y", [])
+
+    def _from_api(self, url: str) -> Tuple[List[dict], List[int]]:
+        if not requests:
+            raise RuntimeError("requests not available")
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload.get("X", []), payload.get("y", [])
+
+    def _from_db(self, path: str) -> Tuple[List[dict], List[int]]:
+        if not self.router:
+            raise RuntimeError("DBRouter not initialised")
+        conn = self.router.get_connection("training_data")
+        cur = conn.execute("SELECT features, label FROM training_data")
+        X: List[dict] = []
+        y: List[int] = []
+        for row in cur.fetchall():
+            X.append(json.loads(row[0]))
+            y.append(int(row[1]))
+        return X, y
 
     def _generate_training_data(source: str | None) -> Tuple[List[dict], List[int]]:
         """Return training data from ``source`` or generate synthetic samples."""

@@ -6,6 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 import logging
+import json
 
 from .coding_bot_interface import self_coding_managed
 import smtplib
@@ -33,7 +34,21 @@ except Exception:
     logger.warning(
         "matplotlib is not installed; chart generation will be skipped"
     )
-from jinja2 import Template
+try:
+    from jinja2 import Template
+except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
+    class Template:  # type: ignore[misc]
+        """Minimal stand-in for :class:`jinja2.Template` when dependency is missing."""
+
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def render(self, **context: object) -> str:
+            # Simple placeholder replacement for the handful of fields we use.
+            output = self._text
+            for key, value in context.items():
+                output = output.replace(f"{{{{{key}}}}}", str(value))
+            return output
 
 try:
     import tabulate  # noqa: F401
@@ -107,9 +122,16 @@ class ReportGenerationBot:
         end: str | None = None,
     ) -> Path:
         df = self.db.fetch(limit=limit, start=start, end=end)
-        charts = self._generate_charts(df, options.metrics)
-        desc = df[options.metrics].describe()
-        summary = desc.to_markdown() if HAVE_TABULATE else desc.to_string()
+        if pd is None or not hasattr(df, "__class__"):
+            logger.warning(
+                "pandas is unavailable; generating plain-text report without DataFrame support"
+            )
+            charts: list[Path] = []
+            summary = json.dumps(df, indent=2, default=str)
+        else:
+            charts = self._generate_charts(df, options.metrics)
+            desc = df[options.metrics].describe()
+            summary = desc.to_markdown() if HAVE_TABULATE else desc.to_string()
         template = Template("""# {{title}}
 
 Metrics summary:

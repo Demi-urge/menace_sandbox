@@ -19,9 +19,21 @@ try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
-import psutil
-import networkx as nx
-import pulp
+
+try:
+    import psutil
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback
+    psutil = None  # type: ignore[assignment]
+
+try:
+    import networkx as nx
+except ModuleNotFoundError:  # pragma: no cover - rely on registry shim
+    from .bot_registry import nx as nx  # type: ignore
+
+try:
+    import pulp
+except ModuleNotFoundError:  # pragma: no cover - optional optimisation
+    pulp = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - support flat execution
     from .shared.self_coding_import_guard import is_self_coding_import_active
@@ -338,6 +350,23 @@ class ResourcePredictionBot:
         return metrics
 
     def monitor_live(self) -> ResourceMetrics:
+        if psutil is None:
+            logger.warning(
+                "psutil unavailable; live resource monitoring returning baseline metrics"
+            )
+            try:
+                import shutil
+                import os
+
+                load_avg = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+                cpu_pct = min(100.0, max(0.0, load_avg * 100))
+                disk = shutil.disk_usage("/")
+                disk_pct = (disk.used / disk.total) * 100 if disk.total else 0.0
+            except Exception:
+                cpu_pct = 0.0
+                disk_pct = 0.0
+            return ResourceMetrics(cpu=cpu_pct, memory=0.0, disk=disk_pct, time=0.0)
+
         return ResourceMetrics(
             cpu=psutil.cpu_percent(),
             memory=psutil.virtual_memory().percent,
@@ -366,6 +395,11 @@ class ResourcePredictionBot:
 
     def optimise_schedule(self, tasks: Iterable[str], cpu_limit: float = 100.0) -> List[str]:
         preds: Dict[str, ResourceMetrics] = {t: self.predict(t) for t in tasks}
+        if pulp is None:
+            logger.warning(
+                "pulp not installed; returning tasks sorted by predicted CPU usage"
+            )
+            return sorted(tasks, key=lambda t: preds[t].cpu)
         prob = pulp.LpProblem("schedule", pulp.LpMinimize)
         order_vars = {t: pulp.LpVariable(f"o_{i}", lowBound=0) for i, t in enumerate(tasks)}
         prob += pulp.lpSum(order_vars.values())

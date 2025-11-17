@@ -8,7 +8,52 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from filelock import FileLock
+try:  # pragma: no cover - optional dependency
+    from filelock import FileLock
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback
+    # ``filelock`` is not guaranteed to be available in the sandbox
+    # environment. Provide a minimal POSIX-compatible fallback so that
+    # prompt logging still occurs with basic inter-process safety.
+    import os
+    import fcntl
+    from contextlib import contextmanager
+
+    class FileLock:  # type: ignore[misc]
+        """Lightweight advisory file lock using ``fcntl``.
+
+        The lock mirrors the API surface used in this module (context-manager
+        support only) and stores the underlying file descriptor so callers can
+        safely coordinate concurrent append operations without the external
+        ``filelock`` dependency.  On non-POSIX systems an ImportError will be
+        raised by the ``fcntl`` import above which clearly signals the missing
+        capability.
+        """
+
+        def __init__(self, path: str) -> None:
+            self._path = path
+            self._fd: int | None = None
+
+        def acquire(self) -> None:
+            # ``os.open`` is used instead of ``open`` to keep the descriptor
+            # available for ``fcntl`` operations and to avoid buffering.
+            self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR)
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+
+        def release(self) -> None:
+            if self._fd is None:
+                return
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+
+        def __enter__(self) -> "FileLock":
+            self.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.release()
 from dynamic_path_router import get_project_root, resolve_path
 
 
