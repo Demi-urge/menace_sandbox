@@ -40,6 +40,7 @@ from code_database import PatchHistoryDB  # noqa: E402
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache  # noqa: E402
 from cache_utils import clear_cache, show_cache, cache_stats  # noqa: E402
 from workflow_synthesizer_cli import run as handle_workflow  # noqa: E402
+from quick_fix_engine import quick_fix  # noqa: E402
 
 PatchLogger = None  # type: ignore
 build_chain = None  # type: ignore
@@ -260,6 +261,11 @@ def handle_patch(args: argparse.Namespace) -> int:
             print("invalid JSON context", file=sys.stderr)
             return 1
 
+    module_path = Path(args.module).resolve()
+    if not module_path.exists():
+        print(f"module path not found: {module_path}", file=sys.stderr)
+        return 1
+
     db_kwargs = {}
     if args.db_path:
         db_kwargs["path"] = args.db_path
@@ -283,24 +289,43 @@ def handle_patch(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"failed to import manager {args.manager}: {exc}", file=sys.stderr)
             return 1
-        from self_coding_manager import SelfCodingManager  # type: ignore
-        if not isinstance(manager, SelfCodingManager):  # type: ignore[name-defined]
-            print("manager module must export a SelfCodingManager", file=sys.stderr)
+        if manager is None:
+            print("manager module must export a manager", file=sys.stderr)
             return 1
     else:
-        from self_coding_manager import SelfCodingManager, internalize_coding_bot
-        from self_coding_engine import SelfCodingEngine
-        from model_automation_pipeline import ModelAutomationPipeline
-        from code_database import CodeDB
-        from menace_memory_manager import MenaceMemoryManager
-        from bot_registry import BotRegistry
-        from data_bot import DataBot, persist_sc_thresholds
-        from self_coding_thresholds import get_thresholds
-        from threshold_service import ThresholdService
-        from coding_bot_interface import (
-            fallback_helper_manager,
-            prepare_pipeline_for_bootstrap,
-        )
+        try:
+            from menace_sandbox.self_coding_manager import (  # type: ignore
+                SelfCodingManager,
+                internalize_coding_bot,
+            )
+            from menace_sandbox.self_coding_engine import SelfCodingEngine  # type: ignore
+            from menace_sandbox.model_automation_pipeline import (  # type: ignore
+                ModelAutomationPipeline,
+            )
+            from menace_sandbox.code_database import CodeDB  # type: ignore
+            from menace_sandbox.menace_memory_manager import MenaceMemoryManager  # type: ignore
+            from menace_sandbox.bot_registry import BotRegistry  # type: ignore
+            from menace_sandbox.data_bot import DataBot, persist_sc_thresholds  # type: ignore
+            from menace_sandbox.self_coding_thresholds import get_thresholds  # type: ignore
+            from menace_sandbox.threshold_service import ThresholdService  # type: ignore
+            from menace_sandbox.coding_bot_interface import (  # type: ignore
+                fallback_helper_manager,
+                prepare_pipeline_for_bootstrap,
+            )
+        except Exception:  # pragma: no cover - fallback for flat layout
+            from self_coding_manager import SelfCodingManager, internalize_coding_bot
+            from self_coding_engine import SelfCodingEngine
+            from model_automation_pipeline import ModelAutomationPipeline
+            from code_database import CodeDB
+            from menace_memory_manager import MenaceMemoryManager
+            from bot_registry import BotRegistry
+            from data_bot import DataBot, persist_sc_thresholds
+            from self_coding_thresholds import get_thresholds
+            from threshold_service import ThresholdService
+            from coding_bot_interface import (
+                fallback_helper_manager,
+                prepare_pipeline_for_bootstrap,
+            )
 
         bot_name = Path(args.module).stem
         data_bot = DataBot(start_server=False)
@@ -355,16 +380,52 @@ def handle_patch(args: argparse.Namespace) -> int:
     if not provenance_token:
         print("manager lacks provenance token", file=sys.stderr)
         return 1
-    patch_id = manager.generate_patch(
-        args.module,
-        args.desc,
+    validation_ok, validation_flags = quick_fix.validate_patch(
+        module_path=str(module_path),
+        description=args.desc,
+        repo_root=str(Path.cwd()),
+        provenance_token=provenance_token,
+        manager=manager,
         context_builder=builder,
         patch_logger=patch_logger,
-        context=ctx,
-        effort_estimate=args.effort_estimate,
-        provenance_token=provenance_token,
     )
-    if not patch_id:
+    if not validation_ok or validation_flags:
+        print(
+            json.dumps(
+                {
+                    "code": "QUICK_FIX_VALIDATION_FAILED",
+                    "flags": list(validation_flags),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    context_meta = {"target_module": str(module_path), "description": args.desc}
+    if ctx:
+        context_meta.update(ctx)
+
+    passed, patch_id, apply_flags = quick_fix.apply_validated_patch(
+        module_path=str(module_path),
+        description=args.desc,
+        flags=validation_flags,
+        context_meta=context_meta,
+        repo_root=str(Path.cwd()),
+        provenance_token=provenance_token,
+        manager=manager,
+        context_builder=builder,
+        patch_logger=patch_logger,
+    )
+    if not passed or apply_flags or not patch_id:
+        print(
+            json.dumps(
+                {
+                    "code": "QUICK_FIX_APPLY_FAILED",
+                    "flags": list(apply_flags),
+                }
+            ),
+            file=sys.stderr,
+        )
         return 1
     registry = getattr(manager, "bot_registry", None)
     commit = getattr(manager, "_last_commit_hash", None)
