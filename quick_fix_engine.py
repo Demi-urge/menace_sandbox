@@ -1686,7 +1686,13 @@ def apply_validated_patch(
 
     logger = logging.getLogger("QuickFixEngine")
     ctx = context_meta or {}
-    _ = flags  # ignored for backward compatibility with older callers
+    flags_list = list(flags or [])
+    if flags_list:
+        logger.info(
+            "apply_validated_patch received validation flags; skipping apply",
+            extra={"target_module": module_path, "flags": flags_list},
+        )
+        return False, None, flags_list
     if manager is None and engine is not None:
         manager = getattr(engine, "manager", None)
     if context_builder is None:
@@ -2464,7 +2470,13 @@ class QuickFixEngine:
         """
 
         ctx = context_meta or {}
-        _ = flags  # ignored for backward compatibility with older callers
+        flags_list = list(flags or [])
+        if flags_list:
+            self.logger.info(
+                "apply_validated_patch received validation flags; skipping apply",
+                extra={"target_module": module_path, "flags": flags_list},
+            )
+            return False, None, flags_list
         try:
             patch_id, flags = generate_patch(
                 str(module_path),
