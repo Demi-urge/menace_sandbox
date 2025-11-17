@@ -127,6 +127,36 @@ logger = logging.getLogger(__name__)
 _COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 
 
+def _get_bootstrap_wait_timeout() -> float | None:
+    """Return the maximum time (in seconds) to wait for helper bootstrap.
+
+    The timeout is extended beyond the previous hard-coded 10s to accommodate
+    slower initialisation paths.  It can be tuned via
+    ``MENACE_BOOTSTRAP_WAIT_SECS``; specify ``"none"`` to disable timeouts.
+    Invalid overrides fall back to a sensible default while emitting a warning
+    for visibility.
+    """
+
+    default_timeout = 300.0
+    raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+    if not raw_timeout:
+        return default_timeout
+    if raw_timeout.lower() == "none":
+        return None
+    try:
+        return max(1.0, float(raw_timeout))
+    except ValueError:
+        logger.warning(
+            "Invalid MENACE_BOOTSTRAP_WAIT_SECS=%r; using default %ss",
+            raw_timeout,
+            default_timeout,
+        )
+        return default_timeout
+
+
+_BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
+
+
 @dataclass(eq=False)
 class _BootstrapContext:
     """Thread-scoped context shared during nested helper bootstrap."""
@@ -1851,12 +1881,21 @@ class _DisabledSelfCodingManager:
         "quick_fix",
         "error_db",
         "evolution_orchestrator",
+        "manager",
+        "initial_manager",
+        "_pending_manager_helpers",
+        "_lazy_helper_attrs",
+        "_registered_bot_attrs",
+        "_bots",
+        "_bot_attribute_order",
+        "_should_defer_manager_helpers",
         "_last_patch_id",
         "_last_commit_hash",
         "_bootstrap_owner_marker",
         "_self_coding_bootstrap_placeholder",
         "_bootstrap_owner_token",
         "_bootstrap_runtime_marker",
+        "_manager",
     )
 
     def __init__(
@@ -1877,12 +1916,21 @@ class _DisabledSelfCodingManager:
         self.quick_fix = object()
         self.error_db = None
         self.evolution_orchestrator = None
+        self.manager: Any | None = None
+        self.initial_manager: Any | None = None
+        self._pending_manager_helpers: dict[str, Any] = {}
+        self._lazy_helper_attrs: set[str] = set()
+        self._registered_bot_attrs: set[str] = set()
+        self._bots: list[Any] = []
+        self._bot_attribute_order: tuple[str, ...] = ()
+        self._should_defer_manager_helpers = False
         self._last_patch_id = None
         self._last_commit_hash = None
         self._bootstrap_owner_marker = bootstrap_owner
         self._self_coding_bootstrap_placeholder = bootstrap_placeholder
         self._bootstrap_owner_token: Any | None = None
         self._bootstrap_runtime_marker = bootstrap_runtime
+        self._manager: Any | None = None
 
     def __bool__(self) -> bool:
         """Return ``True`` whenever acting as a bootstrap guard."""
@@ -4801,7 +4849,7 @@ def self_coding_managed(
                     bootstrap_event.clear()
 
             if wait_for_completion:
-                if not bootstrap_event.wait(timeout=10):
+                if not bootstrap_event.wait(timeout=_BOOTSTRAP_WAIT_TIMEOUT):
                     timeout_error = TimeoutError(
                         "Bot helper bootstrap timed out waiting for prior initialisation"
                     )
