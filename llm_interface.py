@@ -17,7 +17,10 @@ from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator
 
 import asyncio
 import json
-import requests
+try:  # pragma: no cover - optional dependency
+    import requests
+except Exception:  # pragma: no cover - allow environments without requests
+    requests = None  # type: ignore
 import time
 
 try:  # pragma: no cover - optional dependency
@@ -459,6 +462,10 @@ class OpenAIProvider(LLMClient):
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
         self.max_retries = max_retries or cfg.max_retries
+        if requests is None:
+            raise RuntimeError(
+                "The 'requests' package is required for OpenAIProvider; install it via 'pip install requests'."
+            )
         self._session = requests.Session()
         self.backend_name = "openai"
 

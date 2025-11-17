@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import json
 import base64
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-from cryptography.hazmat.primitives import serialization
+import hmac
+import hashlib
+import secrets
+try:  # pragma: no cover - optional dependency
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+    from cryptography.hazmat.primitives import serialization
+    _CRYPTO_AVAILABLE = True
+except Exception:  # pragma: no cover - cryptography may be unavailable
+    Ed25519PrivateKey = None  # type: ignore
+    Ed25519PublicKey = None  # type: ignore
+    serialization = None  # type: ignore
+    _CRYPTO_AVAILABLE = False
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -69,22 +79,63 @@ class KafkaMetaLogger:
 
 
 @dataclass
+class _HMACKey:
+    """Lightweight signing helper used when ``cryptography`` is unavailable."""
+
+    def __init__(self, key: bytes | None = None) -> None:
+        self.key = key or secrets.token_bytes(32)
+
+    def sign(self, data: bytes) -> bytes:
+        return hmac.new(self.key, data, hashlib.blake2b).digest()
+
+    def verify(self, signature: bytes, data: bytes) -> None:
+        expected = self.sign(data)
+        if not hmac.compare_digest(signature, expected):
+            raise RuntimeError("signature check failed")
+
+    @property
+    def public_key_bytes(self) -> bytes:
+        return self.key
+
+
+def _generate_signing_key() -> Any:
+    if _CRYPTO_AVAILABLE:
+        return Ed25519PrivateKey.generate()  # type: ignore[call-arg]
+    return _HMACKey()
+
+
 class SecureLog:
     """Ed25519-based tamper evidence for logs."""
 
     path: Path
-    private_key: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)
+    private_key: Any = field(default_factory=_generate_signing_key)
     hashes: List[str] = field(default_factory=list)
 
     @property
     def public_key_bytes(self) -> bytes:
-        return self.private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
+        if _CRYPTO_AVAILABLE:
+            return self.private_key.public_key().public_bytes(  # type: ignore[union-attr]
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        return self.private_key.public_key_bytes
+
+    def _sign(self, line: str) -> bytes:
+        payload = line.encode("utf-8")
+        if _CRYPTO_AVAILABLE:
+            return self.private_key.sign(payload)  # type: ignore[union-attr]
+        return self.private_key.sign(payload)
+
+    def _verify(self, signature: bytes, line: str) -> None:
+        payload = line.encode("utf-8")
+        if _CRYPTO_AVAILABLE:
+            pub = self.private_key.public_key()  # type: ignore[union-attr]
+            pub.verify(signature, payload)
+            return
+        self.private_key.verify(signature, payload)
 
     def append(self, line: str) -> None:
-        sig = self.private_key.sign(line.encode("utf-8"))
+        sig = self._sign(line)
         sig_b64 = base64.b64encode(sig).decode()
         self.hashes.append(sig_b64)
         with self.path.open("a") as fh:
@@ -92,7 +143,6 @@ class SecureLog:
 
     def export(self, dest: Path) -> None:
         """Verify signatures and write a clean copy to ``dest``."""
-        pub = Ed25519PublicKey.from_public_bytes(self.public_key_bytes)
         lines = []
         with self.path.open() as src:
             for idx, raw in enumerate(src):
@@ -100,7 +150,7 @@ class SecureLog:
                 if idx >= len(self.hashes) or sig_b64 != self.hashes[idx]:
                     raise RuntimeError("hash mismatch")
                 try:
-                    pub.verify(base64.b64decode(sig_b64), text.encode("utf-8"))
+                    self._verify(base64.b64decode(sig_b64), text)
                 except Exception as exc:  # pragma: no cover - unlikely
                     raise RuntimeError("signature check failed") from exc
                 lines.append(text)
