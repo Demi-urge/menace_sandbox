@@ -28,7 +28,7 @@ from menace_sandbox.threshold_service import ThresholdService
 
 LOGGER = logging.getLogger(__name__)
 
-_BOOTSTRAP_CACHE: Dict[str, Any] | None = None
+_BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _seed_research_aggregator_context(
@@ -80,21 +80,24 @@ def _seed_research_aggregator_context(
 
 
 def initialize_bootstrap_context(
-    bot_name: str = "ResearchAggregatorBot",
+    bot_name: str = "ResearchAggregatorBot", *, use_cache: bool = True
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
     The returned mapping contains the seeded ``registry``, ``data_bot``,
     ``context_builder``, ``engine``, ``pipeline`` and ``manager`` instances.
-    Subsequent invocations return the cached instances.
+    Subsequent invocations return cached instances for the given ``bot_name`` when
+    ``use_cache`` is ``True``. Pass ``use_cache=False`` to force a fresh bootstrap
+    without populating or reading the shared cache.
     """
 
     global _BOOTSTRAP_CACHE
-    if _BOOTSTRAP_CACHE is not None:
+    if use_cache and bot_name in _BOOTSTRAP_CACHE:
         LOGGER.info(
-            "reusing preseeded bootstrap context; pipeline/manager already available"
+            "reusing preseeded bootstrap context for %s; pipeline/manager already available",
+            bot_name,
         )
-        return _BOOTSTRAP_CACHE
+        return _BOOTSTRAP_CACHE[bot_name]
 
     context_builder = create_context_builder()
     registry = BotRegistry()
@@ -151,7 +154,16 @@ def initialize_bootstrap_context(
         manager=manager,
     )
 
-    _BOOTSTRAP_CACHE = {
+    if use_cache:
+        _BOOTSTRAP_CACHE[bot_name] = {
+            "registry": registry,
+            "data_bot": data_bot,
+            "context_builder": context_builder,
+            "engine": engine,
+            "pipeline": pipeline,
+            "manager": manager,
+        }
+    return {
         "registry": registry,
         "data_bot": data_bot,
         "context_builder": context_builder,
@@ -159,7 +171,6 @@ def initialize_bootstrap_context(
         "pipeline": pipeline,
         "manager": manager,
     }
-    return _BOOTSTRAP_CACHE
 
 
 __all__ = ["initialize_bootstrap_context"]
