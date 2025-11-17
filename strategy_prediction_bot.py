@@ -11,13 +11,17 @@ from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
 import time
 import logging
+import math
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback
+    np = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from .prediction_manager_bot import PredictionManager
@@ -127,39 +131,48 @@ class StrategyPredictionBot:
 
     def train(self, samples: Iterable[CompetitorFeatures], labels: Iterable[int]) -> None:
         """Train the underlying model."""
-        X = np.array([s.to_vector() for s in samples])
-        y = np.array(list(labels))
-        if self.model is not None:
+        sample_list = list(samples)
+        label_list = list(labels)
+        if not sample_list or not label_list:
+            logger.warning("No training data supplied; skipping training")
+            return
+
+        if self.model is not None and np is not None:
+            X = np.array([s.to_vector() for s in sample_list])
+            y = np.array(label_list)
             self.model.fit(X, y)
             self._weights = None
-        else:
-            # fallback implementation of logistic regression using gradient descent
-            Xb = np.hstack([np.ones((X.shape[0], 1)), X])
-            weights = np.zeros(Xb.shape[1])
-            lr = 0.1
-            for _ in range(200):
-                preds = 1.0 / (1.0 + np.exp(-Xb.dot(weights)))
-                gradient = Xb.T.dot(preds - y) / Xb.shape[0]
-                weights -= lr * gradient
-            self._weights = weights
+            return
+
+        if np is None:
+            logger.warning(
+                "numpy unavailable; using pure-Python logistic regression fallback"
+            )
+        X = [s.to_vector() for s in sample_list]
+        weights = self._train_fallback(X, label_list)
+        self._weights = weights
 
     def predict(self, features: CompetitorFeatures) -> float:
         """Return probability of aggressive strategic move."""
         if self.model is not None:
             prob = float(self.model.predict_proba([features.to_vector()])[0][1])
         elif self._weights is not None:
-            vec = np.array([1.0, *features.to_vector()])
-            score = float(vec.dot(self._weights))
-            prob = float(1.0 / (1.0 + np.exp(-score)))
+            if np is not None:
+                vec = np.array([1.0, *features.to_vector()])
+                score = float(vec.dot(self._weights))
+            else:
+                vec = [1.0, *features.to_vector()]
+                score = float(sum(w * v for w, v in zip(self._weights, vec)))
+            prob = self._sigmoid(score)
         else:
             # approximate logistic model when training data is unavailable
             score = (
                 features.revenue_growth * 0.6
                 + features.funding * 0.4
                 + features.sentiment * 0.3
-                + np.log1p(features.tech_mentions) * 0.2
+                + math.log1p(features.tech_mentions) * 0.2
             )
-            prob = float(1.0 / (1.0 + np.exp(-score)))
+            prob = self._sigmoid(score)
 
         if self.prediction_manager:
             prob = self._apply_prediction_bots(prob, features)
@@ -197,6 +210,36 @@ class StrategyPredictionBot:
             except Exception:
                 continue
         return prob
+
+    @staticmethod
+    def _sigmoid(value: float) -> float:
+        return float(1.0 / (1.0 + math.exp(-value)))
+
+    def _train_fallback(
+        self, samples: list[list[float]], labels: list[int], *, lr: float = 0.1, epochs: int = 200
+    ) -> list[float]:
+        """Pure-Python logistic regression trainer used when numpy is unavailable."""
+
+        feature_len = len(samples[0]) if samples else 0
+        weights = [0.0] * (feature_len + 1)  # bias term + features
+        if feature_len == 0:
+            return weights
+
+        for _ in range(max(1, epochs)):
+            gradient = [0.0] * len(weights)
+            for row, label in zip(samples, labels):
+                x = [1.0, *row]
+                score = sum(w * v for w, v in zip(weights, x))
+                pred = self._sigmoid(score)
+                error = pred - float(label)
+                for i, val in enumerate(x):
+                    gradient[i] += error * val
+
+            step = lr / len(samples)
+            for i in range(len(weights)):
+                weights[i] -= step * gradient[i]
+
+        return weights
 
 
 _DISRUPTION_KEYWORDS = {"quantum", "gpt", "ai", "blockchain", "boom", "layoff", "pivot"}

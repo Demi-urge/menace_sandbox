@@ -20,7 +20,23 @@ from .resilience import (
     retry_with_backoff,
 )
 
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel
+except ModuleNotFoundError:  # pragma: no cover - minimal runtime shim
+    class BaseModel:  # type: ignore[misc]
+        def __init__(self, **data: Any) -> None:
+            for key, value in data.items():
+                setattr(self, key, value)
+
+        def dict(self) -> Dict[str, Any]:
+            return dict(self.__dict__)
+
+        def json(self) -> str:
+            return json.dumps(self.dict())
+
+        @classmethod
+        def parse_obj(cls, obj: Dict[str, Any]) -> "BaseModel":
+            return cls(**obj)
 from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 

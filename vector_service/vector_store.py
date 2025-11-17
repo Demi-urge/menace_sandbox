@@ -37,7 +37,10 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when module missing
     chromadb = None  # type: ignore
 
-import numpy as np
+try:  # pragma: no cover - optional dependency
+    import numpy as np
+except Exception:  # pragma: no cover - fallback when module missing
+    np = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -107,6 +110,8 @@ class FaissVectorStore:
         else:
             if faiss is None:
                 raise RuntimeError("faiss backend requested but faiss not available")
+            if np is None:
+                raise RuntimeError("faiss backend requires numpy, which is missing")
             self.index = faiss.IndexFlatL2(self.dim)
             self.ids: List[str] = []
             self.meta: List[Dict[str, Any]] = []
@@ -122,6 +127,8 @@ class FaissVectorStore:
     ) -> None:
         if faiss is None:
             raise RuntimeError("faiss not available")
+        if np is None:
+            raise RuntimeError("numpy is required for faiss vector store operations")
         vec = np.array([vector], dtype="float32")
         self.index.add(vec)
         self.ids.append(record_id)
@@ -138,6 +145,8 @@ class FaissVectorStore:
     def query(self, vector: Sequence[float], top_k: int = 5) -> List[Tuple[str, float]]:
         if not self.ids:
             return []
+        if np is None:
+            raise RuntimeError("numpy is required for faiss vector store operations")
         vec = np.array([vector], dtype="float32")
         distances, indices = self.index.search(vec, top_k)
         result: List[Tuple[str, float]] = []
@@ -177,6 +186,8 @@ class AnnoyVectorStore:
     metric: str = "angular"
 
     def __post_init__(self) -> None:
+        if AnnoyIndex is None:
+            raise RuntimeError("annoy backend requested but annoy is not available")
         self.path = _resolve_or_prepare_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
         self.index = AnnoyIndex(self.dim, self.metric)
@@ -250,6 +261,70 @@ class AnnoyVectorStore:
             json.dump(
                 {"ids": self.ids, "meta": self.meta, "vectors": self.vectors}, fh
             )
+
+
+@dataclass
+class InMemoryVectorStore:
+    """Minimal vector store fallback with JSON persistence."""
+
+    dim: int
+    path: Path
+    metric: str = "euclidean"
+
+    def __post_init__(self) -> None:
+        self.path = _resolve_or_prepare_path(self.path)
+        self.ids: List[str] = []
+        self.vectors: List[List[float]] = []
+        self.meta: List[Dict[str, Any]] = []
+        if self.path.exists():
+            self.load()
+
+    def add(
+        self,
+        kind: str,
+        record_id: str,
+        vector: Sequence[float],
+        *,
+        origin_db: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.ids.append(record_id)
+        self.vectors.append([float(v) for v in vector])
+        self.meta.append(
+            {
+                "type": kind,
+                "id": record_id,
+                "origin_db": origin_db,
+                "metadata": dict(metadata or {}),
+            }
+        )
+        self._save()
+
+    def query(self, vector: Sequence[float], top_k: int = 5) -> List[Tuple[str, float]]:
+        if not self.ids:
+            return []
+        query_vec = [float(v) for v in vector]
+        distances = []
+        for idx, candidate in enumerate(self.vectors):
+            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(query_vec, candidate)))
+            distances.append((self.ids[idx], dist))
+        distances.sort(key=lambda item: item[1])
+        return distances[:top_k]
+
+    def load(self) -> None:
+        try:
+            with self.path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except FileNotFoundError:
+            self.ids, self.vectors, self.meta = [], [], []
+            return
+        self.ids = [str(v) for v in payload.get("ids", [])]
+        self.vectors = [list(map(float, v)) for v in payload.get("vectors", [])]
+        self.meta = list(payload.get("meta", []))
+
+    def _save(self) -> None:
+        with self.path.open("w", encoding="utf-8") as fh:
+            json.dump({"ids": self.ids, "vectors": self.vectors, "meta": self.meta}, fh)
 
 
 # ---------------------------------------------------------------------------
@@ -399,13 +474,18 @@ def create_vector_store(
     """Create a ``VectorStore`` instance for the given configuration."""
 
     backend = (backend or "faiss").lower()
-    if backend == "faiss" and faiss is not None:
+    if backend == "faiss" and faiss is not None and np is not None:
         return FaissVectorStore(dim=dim, path=Path(path))
     if backend == "qdrant" and QdrantClient is not None:
         return QdrantVectorStore(dim=dim, path=Path(path))
     if backend == "chroma" and chromadb is not None:
         return ChromaVectorStore(dim=dim, path=Path(path))
-    return AnnoyVectorStore(dim=dim, path=Path(path), metric=metric)
+    if backend == "annoy" and AnnoyIndex is not None:
+        return AnnoyVectorStore(dim=dim, path=Path(path), metric=metric)
+    if AnnoyIndex is not None:
+        return AnnoyVectorStore(dim=dim, path=Path(path), metric=metric)
+    _trace("vector_store.fallback", backend="inmemory", requested=backend)
+    return InMemoryVectorStore(dim=dim, path=Path(path), metric=metric)
 
 
 _default_store: VectorStore | None = None
@@ -459,6 +539,7 @@ __all__ = [
     "AnnoyVectorStore",
     "QdrantVectorStore",
     "ChromaVectorStore",
+    "InMemoryVectorStore",
     "create_vector_store",
     "get_default_vector_store",
 ]

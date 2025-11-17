@@ -66,96 +66,150 @@ try:  # noqa: E402 - optional dependency
 except Exception:  # pragma: no cover - PyYAML missing
     yaml = None  # type: ignore
 
-from pydantic import BaseModel, Field  # noqa: E402
-
 try:  # noqa: E402 - prefer attribute detection over import side effects
+    from pydantic import BaseModel, Field  # type: ignore
     import pydantic as _pydantic
-except Exception as exc:  # pragma: no cover - pydantic should always be present
-    raise ImportError("pydantic is required for configuration models") from exc
+except Exception:  # pragma: no cover - pydantic unavailable
+    class BaseModel:  # type: ignore[misc]
+        def __init__(self, **data):
+            for key, value in data.items():
+                setattr(self, key, value)
 
-if not hasattr(BaseModel, "model_validate"):
+        @classmethod
+        def model_validate(cls, data):  # type: ignore[override]
+            return cls(**data)
 
-    @classmethod
-    def _model_validate(cls, data):  # type: ignore[override]
-        """Compatibility shim for :meth:`BaseModel.model_validate` on Pydantic v1."""
+        def model_dump(self, *_, **__):  # type: ignore[override]
+            return dict(self.__dict__)
 
-        if hasattr(cls, "parse_obj"):
-            return cls.parse_obj(data)  # type: ignore[attr-defined]
-        return cls(**data)
+        @classmethod
+        def parse_obj(cls, data):  # type: ignore[override]
+            return cls(**data)
 
-    BaseModel.model_validate = classmethod(_model_validate)  # type: ignore[attr-defined]
+        def dict(self, *_, **__):  # type: ignore[override]
+            return dict(self.__dict__)
 
-if not hasattr(BaseModel, "model_dump"):
+    def Field(default=None, **kwargs):  # type: ignore[override]
+        return default
 
-    def _model_dump(self, *args, **kwargs):  # type: ignore[override]
-        """Compatibility shim for :meth:`BaseModel.model_dump` on Pydantic v1."""
+    ConfigDict = dict  # type: ignore[assignment]
 
-        return self.dict(*args, **kwargs)  # type: ignore[attr-defined]
+    def field_validator(*_args, **_kwargs):  # type: ignore[override]
+        def decorator(func):
+            return func
 
-    BaseModel.model_dump = _model_dump  # type: ignore[attr-defined]
+        return decorator
 
-if all(
-    hasattr(_pydantic, attr)
-    for attr in ("ConfigDict", "field_validator", "model_validator")
-):
-    ConfigDict = getattr(_pydantic, "ConfigDict")  # type: ignore[assignment]
-    field_validator = getattr(_pydantic, "field_validator")  # type: ignore[assignment]
-    model_validator = getattr(_pydantic, "model_validator")  # type: ignore[assignment]
-    _PYDANTIC_V2 = True
-else:  # pragma: no cover - executed when running under pydantic v1
-    from pydantic import root_validator, validator  # type: ignore
+    def model_validator(*_args, **_kwargs):  # type: ignore[override]
+        def decorator(func):
+            return func
+
+        return decorator
 
     _PYDANTIC_V2 = False
+else:
+    if not hasattr(BaseModel, "model_validate"):
 
-    def field_validator(*fields, **kwargs):  # type: ignore[override]
-        """Compatibility shim for :func:`pydantic.field_validator` on v1."""
+        @classmethod
+        def _model_validate(cls, data):  # type: ignore[override]
+            """Compatibility shim for :meth:`BaseModel.model_validate` on Pydantic v1."""
 
-        mode = kwargs.pop("mode", None)
-        if mode is not None:
-            translated = {"before": True, "after": False, "plain": False}
-            if mode not in translated:
+            if hasattr(cls, "parse_obj"):
+                return cls.parse_obj(data)  # type: ignore[attr-defined]
+            return cls(**data)
+
+        BaseModel.model_validate = classmethod(_model_validate)  # type: ignore[attr-defined]
+
+    if not hasattr(BaseModel, "model_dump"):
+
+        def _model_dump(self, *args, **kwargs):  # type: ignore[override]
+            """Compatibility shim for :meth:`BaseModel.model_dump` on Pydantic v1."""
+
+            return self.dict(*args, **kwargs)  # type: ignore[attr-defined]
+
+        BaseModel.model_dump = _model_dump  # type: ignore[attr-defined]
+
+    if all(
+        hasattr(_pydantic, attr)
+        for attr in ("ConfigDict", "field_validator", "model_validator")
+    ):
+        ConfigDict = getattr(_pydantic, "ConfigDict")  # type: ignore[assignment]
+        field_validator = getattr(_pydantic, "field_validator")  # type: ignore[assignment]
+        model_validator = getattr(_pydantic, "model_validator")  # type: ignore[assignment]
+        _PYDANTIC_V2 = True
+    else:  # pragma: no cover - executed when running under pydantic v1
+        from pydantic import root_validator, validator  # type: ignore
+
+        _PYDANTIC_V2 = False
+
+        def field_validator(*fields, **kwargs):  # type: ignore[override]
+            """Compatibility shim for :func:`pydantic.field_validator` on v1."""
+
+            mode = kwargs.pop("mode", None)
+            if mode is not None:
+                translated = {"before": True, "after": False, "plain": False}
+                if mode not in translated:
+                    raise ValueError(
+                        f"Unsupported validation mode for pydantic<2: {mode!r}"
+                    )
+                kwargs["pre"] = translated[mode]
+
+            kwargs.setdefault("allow_reuse", True)
+            decorator = validator(*fields, **kwargs)
+
+            def wrapper(func):
+                method = func.__func__ if isinstance(func, classmethod) else func
+
+                def _validator(cls, value, values, config, field):  # type: ignore[override]
+                    info = SimpleNamespace(field_name=getattr(field, "name", None))
+                    return method(cls, value, info)
+
+                _validator.__name__ = getattr(method, "__name__", "validator")
+                _validator.__qualname__ = getattr(method, "__qualname__", _validator.__qualname__)
+
+                return decorator(_validator)
+
+            return wrapper
+
+        def model_validator(*, mode):  # type: ignore[override]
+            """Compatibility shim for :func:`pydantic.model_validator` on v1."""
+
+            if mode not in {"after", "before"}:  # pragma: no cover - other modes unused
                 raise ValueError(
-                    f"Unsupported validation mode for pydantic<2: {mode!r}"
+                    "pydantic v1 fallback only supports mode in {'after', 'before'}"
                 )
-            kwargs["pre"] = translated[mode]
 
-        kwargs.setdefault("allow_reuse", True)
-        decorator = validator(*fields, **kwargs)
+            def decorator(func):
+                is_classmethod = isinstance(func, classmethod)
+                method = func.__func__ if is_classmethod else func
 
-        def wrapper(func):
-            method = func.__func__ if isinstance(func, classmethod) else func
+                if mode == "after":
 
-            def _validator(cls, value, values, config, field):  # type: ignore[override]
-                info = SimpleNamespace(field_name=getattr(field, "name", None))
-                return method(cls, value, info)
+                    def _validator(cls, values):
+                        instance = cls.construct(**values)  # type: ignore[attr-defined]
+                        if is_classmethod:
+                            result = method(cls, instance)
+                        else:
+                            result = method(instance)
+                        if isinstance(result, cls):
+                            return result.dict()
+                        return values if result is None else result
 
-            _validator.__name__ = getattr(method, "__name__", "validator")
-            _validator.__qualname__ = getattr(method, "__qualname__", _validator.__qualname__)
+                    _validator.__name__ = getattr(method, "__name__", "validator")
+                    _validator.__qualname__ = getattr(
+                        method, "__qualname__", _validator.__qualname__
+                    )
+                    _validator.__doc__ = getattr(method, "__doc__", None)
 
-            return decorator(_validator)
-
-        return wrapper
-
-    def model_validator(*, mode):  # type: ignore[override]
-        """Compatibility shim for :func:`pydantic.model_validator` on v1."""
-
-        if mode not in {"after", "before"}:  # pragma: no cover - other modes unused
-            raise ValueError(
-                "pydantic v1 fallback only supports mode in {'after', 'before'}"
-            )
-
-        def decorator(func):
-            is_classmethod = isinstance(func, classmethod)
-            method = func.__func__ if is_classmethod else func
-
-            if mode == "after":
+                    return root_validator(
+                        skip_on_failure=True, allow_reuse=True
+                    )(_validator)
 
                 def _validator(cls, values):
-                    instance = cls.construct(**values)  # type: ignore[attr-defined]
                     if is_classmethod:
-                        result = method(cls, instance)
+                        result = method(cls, values)
                     else:
-                        result = method(instance)
+                        result = method(values)
                     if isinstance(result, cls):
                         return result.dict()
                     return values if result is None else result
@@ -166,34 +220,15 @@ else:  # pragma: no cover - executed when running under pydantic v1
                 )
                 _validator.__doc__ = getattr(method, "__doc__", None)
 
-                return root_validator(
-                    skip_on_failure=True, allow_reuse=True
-                )(_validator)
+                return root_validator(pre=True, allow_reuse=True)(_validator)
 
-            def _validator(cls, values):
-                if is_classmethod:
-                    result = method(cls, values)
-                else:
-                    result = method(values)
-                if isinstance(result, cls):
-                    return result.dict()
-                return values if result is None else result
+            return decorator
 
-            _validator.__name__ = getattr(method, "__name__", "validator")
-            _validator.__qualname__ = getattr(
-                method, "__qualname__", _validator.__qualname__
-            )
-            _validator.__doc__ = getattr(method, "__doc__", None)
+        class ConfigDict(dict):  # type: ignore[misc,override]
+            """Minimal stand-in so attribute access succeeds under v1."""
 
-            return root_validator(pre=True, allow_reuse=True)(_validator)
-
-        return decorator
-
-    class ConfigDict(dict):  # type: ignore[misc,override]
-        """Minimal stand-in so attribute access succeeds under v1."""
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from .unified_event_bus import EventBus

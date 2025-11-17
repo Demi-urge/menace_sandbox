@@ -10,7 +10,10 @@ import json
 import os
 import time
 import urllib.request
-import joblib
+try:  # pragma: no cover - optional dependency
+    import joblib
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback
+    joblib = None  # type: ignore[assignment]
 import pickle
 
 registry = BotRegistry()
@@ -27,10 +30,17 @@ from typing import TYPE_CHECKING, Iterable, List, Tuple
 
 from dynamic_path_router import resolve_path
 
-import numpy as np
+import math
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    np = None  # type: ignore[assignment]
 import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
+log2 = np.log2 if np is not None else math.log2
+exp = np.exp if np is not None else math.exp
 
 from .error_flags import RAISE_ERRORS
 from .prediction_manager_bot import PredictionManager
@@ -196,7 +206,7 @@ def _sanitize_training_data(pairs: list[tuple[str, str]]) -> list[tuple[str, str
             continue
         counts = Counter(text)
         total = len(text)
-        ent = -sum((c / total) * np.log2(c / total) for c in counts.values())
+        ent = -sum((c / total) * log2(c / total) for c in counts.values())
         if ent < 1.0 or ent > 8.0:
             continue
         out.append((text, label))
@@ -498,7 +508,7 @@ class AICounterBot:
         self.export_path = Path(
             os.getenv("AI_COUNTER_EXPORT_FILE", "models/ai_classifier.pkl")
         )
-        if LogisticRegression is not None:
+        if LogisticRegression is not None and np is not None and joblib is not None:
             if self.model_path.exists():
                 try:
                     self.model = joblib.load(self.model_path)
@@ -546,7 +556,7 @@ class AICounterBot:
         self, samples: Iterable[TrafficSample], labels: Iterable[int]
     ) -> None:
         """Train adaptation prediction model."""
-        if self.model is None:
+        if self.model is None or np is None:
             return
         samples = list(samples)
         labels = list(labels)
@@ -559,11 +569,12 @@ class AICounterBot:
         self._scale_std = X.std(axis=0) + 1e-9
         X_norm = (X - self._scale_mean) / self._scale_std
         self.model.fit(X_norm, y)
-        try:
-            joblib.dump(self.model, self.model_path)
-            self._export_model()
-        except Exception as exc:  # pragma: no cover - optional
-            logger.warning("failed to persist model %s: %s", self.model_path, exc)
+        if joblib is not None:
+            try:
+                joblib.dump(self.model, self.model_path)
+                self._export_model()
+            except Exception as exc:  # pragma: no cover - optional
+                logger.warning("failed to persist model %s: %s", self.model_path, exc)
 
     def _apply_prediction_bots(
         self, base: float, sample: TrafficSample
@@ -611,7 +622,7 @@ class AICounterBot:
             if sample.pattern:
                 counts = Counter(sample.pattern)
                 total = len(sample.pattern)
-                ent = -sum((c / total) * np.log2(c / total) for c in counts.values()) / max(np.log2(total), 1e-9)  # noqa: E501
+                ent = -sum((c / total) * log2(c / total) for c in counts.values()) / max(log2(total), 1e-9)  # noqa: E501
             score = (
                 0.05 * sample.frequency
                 + 0.5 * sample.similarity
@@ -619,8 +630,14 @@ class AICounterBot:
                 + 0.02 * history
                 + 0.1 * ent
             )
-            prob = float(1.0 / (1.0 + np.exp(-score)))
+            prob = float(1.0 / (1.0 + exp(-score)))
         else:
+            if np is None:
+                logger.warning(
+                    "numpy unavailable; using heuristic probability estimate"
+                )
+                score = sample.similarity * 0.5
+                return float(1.0 / (1.0 + exp(-score)))
             vec = np.array(sample.to_vector(), dtype=float)
             if self._scale_mean is not None:
                 vec = (vec - self._scale_mean) / self._scale_std
