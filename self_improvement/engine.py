@@ -2605,6 +2605,12 @@ class SelfImprovementEngine:
                                                         description_text,
                                                         repo_root=clone_root,
                                                         provenance_token=provenance_token,
+                                                        manager=self.self_coding_engine,
+                                                        context_builder=getattr(
+                                                            self.self_coding_engine,
+                                                            "context_builder",
+                                                            None,
+                                                        ),
                                                     )
                                                     cloned_summary["validation_flags"] = list(
                                                         validation_flags
@@ -2631,15 +2637,23 @@ class SelfImprovementEngine:
                                                     )
                                                     continue
 
+                                            context_meta = {
+                                                "trigger": action,
+                                                "module": str(module_rel_path),
+                                                "description": description_text,
+                                            }
                                             passed, validated_patch_id, flags = (
                                                 quick_fix_engine.apply_validated_patch(
                                                     str(cloned_module),
                                                     description_text,
-                                                    {
-                                                        "trigger": action,
-                                                        "module": str(module_rel_path),
-                                                    },
+                                                    context_meta,
                                                     flags=validation_flags,
+                                                    manager=self.self_coding_engine,
+                                                    context_builder=getattr(
+                                                        self.self_coding_engine,
+                                                        "context_builder",
+                                                        None,
+                                                    ),
                                                     **apply_kwargs,
                                                 )
                                             )
