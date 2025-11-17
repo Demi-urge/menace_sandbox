@@ -4801,7 +4801,20 @@ def self_coding_managed(
                     bootstrap_event.clear()
 
             if wait_for_completion:
-                bootstrap_event.wait()
+                if not bootstrap_event.wait(timeout=10):
+                    timeout_error = TimeoutError(
+                        "Bot helper bootstrap timed out waiting for prior initialisation"
+                    )
+                    with bootstrap_lock:
+                        bootstrap_error = timeout_error
+                        bootstrap_in_progress = False
+                        bootstrap_done = False
+                        bootstrap_event.set()
+                    logger.error(
+                        "Bootstrap coordination stalled; falling back to fail-fast behaviour",
+                        exc_info=timeout_error,
+                    )
+                    raise timeout_error
                 if bootstrap_error is not None:
                     raise bootstrap_error
                 if not bootstrap_done or resolved_registry is None or resolved_data_bot is None:
