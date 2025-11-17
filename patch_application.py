@@ -86,16 +86,31 @@ def _validate_and_apply(
             "instance when invoking quick_fix.validate_patch."
         )
 
-    if valid:
-        quick_fix.apply_validated_patch(
-            module_path=str(module_path),
-            flags=flags,
-            context_meta={"description": description},
-            repo_root=repo_root,
-            provenance_token=provenance,
-            manager=None,
-            context_builder=builder,
+    if not valid or flags:
+        raise RuntimeError(
+            f"Quick-fix validation failed with flags: {sorted(flags)}"
         )
+
+    context_meta = {
+        "description": description,
+        "target_module": str(module_path),
+    }
+    passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
+        module_path=str(module_path),
+        description=description,
+        flags=flags,
+        context_meta=context_meta,
+        repo_root=repo_root,
+        provenance_token=provenance,
+        manager=None,
+        context_builder=builder,
+    )
+
+    if not passed or apply_flags:
+        raise RuntimeError(
+            f"Quick-fix application failed with flags: {sorted(apply_flags)}"
+        )
+
     return valid, flags
 
 
