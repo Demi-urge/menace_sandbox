@@ -336,6 +336,16 @@ def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
     if _SC_PATH is None or Observer is None or _SC_WATCHER is not None:
         return
 
+    # When the thresholds file or its parent directory is missing, the
+    # underlying watchdog observer raises ``FileNotFoundError`` on Windows.
+    # Skip watcher setup in that case so callers can still load thresholds
+    # without crashing.
+    if not _SC_PATH.parent.exists():
+        logger.warning(
+            "skipping threshold watcher because %s does not exist", _SC_PATH.parent
+        )
+        return
+
     class _ThresholdHandler(FileSystemEventHandler):
         def on_modified(self, event):  # type: ignore[override]
             if getattr(event, "is_directory", False):
@@ -354,7 +364,13 @@ def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
     observer = Observer()
     observer.schedule(handler, str(_SC_PATH.parent.resolve()), recursive=False)
     observer.daemon = True
-    observer.start()
+    try:
+        observer.start()
+    except FileNotFoundError:
+        logger.warning(
+            "skipping threshold watcher because %s is unavailable", _SC_PATH.parent
+        )
+        return
     _SC_WATCHER = observer
 
 
