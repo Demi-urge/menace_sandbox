@@ -25,14 +25,25 @@ sys.modules.setdefault(
 
 quick_fix_engine = types.SimpleNamespace()
 sys.modules["quick_fix_engine"] = quick_fix_engine
+quick_fix_engine.quick_fix = types.SimpleNamespace()
 
 import menace_cli
 import vector_service
 
 
 class DummyContextBuilder:
+    provenance_token = "tok"
+    roi_tag_penalties: dict[str, float] = {}
+
     def build(self, *a, **k):
         return ""
+
+    def refresh_db_weights(self):
+        return None
+
+
+# Force the CLI to use the lightweight dummy builder in tests.
+menace_cli.create_context_builder = lambda: DummyContextBuilder()
 
 
 # ---------------------------------------------------------------------------
@@ -42,8 +53,9 @@ def test_patch_success(monkeypatch, tmp_path, capsys):
     module.write_text("x=1\n")
 
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
-    monkeypatch.setattr(
-        quick_fix_engine, "generate_patch", lambda module, *a, **k: 123, raising=False
+    quick_fix_engine.quick_fix.validate_patch = lambda *a, **k: (True, [])
+    quick_fix_engine.quick_fix.apply_validated_patch = (
+        lambda *a, **k: (True, 123, [])
     )
 
     class DummyDB:
@@ -64,9 +76,7 @@ def test_patch_success(monkeypatch, tmp_path, capsys):
 
 def test_patch_invalid_path(monkeypatch, tmp_path):
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
-    monkeypatch.setattr(
-        quick_fix_engine, "generate_patch", lambda *a, **k: None, raising=False
-    )
+    quick_fix_engine.quick_fix.validate_patch = lambda *a, **k: (False, ["missing"])
 
     rc = menace_cli.main([
         "patch",
@@ -83,6 +93,10 @@ def test_patch_bad_context(monkeypatch, tmp_path, capsys):
     module = tmp_path / "mod_bad_ctx.py"  # path-ignore
     module.write_text("x=1\n")
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
+    quick_fix_engine.quick_fix.validate_patch = lambda *a, **k: (True, [])
+    quick_fix_engine.quick_fix.apply_validated_patch = (
+        lambda *a, **k: (True, 5, [])
+    )
 
     rc = menace_cli.main([
         "patch",
@@ -106,14 +120,18 @@ def test_patch_description_and_context(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_generate_patch(module, *a, **kwargs):
+    def fake_validate_patch(*_args, **kwargs):
         captured["description"] = kwargs.get("description")
-        captured["context"] = kwargs.get("context")
-        return 7
+        captured["context_meta_validate"] = kwargs.get("context_builder")
+        return True, []
 
-    monkeypatch.setattr(
-        quick_fix_engine, "generate_patch", fake_generate_patch, raising=False
-    )
+    def fake_apply_validated_patch(*_args, **kwargs):
+        captured["description_apply"] = kwargs.get("description")
+        captured["context"] = kwargs.get("context_meta")
+        return True, 7, []
+
+    quick_fix_engine.quick_fix.validate_patch = fake_validate_patch
+    quick_fix_engine.quick_fix.apply_validated_patch = fake_apply_validated_patch
     monkeypatch.setattr(menace_cli, "PatchHistoryDB", lambda: types.SimpleNamespace(get=lambda pid: None))
     monkeypatch.setattr(menace_cli, "PatchLogger", lambda patch_db=None: object())
 
@@ -129,4 +147,6 @@ def test_patch_description_and_context(monkeypatch, tmp_path):
     )
 
     assert captured["description"] == "something"
-    assert captured["context"] == {"foo": "bar"}
+    assert captured["description_apply"] == "something"
+    assert captured["context"]["foo"] == "bar"
+    assert captured["context"]["target_module"] == str(module)
