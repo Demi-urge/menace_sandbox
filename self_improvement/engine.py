@@ -2573,6 +2573,7 @@ class SelfImprovementEngine:
                                         os.chdir(str(clone_root))
                                         try:
                                             apply_kwargs: dict[str, Any] = {}
+                                            provenance_token: str | None = None
                                             try:
                                                 sig = inspect.signature(
                                                     quick_fix_engine.apply_validated_patch
@@ -2595,6 +2596,41 @@ class SelfImprovementEngine:
                                                     apply_kwargs["provenance_token"] = provenance_token
                                             except Exception:
                                                 pass
+
+                                            validation_flags: list[str] = []
+                                            if hasattr(quick_fix_engine, "validate_patch"):
+                                                try:
+                                                    valid, validation_flags = quick_fix_engine.validate_patch(
+                                                        str(cloned_module),
+                                                        description_text,
+                                                        repo_root=clone_root,
+                                                        provenance_token=provenance_token,
+                                                    )
+                                                    cloned_summary["validation_flags"] = list(
+                                                        validation_flags
+                                                    )
+                                                    if not valid or validation_flags:
+                                                        cloned_summary["passed"] = False
+                                                        validation_failed = True
+                                                        failure_reason = failure_reason or (
+                                                            "quick_fix_generation_error"
+                                                            if not valid
+                                                            else "quick_fix_flags"
+                                                        )
+                                                        continue
+                                                except Exception:
+                                                    validation_failed = True
+                                                    cloned_summary["error"] = "quick_fix_validation_error"
+                                                    cloned_summary["passed"] = False
+                                                    failure_reason = failure_reason or "quick_fix_error"
+                                                    self.logger.exception(
+                                                        "quick fix validation failed",
+                                                        extra=log_record(
+                                                            module=module, patch_id=patch_id
+                                                        ),
+                                                    )
+                                                    continue
+
                                             passed, validated_patch_id, flags = (
                                                 quick_fix_engine.apply_validated_patch(
                                                     str(cloned_module),
@@ -2603,6 +2639,7 @@ class SelfImprovementEngine:
                                                         "trigger": action,
                                                         "module": str(module_rel_path),
                                                     },
+                                                    flags=validation_flags,
                                                     **apply_kwargs,
                                                 )
                                             )
