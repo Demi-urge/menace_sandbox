@@ -146,26 +146,77 @@ def validate_patch_with_context(
     description: str,
     *,
     repo_root: str | Path,
-) -> tuple[bool, list[str]]:
-    """Validate a patch using a context-aware builder.
+    manager: object,
+    context_meta: dict | None = None,
+    provenance_token: str | None = None,
+    patch_logger: object | None = None,
+) -> dict[str, object]:
+    """Validate and apply a patch using the quick-fix pipeline.
 
-    Creating the :class:`~menace_sandbox.context_builder.ContextBuilder` here
-    ensures :func:`quick_fix_engine.validate_patch` receives both a provenance
-    token and a real context builder rather than logging a missing context
-    warning.
+    The call mirrors the bootstrap sequence used by
+    :meth:`self_coding_manager.SelfCodingManager.run_post_patch_cycle`: first
+    ``quick_fix.validate_patch`` is invoked against the target module and
+    description, then ``quick_fix.apply_validated_patch`` is executed with the
+    returned flags and context metadata. Surfacing validation or application
+    flags early prevents expensive self-test runs when the patch is malformed
+    or missing required schema fields.
     """
 
-    repo_root_path = Path(repo_root)
+    repo_root_path = Path(repo_root).resolve()
+    module_path = resolve_path(str(module_path))
+    if not module_path.is_absolute():
+        module_path = (repo_root_path / module_path).resolve()
+    if not module_path.exists():
+        raise FileNotFoundError(f"module path not found: {module_path}")
+
     builder = create_context_builder(repo_root=repo_root_path)
-    provenance = builder.provenance_token
+    provenance = provenance_token or getattr(builder, "provenance_token", None)
+    if not provenance:
+        raise RuntimeError("ContextBuilder did not expose a provenance token")
+
     valid, flags = quick_fix.validate_patch(
         module_path=str(module_path),
         description=description,
         repo_root=str(repo_root_path),
         provenance_token=provenance,
+        manager=manager,
         context_builder=builder,
+        patch_logger=patch_logger,
     )
-    return valid, flags
+    if not valid or flags:
+        raise RuntimeError(
+            f"Quick-fix validation failed with flags: {sorted(flags)}"
+        )
+
+    merged_context = {
+        "description": description,
+        "target_module": str(module_path),
+    }
+    if context_meta:
+        merged_context.update(context_meta)
+
+    passed, patch_id, apply_flags = quick_fix.apply_validated_patch(
+        module_path=str(module_path),
+        description=description,
+        flags=list(flags),
+        context_meta=merged_context,
+        repo_root=str(repo_root_path),
+        provenance_token=provenance,
+        manager=manager,
+        context_builder=builder,
+        patch_logger=patch_logger,
+    )
+    if not passed or apply_flags:
+        raise RuntimeError(
+            f"Quick-fix application failed with flags: {sorted(apply_flags)}"
+        )
+
+    return {
+        "validation_flags": list(flags),
+        "apply_flags": list(apply_flags),
+        "patch_id": patch_id,
+        "passed": bool(passed),
+    }
 
 
 __all__ = ["generate_patch", "apply_patch", "validate_patch_with_context"]
