@@ -2,12 +2,21 @@ from pathlib import Path
 import sys
 import __main__
 
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+
+# Ensure the repository root is on the path so ``menace_sandbox`` can be imported
+# when the script is executed directly from the cloned repository.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.coding_bot_interface import fallback_helper_manager, prepare_pipeline_for_bootstrap
 from menace_sandbox.data_bot import DataBot
 from menace_sandbox.menace_memory_manager import MenaceMemoryManager
 from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+from context_builder_util import create_context_builder
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
@@ -21,8 +30,8 @@ description = "Describe the change"
 # Build engine + context builder
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
-engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
-builder = engine.context_builder
+builder = create_context_builder()
+engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder)
 
 # Install a bootstrap sentinel manager while the pipeline is constructed
 with fallback_helper_manager(bot_registry=registry, data_bot=data_bot) as bootstrap_manager:
