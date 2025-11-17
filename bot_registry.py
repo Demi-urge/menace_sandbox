@@ -2158,6 +2158,12 @@ class BotRegistry:
         manager: "SelfCodingManager | None",
         data_bot: "DataBot | None",
     ) -> None:
+        if name not in self.graph:
+            logger.debug(
+                "adding placeholder graph node for missing coding bot %s", name
+            )
+            self.graph.add_node(name)
+
         node = self.graph.nodes[name]
 
         components = _load_self_coding_components()
