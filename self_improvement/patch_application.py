@@ -13,6 +13,7 @@ import logging
 import subprocess
 import tempfile
 import shutil
+import sys
 
 from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
@@ -49,13 +50,17 @@ def apply_patch(
     """
 
     logger = logging.getLogger(__name__)
-    try:
-        fetch = _load_callable("quick_fix_engine", "fetch_patch")
-    except RuntimeError as exc:  # pragma: no cover - best effort logging
-        logger.error("quick_fix_engine missing", exc_info=exc)
-        raise RuntimeError(
-            "quick_fix_engine is required for patch application. Install it via `pip install quick_fix_engine`."
-        ) from exc
+    inline_fetch = getattr(sys.modules.get("quick_fix_engine"), "fetch_patch", None)
+    if callable(inline_fetch):
+        fetch = inline_fetch
+    else:
+        try:
+            fetch = _load_callable("quick_fix_engine", "fetch_patch")
+        except RuntimeError as exc:  # pragma: no cover - best effort logging
+            logger.error("quick_fix_engine missing", exc_info=exc)
+            raise RuntimeError(
+                "quick_fix_engine is required for patch application. Install it via `pip install quick_fix_engine`."
+            ) from exc
     try:
         patch_data = _call_with_retries(
             fetch, patch_id, retries=retries, delay=delay
