@@ -124,11 +124,6 @@ def _validate_and_apply(
     )
     valid, flags, validation_context = _parse_validation_result(validation_result)
 
-    if not valid or flags:
-        raise RuntimeError(
-            f"Quick-fix validation failed with flags: {sorted(flags)}"
-        )
-
     merged_context = {
         "description": description,
         "target_module": str(module_path),
@@ -148,6 +143,11 @@ def _validate_and_apply(
         manager=manager,
         context_builder=builder,
     )
+
+    if not valid or flags:
+        raise RuntimeError(
+            f"Quick-fix validation failed with flags: {sorted(flags)}"
+        )
 
     if not passed or apply_flags:
         raise RuntimeError(
@@ -186,7 +186,7 @@ def main() -> None:
             manager=manager,
         )
     except Exception as exc:  # pragma: no cover - CLI surface
-        print(f"Patch application failed: {exc}")
+        print(f"Patch application failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if valid:
