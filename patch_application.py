@@ -81,6 +81,19 @@ def _parse_validation_result(result: Any) -> tuple[bool, list[str], dict[str, An
     return bool(valid), list(flags or []), dict(context)
 
 
+def _parse_apply_result(result: Any) -> tuple[bool, Any, list[str]]:
+    """Normalize quick-fix application output and surface schema mismatches."""
+
+    try:
+        passed, patch_id, flags = result
+    except Exception as exc:  # pragma: no cover - defensive against schema drift
+        raise RuntimeError(
+            "quick_fix.apply_validated_patch returned unexpected response format"
+        ) from exc
+
+    return bool(passed), patch_id, list(flags or [])
+
+
 def _validate_and_apply(
     module_path: Path,
     description: str,
@@ -133,15 +146,17 @@ def _validate_and_apply(
     if context_meta:
         merged_context.update(context_meta)
 
-    passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
-        module_path=str(module_path),
-        description=description,
-        flags=flags,
-        context_meta=merged_context,
-        repo_root=repo_root,
-        provenance_token=provenance,
-        manager=manager,
-        context_builder=builder,
+    passed, _patch_id, apply_flags = _parse_apply_result(
+        quick_fix.apply_validated_patch(
+            module_path=str(module_path),
+            description=description,
+            flags=flags,
+            context_meta=merged_context,
+            repo_root=repo_root,
+            provenance_token=provenance,
+            manager=manager,
+            context_builder=builder,
+        )
     )
 
     if not valid or flags:
