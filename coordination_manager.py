@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+from urllib.parse import urlparse
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
@@ -15,6 +17,28 @@ try:
     import pika  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pika = None  # type: ignore
+
+
+def _can_reach_broker(queue_url: str, timeout: float = 0.25) -> bool:
+    """Return True when the RabbitMQ broker defined by *queue_url* is reachable."""
+
+    try:
+        parsed = urlparse(queue_url)
+        if not parsed.hostname:
+            return False
+        port = parsed.port or 5672
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        logging.getLogger(__name__).debug(
+            "RabbitMQ broker not reachable at %s: %s", queue_url, exc
+        )
+        return False
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "RabbitMQ broker check failed for %s: %s", queue_url, exc
+        )
+        return False
 
 
 @dataclass
@@ -67,7 +91,7 @@ class CoordinationManager:
     def __init__(self, queue_url: str = "amqp://guest:guest@localhost/", log: MessageLog | None = None) -> None:
         self.log = log or MessageLog()
         self._use_pika = False
-        if pika:
+        if pika and _can_reach_broker(queue_url):
             try:
                 self.conn = pika.BlockingConnection(pika.URLParameters(queue_url))
                 self.ch = self.conn.channel()
@@ -76,6 +100,13 @@ class CoordinationManager:
             except Exception:  # pragma: no cover - no RabbitMQ
                 self.conn = None
                 self.ch = None
+                logging.getLogger(__name__).info(
+                    "RabbitMQ unreachable at %s; using in-process queue", queue_url
+                )
+        elif queue_url:
+            logging.getLogger(__name__).info(
+                "RabbitMQ not available at %s; using in-process queue", queue_url
+            )
         if not self._use_pika:
             from queue import Queue
 

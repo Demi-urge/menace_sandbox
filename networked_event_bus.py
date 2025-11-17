@@ -59,14 +59,27 @@ class NetworkedEventBus:
         self._consumers: Dict[str, threading.Thread] = {}
         self._closing = threading.Event()
         self._circuit = CircuitBreaker()
+        self._queues: Dict[str, queue.Queue[object]] | None = None
         if pika:
-            self._conn = pika.BlockingConnection(pika.ConnectionParameters(host=host))
-            self._channel = self._conn.channel()
-            self._queues = None
+            try:
+                self._conn = pika.BlockingConnection(
+                    pika.ConnectionParameters(host=host)
+                )
+                self._channel = self._conn.channel()
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "RabbitMQ unavailable at %s; falling back to in-process bus",
+                    host,
+                )
+                self._conn = None
+                self._channel = None
+                self._queues = {}
+            else:
+                self._queues = None
         else:
             self._conn = None
             self._channel = None
-            self._queues: Dict[str, queue.Queue[object]] = {}
+            self._queues = {}
 
     # ------------------------------------------------------------------
     def subscribe(self, topic: str, callback: Callable[[str, object], None]) -> None:
