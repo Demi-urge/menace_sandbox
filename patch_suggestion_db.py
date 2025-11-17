@@ -6,8 +6,67 @@ from pathlib import Path
 from collections import Counter
 from typing import Any, Dict, Iterable, Iterator, List, Optional, TYPE_CHECKING
 import logging
+import os
 import threading
-from filelock import FileLock
+import time
+
+try:
+    from filelock import FileLock
+except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
+    class FileLock:
+        """Minimal cross-platform file lock to avoid external dependency."""
+
+        def __init__(self, path: str, timeout: float | None = None):
+            self.path = Path(path)
+            self.timeout = timeout
+            self._handle = None
+
+        def acquire(self, timeout: float | None = None, poll_interval: float = 0.1):
+            timeout = self.timeout if timeout is None else timeout
+            start = time.monotonic()
+            self.path.touch(exist_ok=True)
+            handle = self.path.open("a+")
+            while True:
+                try:
+                    if os.name == "nt":  # pragma: no cover - Windows
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:  # pragma: no cover - Unix
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (BlockingIOError, OSError):
+                    if timeout is not None and (time.monotonic() - start) >= timeout:
+                        handle.close()
+                        raise TimeoutError(f"Failed to acquire lock on {self.path}")
+                    time.sleep(poll_interval)
+            self._handle = handle
+            return self
+
+        def release(self):
+            if not self._handle:
+                return
+            try:
+                if hasattr(os, "name") and os.name == "nt":  # pragma: no cover - Windows
+                    import msvcrt
+
+                    self._handle.seek(0)
+                    msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:  # pragma: no cover - Unix
+                    import fcntl
+
+                    fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._handle.close()
+                self._handle = None
+
+        def __enter__(self):
+            return self.acquire()
+
+        def __exit__(self, exc_type, exc, tb):
+            self.release()
 
 from db_router import init_db_router
 from dynamic_path_router import resolve_path

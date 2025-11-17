@@ -5,6 +5,8 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
+import logging
+
 from .coding_bot_interface import self_coding_managed
 import smtplib
 from dataclasses import dataclass
@@ -15,12 +17,22 @@ from typing import Iterable, List, Optional
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+logger = logging.getLogger(__name__)
 
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
-import matplotlib.pyplot as plt
+try:  # pragma: no cover - optional dependency
+    import matplotlib.pyplot as plt
+
+    HAVE_MATPLOTLIB = True
+except Exception:
+    plt = None  # type: ignore
+    HAVE_MATPLOTLIB = False
+    logger.warning(
+        "matplotlib is not installed; chart generation will be skipped"
+    )
 from jinja2 import Template
 
 try:
@@ -71,6 +83,9 @@ class ReportGenerationBot:
         return self.reports_dir / f"{name}.png"
 
     def _generate_charts(self, df: pd.DataFrame, metrics: Iterable[str]) -> List[Path]:
+        if not HAVE_MATPLOTLIB:
+            logger.debug("Skipping chart generation because matplotlib is unavailable")
+            return []
         paths = []
         for metric in metrics:
             if metric not in df:
