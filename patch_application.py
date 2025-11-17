@@ -19,7 +19,7 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-from typing import Iterable, Tuple
+from typing import Any, Iterable, Mapping
 
 
 def _add_repo_to_syspath(repo_root: Path) -> None:
@@ -56,9 +56,34 @@ def _resolve_module_path(repo_root: Path, raw_path: str) -> Path:
     return path
 
 
+def _parse_validation_result(result: Any) -> tuple[bool, list[str], dict[str, Any]]:
+    """Normalize quick-fix validation output.
+
+    ``quick_fix.validate_patch`` historically returned a ``(valid, flags)`` tuple
+    but newer variants may append a context mapping. This helper accepts either
+    shape and always returns a ``(valid, flags, context)`` triple, raising
+    :class:`RuntimeError` when the payload cannot be interpreted.
+    """
+
+    try:
+        valid, flags, *rest = result
+    except Exception as exc:  # pragma: no cover - defensive against schema drift
+        raise RuntimeError(
+            "quick_fix.validate_patch returned unexpected response format"
+        ) from exc
+
+    context = rest[0] if rest else {}
+    if context is None:
+        context = {}
+    if not isinstance(context, Mapping):
+        raise RuntimeError("Validation context must be mapping-like")
+
+    return bool(valid), list(flags or []), dict(context)
+
+
 def _validate_and_apply(
     module_path: Path, description: str, repo_root: Path
-) -> Tuple[bool, Iterable[str]]:
+) -> tuple[bool, list[str]]:
     """Run validation and apply the patch when safe."""
 
     from menace_sandbox.context_builder import create_context_builder
@@ -69,7 +94,7 @@ def _validate_and_apply(
     if not provenance:
         raise RuntimeError("ContextBuilder did not expose a provenance token")
 
-    valid, flags = quick_fix.validate_patch(
+    validation_result = quick_fix.validate_patch(
         module_path=str(module_path),
         description=description,
         repo_root=repo_root,
@@ -77,6 +102,7 @@ def _validate_and_apply(
         manager=None,
         context_builder=builder,
     )
+    valid, flags, validation_context = _parse_validation_result(validation_result)
 
     if "missing_context" in flags:
         raise RuntimeError(
@@ -95,6 +121,8 @@ def _validate_and_apply(
         "description": description,
         "target_module": str(module_path),
     }
+    if validation_context:
+        context_meta.update(validation_context)
     passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
         module_path=str(module_path),
         description=description,
