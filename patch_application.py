@@ -82,14 +82,34 @@ def _parse_validation_result(result: Any) -> tuple[bool, list[str], dict[str, An
 
 
 def _validate_and_apply(
-    module_path: Path, description: str, repo_root: Path
+    module_path: Path,
+    description: str,
+    repo_root: Path,
+    *,
+    manager: object,
+    builder: object | None = None,
+    context_meta: dict[str, object] | None = None,
 ) -> tuple[bool, list[str]]:
-    """Run validation and apply the patch when safe."""
+    """Run quick-fix validation and apply the patch when safe.
+
+    This helper mirrors the bootstrap flow used by
+    ``SelfCodingManager.run_post_patch_cycle``: it validates the prospective
+    patch via ``quick_fix.validate_patch`` using the active manager and then
+    immediately calls ``quick_fix.apply_validated_patch`` with the returned
+    flags and any validation context. Failing fast on validation or application
+    flags keeps subsequent self-tests from running with a malformed patch.
+    """
 
     from menace_sandbox.context_builder import create_context_builder
     from menace_sandbox.quick_fix_engine import quick_fix
 
-    builder = create_context_builder(repo_root=repo_root)
+    if manager is None:
+        raise RuntimeError(
+            "A SelfCodingManager instance is required for quick-fix validation"
+        )
+
+    builder = builder or getattr(manager, "context_builder", None)
+    builder = builder or create_context_builder(repo_root=repo_root)
     provenance = getattr(builder, "provenance_token", None)
     if not provenance:
         raise RuntimeError("ContextBuilder did not expose a provenance token")
@@ -99,38 +119,33 @@ def _validate_and_apply(
         description=description,
         repo_root=repo_root,
         provenance_token=provenance,
-        manager=None,
+        manager=manager,
         context_builder=builder,
     )
     valid, flags, validation_context = _parse_validation_result(validation_result)
-
-    if "missing_context" in flags:
-        raise RuntimeError(
-            "Patch validation requires both a SelfCodingManager and ContextBuilder. "
-            "The helper was unable to locate a SelfCodingManager in this environment; "
-            "start the sandbox via the self-coding entrypoints or provide a manager "
-            "instance when invoking quick_fix.validate_patch."
-        )
 
     if not valid or flags:
         raise RuntimeError(
             f"Quick-fix validation failed with flags: {sorted(flags)}"
         )
 
-    context_meta = {
+    merged_context = {
         "description": description,
         "target_module": str(module_path),
     }
     if validation_context:
-        context_meta.update(validation_context)
+        merged_context.update(validation_context)
+    if context_meta:
+        merged_context.update(context_meta)
+
     passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
         module_path=str(module_path),
         description=description,
         flags=flags,
-        context_meta=context_meta,
+        context_meta=merged_context,
         repo_root=repo_root,
         provenance_token=provenance,
-        manager=None,
+        manager=manager,
         context_builder=builder,
     )
 
@@ -148,8 +163,28 @@ def main() -> None:
     args = _parse_args()
     module_path = _resolve_module_path(repo_root, args.module_path)
 
+    # ``patch_application`` is primarily intended for use inside an existing
+    # self-coding sandbox where a ``SelfCodingManager`` has already been
+    # instantiated. Without that manager quick-fix validation will return a
+    # ``missing_context`` flag. The CLI therefore refuses to proceed when a
+    # manager is not available rather than attempting a best-effort stub.
+    manager = getattr(sys.modules.get("__main__"), "manager", None)
+    if manager is None:
+        print(
+            "Patch application requires an active SelfCodingManager. "
+            "Run this module from within the bootstrap process or use the "
+            "`menace_cli patch` entrypoint to construct the manager first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     try:
-        valid, flags = _validate_and_apply(module_path, args.description, repo_root)
+        valid, flags = _validate_and_apply(
+            module_path,
+            args.description,
+            repo_root,
+            manager=manager,
+        )
     except Exception as exc:  # pragma: no cover - CLI surface
         print(f"Patch application failed: {exc}")
         sys.exit(1)
