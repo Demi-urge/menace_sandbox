@@ -91,6 +91,9 @@ def initialize_bootstrap_context(
 
     global _BOOTSTRAP_CACHE
     if _BOOTSTRAP_CACHE is not None:
+        LOGGER.info(
+            "reusing preseeded bootstrap context; pipeline/manager already available"
+        )
         return _BOOTSTRAP_CACHE
 
     context_builder = create_context_builder()
