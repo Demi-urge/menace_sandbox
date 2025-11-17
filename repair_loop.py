@@ -12,6 +12,7 @@ properly vetted.
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping
 
 from menace_sandbox.context_builder import create_context_builder
@@ -56,6 +57,38 @@ def _resolve_manager(service: Any, manager: Any | None) -> Any:
     return manager
 
 
+def _discover_repo_root(target_path: Path, override: str | Path | None) -> Path:
+    """Resolve the repository root used for quick-fix validation.
+
+    ``run_post_patch_cycle`` performs its validation in a temporary clone rooted at
+    the repository root. Mirroring that behaviour here avoids applying patches in
+    an unrelated working directory (for example when the target file lives under
+    a nested package directory) and ensures ``git checkout`` reversions operate on
+    the correct worktree.
+    """
+
+    if override:
+        return Path(override).resolve()
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(target_path.parent),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        root = result.stdout.strip()
+        if root:
+            return Path(root).resolve()
+    except Exception:
+        # Fall back to the target file's parent directory when git metadata is
+        # unavailable (for example in ephemeral tmp dirs used by tests).
+        pass
+
+    return target_path.parent.resolve()
+
+
 def run_repair_loop(
     results: Any,
     service: Any,
@@ -85,12 +118,14 @@ def run_repair_loop(
 
     diag = _pick_first_diagnostic(results)
     target_path = Path(diag["file"]).resolve()
-    root = Path(repo_root).resolve() if repo_root else target_path.parent
+    root = _discover_repo_root(target_path, repo_root)
     description = f"Fix: {diag['error_summary']} in {target_path.name}"
 
     context_builder = create_context_builder(repo_root=root)
     provenance = _ensure_provenance(context_builder)
     manager = _resolve_manager(service, manager)
+    if hasattr(manager, "refresh_quick_fix_context"):
+        manager.refresh_quick_fix_context()
 
     base_context: dict[str, Any] = {
         "description": description,
@@ -141,5 +176,5 @@ def run_repair_loop(
     )
 
 
-__all__ = ["run_repair_loop", "RepairLoopError"]
+__all__ = ["run_repair_loop", "RepairLoopError", "_discover_repo_root"]
 
