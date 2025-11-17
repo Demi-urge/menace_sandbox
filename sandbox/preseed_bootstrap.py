@@ -8,6 +8,7 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict
 
 from menace_sandbox.bot_registry import BotRegistry
@@ -29,6 +30,7 @@ from menace_sandbox.threshold_service import ThresholdService
 LOGGER = logging.getLogger(__name__)
 
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
+_BOOTSTRAP_CACHE_LOCK = threading.Lock()
 
 
 def _seed_research_aggregator_context(
@@ -92,70 +94,84 @@ def initialize_bootstrap_context(
     """
 
     global _BOOTSTRAP_CACHE
-    if use_cache and bot_name in _BOOTSTRAP_CACHE:
-        LOGGER.info(
-            "reusing preseeded bootstrap context for %s; pipeline/manager already available",
-            bot_name,
-        )
-        return _BOOTSTRAP_CACHE[bot_name]
-
-    context_builder = create_context_builder()
-    registry = BotRegistry()
-    data_bot = DataBot(start_server=False)
-    engine = SelfCodingEngine(
-        CodeDB(),
-        MenaceMemoryManager(),
-        context_builder=context_builder,
-    )
-
-    with fallback_helper_manager(bot_registry=registry, data_bot=data_bot) as bootstrap_manager:
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=context_builder,
-            bot_registry=registry,
-            data_bot=data_bot,
-            bootstrap_runtime_manager=bootstrap_manager,
-            manager=bootstrap_manager,
-        )
-
-    thresholds = get_thresholds(bot_name)
-    try:
-        persist_sc_thresholds(
-            bot_name,
-            roi_drop=thresholds.roi_drop,
-            error_increase=thresholds.error_increase,
-            test_failure_increase=thresholds.test_failure_increase,
-        )
-    except Exception:  # pragma: no cover - best effort persistence
-        LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
-
-    manager = internalize_coding_bot(
-        bot_name,
-        engine,
-        pipeline,
-        data_bot=data_bot,
-        bot_registry=registry,
-        threshold_service=ThresholdService(),
-        roi_threshold=thresholds.roi_drop,
-        error_threshold=thresholds.error_increase,
-        test_failure_threshold=thresholds.test_failure_increase,
-    )
-    promote_pipeline(manager)
-
-    _push_bootstrap_context(
-        registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
-    )
-    _seed_research_aggregator_context(
-        registry=registry,
-        data_bot=data_bot,
-        context_builder=context_builder,
-        engine=engine,
-        pipeline=pipeline,
-        manager=manager,
-    )
 
     if use_cache:
-        _BOOTSTRAP_CACHE[bot_name] = {
+        cached_context = _BOOTSTRAP_CACHE.get(bot_name)
+        if cached_context:
+            LOGGER.info(
+                "reusing preseeded bootstrap context for %s; pipeline/manager already available",
+                bot_name,
+            )
+            return cached_context
+
+    with _BOOTSTRAP_CACHE_LOCK:
+        if use_cache:
+            cached_context = _BOOTSTRAP_CACHE.get(bot_name)
+            if cached_context:
+                LOGGER.info(
+                    "reusing preseeded bootstrap context for %s; pipeline/manager already available",
+                    bot_name,
+                )
+                return cached_context
+
+        context_builder = create_context_builder()
+        registry = BotRegistry()
+        data_bot = DataBot(start_server=False)
+        engine = SelfCodingEngine(
+            CodeDB(),
+            MenaceMemoryManager(),
+            context_builder=context_builder,
+        )
+
+        with fallback_helper_manager(
+            bot_registry=registry, data_bot=data_bot
+        ) as bootstrap_manager:
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+                bootstrap_runtime_manager=bootstrap_manager,
+                manager=bootstrap_manager,
+            )
+
+        thresholds = get_thresholds(bot_name)
+        try:
+            persist_sc_thresholds(
+                bot_name,
+                roi_drop=thresholds.roi_drop,
+                error_increase=thresholds.error_increase,
+                test_failure_increase=thresholds.test_failure_increase,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
+
+        manager = internalize_coding_bot(
+            bot_name,
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            threshold_service=ThresholdService(),
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+        )
+        promote_pipeline(manager)
+
+        _push_bootstrap_context(
+            registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
+        )
+        _seed_research_aggregator_context(
+            registry=registry,
+            data_bot=data_bot,
+            context_builder=context_builder,
+            engine=engine,
+            pipeline=pipeline,
+            manager=manager,
+        )
+
+        bootstrap_context = {
             "registry": registry,
             "data_bot": data_bot,
             "context_builder": context_builder,
@@ -163,14 +179,9 @@ def initialize_bootstrap_context(
             "pipeline": pipeline,
             "manager": manager,
         }
-    return {
-        "registry": registry,
-        "data_bot": data_bot,
-        "context_builder": context_builder,
-        "engine": engine,
-        "pipeline": pipeline,
-        "manager": manager,
-    }
+        if use_cache:
+            _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+        return bootstrap_context
 
 
 __all__ = ["initialize_bootstrap_context"]
