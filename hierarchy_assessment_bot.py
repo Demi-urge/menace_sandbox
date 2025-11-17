@@ -9,10 +9,12 @@ from .coding_bot_interface import self_coding_managed
 import json
 import logging
 import os
+import socket
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Callable, Dict, List
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,24 @@ def _self_coding_disabled() -> bool:
     ):
         return True
     return True
+
+
+def _can_reach_broker(mq_url: str, timeout: float = 0.25) -> bool:
+    """Return True when the RabbitMQ broker is reachable."""
+
+    try:
+        parsed = urlparse(mq_url)
+        if not parsed.hostname:
+            return False
+        port = parsed.port or 5672
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        logger.debug("RabbitMQ broker not reachable at %s: %s", mq_url, exc)
+        return False
+    except Exception as exc:
+        logger.debug("RabbitMQ broker check failed for %s: %s", mq_url, exc)
+        return False
 
 
 if _self_coding_disabled():
@@ -136,7 +156,7 @@ class HierarchyAssessmentBot:
             self._error = Exception
         self.tasks: List[BotTaskRecord] = []
         self.channel = None
-        if pika:
+        if pika and _can_reach_broker(mq_url):
             try:
                 params = pika.URLParameters(mq_url)
                 conn = pika.BlockingConnection(params)
@@ -144,7 +164,16 @@ class HierarchyAssessmentBot:
                 ch.queue_declare(queue="oversight", durable=True)
                 self.channel = ch
             except Exception:  # pragma: no cover - external service
+                logger.info(
+                    "RabbitMQ unreachable at %s; using local oversight queue",
+                    mq_url,
+                )
                 self.channel = None
+        elif mq_url:
+            logger.info(
+                "RabbitMQ not available at %s; using in-process oversight queue",
+                mq_url,
+            )
 
     def register(self, bot: str, task: str) -> None:
         self.tasks.append(BotTaskRecord(bot=bot, task=task))
