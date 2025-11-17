@@ -17,7 +17,12 @@ import shutil
 from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
 from menace_sandbox.context_builder import create_context_builder
-from menace_sandbox.quick_fix_engine import quick_fix
+
+try:  # pragma: no cover - prefer lightweight stub when available
+    from quick_fix_engine import quick_fix  # type: ignore
+except Exception:  # pragma: no cover - fallback to package import
+    from menace_sandbox.quick_fix_engine import quick_fix
+
 from menace_sandbox.sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - fallback for flat layout
@@ -147,6 +152,7 @@ def validate_patch_with_context(
     *,
     repo_root: str | Path,
     manager: object,
+    builder: object | None = None,
     context_meta: dict | None = None,
     provenance_token: str | None = None,
     patch_logger: object | None = None,
@@ -159,7 +165,8 @@ def validate_patch_with_context(
     description, then ``quick_fix.apply_validated_patch`` is executed with the
     returned flags and context metadata. Surfacing validation or application
     flags early prevents expensive self-test runs when the patch is malformed
-    or missing required schema fields.
+    or missing required schema fields. When a prepared context builder is
+    supplied it will be reused to retain any injected retrievers or caches.
     """
 
     repo_root_path = Path(repo_root).resolve()
@@ -169,7 +176,7 @@ def validate_patch_with_context(
     if not module_path.exists():
         raise FileNotFoundError(f"module path not found: {module_path}")
 
-    builder = create_context_builder(repo_root=repo_root_path)
+    builder = builder or create_context_builder(repo_root=repo_root_path)
     provenance = provenance_token or getattr(builder, "provenance_token", None)
     if not provenance:
         raise RuntimeError("ContextBuilder did not expose a provenance token")
