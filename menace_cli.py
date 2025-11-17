@@ -6,6 +6,7 @@ performing any database work.
 
 import argparse
 import json
+import ast
 import os
 import subprocess
 import sys
@@ -40,7 +41,12 @@ from code_database import PatchHistoryDB  # noqa: E402
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache  # noqa: E402
 from cache_utils import clear_cache, show_cache, cache_stats  # noqa: E402
 from workflow_synthesizer_cli import run as handle_workflow  # noqa: E402
-from quick_fix_engine import quick_fix  # noqa: E402
+try:  # pragma: no cover - flat-layout fallback
+    from menace_sandbox.self_improvement.patch_application import (
+        validate_patch_with_context,
+    )
+except Exception:  # pragma: no cover - fallback when executed outside package
+    from self_improvement.patch_application import validate_patch_with_context  # type: ignore
 
 PatchLogger = None  # type: ignore
 build_chain = None  # type: ignore
@@ -380,50 +386,36 @@ def handle_patch(args: argparse.Namespace) -> int:
     if not provenance_token:
         print("manager lacks provenance token", file=sys.stderr)
         return 1
-    validation_ok, validation_flags = quick_fix.validate_patch(
-        module_path=str(module_path),
-        description=args.desc,
-        repo_root=str(Path.cwd()),
-        provenance_token=provenance_token,
-        manager=manager,
-        context_builder=builder,
-        patch_logger=patch_logger,
-    )
-    if not validation_ok or validation_flags:
-        print(
-            json.dumps(
-                {
-                    "code": "QUICK_FIX_VALIDATION_FAILED",
-                    "flags": list(validation_flags),
-                }
-            ),
-            file=sys.stderr,
+    try:
+        patch_result = validate_patch_with_context(
+            module_path=module_path,
+            description=args.desc,
+            repo_root=Path.cwd(),
+            manager=manager,
+            builder=builder,
+            context_meta=ctx,
+            patch_logger=patch_logger,
         )
+    except RuntimeError as exc:
+        msg = str(exc)
+        code = (
+            "QUICK_FIX_APPLY_FAILED"
+            if "application" in msg.lower()
+            else "QUICK_FIX_VALIDATION_FAILED"
+        )
+        flags: list[str] = []
+        if "flags:" in msg:
+            try:
+                flags = ast.literal_eval(msg.split("flags:", 1)[1].strip())
+            except Exception:
+                flags = [msg]
+        print(json.dumps({"code": code, "flags": list(flags)}), file=sys.stderr)
         return 1
 
-    context_meta = {"target_module": str(module_path), "description": args.desc}
-    if ctx:
-        context_meta.update(ctx)
-
-    passed, patch_id, apply_flags = quick_fix.apply_validated_patch(
-        module_path=str(module_path),
-        description=args.desc,
-        flags=validation_flags,
-        context_meta=context_meta,
-        repo_root=str(Path.cwd()),
-        provenance_token=provenance_token,
-        manager=manager,
-        context_builder=builder,
-        patch_logger=patch_logger,
-    )
-    if not passed or apply_flags or not patch_id:
+    patch_id = patch_result.get("patch_id")
+    if not patch_id:
         print(
-            json.dumps(
-                {
-                    "code": "QUICK_FIX_APPLY_FAILED",
-                    "flags": list(apply_flags),
-                }
-            ),
+            json.dumps({"code": "QUICK_FIX_APPLY_FAILED", "flags": []}),
             file=sys.stderr,
         )
         return 1
