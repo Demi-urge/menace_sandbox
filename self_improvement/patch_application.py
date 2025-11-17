@@ -181,7 +181,7 @@ def validate_patch_with_context(
     if not provenance:
         raise RuntimeError("ContextBuilder did not expose a provenance token")
 
-    valid, flags = quick_fix.validate_patch(
+    validation_result = quick_fix.validate_patch(
         module_path=str(module_path),
         description=description,
         repo_root=str(repo_root_path),
@@ -190,6 +190,13 @@ def validate_patch_with_context(
         context_builder=builder,
         patch_logger=patch_logger,
     )
+    try:
+        valid, flags, *extras = validation_result
+    except Exception as exc:  # pragma: no cover - defensive against schema drift
+        raise RuntimeError(
+            "quick_fix.validate_patch returned unexpected response format"
+        ) from exc
+    validation_context = extras[0] if extras else None
     if not valid or flags:
         raise RuntimeError(
             f"Quick-fix validation failed with flags: {sorted(flags)}"
@@ -199,6 +206,8 @@ def validate_patch_with_context(
         "description": description,
         "target_module": str(module_path),
     }
+    if validation_context:
+        merged_context.update(validation_context)
     if context_meta:
         merged_context.update(context_meta)
 
