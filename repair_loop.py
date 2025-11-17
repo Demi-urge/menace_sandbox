@@ -41,6 +41,31 @@ def _pick_first_diagnostic(results: Any) -> Mapping[str, Any]:
     return diag
 
 
+def _parse_validation_result(result: Any) -> tuple[bool, list[str], dict[str, Any]]:
+    """Normalize quick-fix validation output.
+
+    ``quick_fix.validate_patch`` historically returned a ``(valid, flags)`` tuple
+    but newer variants may append a context mapping. This helper accepts either
+    shape and always returns a ``(valid, flags, context)`` triple, raising
+    :class:`RepairLoopError` when the payload cannot be interpreted.
+    """
+
+    try:
+        valid, flags, *rest = result
+    except Exception as exc:  # pragma: no cover - defensive against schema drift
+        raise RepairLoopError(
+            "quick_fix.validate_patch returned unexpected response format"
+        ) from exc
+
+    context = rest[0] if rest else {}
+    if context is None:
+        context = {}
+    if not isinstance(context, Mapping):
+        raise RepairLoopError("Validation context must be mapping-like")
+
+    return bool(valid), list(flags or []), dict(context)
+
+
 def _ensure_provenance(builder: Any) -> str:
     provenance = getattr(builder, "provenance_token", None)
     if not provenance:
@@ -138,7 +163,7 @@ def run_repair_loop(
         print(f"\n🔁 Repair attempt {attempt}...")
 
         try:
-            valid, validation_flags = quick_fix.validate_patch(
+            validation_result = quick_fix.validate_patch(
                 module_path=str(target_path),
                 description=description,
                 repo_root=str(root),
@@ -146,23 +171,27 @@ def run_repair_loop(
                 manager=manager,
                 context_builder=context_builder,
             )
+            valid, validation_flags, validation_context = _parse_validation_result(
+                validation_result
+            )
         except Exception as exc:  # pragma: no cover - defensive wrapper around engine failures
             raise RepairLoopError(
                 f"Repair validation raised an exception on attempt {attempt}: {exc}"
             ) from exc
 
-        flags = list(validation_flags or [])
-        if not valid or flags:
+        if not valid or validation_flags:
             raise RepairLoopError(
-                f"Repair validation failed (attempt {attempt}): {flags}"
+                f"Repair validation failed (attempt {attempt}): {validation_flags}"
             )
 
-        context_meta = dict(base_context, repair_attempt=attempt)
+        context_meta = dict(validation_context or {})
+        context_meta.update(base_context)
+        context_meta["repair_attempt"] = attempt
         try:
             passed, _patch_id, apply_flags = quick_fix.apply_validated_patch(
                 module_path=str(target_path),
                 description=description,
-                flags=flags,
+                flags=list(validation_flags),
                 context_meta=context_meta,
                 repo_root=str(root),
                 provenance_token=provenance,
