@@ -179,11 +179,6 @@ def run_repair_loop(
                 f"Repair validation raised an exception on attempt {attempt}: {exc}"
             ) from exc
 
-        if not valid or validation_flags:
-            raise RepairLoopError(
-                f"Repair validation failed (attempt {attempt}): {validation_flags}"
-            )
-
         context_meta = dict(validation_context or {})
         context_meta.update(base_context)
         context_meta["repair_attempt"] = attempt
@@ -204,9 +199,11 @@ def run_repair_loop(
             ) from exc
 
         apply_flags = list(apply_flags or [])
-        if not passed or apply_flags:
+        combined_flags = list(validation_flags or []) + apply_flags
+        if not valid or not passed or combined_flags:
             raise RepairLoopError(
-                f"Patch application failed (attempt {attempt}): {apply_flags}"
+                "Patch application failed "
+                f"(attempt {attempt}): {combined_flags or validation_flags or apply_flags}"
             )
 
         results, _ = service.run_once(pytest_args=["-k", diag["test_name"]])
