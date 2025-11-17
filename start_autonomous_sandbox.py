@@ -29,6 +29,7 @@ if "--health-check" in sys.argv[1:]:
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
+from sandbox.preseed_bootstrap import initialize_bootstrap_context
 from sandbox_runner.bootstrap import (
     auto_configure_env,
     bootstrap_environment,
@@ -190,6 +191,19 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("sandbox start", extra=log_record(event="start"))
 
     try:
+        if not args.health_check:
+            try:
+                initialize_bootstrap_context()
+                logger.info(
+                    "preseeded bootstrap context in use; pipeline and manager are cached",
+                    extra=log_record(event="bootstrap-preseed"),
+                )
+            except Exception:  # pragma: no cover - defensive bootstrap hint
+                logger.exception(
+                    "failed to preseed bootstrap context before bot loading",
+                    extra=log_record(event="bootstrap-preseed-error"),
+                )
+
         if args.health_check:
             bootstrap_environment(
                 initialize=False,
