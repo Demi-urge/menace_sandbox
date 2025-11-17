@@ -1,6 +1,6 @@
-from pathlib import Path
 import sys
 import __main__
+from pathlib import Path
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
@@ -15,10 +15,10 @@ from menace_sandbox.code_database import CodeDB
 from menace_sandbox.coding_bot_interface import fallback_helper_manager, prepare_pipeline_for_bootstrap
 from menace_sandbox.data_bot import DataBot
 from menace_sandbox.menace_memory_manager import MenaceMemoryManager
-from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
-from context_builder_util import create_context_builder
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
+from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
+from context_builder_util import create_context_builder
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 import menace_sandbox.patch_application as patch_application
