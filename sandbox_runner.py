@@ -808,6 +808,60 @@ class SandboxContext:
     best_synergy_metrics: Dict[str, float] = field(default_factory=dict)
     module_map: set[str] = field(default_factory=set)
     orphan_traces: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    meta_cycle: Any | None = None
+
+
+def _start_meta_planning_cycle(ctx: SandboxContext) -> Any | None:
+    """Launch the meta planning cycle using sandbox context resources."""
+
+    try:
+        from self_improvement import meta_planning
+    except Exception:
+        logger.exception("meta_planning import failed; skipping meta cycle")
+        return None
+
+    try:
+        for mod in ("governed_embeddings", "roi_results_db", "workflow_graph"):
+            importlib.import_module(mod)
+    except Exception as exc:
+        logger.warning(
+            "meta planner dependencies missing", extra=log_record(module=str(exc))
+        )
+        if getattr(ctx.settings, "enable_meta_planner", False):
+            raise
+        return None
+
+    try:
+        meta_planning.reload_settings(ctx.settings)
+        planner_cls = meta_planning.resolve_meta_workflow_planner(force_reload=True)
+        if planner_cls is None:
+            msg = "MetaWorkflowPlanner unavailable; using fallback"
+            logger.warning(msg)
+            if getattr(ctx.settings, "enable_meta_planner", False):
+                raise RuntimeError(msg)
+            return None
+
+        workflows = {
+            "refresh_context": lambda: ctx.context_builder.refresh_db_weights(),
+            "event_bus_keepalive": lambda: ctx.event_bus.publish(
+                "meta_planning.keepalive",
+                {"ts": time.time(), "repo": str(ctx.repo)},
+            ),
+        }
+
+        cycle = meta_planning.start_self_improvement_cycle(
+            workflows,
+            event_bus=ctx.event_bus,
+            interval=float(
+                getattr(ctx.settings, "meta_planning_interval", meta_planning.PLANNER_INTERVAL)
+            ),
+            error_log=ctx.meta_log,
+        )
+        cycle.start()
+        return cycle
+    except Exception:
+        logger.exception("failed to start meta planning cycle")
+        return None
 
 
 def _bootstrap_sandbox_manager(
@@ -1319,7 +1373,7 @@ def _sandbox_init(
     except Exception:
         module_map_set = set()
 
-    return SandboxContext(
+    ctx = SandboxContext(
         tmp=tmp,
         repo=repo,
         orig_cwd=orig_cwd,
@@ -1373,7 +1427,11 @@ def _sandbox_init(
         suggestion_db=suggestion_db,
         module_map=module_map_set,
         orphan_traces={},
+        meta_cycle=None,
     )
+
+    ctx.meta_cycle = _start_meta_planning_cycle(ctx)
+    return ctx
 
 
 def _sandbox_cleanup(ctx: SandboxContext) -> None:
@@ -1405,6 +1463,17 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
         ctx.telem_db.conn.commit()
     except Exception:
         logger.exception("telemetry db commit failed")
+    meta_cycle = getattr(ctx, "meta_cycle", None)
+    if meta_cycle is not None:
+        try:
+            stop = getattr(meta_cycle, "stop", None)
+            join = getattr(meta_cycle, "join", None)
+            if callable(stop):
+                stop()
+            if callable(join):
+                join(timeout=1.0)
+        except Exception:
+            logger.exception("failed to stop meta planning cycle")
     builder = ctx.context_builder
     try:
         close = getattr(builder, "close", None)
