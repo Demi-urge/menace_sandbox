@@ -1828,6 +1828,18 @@ class SelfImprovementEngine:
         self._meta_planner_thread: threading.Thread | None = None
         self._meta_planner_stop: threading.Event | None = None
         planner_cls = resolve_meta_workflow_planner()
+        if planner_cls is None:
+            self.logger.info(
+                "meta workflow planner not available; skipping background loops",
+                extra=log_record(event="meta-planner-missing"),
+            )
+        else:
+            self.logger.info(
+                "resolved meta workflow planner",
+                extra=log_record(
+                    event="meta-planner-resolved", planner_class=planner_cls.__name__
+                ),
+            )
         if META_PLANNING_PERIOD > 0 and planner_cls is not None:
             self._start_meta_planner_thread(float(META_PLANNING_PERIOD))
 
@@ -3289,6 +3301,14 @@ class SelfImprovementEngine:
             target=self._meta_planning_loop,
             args=(interval, improvement_threshold),
             daemon=True,
+        )
+        self.logger.info(
+            "starting meta planning loop thread",
+            extra=log_record(
+                event="meta-loop-start",
+                interval=interval,
+                improvement_threshold=improvement_threshold,
+            ),
         )
         self._meta_loop_thread.start()
 
