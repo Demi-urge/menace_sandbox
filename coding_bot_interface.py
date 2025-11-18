@@ -5740,9 +5740,13 @@ def self_coding_managed(
                     orchestrator_boot_failed = True
                     orchestrator = None
                 except Exception as exc:  # pragma: no cover - optional dependency
-                    raise RuntimeError(
-                        f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
-                    ) from exc
+                    logger.warning(
+                        "%s: EvolutionOrchestrator is required but could not be instantiated; disabling orchestration",
+                        cls.__name__,
+                        exc_info=exc,
+                    )
+                    orchestrator_boot_failed = True
+                    orchestrator = None
 
             if orchestrator is not None:
                 self.evolution_orchestrator = orchestrator
