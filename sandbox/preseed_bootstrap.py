@@ -15,6 +15,7 @@ from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.coding_bot_interface import (
+    _pop_bootstrap_context,
     _push_bootstrap_context,
     fallback_helper_manager,
     prepare_pipeline_for_bootstrap,
@@ -126,14 +127,35 @@ def initialize_bootstrap_context(
         with fallback_helper_manager(
             bot_registry=registry, data_bot=data_bot
         ) as bootstrap_manager:
-            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=context_builder,
-                bot_registry=registry,
+            LOGGER.info(
+                "seeding research aggregator with bootstrap manager before pipeline preparation"
+            )
+            placeholder_context = _push_bootstrap_context(
+                registry=registry,
                 data_bot=data_bot,
-                bootstrap_runtime_manager=bootstrap_manager,
+                manager=bootstrap_manager,
+                pipeline=bootstrap_manager,
+            )
+            _seed_research_aggregator_context(
+                registry=registry,
+                data_bot=data_bot,
+                context_builder=context_builder,
+                engine=engine,
+                pipeline=bootstrap_manager,
                 manager=bootstrap_manager,
             )
+            LOGGER.info("invoking prepare_pipeline_for_bootstrap after bootstrap seeding")
+            try:
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=context_builder,
+                    bot_registry=registry,
+                    data_bot=data_bot,
+                    bootstrap_runtime_manager=bootstrap_manager,
+                    manager=bootstrap_manager,
+                )
+            finally:
+                _pop_bootstrap_context(placeholder_context)
 
         thresholds = get_thresholds(bot_name)
         try:
