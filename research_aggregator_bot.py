@@ -90,6 +90,8 @@ manager: SelfCodingManager | None = None
 _CapitalManagerCls: "Type[CapitalManagementBot] | None" = None
 
 _runtime_state: _RuntimeDependencies | None = None
+_runtime_placeholder: _RuntimeDependencies | None = None
+_runtime_initializing = False
 _self_coding_configured = False
 
 
@@ -189,10 +191,38 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
     global evolution_orchestrator
     global manager
     global _runtime_state
+    global _runtime_placeholder
+    global _runtime_initializing
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
         return _runtime_state
+
+    if _runtime_initializing:
+        if _runtime_placeholder is not None:
+            return _runtime_placeholder
+
+        reg = registry if registry is not None else BotRegistry()
+        dbot = data_bot if data_bot is not None else DataBot(start_server=False)
+        ctx_builder = _context_builder
+        if ctx_builder is None:
+            ctx_builder = create_context_builder()
+        eng = engine if engine is not None else SelfCodingEngine(
+            CodeDB(),
+            GPTMemoryManager(),
+            context_builder=ctx_builder,
+        )
+
+        _runtime_placeholder = _RuntimeDependencies(
+            registry=reg,
+            data_bot=dbot,
+            context_builder=ctx_builder,
+            engine=eng,
+            pipeline=pipeline,
+            evolution_orchestrator=evolution_orchestrator,
+            manager=manager,
+        )
+        return _runtime_placeholder
 
     reg = registry if registry is not None else BotRegistry()
     dbot = data_bot if data_bot is not None else DataBot(start_server=False)
@@ -207,83 +237,109 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
         context_builder=ctx_builder,
     )
 
-    pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
-    promote_pipeline: Callable[[SelfCodingManager | None], None]
-    if pipeline is not None:
-        pipe = pipeline
-        promote_pipeline = lambda *_args: None
-    else:
-        pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=pipeline_cls,
-            context_builder=ctx_builder,
-            bot_registry=reg,
-            data_bot=dbot,
-        )
-
-    try:
-        orchestrator = (
-            evolution_orchestrator
-            if evolution_orchestrator is not None
-            else get_orchestrator("ResearchAggregatorBot", dbot, eng)
-        )
-    except Exception as exc:  # pragma: no cover - fallback for degraded envs
-        logger.warning(
-            "Evolution orchestrator unavailable for ResearchAggregatorBot: %s", exc
-        )
-        orchestrator = None
-
-    thresholds = get_thresholds("ResearchAggregatorBot")
-    try:
-        persist_sc_thresholds(
-            "ResearchAggregatorBot",
-            roi_drop=thresholds.roi_drop,
-            error_increase=thresholds.error_increase,
-            test_failure_increase=thresholds.test_failure_increase,
-        )
-    except Exception:  # pragma: no cover - best effort persistence
-        logger.exception("Failed to persist self-coding thresholds for ResearchAggregatorBot")
-
-    try:
-        mgr = manager if manager is not None else internalize_coding_bot(
-            "ResearchAggregatorBot",
-            eng,
-            pipe,
-            data_bot=dbot,
-            bot_registry=reg,
-            evolution_orchestrator=orchestrator,
-            threshold_service=ThresholdService(),
-            roi_threshold=thresholds.roi_drop,
-            error_threshold=thresholds.error_increase,
-            test_failure_threshold=thresholds.test_failure_increase,
-        )
-    except Exception as exc:  # pragma: no cover - fallback for degraded envs
-        logger.warning(
-            "Self-coding manager unavailable for ResearchAggregatorBot: %s", exc
-        )
-        mgr = None
-    else:
-        promote_pipeline(mgr)
-
-    registry = reg
-    data_bot = dbot
-    _context_builder = ctx_builder
-    engine = eng
-    _PipelineCls = pipeline_cls
-    pipeline = pipe
-    evolution_orchestrator = orchestrator
-    manager = mgr
-
-    _runtime_state = _RuntimeDependencies(
+    _runtime_initializing = True
+    _runtime_placeholder = _RuntimeDependencies(
         registry=reg,
         data_bot=dbot,
         context_builder=ctx_builder,
         engine=eng,
-        pipeline=pipe,
-        evolution_orchestrator=orchestrator,
-        manager=mgr,
+        pipeline=pipeline,
+        evolution_orchestrator=evolution_orchestrator,
+        manager=manager,
     )
-    _ensure_self_coding_decorated(_runtime_state)
-    return _runtime_state
+
+    orchestrator = evolution_orchestrator
+    mgr = manager
+
+    success = False
+
+    try:
+        pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
+        promote_pipeline: Callable[[SelfCodingManager | None], None]
+        if pipeline is not None:
+            pipe = pipeline
+            promote_pipeline = lambda *_args: None
+        else:
+            pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=pipeline_cls,
+                context_builder=ctx_builder,
+                bot_registry=reg,
+                data_bot=dbot,
+            )
+
+        try:
+            orchestrator = (
+                orchestrator
+                if orchestrator is not None
+                else get_orchestrator("ResearchAggregatorBot", dbot, eng)
+            )
+        except Exception as exc:  # pragma: no cover - fallback for degraded envs
+            logger.warning(
+                "Evolution orchestrator unavailable for ResearchAggregatorBot: %s", exc
+            )
+            orchestrator = None
+
+        thresholds = get_thresholds("ResearchAggregatorBot")
+        try:
+            persist_sc_thresholds(
+                "ResearchAggregatorBot",
+                roi_drop=thresholds.roi_drop,
+                error_increase=thresholds.error_increase,
+                test_failure_increase=thresholds.test_failure_increase,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            logger.exception(
+                "Failed to persist self-coding thresholds for ResearchAggregatorBot"
+            )
+
+        try:
+            mgr = mgr if mgr is not None else internalize_coding_bot(
+                "ResearchAggregatorBot",
+                eng,
+                pipe,
+                data_bot=dbot,
+                bot_registry=reg,
+                evolution_orchestrator=orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+            )
+        except Exception as exc:  # pragma: no cover - fallback for degraded envs
+            logger.warning(
+                "Self-coding manager unavailable for ResearchAggregatorBot: %s", exc
+            )
+            mgr = None
+        else:
+            promote_pipeline(mgr)
+
+        registry = reg
+        data_bot = dbot
+        _context_builder = ctx_builder
+        engine = eng
+        _PipelineCls = pipeline_cls
+        pipeline = pipe
+        evolution_orchestrator = orchestrator
+        manager = mgr
+
+        _runtime_state = _RuntimeDependencies(
+            registry=reg,
+            data_bot=dbot,
+            context_builder=ctx_builder,
+            engine=eng,
+            pipeline=pipe,
+            evolution_orchestrator=orchestrator,
+            manager=mgr,
+        )
+        _runtime_placeholder = _runtime_state
+        _ensure_self_coding_decorated(_runtime_state)
+        success = True
+        return _runtime_state
+
+    finally:
+        if not success:
+            _runtime_placeholder = None
+        _runtime_initializing = False
 
 @dataclass
 class ResearchItem:
