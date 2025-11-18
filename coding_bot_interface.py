@@ -4849,6 +4849,22 @@ def self_coding_managed(
                     bootstrap_event.clear()
 
             if wait_for_completion:
+                active_context = _current_bootstrap_context()
+                if active_context is not None and (
+                    getattr(active_context, "manager", None) is not None
+                    or getattr(active_context, "pipeline", None) is not None
+                ):
+                    logger.debug(
+                        "%s: reusing active bootstrap context (manager=%s, pipeline=%s)",
+                        name,
+                        getattr(active_context, "manager", None),
+                        getattr(active_context, "pipeline", None),
+                    )
+                    return (
+                        getattr(active_context, "registry", None),
+                        getattr(active_context, "data_bot", None),
+                        None,
+                    )
                 if not bootstrap_event.wait(timeout=_BOOTSTRAP_WAIT_TIMEOUT):
                     timeout_error = TimeoutError(
                         "Bot helper bootstrap timed out waiting for prior initialisation"
