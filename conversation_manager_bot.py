@@ -92,7 +92,18 @@ except Exception as exc:  # pragma: no cover - provide lightweight fallback
 
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 
-from .chatgpt_idea_bot import ChatGPTClient
+try:
+    from .chatgpt_idea_bot import ChatGPTClient
+except ImportError:
+    # During early bootstrap the chatgpt_idea_bot module can fail to expose
+    # ChatGPTClient (e.g., when the module partially initialises under
+    # circular-import pressure). Defer hard dependency failures so the
+    # pipeline can finish bootstrapping in test environments.
+    class ChatGPTClient:  # type: ignore
+        """Lightweight placeholder used when ChatGPTClient is unavailable."""
+
+        def __init__(self, *args, **kwargs):  # pragma: no cover - safety shim
+            raise ImportError("ChatGPTClient dependency unavailable")
 from context_builder import PromptBuildError, handle_failure
 from gpt_memory_interface import GPTMemoryInterface
 try:  # canonical tag constants
