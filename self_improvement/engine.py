@@ -2653,7 +2653,6 @@ class SelfImprovementEngine:
                                                             if not valid
                                                             else "quick_fix_flags"
                                                         )
-                                                        continue
                                                 except Exception:
                                                     validation_failed = True
                                                     cloned_summary["error"] = "quick_fix_validation_error"
@@ -2665,32 +2664,34 @@ class SelfImprovementEngine:
                                                             module=module, patch_id=patch_id
                                                         ),
                                                     )
-                                                    continue
-
-                                            context_meta = {
-                                                "trigger": action,
-                                                "module": str(module_rel_path),
-                                                "description": description_text,
-                                            }
-                                            if validation_context:
-                                                context_meta.update(
-                                                    dict(validation_context)
+                                            passed = False
+                                            flags: list[str] = []
+                                            validated_patch_id: str | None = None
+                                            if not validation_failed:
+                                                context_meta = {
+                                                    "trigger": action,
+                                                    "module": str(module_rel_path),
+                                                    "description": description_text,
+                                                }
+                                                if validation_context:
+                                                    context_meta.update(
+                                                        dict(validation_context)
+                                                    )
+                                                passed, validated_patch_id, flags = (
+                                                    quick_fix_engine.apply_validated_patch(
+                                                        str(cloned_module),
+                                                        description_text,
+                                                        context_meta,
+                                                        flags=validation_flags,
+                                                        manager=self.self_coding_engine,
+                                                        context_builder=getattr(
+                                                            self.self_coding_engine,
+                                                            "context_builder",
+                                                            None,
+                                                        ),
+                                                        **apply_kwargs,
+                                                    )
                                                 )
-                                            passed, validated_patch_id, flags = (
-                                                quick_fix_engine.apply_validated_patch(
-                                                    str(cloned_module),
-                                                    description_text,
-                                                    context_meta,
-                                                    flags=validation_flags,
-                                                    manager=self.self_coding_engine,
-                                                    context_builder=getattr(
-                                                        self.self_coding_engine,
-                                                        "context_builder",
-                                                        None,
-                                                    ),
-                                                    **apply_kwargs,
-                                                )
-                                            )
                                         finally:
                                             os.chdir(prev_cwd)
                                         cloned_summary.update(
