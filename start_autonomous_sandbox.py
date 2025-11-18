@@ -158,6 +158,12 @@ def main(argv: list[str] | None = None) -> None:
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
 
+    # Ensure meta-planning settings are populated before the self-improvement
+    # engine is instantiated so the background loop is enabled.
+    os.environ.setdefault("META_PLANNING_LOOP", "1")
+    os.environ.setdefault("META_PLANNING_INTERVAL", "10")
+    os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
+
     settings = SandboxSettings()
     # Automatically configure the environment before proceeding so the caller
     # does not need to pre-populate configuration files or model paths.
