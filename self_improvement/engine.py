@@ -3193,6 +3193,17 @@ class SelfImprovementEngine:
         """Background evolution loop driven by :class:`MetaWorkflowPlanner`."""
 
         assert self._meta_loop_stop is not None
+        evaluate_cycle = getattr(meta_planning, "_evaluate_cycle", None)
+        tracker = getattr(self, "baseline_tracker", None)
+        error_state = getattr(self, "error_bot", None)
+
+        if tracker is None:
+            try:
+                tracker = getattr(meta_planning, "BASELINE_TRACKER", None)
+            except Exception:
+                tracker = None
+
+        self._meta_loop_paused: bool = False
         if self.workflow_evolver is None:
             self.logger.debug(
                 "meta planning loop skipped: workflow_evolver missing"
@@ -3212,6 +3223,30 @@ class SelfImprovementEngine:
 
         while not self._meta_loop_stop.is_set():
             try:
+                if evaluate_cycle is not None and tracker is not None:
+                    decision, info = evaluate_cycle(tracker, error_state)
+                    if decision == "skip":
+                        self._meta_loop_paused = True
+                        self.logger.info(
+                            "meta planning loop paused",
+                            extra=log_record(
+                                event="meta-loop-skip",
+                                reason=info.get("reason"),
+                                metrics=info.get("metrics"),
+                            ),
+                        )
+                        self._meta_loop_stop.wait(interval)
+                        continue
+                    if self._meta_loop_paused:
+                        self.logger.info(
+                            "meta planning loop resuming",
+                            extra=log_record(
+                                event="meta-loop-resume",
+                                reason=info.get("reason"),
+                                metrics=info.get("metrics"),
+                            ),
+                        )
+                        self._meta_loop_paused = False
                 workflows: dict[str, Callable[[], Any]] = {}
                 if WorkflowDB is not None and WorkflowRecord is not None:
                     try:
