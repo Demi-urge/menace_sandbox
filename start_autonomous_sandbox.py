@@ -158,12 +158,6 @@ def main(argv: list[str] | None = None) -> None:
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
 
-    # Ensure meta-planning settings are populated before the self-improvement
-    # engine is instantiated so the background loop is enabled.
-    os.environ.setdefault("META_PLANNING_LOOP", "1")
-    os.environ.setdefault("META_PLANNING_INTERVAL", "10")
-    os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
-
     settings = SandboxSettings()
     # Automatically configure the environment before proceeding so the caller
     # does not need to pre-populate configuration files or model paths.
@@ -199,7 +193,39 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if not args.health_check:
             try:
-                initialize_bootstrap_context()
+                bootstrap_context = initialize_bootstrap_context()
+                os.environ.setdefault("META_PLANNING_LOOP", "1")
+                os.environ.setdefault("META_PLANNING_INTERVAL", "10")
+                os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
+                try:
+                    from self_improvement import meta_planning
+                    from self_improvement.meta_planning import (  # noqa: F401
+                        self_improvement_cycle,
+                    )
+
+                    interval = float(
+                        os.getenv(
+                            "META_PLANNING_INTERVAL",
+                            getattr(settings, "meta_planning_interval", 10),
+                        )
+                    )
+                    workflows = {
+                        "preseeded_manager": lambda: bootstrap_context.get("manager"),
+                        "preseeded_pipeline": lambda: bootstrap_context.get("pipeline"),
+                    }
+                    thread = meta_planning.start_self_improvement_cycle(
+                        workflows,
+                        interval=interval,
+                    )
+                    thread.start()
+                    logger.info(
+                        "meta planning loop started",
+                        extra=log_record(event="meta-planning-start"),
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to start meta planning loop", extra=log_record(event="meta-loop-error")
+                    )
                 logger.info(
                     "preseeded bootstrap context in use; pipeline and manager are cached",
                     extra=log_record(event="bootstrap-preseed"),
