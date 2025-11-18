@@ -554,22 +554,36 @@ class SelfCodingManager:
                     selfcoding_manager=self,
                     event_bus=self.event_bus,
                 )
-            except Exception as exc:  # pragma: no cover - best effort
-                raise RuntimeError(
-                    "EvolutionOrchestrator is required but could not be constructed",
-                ) from exc
+                self.logger.debug(
+                    "%s: EvolutionOrchestrator initialized successfully", self.bot_name
+                )
+            except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+                self.logger.warning(
+                    "%s: EvolutionOrchestrator dependencies unavailable: %s",
+                    self.bot_name,
+                    exc,
+                )
+                self.evolution_orchestrator = None
+            except Exception as exc:  # pragma: no cover - optional dependency
+                self.logger.warning(
+                    "%s: EvolutionOrchestrator could not be instantiated; disabling orchestration",
+                    self.bot_name,
+                    exc_info=exc,
+                )
+                self.evolution_orchestrator = None
 
         if not self.evolution_orchestrator:
-            raise RuntimeError(
-                "EvolutionOrchestrator is required but could not be constructed",
+            self.logger.debug(
+                "%s: EvolutionOrchestrator not available; continuing without orchestration",
+                self.bot_name,
             )
-
-        try:  # pragma: no cover - best effort
-            self.evolution_orchestrator.register_bot(self.bot_name)
-        except Exception:
-            self.logger.exception(
-                "failed to register bot with evolution orchestrator",
-            )
+        else:
+            try:  # pragma: no cover - best effort
+                self.evolution_orchestrator.register_bot(self.bot_name)
+            except Exception:
+                self.logger.exception(
+                    "failed to register bot with evolution orchestrator",
+                )
 
     def register_bot(
         self,
