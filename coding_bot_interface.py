@@ -5712,7 +5712,9 @@ def self_coding_managed(
                     _EO = _eo_module.EvolutionOrchestrator
 
                     capital = CapitalManagementBot(data_bot=d_bot)
-                    builder = create_context_builder()
+                    builder, builder_is_stub = getattr(
+                        _EO, "resolve_context_builder", lambda _=None: (create_context_builder(), False)
+                    )(logger)
                     improv = SelfImprovementEngine(
                         context_builder=builder,
                         data_bot=d_bot,
@@ -5731,6 +5733,11 @@ def self_coding_managed(
                         evolution_manager=evol_mgr,
                         selfcoding_manager=manager_local,
                     )
+                    if builder_is_stub:
+                        try:
+                            orchestrator.context_builder_degraded = True
+                        except Exception:
+                            logger.debug("failed to flag degraded context builder", exc_info=True)
                 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
                     logger.warning(
                         "%s: EvolutionOrchestrator dependencies unavailable: %s",

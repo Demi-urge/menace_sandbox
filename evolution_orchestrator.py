@@ -21,21 +21,9 @@ from typing import TYPE_CHECKING, Any, Dict
 from . import stripe_billing_router  # noqa: F401
 from context_builder_util import create_context_builder, ensure_fresh_weights
 from retry_utils import with_retry
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder  # noqa: F401
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "vector_service.ContextBuilder is required for EvolutionOrchestrator"
-    ) from exc
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
 from .threshold_service import threshold_service
-try:  # pragma: no cover - optional dependency
-    from . import mutation_logger as MutationLogger
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "mutation_logger is required for EvolutionOrchestrator"
-    ) from exc
 
 try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
@@ -86,6 +74,79 @@ class EvolutionOrchestrator:
     other components.
     """
 
+    class _StubContextBuilder:
+        """Lightweight stand-in when vector context builder is unavailable."""
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - trivial
+            return None
+
+        def build(self, *_args: object, **_kwargs: object) -> str:  # pragma: no cover - simple stub
+            return ""
+
+        def __call__(self, *args: object, **kwargs: object) -> str:  # pragma: no cover - simple stub
+            return self.build(*args, **kwargs)
+
+    @staticmethod
+    def _load_mutation_logger(logger: logging.Logger | None = None):
+        """Return the mutation logger module when available.
+
+        The import is intentionally deferred to avoid failing at module import
+        time when the optional dependency is not installed.
+        """
+
+        try:  # pragma: no cover - optional dependency
+            from . import mutation_logger as MutationLogger
+        except Exception as exc:  # pragma: no cover - optional dependency missing
+            if logger:
+                logger.warning(
+                    "mutation_logger unavailable; mutation tracking disabled: %s",
+                    exc,
+                )
+            return None
+
+        return MutationLogger
+
+    @classmethod
+    def _build_context_builder(
+        cls, logger: logging.Logger | None = None
+    ) -> tuple[object, bool]:
+        """Return a usable context builder and whether it is a stub fallback."""
+
+        try:  # pragma: no cover - optional dependency
+            from vector_service.context_builder import ContextBuilder  # noqa: F401
+        except Exception as exc:  # pragma: no cover - missing dependency
+            if logger:
+                logger.warning(
+                    "vector_service context builder unavailable; using stub: %s", exc
+                )
+            return cls._StubContextBuilder(), True
+
+        try:
+            builder = create_context_builder()
+            ensure_fresh_weights(builder)
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    "Context builder initialisation failed; using stub: %s", exc
+                )
+            return cls._StubContextBuilder(), True
+
+        return builder, False
+
+    def _get_context_builder(self):
+        builder, is_stub = self._build_context_builder(self.logger)
+        if is_stub:
+            self.context_builder_degraded = True
+        return builder
+
+    @classmethod
+    def resolve_context_builder(
+        cls, logger: logging.Logger | None = None
+    ) -> tuple[object, bool]:
+        """Public helper used by bootstrap code to obtain a builder safely."""
+
+        return cls._build_context_builder(logger)
+
     def __init__(
         self,
         data_bot: DataBot,
@@ -111,6 +172,10 @@ class EvolutionOrchestrator:
         dataset_path: str | Path = "roi_eval_dataset.csv",
         retrain_interval: int = 10,
     ) -> None:
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("EvolutionOrchestrator")
+        self._mutation_logger = self._load_mutation_logger()
+        self.context_builder_degraded = False
         self.data_bot = data_bot
         self.capital_bot = capital_bot
         self.improvement_engine = improvement_engine
@@ -147,8 +212,6 @@ class EvolutionOrchestrator:
                 self.capital_bot.trend_predictor = trend_predictor
             except Exception:
                 self.logger.exception("failed to set trend predictor")
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("EvolutionOrchestrator")
         self.prev_roi = self._latest_roi()
         self.prev_error = self._error_rate()
         self._cycles = 0
@@ -346,24 +409,7 @@ class EvolutionOrchestrator:
         post_details: dict[str, Any] | None = None
         post_error: str | None = None
         try:
-            builder = create_context_builder()
-            try:
-                ensure_fresh_weights(builder)
-            except Exception:
-                self.logger.exception(
-                    "failed to refresh context builder for %s", bot
-                )
-                if bus:
-                    try:
-                        bus.publish(
-                            "bot:patch_failed",
-                            {"bot": bot, "stage": "context", "error": "refresh_db_weights"},
-                        )
-                    except Exception:
-                        self.logger.exception(
-                            "failed to publish patch_failed for %s", bot
-                        )
-                return
+            builder = self._get_context_builder()
             self.selfcoding_manager.generate_and_patch(
                 module_path,
                 desc,
@@ -793,24 +839,7 @@ class EvolutionOrchestrator:
                 settings = getattr(self.data_bot, "settings", SandboxSettings())
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
-                builder = create_context_builder()
-                try:
-                    ensure_fresh_weights(builder)
-                except Exception:
-                    self.logger.exception(
-                        "failed to refresh context builder for %s", bot
-                    )
-                    if bus:
-                        try:
-                            bus.publish(
-                                "bot:patch_failed",
-                                {"bot": bot, "stage": "context", "error": "refresh_db_weights"},
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "failed to publish patch_failed for %s", bot
-                            )
-                    return
+                builder = self._get_context_builder()
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
@@ -1035,10 +1064,7 @@ class EvolutionOrchestrator:
         error_rate = self._error_rate()
         delta_err = error_rate - getattr(self, "prev_error", 0.0)
         self.prev_error = error_rate
-        try:
-            from . import mutation_logger as MutationLogger
-        except Exception:  # pragma: no cover - best effort
-            MutationLogger = None  # type: ignore
+        MutationLogger = self._mutation_logger
 
         def _self_patch(module: object, reason: str, trigger: str) -> None:
             if not self.selfcoding_manager:
@@ -1402,8 +1428,13 @@ class EvolutionOrchestrator:
                             if mod:
                                 path = Path(getattr(mod, "__file__", ""))
                     if path and path.exists():
+                        MutationLogger = self._mutation_logger
+                        if MutationLogger is None:
+                            self.logger.info(
+                                "mutation_logger unavailable; skipping mutation audit"
+                            )
+                            continue
                         try:
-                            from . import mutation_logger as MutationLogger
                             event_id = MutationLogger.log_mutation(
                                 change=f"patch:{path.name}",
                                 reason="self_improvement",
