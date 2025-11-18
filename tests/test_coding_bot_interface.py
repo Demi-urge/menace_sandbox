@@ -170,6 +170,35 @@ def test_auto_instantiates_orchestrator():
     assert bot.evolution_orchestrator.registered == ["auto"]
 
 
+def test_auto_instantiates_with_stubbed_builder(monkeypatch):
+    def _stub_resolve(_logger=None):
+        class _StubBuilder:
+            def refresh_db_weights(self):
+                return None
+
+        return _StubBuilder(), True
+
+    monkeypatch.setattr(evo_stub, "resolve_context_builder", _stub_resolve)
+
+    class _Registry(DummyRegistry):
+        def register_bot(self, name, *_args, **kwargs):
+            return super().register_bot(name, **kwargs)
+
+    registry = _Registry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "stub"
+
+        def __init__(self):
+            pass
+
+    bot = Bot()
+    assert registry.registered == ["stub"]
+    assert getattr(bot.evolution_orchestrator, "context_builder_degraded", False)
+
+
 def test_orchestrator_autoinstantiation_failure(monkeypatch):
     class Broken(_StubOrchestrator):
         def __init__(self, *a, **k):  # pragma: no cover - simulate failure
