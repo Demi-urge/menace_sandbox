@@ -1527,6 +1527,7 @@ def start_self_improvement_cycle(
     event_bus: UnifiedEventBus | None = None,
     interval: float = PLANNER_INTERVAL,
     error_log: Any | None = None,
+    workflow_graph: Any | None = None,
     should_encode: Callable[
         [Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]
     ]
@@ -1544,6 +1545,13 @@ def start_self_improvement_cycle(
 
     if evaluate_cycle is None:
         raise ValueError("evaluate_cycle callable required")
+
+    try:
+        _init.workflow_graph = workflow_graph
+    except Exception:
+        get_logger(__name__).debug(
+            "workflow graph injection failed", extra=log_record(component=__name__)
+        )
 
     print("💡 SI-7: preparing self-improvement cycle thread scaffold")
     stop_event = threading.Event()
