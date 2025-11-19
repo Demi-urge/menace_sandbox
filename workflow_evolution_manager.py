@@ -444,6 +444,39 @@ def evolve(
     baseline_roi = baseline_result.roi_gain
     baseline_synergy = getattr(baseline_result, "workflow_synergy_score", 0.0)
     workflow_run_summary.record_run(wf_id_str, baseline_roi)
+    roi_cfg = getattr(settings, "roi", None)
+    stagnation_threshold = float(
+        getattr(roi_cfg, "stagnation_threshold", 0.0) if roi_cfg is not None else 0.0
+    )
+    stagnation_cycles = int(
+        getattr(roi_cfg, "stagnation_cycles", 3) if roi_cfg is not None else 3
+    )
+    chain_stats = results_db.fetch_chain_stats(wf_id_str)
+    delta_roi = float(chain_stats.get("delta_roi", 0.0))
+    streak = int(chain_stats.get("non_positive_streak", 0))
+    if streak >= stagnation_cycles and delta_roi <= (stagnation_threshold or 0.0):
+        logger.info(
+            "workflow %s stagnated; skipping variant evolution", wf_id_str, extra={
+                "roi_delta": delta_roi,
+                "stagnation_streak": streak,
+                "decision": "pause",
+            }
+        )
+        if stability_db:
+            try:  # pragma: no cover - best effort
+                stability_db.record_metrics(
+                    wf_id_str,
+                    baseline_roi,
+                    0,
+                    getattr(baseline_result, "code_entropy", 0.0),
+                    roi_delta=delta_roi,
+                )
+            except Exception:
+                logger.exception("failed to record stability metrics for stagnated workflow")
+        tracker.score_workflow(wf_id_str, baseline_roi)
+        workflow_run_summary.save_all_summaries("workflows")
+        _merge_branches_for_parent(wf_id_str)
+        return workflow_callable
 
     # Attach lineage metadata to the baseline callable so it can be returned
     # unchanged while still exposing parent information.

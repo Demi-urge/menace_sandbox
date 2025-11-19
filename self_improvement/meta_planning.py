@@ -1109,6 +1109,7 @@ async def self_improvement_cycle(
     mutation_rate = cfg.meta_mutation_rate
     roi_weight = cfg.meta_roi_weight
     domain_penalty = cfg.meta_domain_penalty
+    stagnated_workflows: dict[str, dict[str, float]] = {}
 
     for name, value in {
         "mutation_rate": mutation_rate,
@@ -1169,6 +1170,16 @@ async def self_improvement_cycle(
                 logger.exception(
                     "ROI logging failed", extra=log_record(workflow_id=cid), exc_info=exc
                 )
+        chain_stats: dict[str, float] = {}
+        try:
+            if planner.roi_db is not None:
+                chain_stats = planner.roi_db.fetch_chain_stats(cid)
+        except Exception as exc:  # pragma: no cover - logging best effort
+            logger.debug(
+                "roi chain stats fetch failed",
+                extra=log_record(workflow_id=cid),
+                exc_info=exc,
+            )
         if planner.stability_db is not None:
             try:
                 planner.stability_db.record_metrics(
@@ -1188,6 +1199,7 @@ async def self_improvement_cycle(
                         "entropy": entropy,
                         "expense": 1.0,
                         "revenue": 1.0 + roi,
+                        "roi_delta": chain_stats.get("delta_roi", roi),
                     },
                 )
             except Exception as exc:  # pragma: no cover - best effort
@@ -1229,6 +1241,29 @@ async def self_improvement_cycle(
                 **extra_fields,
             ),
         )
+
+    def _is_stagnant(chain_id: str, roi_delta: float | None = None) -> tuple[bool, dict[str, float]]:
+        threshold = ROI_BACKOFF_THRESHOLD if ROI_BACKOFF_THRESHOLD != 0 else 0.0
+        streak_required = max(1, ROI_BACKOFF_CONSECUTIVE)
+        stats: dict[str, float] = {}
+        try:
+            if planner.roi_db is not None:
+                stats = planner.roi_db.fetch_chain_stats(chain_id)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug(
+                "stagnation stats lookup failed",
+                extra=log_record(workflow_id=chain_id),
+                exc_info=exc,
+            )
+            return False, stats
+        delta = float(stats.get("delta_roi", roi_delta or 0.0))
+        streak = int(stats.get("non_positive_streak", 0))
+        stagnant = streak >= streak_required and delta <= threshold
+        if stagnant:
+            stagnated_workflows[chain_id] = stats
+        else:
+            stagnated_workflows.pop(chain_id, None)
+        return stagnant, stats
 
     if evaluate_cycle is None:
         raise ValueError("evaluate_cycle callable required")
@@ -1325,6 +1360,32 @@ async def self_improvement_cycle(
                 )
                 tracker = BASELINE_TRACKER
                 encode_fn = should_encode
+                chain_id = "->".join(rec.get("chain", [])) if rec.get("chain") else None
+                stagnant_stats: dict[str, float] = {}
+                if chain_id:
+                    stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
+                    if stagnant:
+                        _debug_cycle(
+                            "skipped",
+                            reason="roi_stagnation",
+                            roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                            stagnation_streak=stagnant_stats.get("non_positive_streak", 0),
+                            workflow_id=chain_id,
+                        )
+                        outcome_logged = True
+                        logger.info(
+                            "workflow %s paused due to ROI stagnation",
+                            chain_id,
+                            extra=log_record(
+                                workflow_id=chain_id,
+                                roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                non_positive_streak=stagnant_stats.get(
+                                    "non_positive_streak", 0
+                                ),
+                                decision="pause",
+                            ),
+                        )
+                        continue
                 if encode_fn is None:
                     momentum = getattr(tracker, "momentum", 1.0) or 1.0
                     roi_delta = tracker.delta("roi") * momentum
