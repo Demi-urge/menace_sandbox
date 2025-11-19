@@ -230,6 +230,61 @@ def _discover_repo_workflows(
     return specs
 
 
+def _decompose_menace_components(
+    *,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    workflow_evolver: WorkflowEvolutionManager,
+) -> tuple[list[Mapping[str, Any]], dict[str, Callable[[], Any]]]:
+    """Derive workflow specs and callables from the Menace monolith.
+
+    The decomposition step inspects workflow-oriented modules in the repo and
+    converts them into executable callables via the ``WorkflowEvolutionManager``
+    so the meta-planning loop can mutate and wire them dynamically instead of
+    depending solely on pre-seeded bootstrap entries.
+    """
+
+    repo_root = getattr(settings, "repo_root", None) or resolve_path(".")
+    derived_specs: list[Mapping[str, Any]] = []
+    derived_callables: dict[str, Callable[[], Any]] = {}
+
+    try:
+        derived_specs.extend(
+            discover_workflow_specs(base_path=repo_root, logger=logger)
+        )
+    except Exception:
+        logger.exception(
+            "failed to decompose repo workflows",
+            extra=log_record(event="menace-decomposition"),
+        )
+
+    for spec in derived_specs:
+        seq = spec.get("workflow") or spec.get("task_sequence") or []
+        workflow_id = str(
+            spec.get("workflow_id")
+            or spec.get("metadata", {}).get("workflow_id")
+            or ""
+        ).strip()
+        if not workflow_id or not seq:
+            continue
+        try:
+            seq_list = (
+                list(seq)
+                if isinstance(seq, Sequence) and not isinstance(seq, (str, bytes))
+                else [seq]
+            )
+            derived_callables[workflow_id] = workflow_evolver.build_callable(
+                "-".join(str(step) for step in seq_list)
+            )
+        except Exception:
+            logger.exception(
+                "failed to build callable for decomposed workflow",
+                extra=log_record(workflow_id=workflow_id),
+            )
+
+    return derived_specs, derived_callables
+
+
 def _build_self_improvement_workflows(
     bootstrap_context: Mapping[str, Any],
     settings: SandboxSettings,
@@ -262,6 +317,11 @@ def _build_self_improvement_workflows(
         _discover_repo_workflows(logger=logger, base_path=repo_root)
     )
 
+    derived_specs, derived_callables = _decompose_menace_components(
+        settings=settings, logger=logger, workflow_evolver=workflow_evolver
+    )
+    all_discovered.extend(derived_specs)
+
     for name in (
         "manager",
         "pipeline",
@@ -280,6 +340,12 @@ def _build_self_improvement_workflows(
         _tag_node(workflow_id, source="bootstrap", order=0)
 
     records = _load_workflow_records(settings, discovered_specs=all_discovered)
+    if derived_callables:
+        workflows.update(derived_callables)
+        for wf_id in derived_callables:
+            graph.add_workflow(wf_id)
+            _tag_node(wf_id, source="monolith-decomposition", order=1)
+
     for record in records:
         seq = record.get("workflow") or record.get("task_sequence") or []
         workflow_id = str(
@@ -362,6 +428,52 @@ def _build_self_improvement_workflows(
     )
 
     return workflows, graph
+
+
+def _run_prelaunch_improvement_cycles(
+    workflows: Mapping[str, Callable[[], Any]],
+    planner_cls: type | None,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+) -> tuple[bool, bool]:
+    """Iterate each workflow through ROI-gated improvement before launch."""
+
+    if not workflows:
+        return True, False
+
+    system_ready = True
+    roi_backoff = False
+    per_workflow_ready: dict[str, bool] = {}
+
+    for workflow_id, callable_fn in workflows.items():
+        ready, backoff = _coordinate_workflows_until_stagnation(
+            {workflow_id: callable_fn},
+            planner_cls=planner_cls,
+            settings=settings,
+            logger=logger,
+            continuous_monitor=True,
+            cycle_budget=3,
+        )
+        per_workflow_ready[workflow_id] = ready
+        roi_backoff = roi_backoff or backoff
+        if not ready:
+            system_ready = False
+            logger.warning(
+                "workflow stalled before launch",
+                extra=log_record(workflow_id=workflow_id, event="prelaunch-stall"),
+            )
+
+    if system_ready and not roi_backoff:
+        system_ready, system_backoff = _coordinate_workflows_until_stagnation(
+            workflows,
+            planner_cls=planner_cls,
+            settings=settings,
+            logger=logger,
+            continuous_monitor=True,
+        )
+        roi_backoff = roi_backoff or system_backoff
+
+    return system_ready and all(per_workflow_ready.values()), roi_backoff
 
 
 def _coordinate_workflows_until_stagnation(
@@ -625,19 +737,70 @@ def main(argv: list[str] | None = None) -> None:
                         "failed to auto-discover workflow specs",
                         extra=log_record(event="workflow-discovery-error"),
                     )
+
+                orphan_specs: list[Mapping[str, Any]] = []
+                include_orphans = bool(
+                    getattr(settings, "include_orphans", False)
+                    and not getattr(settings, "disable_orphans", False)
+                )
+                recursive_orphans = bool(
+                    getattr(settings, "recursive_orphan_scan", False)
+                )
+                if include_orphans:
+                    try:
+                        orphan_modules = integrate_orphans(recursive=recursive_orphans)
+                        orphan_specs.extend(
+                            {
+                                "workflow": [module],
+                                "workflow_id": module,
+                                "task_sequence": [module],
+                                "source": "orphan_discovery",
+                            }
+                            for module in orphan_modules
+                            if isinstance(module, str)
+                        )
+                    except Exception:
+                        logger.exception(
+                            "startup orphan integration failed",
+                            extra=log_record(event="startup-orphan-discovery"),
+                        )
+                    if recursive_orphans:
+                        try:
+                            result = post_round_orphan_scan(recursive=True)
+                            integrated = (
+                                result.get("integrated")
+                                if isinstance(result, Mapping)
+                                else None
+                            )
+                            if integrated:
+                                orphan_specs.extend(
+                                    {
+                                        "workflow": [module],
+                                        "workflow_id": module,
+                                        "task_sequence": [module],
+                                        "source": "recursive_orphan_discovery",
+                                    }
+                                    for module in integrated
+                                    if isinstance(module, str)
+                                )
+                        except Exception:
+                            logger.exception(
+                                "startup recursive orphan scan failed",
+                                extra=log_record(event="startup-orphan-recursive"),
+                            )
+
                 workflows, workflow_graph_obj = _build_self_improvement_workflows(
                     bootstrap_context,
                     settings,
                     workflow_evolver,
                     logger=logger,
-                    discovered_specs=discovered_specs,
+                    discovered_specs=[*discovered_specs, *orphan_specs],
                 )
-                ready_to_launch, roi_backoff_triggered = _coordinate_workflows_until_stagnation(
+                ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
                     workflows,
                     planner_cls=planner_cls,
                     settings=settings,
                     logger=logger,
-                    continuous_monitor=args.monitor_roi_backoff,
                 )
 
                 meta_planning.reload_settings(settings)
