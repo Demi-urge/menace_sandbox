@@ -466,7 +466,18 @@ def _run_prelaunch_improvement_cycles(
     """Iterate each workflow through ROI-gated improvement before launch."""
 
     if not workflows:
-        return True, False
+        logger.error(
+            "no workflows available for ROI coordination; aborting sandbox launch",
+            extra=log_record(event="meta-coordinator-missing-workflows"),
+        )
+        raise RuntimeError("no workflows available for ROI coordination")
+
+    if planner_cls is None:
+        logger.error(
+            "meta planner unavailable; cannot coordinate ROI stagnation",
+            extra=log_record(event="meta-coordinator-missing"),
+        )
+        raise RuntimeError("meta planner unavailable for ROI coordination")
 
     system_ready = True
     roi_backoff = False
@@ -532,20 +543,6 @@ def _coordinate_workflows_until_stagnation(
 ) -> tuple[bool, bool]:
     """Iterate workflows through the meta planner until ROI gains stagnate."""
 
-    if not workflows:
-        logger.info(
-            "no workflows discovered; skipping ROI coordination",
-            extra=log_record(event="meta-coordinator-skip"),
-        )
-        return True, False
-
-    if planner_cls is None:
-        logger.error(
-            "meta planner unavailable; cannot coordinate ROI stagnation",
-            extra=log_record(event="meta-coordinator-missing"),
-        )
-        return False, False
-
     roi_settings = getattr(settings, "roi", None)
     threshold = float(
         getattr(roi_settings, "stagnation_threshold", 0.0)
@@ -568,7 +565,7 @@ def _coordinate_workflows_until_stagnation(
             "failed to initialize meta planner for ROI coordination",
             extra=log_record(event="meta-coordinator-init-error"),
         )
-        return False, False
+        raise
 
     for name, value in {
         "mutation_rate": settings.meta_mutation_rate,
@@ -842,6 +839,15 @@ def main(argv: list[str] | None = None) -> None:
                     discovered_specs=[*discovered_specs, *orphan_specs],
                 )
                 bootstrap_mode = not _roi_baseline_available()
+                logger.info(
+                    "evaluating sandbox startup readiness",
+                    extra=log_record(
+                        event="startup-readiness",
+                        workflow_count=len(workflows),
+                        planner_available=planner_cls is not None,
+                        bootstrap_mode=bootstrap_mode,
+                    ),
+                )
                 ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
                     workflows,
                     planner_cls=planner_cls,
@@ -851,6 +857,16 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
                 meta_planning.reload_settings(settings)
+                logger.info(
+                    "startup readiness evaluation complete",
+                    extra=log_record(
+                        event="startup-readiness-result",
+                        workflow_count=len(workflows),
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        planner_available=planner_cls is not None,
+                    ),
+                )
                 if ready_to_launch:
                     try:
                         thread = meta_planning.start_self_improvement_cycle(
