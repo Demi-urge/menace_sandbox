@@ -73,6 +73,7 @@ except (ImportError, ValueError):  # pragma: no cover - fallback for manual_boot
     from lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT  # type: ignore
 
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
+from .orphan_handling import integrate_orphans, post_round_orphan_scan
 
 if TYPE_CHECKING:  # pragma: no cover - used for static analysis only
     try:
@@ -1331,6 +1332,50 @@ async def self_improvement_cycle(
                 )
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
+            orphan_workflows: list[str] = []
+            if DISCOVER_ORPHANS:
+                try:
+                    orphan_workflows.extend(
+                        w
+                        for w in integrate_orphans(recursive=RECURSIVE_ORPHANS)
+                        if isinstance(w, str)
+                    )
+                except Exception:
+                    logger.exception("orphan integration failed")
+
+                if RECURSIVE_ORPHANS:
+                    try:
+                        result = post_round_orphan_scan(recursive=True)
+                        integrated = result.get("integrated") if isinstance(result, dict) else None
+                        if integrated:
+                            orphan_workflows.extend(
+                                w for w in integrated if isinstance(w, str)
+                            )
+                    except Exception:
+                        logger.exception("recursive orphan discovery failed")
+
+            if orphan_workflows:
+                unique_orphans: list[str] = []
+                seen_orphans: set[str] = set()
+                for wf in orphan_workflows:
+                    if wf not in seen_orphans:
+                        seen_orphans.add(wf)
+                        unique_orphans.append(wf)
+                for wid in unique_orphans:
+                    chain = [wid]
+                    if tuple(chain) not in planner.cluster_map:
+                        planner.cluster_map[tuple(chain)] = {
+                            "last_roi": 0.0,
+                            "last_entropy": 0.0,
+                            "score": 0.0,
+                            "failures": 0,
+                            "ts": time.time(),
+                        }
+                        try:
+                            planner._save_state()
+                        except Exception:
+                            logger.exception("failed to persist orphan workflows")
+                    active.append(chain)
             outcome_logged = False
             for rec in records:
                 await _log(rec)
