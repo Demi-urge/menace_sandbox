@@ -58,6 +58,7 @@ from workflow_evolution_manager import WorkflowEvolutionManager
 import workflow_graph
 from self_improvement.workflow_discovery import discover_workflow_specs
 from sandbox_orchestrator import SandboxOrchestrator
+from context_builder_util import create_context_builder
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -341,6 +342,150 @@ def _build_self_improvement_workflows(
     return workflows, graph
 
 
+def _coordinate_workflows_until_stagnation(
+    workflows: Mapping[str, Callable[[], Any]],
+    *,
+    planner_cls: type | None,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    continuous_monitor: bool = False,
+    cycle_budget: int | None = None,
+) -> tuple[bool, bool]:
+    """Iterate workflows through the meta planner until ROI gains stagnate."""
+
+    if not workflows:
+        logger.info(
+            "no workflows discovered; skipping ROI coordination",
+            extra=log_record(event="meta-coordinator-skip"),
+        )
+        return True, False
+
+    if planner_cls is None:
+        logger.error(
+            "meta planner unavailable; cannot coordinate ROI stagnation",
+            extra=log_record(event="meta-coordinator-missing"),
+        )
+        return False, False
+
+    roi_settings = getattr(settings, "roi", None)
+    threshold = float(
+        getattr(roi_settings, "stagnation_threshold", 0.0)
+        if roi_settings is not None
+        else 0.0
+    )
+    streak_required = max(
+        1,
+        int(
+            getattr(roi_settings, "stagnation_cycles", 1)
+            if roi_settings is not None
+            else 1
+        ),
+    )
+
+    try:
+        planner = planner_cls(context_builder=create_context_builder())
+    except Exception:
+        logger.exception(
+            "failed to initialize meta planner for ROI coordination",
+            extra=log_record(event="meta-coordinator-init-error"),
+        )
+        return False, False
+
+    for name, value in {
+        "mutation_rate": settings.meta_mutation_rate,
+        "roi_weight": settings.meta_roi_weight,
+        "domain_transition_penalty": settings.meta_domain_penalty,
+    }.items():
+        if hasattr(planner, name):
+            setattr(planner, name, value)
+
+    diminishing: set[str] = set()
+    roi_backoff_triggered = False
+    budget = cycle_budget or max(len(workflows) * streak_required * 2, 3)
+
+    for cycle in range(budget):
+        try:
+            records = planner.discover_and_persist(workflows)
+        except Exception:
+            logger.exception(
+                "meta planner coordination failed",
+                extra=log_record(event="meta-coordinator-error", cycle=cycle),
+            )
+            break
+
+        if not records:
+            logger.info(
+                "meta planner returned no records; assuming diminishing returns",
+                extra=log_record(event="meta-coordinator-empty", cycle=cycle),
+            )
+            break
+
+        for rec in records:
+            chain = rec.get("chain", [])
+            chain_id = "->".join(chain) if chain else rec.get("workflow_id", "unknown")
+            roi_gain = float(rec.get("roi_gain", 0.0))
+            stats: dict[str, float] = {}
+            if getattr(planner, "roi_db", None) is not None and isinstance(chain_id, str):
+                try:
+                    stats = planner.roi_db.fetch_chain_stats(chain_id)  # type: ignore[operator]
+                except Exception:
+                    logger.debug(
+                        "roi stats lookup failed", extra=log_record(workflow_id=chain_id)
+                    )
+
+            roi_delta = float(stats.get("delta_roi", roi_gain))
+            streak = int(stats.get("non_positive_streak", 0))
+            stagnated = roi_delta <= threshold and streak >= streak_required
+
+            logger.info(
+                "meta planning progress",
+                extra=log_record(
+                    workflow_id=chain_id,
+                    roi_gain=roi_gain,
+                    roi_delta=roi_delta,
+                    stagnation_threshold=threshold,
+                    non_positive_streak=streak,
+                    stagnation_met=stagnated,
+                    diminishing_complete=len(diminishing),
+                    diminishing_target=len(workflows),
+                    cycle=cycle,
+                ),
+            )
+
+            if stagnated and isinstance(chain_id, str):
+                diminishing.add(chain_id)
+
+            if continuous_monitor and roi_delta <= threshold:
+                roi_backoff_triggered = True
+                logger.warning(
+                    "roi backoff triggered during coordination",
+                    extra=log_record(
+                        workflow_id=chain_id,
+                        roi_delta=roi_delta,
+                        stagnation_threshold=threshold,
+                        non_positive_streak=streak,
+                        event="roi-backoff",
+                    ),
+                )
+                break
+
+        if roi_backoff_triggered or len(diminishing) >= len(workflows):
+            break
+
+    ready = len(diminishing) >= len(workflows)
+    if not ready:
+        logger.warning(
+            "diminishing returns not reached for all workflows",
+            extra=log_record(
+                achieved=len(diminishing),
+                total=len(workflows),
+                event="meta-coordinator-incomplete",
+            ),
+        )
+
+    return ready, roi_backoff_triggered
+
+
 def main(argv: list[str] | None = None) -> None:
     """Launch the sandbox with optional log level configuration.
 
@@ -376,6 +521,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Run sandbox health checks and exit",
     )
+    parser.add_argument(
+        "--monitor-roi-backoff",
+        action="store_true",
+        help="Continuously monitor ROI backoff and pause launch when triggered",
+    )
     args = parser.parse_args(argv_list)
 
     root_logger = logging.getLogger()
@@ -388,6 +538,9 @@ def main(argv: list[str] | None = None) -> None:
     logger = get_logger(__name__)
     sandbox_restart_total.labels(service="start_autonomous", reason="launch").inc()
     logger.info("sandbox start", extra=log_record(event="start"))
+
+    ready_to_launch = True
+    roi_backoff_triggered = False
 
     try:
         if not args.health_check:
@@ -434,49 +587,65 @@ def main(argv: list[str] | None = None) -> None:
                     logger=logger,
                     discovered_specs=discovered_specs,
                 )
-                try:
-                    thread = meta_planning.start_self_improvement_cycle(
-                        workflows,
-                        event_bus=shared_event_bus,
-                        interval=interval,
-                        workflow_graph=workflow_graph_obj,
-                    )
-                except Exception:
-                    logger.exception(
-                        "failed to initialize meta planning loop; sandbox launch halted",
-                        extra=log_record(event="meta-loop-error"),
-                    )
-                    sys.exit(1)
-
-                thread.start()
-                logger.info(
-                    "meta planning loop thread started successfully",
-                    extra=log_record(event="meta-planning-start"),
+                ready_to_launch, roi_backoff_triggered = _coordinate_workflows_until_stagnation(
+                    workflows,
+                    planner_cls=planner_cls,
+                    settings=settings,
+                    logger=logger,
+                    continuous_monitor=args.monitor_roi_backoff,
                 )
+
+                meta_planning.reload_settings(settings)
+                if ready_to_launch:
+                    try:
+                        thread = meta_planning.start_self_improvement_cycle(
+                            workflows,
+                            event_bus=shared_event_bus,
+                            interval=interval,
+                            workflow_graph=workflow_graph_obj,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "failed to initialize meta planning loop; sandbox launch halted",
+                            extra=log_record(event="meta-loop-error"),
+                        )
+                        sys.exit(1)
+
+                    thread.start()
+                    logger.info(
+                        "meta planning loop thread started successfully",
+                        extra=log_record(event="meta-planning-start"),
+                    )
+                else:
+                    logger.warning(
+                        "meta planning loop not started because workflows have not met diminishing returns",
+                        extra=log_record(event="meta-planning-skipped"),
+                    )
                 logger.info(
                     "preseeded bootstrap context in use; pipeline and manager are cached",
                     extra=log_record(event="bootstrap-preseed"),
                 )
 
-                orchestrator = SandboxOrchestrator(
-                    workflows,
-                    logger=logger,
-                    loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
-                    diminishing_threshold=float(
-                        os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
-                    ),
-                    patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
-                )
-                orchestrator_thread = threading.Thread(
-                    target=orchestrator.run,
-                    name="sandbox-orchestrator",
-                    daemon=True,
-                )
-                orchestrator_thread.start()
-                logger.info(
-                    "sandbox orchestrator started",
-                    extra=log_record(event="orchestrator-start"),
-                )
+                if ready_to_launch:
+                    orchestrator = SandboxOrchestrator(
+                        workflows,
+                        logger=logger,
+                        loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
+                        diminishing_threshold=float(
+                            os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
+                        ),
+                        patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
+                    )
+                    orchestrator_thread = threading.Thread(
+                        target=orchestrator.run,
+                        name="sandbox-orchestrator",
+                        daemon=True,
+                    )
+                    orchestrator_thread.start()
+                    logger.info(
+                        "sandbox orchestrator started",
+                        extra=log_record(event="orchestrator-start"),
+                    )
             except Exception:  # pragma: no cover - defensive bootstrap hint
                 logger.exception(
                     "failed to preseed bootstrap context before bot loading",
@@ -526,6 +695,18 @@ def main(argv: list[str] | None = None) -> None:
                     "; ".join(failures) if failures else "unknown reason",
                 )
                 sys.exit(2)
+            return
+        if roi_backoff_triggered:
+            logger.warning(
+                "sandbox launch halted due to ROI backoff",
+                extra=log_record(event="roi-backoff-block", correlation_id=cid),
+            )
+            return
+        if not ready_to_launch:
+            logger.warning(
+                "sandbox launch gated until workflows reach diminishing returns",
+                extra=log_record(event="diminishing-returns-pending"),
+            )
             return
         print("[start_autonomous_sandbox] launching sandbox", flush=True)
         launch_sandbox()
