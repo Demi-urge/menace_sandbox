@@ -205,6 +205,7 @@ def run_cycle(
     suggestions: Iterable[Tuple[str, str]] = []
     metrics: dict[str, float] = {}
     evaluation_error: str | None = None
+    manager_missing_reason: str | None = None
 
     def _validate_inputs(result: EvaluationResult) -> tuple[float, float, dict[str, float]]:
         nonlocal evaluation_error
@@ -237,6 +238,8 @@ def run_cycle(
             metrics={"dry_run": 1.0},
         )
         roi_after, confidence, metrics = _validate_inputs(result)
+        if manager is None:
+            manager_missing_reason = "SelfCodingManager unavailable; simulating cycle"
     elif manager is not None:
         try:
             helper_text = manager.engine.generate_helper(
@@ -252,6 +255,7 @@ def run_cycle(
             metrics["evaluation_error"] = metrics.get("evaluation_error", 0.0) + 1.0
     else:
         LOGGER.warning("No manager available; treating cycle as no-op.")
+        manager_missing_reason = "SelfCodingManager unavailable; cycle executed without agent"
 
     if evaluation_error:
         LOGGER.warning("Evaluation error recorded: %s", evaluation_error)
@@ -270,18 +274,26 @@ def run_cycle(
     )
     safety_factor = raroi / roi_after if roi_after else 0.0
 
-    reason: str | None = None
+    reasons: list[str] = []
+    stop_reason: str | None = None
     if raroi < cfg.roi_target:
-        reason = f"RAROI {raroi:.3f} below target {cfg.roi_target:.3f}"
+        stop_reason = f"RAROI {raroi:.3f} below target {cfg.roi_target:.3f}"
     elif confidence < cfg.min_confidence:
-        reason = f"Confidence {confidence:.3f} below minimum {cfg.min_confidence:.3f}"
+        stop_reason = f"Confidence {confidence:.3f} below minimum {cfg.min_confidence:.3f}"
     elif safety_factor < 1.0 / max(1.0, cfg.catastrophic_multiplier):
-        reason = (
+        stop_reason = (
             f"Safety factor {safety_factor:.3f} below conservative bound "
             f"{1.0 / max(1.0, cfg.catastrophic_multiplier):.3f}"
         )
     elif should_stop:
-        reason = "Tracker requested stop (entropy or tolerance triggered)"
+        stop_reason = "Tracker requested stop (entropy or tolerance triggered)"
+
+    if stop_reason:
+        reasons.append(stop_reason)
+    if manager_missing_reason:
+        reasons.append(manager_missing_reason)
+
+    reason = " | ".join(dict.fromkeys(reasons)) or None
 
     return CycleResult(
         roi_before=roi_before,
@@ -290,7 +302,7 @@ def run_cycle(
         confidence=confidence,
         safety_factor=safety_factor,
         suggestions=suggestions,
-        should_stop=should_stop or reason is not None,
+        should_stop=should_stop or stop_reason is not None,
         reason=reason,
     )
 
@@ -339,6 +351,14 @@ def parse_args() -> tuple[argparse.Namespace, ROIConfig]:
         default=_env_bool("SINGLE_AGENT_DRY_RUN"),
         help="Skip self-coding calls and simulate ROI changes for smoke testing.",
     )
+    parser.add_argument(
+        "--allow-no-manager",
+        action="store_true",
+        help=(
+            "Allow the runner to continue in simulated mode if the self-coding manager"
+            " fails to start. Intended for debugging only."
+        ),
+    )
 
     args = parser.parse_args()
     cfg = ROIConfig(
@@ -366,8 +386,22 @@ def main() -> None:
         except Exception:
             LOGGER.exception("Failed to initialise SelfCodingManager; continuing without it")
 
+    if manager is None and not cfg.dry_run:
+        if args.allow_no_manager:
+            LOGGER.warning(
+                "No manager available; enabling dry-run mode for simulated ROI cycles.")
+            cfg.dry_run = True
+        else:
+            LOGGER.error(
+                "No manager available and dry-run not enabled. Use --allow-no-manager to"
+                " simulate cycles when debugging."
+            )
+            sys.exit(1)
+
+    last_result: CycleResult | None = None
     for cycle in range(1, cfg.max_cycles + 1):
         result = run_cycle(manager, tracker, cfg, args.bot_name)
+        last_result = result
         LOGGER.info(
             "Cycle %d: ROI %.3f -> %.3f | RAROI %.3f | confidence %.3f | safety %.3f",
             cycle,
@@ -385,7 +419,19 @@ def main() -> None:
             break
         time.sleep(0.5)
 
-    LOGGER.info("Single-agent ROI run complete.")
+    if last_result is not None:
+        LOGGER.info(
+            "Single-agent ROI run complete. Final ROI %.3f -> %.3f | RAROI %.3f | "
+            "confidence %.3f | safety %.3f | reasons: %s",
+            last_result.roi_before,
+            last_result.roi_after,
+            last_result.raroi,
+            last_result.confidence,
+            last_result.safety_factor,
+            last_result.reason or "none recorded",
+        )
+    else:
+        LOGGER.info("Single-agent ROI run complete with no cycles executed.")
 
 
 if __name__ == "__main__":
