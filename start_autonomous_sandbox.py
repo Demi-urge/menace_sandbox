@@ -485,6 +485,14 @@ def _run_prelaunch_improvement_cycles(
             extra=log_record(event="meta-coordinator-missing-workflows"),
         )
         raise RuntimeError("no workflows available for ROI coordination")
+    else:
+        logger.info(
+            "✅ workflows detected for ROI coordination",
+            extra=log_record(
+                event="meta-coordinator-workflows-present",
+                workflow_count=len(workflows),
+            ),
+        )
 
     if planner_cls is None:
         logger.error(
@@ -492,6 +500,11 @@ def _run_prelaunch_improvement_cycles(
             extra=log_record(event="meta-coordinator-missing"),
         )
         raise RuntimeError("meta planner unavailable for ROI coordination")
+    else:
+        logger.info(
+            "✅ meta planner located for ROI coordination",
+            extra=log_record(event="meta-coordinator-planner-present"),
+        )
 
     system_ready = True
     roi_backoff = False
@@ -522,14 +535,32 @@ def _run_prelaunch_improvement_cycles(
                 event="prelaunch-workflow-result",
                 workflow_id=workflow_id,
                 ready=ready,
-                roi_backoff=backoff,
-            ),
-        )
+            roi_backoff=backoff,
+        ),
+    )
         if not ready:
             system_ready = False
             logger.warning(
                 "❌ workflow stalled before launch",
                 extra=log_record(workflow_id=workflow_id, event="prelaunch-stall"),
+            )
+        elif backoff:
+            logger.warning(
+                "❌ workflow hit ROI backoff during prelaunch",
+                extra=log_record(
+                    event="prelaunch-workflow-backoff",
+                    workflow_id=workflow_id,
+                    roi_backoff=True,
+                ),
+            )
+        else:
+            logger.info(
+                "✅ workflow cleared ROI gate without backoff",
+                extra=log_record(
+                    event="prelaunch-workflow-clear",
+                    workflow_id=workflow_id,
+                    roi_backoff=False,
+                ),
             )
 
     if system_ready and not roi_backoff:
@@ -556,6 +587,15 @@ def _run_prelaunch_improvement_cycles(
                 workflow_count=len(workflows),
                 ready=system_ready,
                 roi_backoff=system_backoff,
+            ),
+        )
+    else:
+        logger.info(
+            "ℹ️ skipping combined ROI gate because a workflow stalled or backoff triggered",
+            extra=log_record(
+                event="prelaunch-system-skip",
+                system_ready=system_ready,
+                roi_backoff=roi_backoff,
             ),
         )
 
@@ -594,6 +634,10 @@ def _run_prelaunch_improvement_cycles(
             ),
         )
         ready = True
+        logger.info(
+            "✅ bootstrap bypass activated; launching despite missing ROI baseline",
+            extra=log_record(event="meta-coordinator-bootstrap-bypass-applied"),
+        )
 
     logger.info(
         "✅ prelaunch ROI coordination complete" if ready else "❌ prelaunch ROI coordination incomplete",
@@ -975,6 +1019,16 @@ def main(argv: list[str] | None = None) -> None:
                     readiness_error = f"unexpected prelaunch failure: {exc}"
                     ready_to_launch = False
                     roi_backoff_triggered = False
+                finally:
+                    logger.info(
+                        "ℹ️ prelaunch ROI cycle invocation finished",
+                        extra=log_record(
+                            event="startup-prelaunch-finished",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                        ),
+                    )
 
                 meta_planning.reload_settings(settings)
                 logger.info(
@@ -988,12 +1042,20 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 if ready_to_launch:
+                    logger.info(
+                        "✅ readiness gate cleared; preparing to start meta planning loop",
+                        extra=log_record(event="meta-planning-ready", roi_backoff=roi_backoff_triggered),
+                    )
                     try:
                         thread = meta_planning.start_self_improvement_cycle(
                             workflows,
                             event_bus=shared_event_bus,
                             interval=interval,
                             workflow_graph=workflow_graph_obj,
+                        )
+                        logger.info(
+                            "✅ meta planning thread object created",
+                            extra=log_record(event="meta-planning-thread-created"),
                         )
                     except Exception:
                         logger.exception(
@@ -1010,6 +1072,15 @@ def main(argv: list[str] | None = None) -> None:
                 else:
                     failure_reason = readiness_error or (
                         "workflows did not reach ROI stagnation; sandbox launch aborted"
+                    )
+                    logger.error(
+                        "❌ readiness gate blocked meta planning loop",
+                        extra=log_record(
+                            event="meta-planning-ready-false",
+                            reason=failure_reason,
+                            roi_backoff=roi_backoff_triggered,
+                            ready_to_launch=ready_to_launch,
+                        ),
                     )
                     logger.error(
                         "meta planning loop not started: %s",
