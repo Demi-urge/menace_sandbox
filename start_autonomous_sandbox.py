@@ -1011,14 +1011,42 @@ def main(argv: list[str] | None = None) -> None:
                         logger=logger,
                         bootstrap_mode=bootstrap_mode,
                     )
+                    logger.info(
+                        "✅ prelaunch ROI cycles finished without raising",  # emoji for quick scanning
+                        extra=log_record(
+                            event="startup-prelaunch-success",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
                 except RuntimeError as exc:
                     readiness_error = str(exc)
                     ready_to_launch = False
                     roi_backoff_triggered = False
+                    logger.error(
+                        "❌ runtime error during prelaunch ROI cycles",  # emoji for quick scanning
+                        extra=log_record(
+                            event="startup-prelaunch-runtime-error",
+                            readiness_error=readiness_error,
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
                 except Exception as exc:
                     readiness_error = f"unexpected prelaunch failure: {exc}"
                     ready_to_launch = False
                     roi_backoff_triggered = False
+                    logger.exception(
+                        "❌ unexpected exception during prelaunch ROI cycles",  # emoji for quick scanning
+                        extra=log_record(
+                            event="startup-prelaunch-unexpected-error",
+                            readiness_error=readiness_error,
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
                 finally:
                     logger.info(
                         "ℹ️ prelaunch ROI cycle invocation finished",
@@ -1064,11 +1092,18 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         sys.exit(1)
 
-                    thread.start()
-                    logger.info(
-                        "meta planning loop thread started successfully",
-                        extra=log_record(event="meta-planning-start"),
-                    )
+                    try:
+                        thread.start()
+                        logger.info(
+                            "✅ meta planning loop thread started successfully",
+                            extra=log_record(event="meta-planning-start"),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "❌ meta planning loop thread failed to start",  # emoji for quick scanning
+                            extra=log_record(event="meta-planning-start-error"),
+                        )
+                        sys.exit(1)
                 else:
                     failure_reason = readiness_error or (
                         "workflows did not reach ROI stagnation; sandbox launch aborted"
@@ -1099,25 +1134,44 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
                 if ready_to_launch:
-                    orchestrator = SandboxOrchestrator(
-                        workflows,
-                        logger=logger,
-                        loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
-                        diminishing_threshold=float(
-                            os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
-                        ),
-                        patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
-                    )
-                    orchestrator_thread = threading.Thread(
-                        target=orchestrator.run,
-                        name="sandbox-orchestrator",
-                        daemon=True,
-                    )
-                    orchestrator_thread.start()
-                    logger.info(
-                        "sandbox orchestrator started",
-                        extra=log_record(event="orchestrator-start"),
-                    )
+                    try:
+                        orchestrator = SandboxOrchestrator(
+                            workflows,
+                            logger=logger,
+                            loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
+                            diminishing_threshold=float(
+                                os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
+                            ),
+                            patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
+                        )
+                        logger.info(
+                            "✅ sandbox orchestrator object created",  # emoji for quick scanning
+                            extra=log_record(event="orchestrator-created"),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "❌ failed to build sandbox orchestrator",  # emoji for quick scanning
+                            extra=log_record(event="orchestrator-build-error"),
+                        )
+                        sys.exit(1)
+
+                    try:
+                        orchestrator_thread = threading.Thread(
+                            target=orchestrator.run,
+                            name="sandbox-orchestrator",
+                            daemon=True,
+                        )
+                        orchestrator_thread.start()
+                        logger.info(
+                            "✅ sandbox orchestrator started",  # emoji for quick scanning
+                            extra=log_record(event="orchestrator-start"),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "❌ failed to start sandbox orchestrator thread",  # emoji for quick scanning
+                            extra=log_record(event="orchestrator-start-error"),
+                        )
+                        sys.exit(1)
             except Exception:  # pragma: no cover - defensive bootstrap hint
                 logger.exception(
                     "failed to preseed bootstrap context before bot loading",
