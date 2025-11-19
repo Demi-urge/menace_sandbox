@@ -171,6 +171,101 @@ _EVOLUTION_DB: EvolutionHistoryDB | None = None  # type: ignore[assignment]
 _EVOLUTION_DB_INITIALIZED = False
 
 
+class WorkflowCycleController:
+    """Track ROI deltas for each workflow and signal diminishing returns.
+
+    The controller polls :class:`ROIResultsDB` (when available) to obtain the
+    ROI delta and non-positive streak for a workflow after every iteration.
+    When the delta stays below ``threshold`` for ``streak_required``
+    consecutive iterations the workflow is considered to have hit diminishing
+    returns.  Transitions between ``active`` and ``halted`` states trigger the
+    optional ``status_callback`` so callers can surface the state back to the
+    launcher or event bus.
+    """
+
+    def __init__(
+        self,
+        *,
+        roi_db: ROIResultsDB | None,
+        threshold: float,
+        streak_required: int,
+        status_callback: Callable[[str, str, Mapping[str, float]], None] | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.roi_db = roi_db
+        self.threshold = float(threshold)
+        self.streak_required = max(1, int(streak_required))
+        self.status_callback = status_callback
+        self.logger = logger or logging.getLogger(__name__)
+        self._state: Dict[str, Dict[str, float]] = {}
+        self._local_streaks: Dict[str, int] = {}
+        self._iterations: Dict[str, int] = {}
+
+    def _fetch_stats(
+        self, workflow_id: str, roi_delta: float | None
+    ) -> Dict[str, float]:
+        stats: Dict[str, float] = {}
+        if self.roi_db is not None:
+            try:
+                fetched = self.roi_db.fetch_chain_stats(workflow_id)
+                stats = {k: float(v) for k, v in fetched.items() if isinstance(v, (int, float))}
+            except Exception:  # pragma: no cover - best effort logging elsewhere
+                stats = {}
+
+        if "delta_roi" not in stats:
+            stats["delta_roi"] = float(roi_delta or 0.0)
+        if "non_positive_streak" not in stats:
+            prev = self._local_streaks.get(workflow_id, 0)
+            if stats["delta_roi"] <= self.threshold:
+                streak = prev + 1
+            else:
+                streak = 0
+            self._local_streaks[workflow_id] = streak
+            stats["non_positive_streak"] = float(streak)
+        return stats
+
+    def record(
+        self, workflow_id: str, roi_delta: float | None = None
+    ) -> tuple[bool, Dict[str, float]]:
+        """Record a workflow iteration and return ``(active, stats)``."""
+
+        stats = self._fetch_stats(workflow_id, roi_delta)
+        delta = float(stats.get("delta_roi", 0.0))
+        streak = int(stats.get("non_positive_streak", 0))
+        iterations = self._iterations.get(workflow_id, 0) + 1
+        self._iterations[workflow_id] = iterations
+        stagnant = streak >= self.streak_required and delta <= self.threshold
+
+        stats.update(
+            {
+                "delta_roi": delta,
+                "non_positive_streak": float(streak),
+                "threshold": self.threshold,
+                "streak_required": float(self.streak_required),
+                "iterations": float(iterations),
+                "stagnant": float(1 if stagnant else 0),
+            }
+        )
+
+        prev_state = self._state.get(workflow_id, {})
+        prev_stagnant = bool(prev_state.get("stagnant"))
+        self._state[workflow_id] = stats.copy()
+
+        if self.status_callback is not None and stagnant != prev_stagnant:
+            status = "halted" if stagnant else "active"
+            try:
+                self.status_callback(workflow_id, status, stats)
+            except Exception:  # pragma: no cover - user supplied callback
+                self.logger.exception("workflow controller callback failed")
+
+        return (not stagnant), stats
+
+    def snapshot(self) -> Dict[str, Dict[str, float]]:
+        """Return a copy of the latest stats for all workflows."""
+
+        return {wf: data.copy() for wf, data in self._state.items()}
+
+
 def _get_stability_db() -> WorkflowStabilityDB | None:
     """Return a cached :class:`WorkflowStabilityDB` instance when available."""
 
@@ -1049,4 +1144,10 @@ class WorkflowEvolutionManager:
         return is_stable(workflow_id)
 
 
-__all__ = ["evolve", "is_stable", "workflow_roi_ema", "WorkflowEvolutionManager"]
+__all__ = [
+    "evolve",
+    "is_stable",
+    "workflow_roi_ema",
+    "WorkflowEvolutionManager",
+    "WorkflowCycleController",
+]
