@@ -14,11 +14,14 @@ pluggable way rather than assuming a fixed increment.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 import math
 from pathlib import Path
 from typing import Iterable, Tuple
@@ -151,6 +154,9 @@ class CycleResult:
     suggestions: Iterable[Tuple[str, str]]
     should_stop: bool
     reason: str | None
+    stopped_due_to_raroi: bool
+    stopped_due_to_safety: bool
+    stopped_due_to_confidence: bool
 
 
 @dataclass
@@ -159,6 +165,159 @@ class EvaluationResult:
     confidence: float
     metrics: dict[str, float]
     error: str | None = None
+
+
+class MetricsWriter:
+    """Persist cycle metrics for auditing.
+
+    Supports JSONL (append-only) and SQLite backends so production runs can keep
+    a durable audit log alongside console output.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        suffix = path.suffix.lower()
+        self.is_jsonl = suffix in {".jsonl", ".json"}
+        self.is_sqlite = suffix in {".db", ".sqlite", ".sqlite3"}
+
+        if not (self.is_jsonl or self.is_sqlite):
+            raise ValueError("--metrics-path must point to a .jsonl or SQLite file")
+
+        if self.is_sqlite:
+            self._initialise_db()
+
+    def _initialise_db(self) -> None:
+        try:
+            conn = sqlite3.connect(self.path)
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS cycle_metrics (
+                        cycle INTEGER,
+                        roi_before REAL,
+                        roi_after REAL,
+                        raroi REAL,
+                        confidence REAL,
+                        safety_factor REAL,
+                        stop_reason TEXT,
+                        stopped_due_to_raroi INTEGER,
+                        stopped_due_to_safety INTEGER,
+                        stopped_due_to_confidence INTEGER,
+                        suggestions_json TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS run_summary (
+                        started_at TEXT,
+                        ended_at TEXT,
+                        cycles_executed INTEGER,
+                        stopped_due_to_raroi INTEGER,
+                        stopped_due_to_safety INTEGER,
+                        stopped_due_to_confidence INTEGER,
+                        stop_reason TEXT
+                    )
+                    """
+                )
+        except Exception:
+            LOGGER.exception("Failed to initialise metrics database at %s", self.path)
+            raise
+
+    def _serialise_suggestions(self, suggestions: Iterable[Tuple[str, str]]) -> list[dict[str, str]]:
+        return [{"bucket": bucket, "hint": hint} for bucket, hint in suggestions]
+
+    def record_cycle(self, cycle: int, result: CycleResult) -> None:
+        payload = {
+            "cycle": cycle,
+            "roi_before": result.roi_before,
+            "roi_after": result.roi_after,
+            "raroi": result.raroi,
+            "confidence": result.confidence,
+            "safety_factor": result.safety_factor,
+            "stop_reason": result.reason,
+            "stopped_due_to_raroi": result.stopped_due_to_raroi,
+            "stopped_due_to_safety": result.stopped_due_to_safety,
+            "stopped_due_to_confidence": result.stopped_due_to_confidence,
+            "suggestions": self._serialise_suggestions(result.suggestions),
+        }
+        try:
+            if self.is_jsonl:
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\n")
+            else:
+                conn = sqlite3.connect(self.path)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO cycle_metrics (
+                            cycle, roi_before, roi_after, raroi, confidence, safety_factor,
+                            stop_reason, stopped_due_to_raroi, stopped_due_to_safety,
+                            stopped_due_to_confidence, suggestions_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            payload["cycle"],
+                            payload["roi_before"],
+                            payload["roi_after"],
+                            payload["raroi"],
+                            payload["confidence"],
+                            payload["safety_factor"],
+                            payload["stop_reason"],
+                            int(payload["stopped_due_to_raroi"]),
+                            int(payload["stopped_due_to_safety"]),
+                            int(payload["stopped_due_to_confidence"]),
+                            json.dumps(payload["suggestions"]),
+                        ),
+                    )
+        except Exception:
+            LOGGER.exception("Failed to persist cycle %s metrics to %s", cycle, self.path)
+
+    def record_summary(
+        self,
+        started_at: datetime,
+        ended_at: datetime,
+        cycles_executed: int,
+        last_result: CycleResult | None,
+    ) -> None:
+        payload = {
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "cycles_executed": cycles_executed,
+            "stopped_due_to_raroi": bool(last_result and last_result.stopped_due_to_raroi),
+            "stopped_due_to_safety": bool(last_result and last_result.stopped_due_to_safety),
+            "stopped_due_to_confidence": bool(
+                last_result and last_result.stopped_due_to_confidence
+            ),
+            "stop_reason": last_result.reason if last_result else None,
+        }
+        try:
+            if self.is_jsonl:
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"summary": payload}) + "\n")
+            else:
+                conn = sqlite3.connect(self.path)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO run_summary (
+                            started_at, ended_at, cycles_executed, stopped_due_to_raroi,
+                            stopped_due_to_safety, stopped_due_to_confidence, stop_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            payload["started_at"],
+                            payload["ended_at"],
+                            payload["cycles_executed"],
+                            int(payload["stopped_due_to_raroi"]),
+                            int(payload["stopped_due_to_safety"]),
+                            int(payload["stopped_due_to_confidence"]),
+                            payload["stop_reason"],
+                        ),
+                    )
+        except Exception:
+            LOGGER.exception("Failed to persist summary metrics to %s", self.path)
 
 
 def build_manager(bot_name: str) -> SelfCodingManager:
@@ -273,14 +432,19 @@ def run_cycle(
         impact_severity=min(1.0, cfg.catastrophic_multiplier),
     )
     safety_factor = raroi / roi_after if roi_after else 0.0
+    suggestions = list(suggestions)
 
     reasons: list[str] = []
     stop_reason: str | None = None
-    if raroi < cfg.roi_target:
+    stop_due_to_raroi = raroi < cfg.roi_target
+    stop_due_to_confidence = confidence < cfg.min_confidence
+    stop_due_to_safety = safety_factor < 1.0 / max(1.0, cfg.catastrophic_multiplier)
+
+    if stop_due_to_raroi:
         stop_reason = f"RAROI {raroi:.3f} below target {cfg.roi_target:.3f}"
-    elif confidence < cfg.min_confidence:
+    elif stop_due_to_confidence:
         stop_reason = f"Confidence {confidence:.3f} below minimum {cfg.min_confidence:.3f}"
-    elif safety_factor < 1.0 / max(1.0, cfg.catastrophic_multiplier):
+    elif stop_due_to_safety:
         stop_reason = (
             f"Safety factor {safety_factor:.3f} below conservative bound "
             f"{1.0 / max(1.0, cfg.catastrophic_multiplier):.3f}"
@@ -304,6 +468,9 @@ def run_cycle(
         suggestions=suggestions,
         should_stop=should_stop or stop_reason is not None,
         reason=reason,
+        stopped_due_to_raroi=stop_due_to_raroi,
+        stopped_due_to_safety=stop_due_to_safety,
+        stopped_due_to_confidence=stop_due_to_confidence,
     )
 
 
@@ -359,6 +526,14 @@ def parse_args() -> tuple[argparse.Namespace, ROIConfig]:
             " fails to start. Intended for debugging only."
         ),
     )
+    parser.add_argument(
+        "--metrics-path",
+        type=Path,
+        help=(
+            "Optional file path for cycle metrics. Supports .jsonl (append-only) and "
+            "SQLite databases (.db/.sqlite/.sqlite3)."
+        ),
+    )
 
     args = parser.parse_args()
     cfg = ROIConfig(
@@ -377,6 +552,14 @@ def main() -> None:
     LOGGER.info(
         "Starting single-agent ROI runner for %s (dry_run=%s)", args.bot_name, cfg.dry_run
     )
+
+    metrics_writer: MetricsWriter | None = None
+    if args.metrics_path:
+        try:
+            metrics_writer = MetricsWriter(args.metrics_path)
+            LOGGER.info("Metrics will be written to %s", args.metrics_path)
+        except Exception:
+            LOGGER.exception("Metrics writer disabled; continuing without persistence")
 
     tracker = ROITracker()
     manager: SelfCodingManager | None = None
@@ -399,9 +582,12 @@ def main() -> None:
             sys.exit(1)
 
     last_result: CycleResult | None = None
+    start_time = datetime.utcnow()
+    cycles_executed = 0
     for cycle in range(1, cfg.max_cycles + 1):
         result = run_cycle(manager, tracker, cfg, args.bot_name)
         last_result = result
+        cycles_executed += 1
         LOGGER.info(
             "Cycle %d: ROI %.3f -> %.3f | RAROI %.3f | confidence %.3f | safety %.3f",
             cycle,
@@ -414,10 +600,17 @@ def main() -> None:
         for bucket, hint in result.suggestions:
             LOGGER.info("Bottleneck suggestion (%s): %s", bucket, hint)
 
+        if metrics_writer:
+            metrics_writer.record_cycle(cycle, result)
+
         if result.should_stop:
             LOGGER.info("Stopping after cycle %d: %s", cycle, result.reason)
             break
         time.sleep(0.5)
+
+    end_time = datetime.utcnow()
+    if metrics_writer:
+        metrics_writer.record_summary(start_time, end_time, cycles_executed, last_result)
 
     if last_result is not None:
         LOGGER.info(
