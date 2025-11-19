@@ -1158,6 +1158,41 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 logger.info(
+                    "✅ meta planning gate decision computed; entering final launch guard",
+                    extra=log_record(
+                        event="meta-planning-gate-decision",
+                        workflows_present=bool(workflows),
+                        planner_available=planner_cls is not None,
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        readiness_error=readiness_error,
+                        bootstrap_mode=bootstrap_mode,
+                    ),
+                )
+                if not workflows:
+                    logger.error(
+                        "❌ gating halted: no workflows discovered for meta planning",
+                        extra=log_record(event="meta-planning-gate-no-workflows"),
+                    )
+                if planner_cls is None:
+                    logger.error(
+                        "❌ gating halted: MetaWorkflowPlanner unresolved",
+                        extra=log_record(event="meta-planning-gate-no-planner"),
+                    )
+                if roi_backoff_triggered:
+                    logger.error(
+                        "❌ gating halted: ROI backoff triggered before launch",
+                        extra=log_record(event="meta-planning-gate-backoff"),
+                    )
+                if readiness_error:
+                    logger.error(
+                        "❌ gating halted: readiness error encountered",
+                        extra=log_record(
+                            event="meta-planning-gate-readiness-error",
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                logger.info(
                     "🔎 launch condition breakdown: workflows=%s, planner=%s, roi_backoff=%s, readiness_error=%s",
                     bool(workflows),
                     bool(planner_cls),
@@ -1172,6 +1207,15 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 if ready_to_launch:
+                    logger.info(
+                        "✅ gating green: all launch conditions satisfied; proceeding to thread bootstrap",
+                        extra=log_record(
+                            event="meta-planning-gate-green",
+                            workflow_count=len(workflows),
+                            planner_resolved=planner_cls is not None,
+                            roi_backoff=roi_backoff_triggered,
+                        ),
+                    )
                     logger.info(
                         "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
                         extra=log_record(
@@ -1247,6 +1291,10 @@ def main(argv: list[str] | None = None) -> None:
                             workflow_graph=workflow_graph_obj,
                         )
                         if thread is None:
+                            logger.error(
+                                "❌ meta planning bootstrap returned None thread",
+                                extra=log_record(event="meta-planning-thread-none"),
+                            )
                             raise RuntimeError("meta planning bootstrap returned None")
                         logger.info(
                             "✅ meta planning bootstrap call returned",
@@ -1273,6 +1321,15 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
                                 alive=getattr(thread, "is_alive", lambda: False)(),
+                            ),
+                        )
+                        logger.info(
+                            "✅ meta planning bootstrap pipeline completed; preparing start() call",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-finished",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
+                                planner_cls=str(planner_cls),
                             ),
                         )
                     except Exception:
@@ -1311,6 +1368,13 @@ def main(argv: list[str] | None = None) -> None:
                             ),
                         )
                         thread.start()
+                        logger.info(
+                            "✅ thread.start() invoked successfully for meta planning loop",
+                            extra=log_record(
+                                event="meta-planning-thread-start-invoked",
+                                thread_name=getattr(thread, "name", "unknown"),
+                            ),
+                        )
                         logger.info(
                             "✅ meta planning thread start invoked",
                             extra=log_record(
@@ -1353,6 +1417,17 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         sys.exit(1)
                 else:
+                    logger.error(
+                        "❌ gating red: prelaunch ROI or planner checks failed; aborting meta-planning start",
+                        extra=log_record(
+                            event="meta-planning-gate-red-summary",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            planner_available=planner_cls is not None,
+                            workflows_present=bool(workflows),
+                            readiness_error=readiness_error,
+                        ),
+                    )
                     logger.error(
                         "❌ meta planning loop launch gate failed",  # emoji for quick scanning
                         extra=log_record(
