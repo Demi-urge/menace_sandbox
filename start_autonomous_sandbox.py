@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -54,6 +55,7 @@ except Exception:  # pragma: no cover - fallback when run as a module
 from shared_event_bus import event_bus as shared_event_bus
 from workflow_evolution_manager import WorkflowEvolutionManager
 from self_improvement.workflow_discovery import discover_workflow_specs
+from sandbox_orchestrator import SandboxOrchestrator
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -363,6 +365,26 @@ def main(argv: list[str] | None = None) -> None:
                 logger.info(
                     "preseeded bootstrap context in use; pipeline and manager are cached",
                     extra=log_record(event="bootstrap-preseed"),
+                )
+
+                orchestrator = SandboxOrchestrator(
+                    workflows,
+                    logger=logger,
+                    loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
+                    diminishing_threshold=float(
+                        os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
+                    ),
+                    patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
+                )
+                orchestrator_thread = threading.Thread(
+                    target=orchestrator.run,
+                    name="sandbox-orchestrator",
+                    daemon=True,
+                )
+                orchestrator_thread.start()
+                logger.info(
+                    "sandbox orchestrator started",
+                    extra=log_record(event="orchestrator-start"),
                 )
             except Exception:  # pragma: no cover - defensive bootstrap hint
                 logger.exception(
