@@ -7,15 +7,29 @@ from threading import Lock, Thread
 from contextlib import contextmanager
 from typing import Optional, Dict, Generator
 
-from .retry_utils import publish_with_retry
+_HAS_PACKAGE = bool(__package__)
 
-from .evolution_history_db import (
-    EvolutionEvent,
-    EvolutionHistoryDB,
-)
+if _HAS_PACKAGE:
+    from .retry_utils import publish_with_retry
+else:  # pragma: no cover - executed when run as a script
+    from retry_utils import publish_with_retry  # type: ignore
+
+if _HAS_PACKAGE:
+    from .evolution_history_db import (
+        EvolutionEvent,
+        EvolutionHistoryDB,
+    )
+else:  # pragma: no cover - executed when run as a script
+    from evolution_history_db import (  # type: ignore
+        EvolutionEvent,
+        EvolutionHistoryDB,
+    )
 
 try:  # optional dependency
-    from .unified_event_bus import UnifiedEventBus  # type: ignore
+    if _HAS_PACKAGE:
+        from .unified_event_bus import UnifiedEventBus  # type: ignore
+    else:  # pragma: no cover - executed when run as a script
+        from unified_event_bus import UnifiedEventBus  # type: ignore
 except Exception:  # pragma: no cover - bus optional
     UnifiedEventBus = None  # type: ignore
 
