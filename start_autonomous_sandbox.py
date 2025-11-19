@@ -869,6 +869,21 @@ def main(argv: list[str] | None = None) -> None:
                     logger=logger,
                     discovered_specs=[*discovered_specs, *orphan_specs],
                 )
+                if not workflows:
+                    logger.error(
+                        "no workflows discovered; startup halted before launching sandbox",
+                        extra=log_record(
+                            event="startup-no-workflows",
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
+                    sys.exit(1)
+                if planner_cls is None:
+                    logger.error(
+                        "planner resolution failed; cannot coordinate ROI for launch",
+                        extra=log_record(event="startup-no-planner", workflow_count=len(workflows)),
+                    )
+                    sys.exit(1)
                 bootstrap_mode = not _roi_baseline_available()
                 logger.info(
                     "evaluating sandbox startup readiness",
