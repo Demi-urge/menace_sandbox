@@ -43,8 +43,8 @@ try:  # pragma: no cover - allow package relative import
     from metrics_exporter import (
         sandbox_restart_total,
         sandbox_crashes_total,
-        sandbox_last_failure_ts,
-    )
+    sandbox_last_failure_ts,
+)
 except Exception:  # pragma: no cover - fallback when run as a module
     from .metrics_exporter import (  # type: ignore
         sandbox_restart_total,
@@ -52,8 +52,10 @@ except Exception:  # pragma: no cover - fallback when run as a module
         sandbox_last_failure_ts,
     )
 
+from dynamic_path_router import resolve_path
 from shared_event_bus import event_bus as shared_event_bus
 from workflow_evolution_manager import WorkflowEvolutionManager
+import workflow_graph
 from self_improvement.workflow_discovery import discover_workflow_specs
 from sandbox_orchestrator import SandboxOrchestrator
 
@@ -184,6 +186,48 @@ def _load_workflow_records(
     return records
 
 
+def _discover_repo_workflows(
+    *, logger: logging.Logger, base_path: str | Path | None = None
+) -> list[Mapping[str, Any]]:
+    """Best-effort discovery of workflow-like modules and bots.
+
+    This routine inspects the repository for ``workflow_*.py`` modules as well as
+    bot modules ending in ``_bot.py``. Each finding is converted into a minimal
+    workflow specification that downstream loaders can hydrate without manual
+    configuration.
+    """
+
+    specs: list[Mapping[str, Any]] = []
+    root = Path(base_path or resolve_path("."))
+
+    try:
+        specs.extend(discover_workflow_specs(base_path=root, logger=logger))
+    except Exception:
+        logger.exception(
+            "workflow module discovery failed", extra=log_record(event="workflow-scan")
+        )
+
+    try:
+        from bot_discovery import _iter_bot_modules
+
+        for mod_path in _iter_bot_modules(root):
+            module_name = ".".join(mod_path.relative_to(root).with_suffix("").parts)
+            specs.append(
+                {
+                    "workflow": [module_name],
+                    "workflow_id": module_name,
+                    "task_sequence": [module_name],
+                    "source": "bot_discovery",
+                }
+            )
+    except Exception:
+        logger.exception(
+            "bot workflow discovery failed", extra=log_record(event="bot-scan")
+        )
+
+    return specs
+
+
 def _build_self_improvement_workflows(
     bootstrap_context: Mapping[str, Any],
     settings: SandboxSettings,
@@ -191,10 +235,30 @@ def _build_self_improvement_workflows(
     *,
     logger: logging.Logger,
     discovered_specs: Sequence[Mapping[str, Any]] | None = None,
-) -> dict[str, Callable[[], Any]]:
-    """Return workflow callables derived from bootstrap and stored records."""
+) -> tuple[dict[str, Callable[[], Any]], workflow_graph.WorkflowGraph]:
+    """Return workflow callables and relationship graph for meta planning."""
 
     workflows: dict[str, Callable[[], Any]] = {}
+    graph = workflow_graph.WorkflowGraph()
+
+    def _tag_node(workflow_id: str, **metadata: Any) -> None:
+        try:
+            if getattr(workflow_graph, "_HAS_NX", False):
+                if graph.graph.has_node(workflow_id):
+                    graph.graph.nodes[workflow_id].update(metadata)
+            else:
+                nodes = graph.graph.setdefault("nodes", {})
+                nodes.setdefault(workflow_id, {}).update(metadata)
+        except Exception:
+            logger.debug(
+                "failed to tag workflow node", extra=log_record(workflow_id=workflow_id)
+            )
+
+    all_discovered = list(discovered_specs or [])
+    repo_root = getattr(settings, "repo_root", None)
+    all_discovered.extend(
+        _discover_repo_workflows(logger=logger, base_path=repo_root)
+    )
 
     for name in (
         "manager",
@@ -208,9 +272,12 @@ def _build_self_improvement_workflows(
         if value is None:
             continue
 
-        workflows[f"preseeded_{name}"] = (lambda v=value: v)
+        workflow_id = f"preseeded_{name}"
+        workflows[workflow_id] = (lambda v=value: v)
+        graph.add_workflow(workflow_id)
+        _tag_node(workflow_id, source="bootstrap", order=0)
 
-    records = _load_workflow_records(settings, discovered_specs=discovered_specs)
+    records = _load_workflow_records(settings, discovered_specs=all_discovered)
     for record in records:
         seq = record.get("workflow") or record.get("task_sequence") or []
         workflow_id = str(
@@ -224,12 +291,33 @@ def _build_self_improvement_workflows(
             continue
 
         try:
-            seq_str = (
-                "-".join(str(step) for step in seq)
+            seq_list = (
+                list(seq)
                 if isinstance(seq, Sequence) and not isinstance(seq, (str, bytes))
-                else str(seq)
+                else [seq]
             )
+            seq_str = "-".join(str(step) for step in seq_list)
             workflows[workflow_id] = workflow_evolver.build_callable(seq_str)
+            graph.add_workflow(workflow_id)
+            _tag_node(
+                workflow_id,
+                source=record.get("source", "record"),
+                order=len(seq_list),
+            )
+            if len(seq_list) > 1:
+                for order, (src, dst) in enumerate(zip(seq_list, seq_list[1:]), start=1):
+                    try:
+                        graph.add_dependency(
+                            str(src),
+                            str(dst),
+                            dependency_type="sequence",
+                            order=order,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "failed to wire workflow dependency",
+                            extra=log_record(src=src, dst=dst, workflow_id=workflow_id),
+                        )
         except Exception:  # pragma: no cover - defensive hydration
             logger.exception(
                 "failed to hydrate workflow callable",
@@ -241,6 +329,8 @@ def _build_self_improvement_workflows(
         workflows.setdefault(
             "refresh_context", lambda cb=context_builder: cb.refresh_db_weights()
         )
+        graph.add_workflow("refresh_context")
+        _tag_node("refresh_context", source="bootstrap", order=0)
 
     logger.info(
         "registered %d workflows for meta planning",
@@ -248,7 +338,7 @@ def _build_self_improvement_workflows(
         extra=log_record(workflow_count=len(workflows)),
     )
 
-    return workflows
+    return workflows, graph
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -337,7 +427,7 @@ def main(argv: list[str] | None = None) -> None:
                         "failed to auto-discover workflow specs",
                         extra=log_record(event="workflow-discovery-error"),
                     )
-                workflows = _build_self_improvement_workflows(
+                workflows, workflow_graph_obj = _build_self_improvement_workflows(
                     bootstrap_context,
                     settings,
                     workflow_evolver,
@@ -349,6 +439,7 @@ def main(argv: list[str] | None = None) -> None:
                         workflows,
                         event_bus=shared_event_bus,
                         interval=interval,
+                        workflow_graph=workflow_graph_obj,
                     )
                 except Exception:
                     logger.exception(
