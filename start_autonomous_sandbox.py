@@ -59,6 +59,7 @@ import workflow_graph
 from self_improvement.workflow_discovery import discover_workflow_specs
 from sandbox_orchestrator import SandboxOrchestrator
 from context_builder_util import create_context_builder
+from self_improvement.orphan_handling import integrate_orphans, post_round_orphan_scan
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -333,6 +334,27 @@ def _build_self_improvement_workflows(
         graph.add_workflow("refresh_context")
         _tag_node("refresh_context", source="bootstrap", order=0)
 
+    include_orphans = bool(
+        getattr(settings, "include_orphans", False)
+        and not getattr(settings, "disable_orphans", False)
+    )
+    recursive_orphans = bool(getattr(settings, "recursive_orphan_scan", False))
+    if include_orphans:
+        workflows.setdefault(
+            "integrate_orphans",
+            lambda recursive=recursive_orphans: integrate_orphans(recursive=recursive),
+        )
+        graph.add_workflow("integrate_orphans")
+        _tag_node("integrate_orphans", source="orphan_handling", order=0)
+
+    if include_orphans and recursive_orphans:
+        workflows.setdefault(
+            "recursive_orphan_scan",
+            lambda: post_round_orphan_scan(recursive=True),
+        )
+        graph.add_workflow("recursive_orphan_scan")
+        _tag_node("recursive_orphan_scan", source="orphan_handling", order=1)
+
     logger.info(
         "registered %d workflows for meta planning",
         len(workflows),
@@ -526,7 +548,30 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Continuously monitor ROI backoff and pause launch when triggered",
     )
+    parser.add_argument(
+        "--include-orphans",
+        dest="include_orphans",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Include orphan modules during testing and planning",
+    )
+    parser.add_argument(
+        "--recursive-orphan-scan",
+        dest="recursive_orphan_scan",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable recursive orphan discovery and integration",
+    )
     args = parser.parse_args(argv_list)
+
+    if args.include_orphans is not None:
+        os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if args.include_orphans else "0"
+        settings.include_orphans = bool(args.include_orphans)
+    if args.recursive_orphan_scan is not None:
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = (
+            "1" if args.recursive_orphan_scan else "0"
+        )
+        settings.recursive_orphan_scan = bool(args.recursive_orphan_scan)
 
     root_logger = logging.getLogger()
     if not root_logger.handlers:
