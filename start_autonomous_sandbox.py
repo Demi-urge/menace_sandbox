@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 if "--health-check" in sys.argv[1:]:
@@ -51,6 +52,14 @@ except Exception:  # pragma: no cover - fallback when run as a module
     )
 
 from shared_event_bus import event_bus as shared_event_bus
+from workflow_evolution_manager import WorkflowEvolutionManager
+
+try:  # pragma: no cover - optional dependency
+    from task_handoff_bot import WorkflowDB  # type: ignore
+except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
+    WorkflowDB = None  # type: ignore
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_dependency_mode(settings: SandboxSettings) -> DependencyMode:
@@ -144,10 +153,35 @@ def _emit_health_report(
     sys.stdout.flush()
 
 
+def _load_workflow_records(settings: SandboxSettings) -> list[Mapping[str, Any]]:
+    """Load workflow specs from configuration and the WorkflowDB if available."""
+
+    records: list[Mapping[str, Any]] = []
+
+    configured = getattr(settings, "workflow_specs", None) or getattr(
+        settings, "meta_workflow_specs", None
+    )
+    if isinstance(configured, Sequence) and not isinstance(configured, (str, bytes)):
+        records.extend([spec for spec in configured if isinstance(spec, Mapping)])
+
+    if WorkflowDB is not None:
+        try:
+            wf_db = WorkflowDB(Path(settings.workflows_db))
+            records.extend(wf_db.fetch_workflows(limit=200))
+        except Exception:  # pragma: no cover - best effort hydration
+            LOGGER.exception("failed to hydrate workflow records from WorkflowDB")
+
+    return records
+
+
 def _build_self_improvement_workflows(
-    bootstrap_context: Mapping[str, Any]
+    bootstrap_context: Mapping[str, Any],
+    settings: SandboxSettings,
+    workflow_evolver: WorkflowEvolutionManager,
+    *,
+    logger: logging.Logger,
 ) -> dict[str, Callable[[], Any]]:
-    """Return workflow callables derived from the seeded bootstrap context."""
+    """Return workflow callables derived from bootstrap and stored records."""
 
     workflows: dict[str, Callable[[], Any]] = {}
 
@@ -165,11 +199,43 @@ def _build_self_improvement_workflows(
 
         workflows[f"preseeded_{name}"] = (lambda v=value: v)
 
+    records = _load_workflow_records(settings)
+    for record in records:
+        seq = record.get("workflow") or record.get("task_sequence") or []
+        workflow_id = str(
+            record.get("id")
+            or record.get("wid")
+            or record.get("workflow_id")
+            or record.get("name")
+            or ""
+        ).strip()
+        if not workflow_id:
+            continue
+
+        try:
+            seq_str = (
+                "-".join(str(step) for step in seq)
+                if isinstance(seq, Sequence) and not isinstance(seq, (str, bytes))
+                else str(seq)
+            )
+            workflows[workflow_id] = workflow_evolver.build_callable(seq_str)
+        except Exception:  # pragma: no cover - defensive hydration
+            logger.exception(
+                "failed to hydrate workflow callable",
+                extra=log_record(workflow_id=workflow_id),
+            )
+
     context_builder = bootstrap_context.get("context_builder")
     if context_builder and hasattr(context_builder, "refresh_db_weights"):
         workflows.setdefault(
             "refresh_context", lambda cb=context_builder: cb.refresh_db_weights()
         )
+
+    logger.info(
+        "registered %d workflows for meta planning",
+        len(workflows),
+        extra=log_record(workflow_count=len(workflows)),
+    )
 
     return workflows
 
@@ -235,6 +301,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
                 meta_planning.reload_settings(settings)
+                workflow_evolver = WorkflowEvolutionManager()
                 planner_cls = meta_planning.resolve_meta_workflow_planner(
                     force_reload=True
                 )
@@ -251,7 +318,12 @@ def main(argv: list[str] | None = None) -> None:
                         getattr(settings, "meta_planning_interval", 10),
                     )
                 )
-                workflows = _build_self_improvement_workflows(bootstrap_context)
+                workflows = _build_self_improvement_workflows(
+                    bootstrap_context,
+                    settings,
+                    workflow_evolver,
+                    logger=logger,
+                )
                 try:
                     thread = meta_planning.start_self_improvement_cycle(
                         workflows,
