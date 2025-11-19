@@ -1656,6 +1656,14 @@ async def self_improvement_cycle(
                             chain_id,
                             extra=log_record(
                                 workflow_id=chain_id,
+                                roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                non_positive_streak=stagnant_stats.get(
+                                    "non_positive_streak", 0
+                                ),
+                                decision="pause",
+                            ),
+                        )
+                        continue
                     if controller is not None:
                         active_chain, stats = controller.record(chain_id, roi_delta=roi)
                         stagnant_stats = {k: float(v) for k, v in stats.items()}
