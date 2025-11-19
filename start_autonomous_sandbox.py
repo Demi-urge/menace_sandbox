@@ -1091,6 +1091,18 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 logger.info(
+                    "🔎 meta-planning launch decision inputs gathered",
+                    extra=log_record(
+                        event="meta-planning-gate-inputs",
+                        ready_to_launch=ready_to_launch,
+                        planner_resolved=planner_cls is not None,
+                        workflow_count=len(workflows),
+                        bootstrap_mode=bootstrap_mode,
+                        roi_backoff=roi_backoff_triggered,
+                        readiness_error=readiness_error,
+                    ),
+                )
+                logger.info(
                     "🔍 evaluating meta planning launch gate",
                     extra=log_record(
                         event="meta-planning-launch-eval",
@@ -1104,6 +1116,16 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 if ready_to_launch:
+                    logger.info(
+                        "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
+                        extra=log_record(
+                            event="meta-planning-launch-sequence-begin",
+                            workflow_ids=list(workflows.keys()),
+                            planner_class=str(planner_cls),
+                            roi_backoff=roi_backoff_triggered,
+                            bootstrap_mode=bootstrap_mode,
+                        ),
+                    )
                     logger.info(
                         "✅ readiness gate cleared; preparing to start meta planning loop",
                         extra=log_record(
@@ -1135,6 +1157,15 @@ def main(argv: list[str] | None = None) -> None:
                         ),
                     )
                     try:
+                        logger.info(
+                            "🔧 invoking meta planning loop bootstrap",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-call",
+                                workflow_count=len(workflows),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                            ),
+                        )
                         thread = meta_planning.start_self_improvement_cycle(
                             workflows,
                             event_bus=shared_event_bus,
@@ -1151,12 +1182,29 @@ def main(argv: list[str] | None = None) -> None:
                         )
                     except Exception:
                         logger.exception(
+                            "❌ meta planning loop bootstrap failed; thread object missing",
+                            extra=log_record(
+                                event="meta-loop-error",
+                                workflow_count=len(workflows),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                            ),
+                        )
+                        logger.exception(
                             "failed to initialize meta planning loop; sandbox launch halted",
                             extra=log_record(event="meta-loop-error"),
                         )
                         sys.exit(1)
 
                     try:
+                        logger.info(
+                            "🔧 attempting to start meta planning loop thread",
+                            extra=log_record(
+                                event="meta-planning-start-attempt",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
+                            ),
+                        )
                         thread.start()
                         logger.info(
                             "✅ meta planning loop thread started successfully",
@@ -1197,6 +1245,16 @@ def main(argv: list[str] | None = None) -> None:
                     )
                     failure_reason = readiness_error or (
                         "workflows did not reach ROI stagnation; sandbox launch aborted"
+                    )
+                    logger.error(
+                        "❌ meta planning launch vetoed after readiness evaluation",
+                        extra=log_record(
+                            event="meta-planning-veto",
+                            reason=failure_reason,
+                            planner_available=planner_cls is not None,
+                            workflow_count=len(workflows),
+                            roi_backoff=roi_backoff_triggered,
+                        ),
                     )
                     logger.error(
                         "❌ readiness gate blocked meta planning loop",
