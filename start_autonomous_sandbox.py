@@ -57,6 +57,7 @@ from shared_event_bus import event_bus as shared_event_bus
 from workflow_evolution_manager import WorkflowEvolutionManager
 import workflow_graph
 from self_improvement.workflow_discovery import discover_workflow_specs
+from self_improvement.component_workflow_synthesis import discover_component_workflows
 from sandbox_orchestrator import SandboxOrchestrator
 from context_builder_util import create_context_builder
 from self_improvement.orphan_handling import integrate_orphans, post_round_orphan_scan
@@ -316,6 +317,18 @@ def _build_self_improvement_workflows(
     all_discovered.extend(
         _discover_repo_workflows(logger=logger, base_path=repo_root)
     )
+
+    try:
+        component_specs = discover_component_workflows(
+            base_path=repo_root,
+            logger=logger,
+        )
+        all_discovered.extend(component_specs)
+    except Exception:
+        logger.exception(
+            "component workflow synthesis failed",
+            extra=log_record(event="component-synthesis-error"),
+        )
 
     derived_specs, derived_callables = _decompose_menace_components(
         settings=settings, logger=logger, workflow_evolver=workflow_evolver
