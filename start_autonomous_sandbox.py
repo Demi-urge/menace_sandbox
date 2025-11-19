@@ -848,13 +848,23 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_mode=bootstrap_mode,
                     ),
                 )
-                ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
-                    workflows,
-                    planner_cls=planner_cls,
-                    settings=settings,
-                    logger=logger,
-                    bootstrap_mode=bootstrap_mode,
-                )
+                readiness_error: str | None = None
+                try:
+                    ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
+                        workflows,
+                        planner_cls=planner_cls,
+                        settings=settings,
+                        logger=logger,
+                        bootstrap_mode=bootstrap_mode,
+                    )
+                except RuntimeError as exc:
+                    readiness_error = str(exc)
+                    ready_to_launch = False
+                    roi_backoff_triggered = False
+                except Exception as exc:
+                    readiness_error = f"unexpected prelaunch failure: {exc}"
+                    ready_to_launch = False
+                    roi_backoff_triggered = False
 
                 meta_planning.reload_settings(settings)
                 logger.info(
@@ -888,10 +898,20 @@ def main(argv: list[str] | None = None) -> None:
                         extra=log_record(event="meta-planning-start"),
                     )
                 else:
-                    logger.warning(
-                        "meta planning loop not started because workflows have not met diminishing returns",
-                        extra=log_record(event="meta-planning-skipped"),
+                    failure_reason = readiness_error or (
+                        "workflows did not reach ROI stagnation; sandbox launch aborted"
                     )
+                    logger.error(
+                        "meta planning loop not started: %s",
+                        failure_reason,
+                        extra=log_record(
+                            event="meta-planning-skipped",
+                            reason=failure_reason,
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
+                    sys.exit(1)
                 logger.info(
                     "preseeded bootstrap context in use; pipeline and manager are cached",
                     extra=log_record(event="bootstrap-preseed"),
