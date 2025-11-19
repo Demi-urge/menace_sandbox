@@ -702,12 +702,18 @@ class _FallbackPlanner:
 
 
 settings = _init.settings
+DISCOVER_ORPHANS = False
+RECURSIVE_ORPHANS = False
+ROI_BACKOFF_THRESHOLD = 0.0
+ROI_BACKOFF_CONSECUTIVE = 1
+_roi_backoff_count = 0
 
 
 def reload_settings(cfg: SandboxSettings) -> None:
     """Update module-level settings and derived constants."""
     global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD
     global SEARCH_DEPTH, BEAM_WIDTH, ENTROPY_WEIGHT
+    global DISCOVER_ORPHANS, RECURSIVE_ORPHANS, ROI_BACKOFF_THRESHOLD, ROI_BACKOFF_CONSECUTIVE
     settings = cfg
     _validate_config(settings)
     PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
@@ -717,6 +723,21 @@ def reload_settings(cfg: SandboxSettings) -> None:
     ENTROPY_WEIGHT = settings.meta_entropy_weight
     SEARCH_DEPTH = settings.meta_search_depth
     BEAM_WIDTH = settings.meta_beam_width
+    DISCOVER_ORPHANS = bool(
+        getattr(settings, "include_orphans", True) and not getattr(settings, "disable_orphans", False)
+    )
+    RECURSIVE_ORPHANS = bool(getattr(settings, "recursive_orphan_scan", False))
+    roi_settings = getattr(settings, "roi", None)
+    ROI_BACKOFF_THRESHOLD = float(
+        getattr(roi_settings, "stagnation_threshold", 0.0)
+        if roi_settings is not None
+        else 0.0
+    )
+    ROI_BACKOFF_CONSECUTIVE = int(
+        getattr(roi_settings, "stagnation_cycles", 1)
+        if roi_settings is not None
+        else 1
+    )
     if settings.meta_entropy_threshold is not None:
         ENTROPY_THRESHOLD = float(settings.meta_entropy_threshold)
     else:
@@ -1007,6 +1028,32 @@ def _evaluate_cycle(
             critical = True
             break
     logger = get_logger(__name__)
+
+    global _roi_backoff_count
+    roi_delta = float(metrics.get("roi", 0.0))
+    if roi_delta <= ROI_BACKOFF_THRESHOLD:
+        _roi_backoff_count += 1
+    else:
+        _roi_backoff_count = 0
+
+    if (
+        ROI_BACKOFF_THRESHOLD > 0
+        and _roi_backoff_count >= max(1, ROI_BACKOFF_CONSECUTIVE)
+    ):
+        logger.debug(
+            "cycle evaluation paused; roi stagnation detected",
+            extra=log_record(
+                reason="roi_backoff",
+                roi_delta=roi_delta,
+                roi_backoff_threshold=ROI_BACKOFF_THRESHOLD,
+                roi_backoff_count=_roi_backoff_count,
+            ),
+        )
+        return "skip", {
+            "reason": "roi_backoff",
+            "metrics": metrics,
+            "backoff_count": _roi_backoff_count,
+        }
 
     if not missing and not critical and metrics and all(v > 0 for v in metrics.values()):
         logger.debug(
