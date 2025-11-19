@@ -15,7 +15,7 @@ import os
 import sys
 import time
 import uuid
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
@@ -49,6 +49,8 @@ except Exception:  # pragma: no cover - fallback when run as a module
         sandbox_crashes_total,
         sandbox_last_failure_ts,
     )
+
+from shared_event_bus import event_bus as shared_event_bus
 
 
 def _resolve_dependency_mode(settings: SandboxSettings) -> DependencyMode:
@@ -142,6 +144,36 @@ def _emit_health_report(
     sys.stdout.flush()
 
 
+def _build_self_improvement_workflows(
+    bootstrap_context: Mapping[str, Any]
+) -> dict[str, Callable[[], Any]]:
+    """Return workflow callables derived from the seeded bootstrap context."""
+
+    workflows: dict[str, Callable[[], Any]] = {}
+
+    for name in (
+        "manager",
+        "pipeline",
+        "engine",
+        "registry",
+        "data_bot",
+        "context_builder",
+    ):
+        value = bootstrap_context.get(name)
+        if value is None:
+            continue
+
+        workflows[f"preseeded_{name}"] = (lambda v=value: v)
+
+    context_builder = bootstrap_context.get("context_builder")
+    if context_builder and hasattr(context_builder, "refresh_db_weights"):
+        workflows.setdefault(
+            "refresh_context", lambda cb=context_builder: cb.refresh_db_weights()
+        )
+
+    return workflows
+
+
 def main(argv: list[str] | None = None) -> None:
     """Launch the sandbox with optional log level configuration.
 
@@ -203,18 +235,23 @@ def main(argv: list[str] | None = None) -> None:
                         self_improvement_cycle,
                     )
 
+                    meta_planning.reload_settings(settings)
+                    planner_cls = meta_planning.resolve_meta_workflow_planner(
+                        force_reload=True
+                    )
+                    if planner_cls is None:
+                        raise RuntimeError("MetaWorkflowPlanner required for sandbox bootstrap")
+
                     interval = float(
                         os.getenv(
                             "META_PLANNING_INTERVAL",
                             getattr(settings, "meta_planning_interval", 10),
                         )
                     )
-                    workflows = {
-                        "preseeded_manager": lambda: bootstrap_context.get("manager"),
-                        "preseeded_pipeline": lambda: bootstrap_context.get("pipeline"),
-                    }
+                    workflows = _build_self_improvement_workflows(bootstrap_context)
                     thread = meta_planning.start_self_improvement_cycle(
                         workflows,
+                        event_bus=shared_event_bus,
                         interval=interval,
                     )
                     thread.start()
