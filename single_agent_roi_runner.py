@@ -24,12 +24,14 @@ from dataclasses import dataclass
 from datetime import datetime
 import math
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Callable, Iterable, Mapping, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT.parent))
 
+import shared_event_bus
+from context_builder_util import create_context_builder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.coding_bot_interface import (
@@ -44,7 +46,8 @@ from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_co
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 from roi_tracker import ROITracker
-from context_builder_util import create_context_builder
+from self_improvement.workflow_discovery import discover_workflow_specs
+from shared_event_bus import event_bus as _GLOBAL_EVENT_BUS
 
 # ``calculate_raroi`` is an instance method on ROITracker; alias it for clarity
 # so callers can import the toolkit components directly from this runner.
@@ -165,6 +168,225 @@ class EvaluationResult:
     confidence: float
     metrics: dict[str, float]
     error: str | None = None
+
+
+@dataclass
+class SelfCodingBootstrap:
+    manager: SelfCodingManager
+    engine: SelfCodingEngine
+    pipeline: ModelAutomationPipeline
+    data_bot: DataBot
+    registry: BotRegistry
+    promote_pipeline: Callable[[SelfCodingManager], None]
+    threshold_service: ThresholdService
+
+
+class DiscoveryPlan:
+    """Track workflow discovery attempts and prioritise dormant modules."""
+
+    def __init__(
+        self,
+        registry: BotRegistry,
+        *,
+        state_path: Path | None = None,
+    ) -> None:
+        self.registry = registry
+        self.state_path = state_path or (REPO_ROOT / ".single_agent_discovery_plan.json")
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state = self._load_state()
+
+    def _default_state(self) -> dict[str, object]:
+        return {
+            "round_id": 0,
+            "attempt_counts": {},
+            "attempted_in_round": {},
+            "outcomes": {},
+        }
+
+    def _load_state(self) -> dict[str, object]:
+        try:
+            if self.state_path.exists():
+                with self.state_path.open("r", encoding="utf-8") as handle:
+                    raw = json.load(handle)
+                    if isinstance(raw, dict):
+                        return raw
+        except Exception:
+            LOGGER.exception("Failed to load discovery plan state from %s", self.state_path)
+        return self._default_state()
+
+    def _save_state(self) -> None:
+        try:
+            with self.state_path.open("w", encoding="utf-8") as handle:
+                json.dump(self.state, handle, indent=2, sort_keys=True)
+        except Exception:
+            LOGGER.exception("Failed to persist discovery plan state to %s", self.state_path)
+
+    def _extract_workflow_id(self, spec: Mapping[str, object]) -> str | None:
+        metadata = spec.get("metadata") if isinstance(spec, Mapping) else None
+        if isinstance(metadata, Mapping):
+            workflow_id = metadata.get("workflow_id")
+            if isinstance(workflow_id, str):
+                return workflow_id
+        workflow = spec.get("workflow") if isinstance(spec, Mapping) else None
+        if isinstance(workflow, list) and workflow:
+            first = workflow[0]
+            if isinstance(first, str):
+                return first
+        return None
+
+    def _discover_modules(self) -> list[str]:
+        discovered = []
+        try:
+            specs = discover_workflow_specs(base_path=REPO_ROOT, logger=LOGGER)
+        except Exception:
+            LOGGER.exception("Failed to discover workflow specs; using empty plan")
+            return []
+        for spec in specs:
+            module = self._extract_workflow_id(spec)
+            if module:
+                discovered.append(module)
+        return sorted(set(discovered))
+
+    def _dormant_modules(self) -> list[str]:
+        active = set(self.registry.graph.nodes)
+        return [module for module in self._discover_modules() if module not in active]
+
+    def _prune_state(self, active_modules: set[str]) -> None:
+        attempt_counts = self.state.get("attempt_counts")
+        if isinstance(attempt_counts, dict):
+            for key in list(attempt_counts):
+                if key not in active_modules:
+                    attempt_counts.pop(key, None)
+        attempted_round = self.state.get("attempted_in_round")
+        if isinstance(attempted_round, dict):
+            for key in list(attempted_round):
+                if key not in active_modules:
+                    attempted_round.pop(key, None)
+        outcomes = self.state.get("outcomes")
+        if isinstance(outcomes, dict):
+            for key in list(outcomes):
+                if key not in active_modules:
+                    outcomes.pop(key, None)
+
+    def _priority_key(self, module: str, suggestions: Iterable[Tuple[str, str]] | None) -> tuple[int, int, str]:
+        attempt_counts = self.state.get("attempt_counts")
+        attempts = 0
+        if isinstance(attempt_counts, dict):
+            attempts = int(attempt_counts.get(module, 0))
+        module_lower = module.lower()
+        suggestion_match = 1
+        if suggestions:
+            for bucket, hint in suggestions:
+                bucket_lower = bucket.lower() if isinstance(bucket, str) else ""
+                hint_lower = hint.lower() if isinstance(hint, str) else ""
+                if bucket_lower and (bucket_lower in module_lower or module_lower in bucket_lower):
+                    suggestion_match = 0
+                    break
+                if hint_lower and module_lower in hint_lower:
+                    suggestion_match = 0
+                    break
+        return (suggestion_match, attempts, module)
+
+    def next_candidate(self, suggestions: Iterable[Tuple[str, str]] | None = None) -> str | None:
+        modules = self._dormant_modules()
+        if not modules:
+            return None
+        active = set(modules)
+        self._prune_state(active)
+        round_id = int(self.state.get("round_id", 0))
+        attempted_round = self.state.get("attempted_in_round")
+        if not isinstance(attempted_round, dict):
+            attempted_round = {}
+            self.state["attempted_in_round"] = attempted_round
+        available = [m for m in modules if attempted_round.get(m) != round_id]
+        if not available:
+            round_id += 1
+            self.state["round_id"] = round_id
+            available = modules
+            attempted_round.clear()
+        candidate = sorted(available, key=lambda mod: self._priority_key(mod, suggestions))[0]
+        attempt_counts = self.state.get("attempt_counts")
+        if not isinstance(attempt_counts, dict):
+            attempt_counts = {}
+            self.state["attempt_counts"] = attempt_counts
+        attempt_counts[candidate] = int(attempt_counts.get(candidate, 0)) + 1
+        attempted_round[candidate] = round_id
+        self._save_state()
+        return candidate
+
+    def record_outcome(self, module: str, *, status: str, error: str | None = None) -> None:
+        outcomes = self.state.get("outcomes")
+        if not isinstance(outcomes, dict):
+            outcomes = {}
+            self.state["outcomes"] = outcomes
+        entry = {
+            "status": status,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if error:
+            entry["error"] = error
+        outcomes[module] = entry
+        self._save_state()
+
+    def internalize_next(
+        self,
+        bootstrap: SelfCodingBootstrap,
+        suggestions: Iterable[Tuple[str, str]] | None = None,
+    ) -> str | None:
+        candidate = self.next_candidate(suggestions)
+        if candidate is None:
+            return None
+        thresholds = get_thresholds(candidate)
+        try:
+            manager = internalize_coding_bot(
+                candidate,
+                bootstrap.engine,
+                bootstrap.pipeline,
+                data_bot=bootstrap.data_bot,
+                bot_registry=bootstrap.registry,
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+                threshold_service=bootstrap.threshold_service,
+            )
+            bootstrap.promote_pipeline(manager)
+            bootstrap.manager = manager
+        except Exception as exc:
+            reason = f"internalize_failed: {exc}"
+            LOGGER.warning("Workflow internalization skipped for %s: %s", candidate, exc)
+            self.record_outcome(candidate, status="skipped", error=str(exc))
+            self._publish_event(
+                "workflow_discovery:skipped",
+                {
+                    "workflow": candidate,
+                    "reason": "internalize_failed",
+                    "error": str(exc),
+                },
+            )
+            return None
+        self.record_outcome(candidate, status="internalized", error=None)
+        attempt_counts = self.state.get("attempt_counts")
+        if isinstance(attempt_counts, dict):
+            attempts_recorded = attempt_counts.get(candidate, 1)
+        else:
+            attempts_recorded = 1
+        self._publish_event(
+            "workflow_discovery:internalized",
+            {
+                "workflow": candidate,
+                "attempts": attempts_recorded,
+            },
+        )
+        return candidate
+
+    def _publish_event(self, topic: str, payload: Mapping[str, object]) -> None:
+        bus = getattr(shared_event_bus, "event_bus", None) or _GLOBAL_EVENT_BUS
+        if bus is None:
+            return
+        try:
+            bus.publish(topic, dict(payload))
+        except Exception:  # pragma: no cover - best effort logging
+            LOGGER.debug("Failed to publish discovery event %s", topic, exc_info=True)
 
 
 class MetricsWriter:
@@ -320,7 +542,7 @@ class MetricsWriter:
             LOGGER.exception("Failed to persist summary metrics to %s", self.path)
 
 
-def build_manager(bot_name: str) -> SelfCodingManager:
+def build_manager(bot_name: str) -> SelfCodingBootstrap:
     registry = BotRegistry()
     data_bot = DataBot(start_server=False)
     builder = create_context_builder()
@@ -337,6 +559,7 @@ def build_manager(bot_name: str) -> SelfCodingManager:
         )
 
     thresholds = get_thresholds(bot_name)
+    threshold_service = ThresholdService()
     manager = internalize_coding_bot(
         bot_name,
         engine,
@@ -346,10 +569,18 @@ def build_manager(bot_name: str) -> SelfCodingManager:
         roi_threshold=thresholds.roi_drop,
         error_threshold=thresholds.error_increase,
         test_failure_threshold=thresholds.test_failure_increase,
-        threshold_service=ThresholdService(),
+        threshold_service=threshold_service,
     )
     promote_pipeline(manager)
-    return manager
+    return SelfCodingBootstrap(
+        manager=manager,
+        engine=engine,
+        pipeline=pipeline,
+        data_bot=data_bot,
+        registry=registry,
+        promote_pipeline=promote_pipeline,
+        threshold_service=threshold_service,
+    )
 
 
 def run_cycle(
@@ -562,14 +793,16 @@ def main() -> None:
             LOGGER.exception("Metrics writer disabled; continuing without persistence")
 
     tracker = ROITracker()
+    bootstrap: SelfCodingBootstrap | None = None
     manager: SelfCodingManager | None = None
     if not cfg.dry_run:
         try:
-            manager = build_manager(args.bot_name)
+            bootstrap = build_manager(args.bot_name)
+            manager = bootstrap.manager
         except Exception:
             LOGGER.exception("Failed to initialise SelfCodingManager; continuing without it")
 
-    if manager is None and not cfg.dry_run:
+    if bootstrap is None and not cfg.dry_run:
         if args.allow_no_manager:
             LOGGER.warning(
                 "No manager available; enabling dry-run mode for simulated ROI cycles.")
@@ -581,11 +814,22 @@ def main() -> None:
             )
             sys.exit(1)
 
+    discovery_plan: DiscoveryPlan | None = None
+    if bootstrap is not None:
+        discovery_plan = DiscoveryPlan(bootstrap.registry)
+
+    active_bot_name = args.bot_name
+    plan_suggestions: list[Tuple[str, str]] = []
     last_result: CycleResult | None = None
     start_time = datetime.utcnow()
     cycles_executed = 0
     for cycle in range(1, cfg.max_cycles + 1):
-        result = run_cycle(manager, tracker, cfg, args.bot_name)
+        if not cfg.dry_run and discovery_plan and bootstrap:
+            assimilated = discovery_plan.internalize_next(bootstrap, plan_suggestions)
+            if assimilated:
+                active_bot_name = assimilated
+                manager = bootstrap.manager
+        result = run_cycle(manager, tracker, cfg, active_bot_name)
         last_result = result
         cycles_executed += 1
         LOGGER.info(
@@ -597,7 +841,8 @@ def main() -> None:
             result.confidence,
             result.safety_factor,
         )
-        for bucket, hint in result.suggestions:
+        plan_suggestions = list(result.suggestions)
+        for bucket, hint in plan_suggestions:
             LOGGER.info("Bottleneck suggestion (%s): %s", bucket, hint)
 
         if metrics_writer:
