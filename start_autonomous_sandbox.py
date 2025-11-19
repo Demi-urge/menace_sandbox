@@ -1115,6 +1115,21 @@ def main(argv: list[str] | None = None) -> None:
                         readiness_error=readiness_error,
                     ),
                 )
+                logger.info(
+                    "🔎 meta planning gate checkpoints: workflows=%d, planner=%s, ready=%s, backoff=%s",
+                    len(workflows),
+                    bool(planner_cls),
+                    ready_to_launch,
+                    roi_backoff_triggered,
+                    extra=log_record(
+                        event="meta-planning-gate-checkpoints",
+                        workflow_count=len(workflows),
+                        planner_resolved=planner_cls is not None,
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        readiness_error=readiness_error,
+                    ),
+                )
                 if ready_to_launch:
                     logger.info(
                         "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
@@ -1148,6 +1163,15 @@ def main(argv: list[str] | None = None) -> None:
                         ),
                     )
                     logger.info(
+                        "✅ meta planning gate satisfied; initializing launch choreography",
+                        extra=log_record(
+                            event="meta-planning-gate-satisfied",
+                            workflow_ids=list(workflows.keys()),
+                            planner_resolved=planner_cls is not None,
+                            bootstrap_mode=bootstrap_mode,
+                        ),
+                    )
+                    logger.info(
                         "🔧 configuring meta planning loop thread creation",
                         extra=log_record(
                             event="meta-planning-thread-config",
@@ -1173,11 +1197,21 @@ def main(argv: list[str] | None = None) -> None:
                             workflow_graph=workflow_graph_obj,
                         )
                         logger.info(
+                            "✅ meta planning bootstrap call returned",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-return",
+                                thread_repr=repr(thread),
+                                thread_name=getattr(thread, "name", "unknown"),
+                            ),
+                        )
+                        logger.info(
                             "✅ meta planning thread object created",
                             extra=log_record(
                                 event="meta-planning-thread-created",
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
+                                planner_cls=str(planner_cls),
+                                workflow_count=len(workflows),
                             ),
                         )
                     except Exception:
@@ -1203,6 +1237,8 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-start-attempt",
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
+                                planner_cls=str(planner_cls),
+                                workflow_count=len(workflows),
                             ),
                         )
                         thread.start()
@@ -1211,6 +1247,17 @@ def main(argv: list[str] | None = None) -> None:
                             extra=log_record(
                                 event="meta-planning-start",
                                 thread_name=getattr(thread, "name", "unknown"),
+                                is_alive=getattr(thread, "is_alive", lambda: False)(),
+                                planner_cls=str(planner_cls),
+                                workflow_count=len(workflows),
+                            ),
+                        )
+                        logger.info(
+                            "✅ meta planning loop start confirmed; orchestrator warm-up next",
+                            extra=log_record(
+                                event="meta-planning-start-confirm",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
                                 is_alive=getattr(thread, "is_alive", lambda: False)(),
                             ),
                         )
