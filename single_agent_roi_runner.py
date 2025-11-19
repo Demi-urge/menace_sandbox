@@ -5,6 +5,11 @@ self-coding agent/manager directly so you can experiment with ROI and
 risk-adjusted ROI (RAROI) in isolation. Use it when you want a single agent to
 run iterative ROI cycles without any orchestration from the broader workflow
 stack.
+
+The runner expects observable metrics to come from telemetry and tracker inputs
+such as revenue proxies, latency/error deltas and recovery time. These signals
+are combined with the agent's own helper output to evaluate ROI deltas in a
+pluggable way rather than assuming a fixed increment.
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Iterable, Tuple
 
@@ -58,6 +64,74 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.lower() in {"1", "true", "yes", "on"}
 
 
+def _latest_metric_delta(tracker: ROITracker, names: Iterable[str]) -> float:
+    for name in names:
+        history = tracker.synergy_metrics_history.get(name) or tracker.metrics_history.get(
+            name
+        )
+        if history:
+            if len(history) >= 2:
+                return history[-1] - history[-2]
+            return history[-1]
+    return 0.0
+
+
+def compute_roi_delta(
+    manager: SelfCodingManager | None,
+    bot_name: str,
+    helper_text: str | None,
+    tracker: ROITracker,
+) -> EvaluationResult:
+    """Compute ROI delta from telemetry and agent output.
+
+    The evaluator pulls recent telemetry deltas (revenue proxy, latency/error
+    deltas and recovery time) from the tracker so the resulting ROI reflects real
+    performance instead of a fixed increment. Errors are surfaced via
+    ``EvaluationResult.error`` and a dedicated ``evaluation_error`` metric so the
+    tracker can record degraded confidence.
+    """
+
+    roi_before = tracker.roi_history[-1] if tracker.roi_history else 1.0
+    metrics: dict[str, float] = {}
+    confidence = 0.5
+
+    try:
+        revenue_delta = _latest_metric_delta(
+            tracker, ["synergy_revenue", "synergy_profitability", "synergy_projected_lucrativity"]
+        )
+        latency_delta = _latest_metric_delta(
+            tracker, ["latency_error_rate", "synergy_latency_error_rate", "recovery_time"]
+        )
+        error_delta = _latest_metric_delta(
+            tracker,
+            [
+                "hostile_failures",
+                "misuse_failures",
+                "synergy_hostile_failures",
+                "synergy_misuse_failures",
+            ],
+        )
+
+        metrics.update(
+            {
+                "revenue_proxy_delta": revenue_delta,
+                "latency_error_delta": latency_delta,
+                "failure_delta": error_delta,
+            }
+        )
+
+        roi_delta = revenue_delta - max(latency_delta, 0.0) - max(error_delta, 0.0)
+        roi_after = max(0.0, roi_before + roi_delta)
+        confidence = min(1.0, max(0.0, 0.4 + abs(roi_delta) + (0.1 if helper_text else 0.0)))
+    except Exception as exc:  # pragma: no cover - defensive path
+        LOGGER.exception("ROI evaluation failed for %s", bot_name)
+        metrics["evaluation_error"] = 1.0
+        return EvaluationResult(roi_after=roi_before, confidence=0.0, metrics=metrics, error=str(exc))
+
+    metrics.setdefault("evaluation_error", 0.0)
+    return EvaluationResult(roi_after=roi_after, confidence=confidence, metrics=metrics)
+
+
 @dataclass
 class ROIConfig:
     roi_target: float
@@ -77,6 +151,14 @@ class CycleResult:
     suggestions: Iterable[Tuple[str, str]]
     should_stop: bool
     reason: str | None
+
+
+@dataclass
+class EvaluationResult:
+    roi_after: float
+    confidence: float
+    metrics: dict[str, float]
+    error: str | None = None
 
 
 def build_manager(bot_name: str) -> SelfCodingManager:
@@ -121,10 +203,40 @@ def run_cycle(
     roi_after = roi_before
     confidence = cfg.min_confidence
     suggestions: Iterable[Tuple[str, str]] = []
+    metrics: dict[str, float] = {}
+    evaluation_error: str | None = None
+
+    def _validate_inputs(result: EvaluationResult) -> tuple[float, float, dict[str, float]]:
+        nonlocal evaluation_error
+        validated_roi = result.roi_after
+        validated_confidence = result.confidence
+        validated_metrics = dict(result.metrics)
+
+        if result.error:
+            evaluation_error = result.error
+            validated_metrics["evaluation_error"] = validated_metrics.get("evaluation_error", 0.0) + 1.0
+            validated_confidence = 0.0
+
+        if not math.isfinite(validated_roi) or validated_roi <= 0.0:
+            evaluation_error = evaluation_error or "roi_after_invalid"
+            validated_metrics["evaluation_error"] = validated_metrics.get("evaluation_error", 0.0) + 1.0
+            validated_roi = roi_before
+
+        if not math.isfinite(validated_confidence) or not (0.0 <= validated_confidence <= 1.0):
+            evaluation_error = evaluation_error or "confidence_invalid"
+            validated_metrics["evaluation_error"] = validated_metrics.get("evaluation_error", 0.0) + 1.0
+            validated_confidence = 0.0
+
+        return validated_roi, validated_confidence, validated_metrics
 
     if cfg.dry_run:
         LOGGER.info("Dry-run enabled; skipping agent invocation.")
-        roi_after = roi_before + 0.01
+        result = EvaluationResult(
+            roi_after=roi_before + 0.01,
+            confidence=1.0,
+            metrics={"dry_run": 1.0},
+        )
+        roi_after, confidence, metrics = _validate_inputs(result)
     elif manager is not None:
         try:
             helper_text = manager.engine.generate_helper(
@@ -132,17 +244,23 @@ def run_cycle(
                 strategy="roi-feedback",
             )
             LOGGER.info("Agent output (truncated): %s", helper_text[:256])
-            roi_after = roi_before + 0.05
+            result = compute_roi_delta(manager, bot_name, helper_text, tracker)
+            roi_after, confidence, metrics = _validate_inputs(result)
         except Exception:
             LOGGER.exception("Agent invocation failed; marking ROI as unchanged.")
             confidence = 0.0
+            metrics["evaluation_error"] = metrics.get("evaluation_error", 0.0) + 1.0
     else:
         LOGGER.warning("No manager available; treating cycle as no-op.")
+
+    if evaluation_error:
+        LOGGER.warning("Evaluation error recorded: %s", evaluation_error)
 
     _vertex, _predictions, should_stop, _entropy_cap = tracker.update(
         roi_before,
         roi_after,
         confidence=confidence,
+        metrics=metrics,
         profile_type="single_agent",
     )
 
@@ -178,7 +296,15 @@ def run_cycle(
 
 
 def parse_args() -> tuple[argparse.Namespace, ROIConfig]:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Metrics sources: telemetry-backed revenue proxies (e.g. synergy_revenue), "
+            "latency/error deltas (latency_error_rate, hostile_failures) and recovery time. "
+            "Populate tracker metrics to avoid defaulting to no-op deltas and keep RAROI "
+            "aligned with production behaviour."
+        ),
+    )
     parser.add_argument("--bot-name", default=os.getenv("SINGLE_AGENT_BOT", "menace"))
     parser.add_argument(
         "--roi-target",
