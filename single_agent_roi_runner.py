@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import math
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Tuple
+from statistics import fmean
+from typing import Any, Callable, Iterable, Mapping, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT.parent) not in sys.path:
@@ -44,10 +45,13 @@ from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
+from menace_sandbox.system_evolution_manager import SystemEvolutionManager
 from menace_sandbox.threshold_service import ThresholdService
 from roi_tracker import ROITracker
 from self_improvement.workflow_discovery import discover_workflow_specs
+from sandbox_orchestrator import SandboxOrchestrator
 from shared_event_bus import event_bus as _GLOBAL_EVENT_BUS
+from workflow_evolution_manager import WorkflowEvolutionManager
 
 # ``calculate_raroi`` is an instance method on ROITracker; alias it for clarity
 # so callers can import the toolkit components directly from this runner.
@@ -179,6 +183,101 @@ class SelfCodingBootstrap:
     registry: BotRegistry
     promote_pipeline: Callable[[SelfCodingManager], None]
     threshold_service: ThresholdService
+
+
+class AssimilationLoop:
+    """Mirror the sandbox orchestrator loop for assimilated workflows."""
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self.logger = logger
+        self.workflow_evolver = WorkflowEvolutionManager()
+        self.system_manager = SystemEvolutionManager([])
+        self.workflows: dict[str, Callable[[], Any]] = {}
+        self.assimilated_bots: list[str] = []
+        self.orchestrator: SandboxOrchestrator | None = None
+
+    def register_workflow(self, workflow_id: str) -> None:
+        if not workflow_id or workflow_id in self.workflows:
+            return
+        try:
+            workflow_callable = self.workflow_evolver.build_callable(workflow_id)
+        except Exception:
+            self.logger.exception("Failed to hydrate workflow callable for %s", workflow_id)
+            return
+        self.workflows[workflow_id] = workflow_callable
+        if workflow_id not in self.assimilated_bots:
+            self.assimilated_bots.append(workflow_id)
+            self.system_manager.bots = list(self.assimilated_bots)
+        self._refresh_orchestrator()
+
+    def _refresh_orchestrator(self) -> None:
+        if not self.workflows:
+            self.orchestrator = None
+            return
+        self.orchestrator = SandboxOrchestrator(
+            self.workflows,
+            logger=self.logger,
+            loop_interval=5.0,
+            diminishing_threshold=0.0,
+            patience=3,
+        )
+
+    def _average_stability(self) -> float:
+        orchestrator = self.orchestrator
+        if orchestrator is None:
+            return 0.0
+        streaks: list[float] = []
+        for workflow_id in self.workflows:
+            try:
+                stats = orchestrator.scorer.results_db.fetch_chain_stats(workflow_id)
+                streaks.append(float(stats.get("non_positive_streak", 0.0)))
+            except Exception:
+                self.logger.debug(
+                    "Failed to fetch chain stats for %s", workflow_id, exc_info=True
+                )
+        return fmean(streaks) if streaks else 0.0
+
+    def _trigger_system_evolution(self) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        try:
+            result = self.system_manager.run_cycle()
+        except Exception:
+            self.logger.exception("System evolution cycle failed")
+            return metrics
+        if result.ga_results:
+            metrics["assimilation_ga_avg_roi"] = float(
+                sum(result.ga_results.values()) / len(result.ga_results)
+            )
+        try:
+            prediction_count = sum(1 for _ in result.predictions)
+        except TypeError:
+            prediction_count = 0
+        metrics["assimilation_structural_predictions"] = float(prediction_count)
+        return metrics
+
+    def run_cycle(self) -> dict[str, float]:
+        if not self.workflows:
+            return {}
+        if self.orchestrator is None:
+            self._refresh_orchestrator()
+        orchestrator = self.orchestrator
+        if orchestrator is None:
+            return {}
+        metrics: dict[str, float] = {}
+        try:
+            orchestrator.run_once()
+            aggregate_delta = orchestrator._aggregate_roi_delta()
+            metrics["assimilation_delta_roi"] = float(aggregate_delta)
+            metrics["assimilation_avg_stability_streak"] = float(self._average_stability())
+            should_continue = orchestrator._should_continue()
+            metrics["assimilation_diminishing_returns"] = 0.0 if should_continue else 1.0
+            if not should_continue:
+                metrics.update(self._trigger_system_evolution())
+                orchestrator.transition_to_maintenance_mode()
+                self._refresh_orchestrator()
+        except Exception:
+            self.logger.exception("Assimilation orchestration cycle failed")
+        return metrics
 
 
 class DiscoveryPlan:
@@ -588,6 +687,7 @@ def run_cycle(
     tracker: ROITracker,
     cfg: ROIConfig,
     bot_name: str,
+    assimilation_metrics: Mapping[str, float] | None = None,
 ) -> CycleResult:
     roi_before = tracker.roi_history[-1] if tracker.roi_history else 1.0
     roi_after = roi_before
@@ -649,6 +749,9 @@ def run_cycle(
 
     if evaluation_error:
         LOGGER.warning("Evaluation error recorded: %s", evaluation_error)
+
+    if assimilation_metrics:
+        metrics.update({k: float(v) for k, v in assimilation_metrics.items()})
 
     _vertex, _predictions, should_stop, _entropy_cap = tracker.update(
         roi_before,
@@ -765,6 +868,14 @@ def parse_args() -> tuple[argparse.Namespace, ROIConfig]:
             "SQLite databases (.db/.sqlite/.sqlite3)."
         ),
     )
+    parser.add_argument(
+        "--enable-assimilation-loop",
+        action="store_true",
+        help=(
+            "Integrate assimilated workflows with a sandbox orchestrator to reuse"
+            " multi-bot ROI/stability deltas."
+        ),
+    )
 
     args = parser.parse_args()
     cfg = ROIConfig(
@@ -819,6 +930,15 @@ def main() -> None:
         discovery_plan = DiscoveryPlan(bootstrap.registry)
 
     active_bot_name = args.bot_name
+    assimilation_loop: AssimilationLoop | None = None
+    if args.enable_assimilation_loop:
+        if bootstrap is None:
+            LOGGER.warning(
+                "Assimilation loop requested but SelfCodingManager unavailable; skipping"
+            )
+        else:
+            assimilation_loop = AssimilationLoop(LOGGER)
+            assimilation_loop.register_workflow(active_bot_name)
     plan_suggestions: list[Tuple[str, str]] = []
     last_result: CycleResult | None = None
     start_time = datetime.utcnow()
@@ -829,7 +949,12 @@ def main() -> None:
             if assimilated:
                 active_bot_name = assimilated
                 manager = bootstrap.manager
-        result = run_cycle(manager, tracker, cfg, active_bot_name)
+                if assimilation_loop:
+                    assimilation_loop.register_workflow(assimilated)
+        assimilation_metrics: Mapping[str, float] | None = None
+        if assimilation_loop:
+            assimilation_metrics = assimilation_loop.run_cycle()
+        result = run_cycle(manager, tracker, cfg, active_bot_name, assimilation_metrics)
         last_result = result
         cycles_executed += 1
         LOGGER.info(
