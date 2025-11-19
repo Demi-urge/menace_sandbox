@@ -469,16 +469,26 @@ def _run_prelaunch_improvement_cycles(
 ) -> tuple[bool, bool]:
     """Iterate each workflow through ROI-gated improvement before launch."""
 
+    logger.info(
+        "✅ starting prelaunch ROI coordination",  # emoji for quick scanning
+        extra=log_record(
+            event="prelaunch-begin",
+            workflow_count=len(workflows),
+            planner_available=planner_cls is not None,
+            bootstrap_mode=bootstrap_mode,
+        ),
+    )
+
     if not workflows:
         logger.error(
-            "no workflows available for ROI coordination; aborting sandbox launch",
+            "❌ no workflows available for ROI coordination; aborting sandbox launch",
             extra=log_record(event="meta-coordinator-missing-workflows"),
         )
         raise RuntimeError("no workflows available for ROI coordination")
 
     if planner_cls is None:
         logger.error(
-            "meta planner unavailable; cannot coordinate ROI stagnation",
+            "❌ meta planner unavailable; cannot coordinate ROI stagnation",
             extra=log_record(event="meta-coordinator-missing"),
         )
         raise RuntimeError("meta planner unavailable for ROI coordination")
@@ -488,6 +498,14 @@ def _run_prelaunch_improvement_cycles(
     per_workflow_ready: dict[str, bool] = {}
 
     for workflow_id, callable_fn in workflows.items():
+        logger.info(
+            "ℹ️ coordinating workflow for prelaunch ROI gate",
+            extra=log_record(
+                event="prelaunch-workflow-start",
+                workflow_id=workflow_id,
+                continuous_monitor=True,
+            ),
+        )
         ready, backoff = _coordinate_workflows_until_stagnation(
             {workflow_id: callable_fn},
             planner_cls=planner_cls,
@@ -498,14 +516,31 @@ def _run_prelaunch_improvement_cycles(
         )
         per_workflow_ready[workflow_id] = ready
         roi_backoff = roi_backoff or backoff
+        logger.info(
+            "✅ workflow ROI gate completed" if ready else "❌ workflow ROI gate incomplete",
+            extra=log_record(
+                event="prelaunch-workflow-result",
+                workflow_id=workflow_id,
+                ready=ready,
+                roi_backoff=backoff,
+            ),
+        )
         if not ready:
             system_ready = False
             logger.warning(
-                "workflow stalled before launch",
+                "❌ workflow stalled before launch",
                 extra=log_record(workflow_id=workflow_id, event="prelaunch-stall"),
             )
 
     if system_ready and not roi_backoff:
+        logger.info(
+            "ℹ️ validating combined workflows for ROI stagnation",
+            extra=log_record(
+                event="prelaunch-system-check",
+                workflow_count=len(workflows),
+                continuous_monitor=True,
+            ),
+        )
         system_ready, system_backoff = _coordinate_workflows_until_stagnation(
             workflows,
             planner_cls=planner_cls,
@@ -514,16 +549,35 @@ def _run_prelaunch_improvement_cycles(
             continuous_monitor=True,
         )
         roi_backoff = roi_backoff or system_backoff
+        logger.info(
+            "✅ combined ROI gate reached" if system_ready else "❌ combined ROI gate incomplete",
+            extra=log_record(
+                event="prelaunch-system-result",
+                workflow_count=len(workflows),
+                ready=system_ready,
+                roi_backoff=system_backoff,
+            ),
+        )
 
     snapshot = workflow_controller_status()
     if snapshot:
         logger.info(
-            "workflow controller status snapshot",
+            "ℹ️ workflow controller status snapshot",
             extra=log_record(event="prelaunch-controller-status", controllers=snapshot),
         )
 
-    return system_ready and all(per_workflow_ready.values()), roi_backoff
     ready = system_ready and all(per_workflow_ready.values())
+
+    logger.info(
+        "✅ per-workflow ROI gates cleared" if ready else "❌ one or more workflows blocked",
+        extra=log_record(
+            event="prelaunch-per-workflow-status",
+            ready=ready,
+            roi_backoff=roi_backoff,
+            workflow_count=len(per_workflow_ready),
+            blocked_workflows=[k for k, v in per_workflow_ready.items() if not v],
+        ),
+    )
 
     if (
         bootstrap_mode
@@ -533,13 +587,23 @@ def _run_prelaunch_improvement_cycles(
         and not ready
     ):
         logger.info(
-            "bypassing diminishing returns gate during bootstrap; ROI baseline unavailable",
+            "✅ bypassing diminishing returns gate during bootstrap; ROI baseline unavailable",
             extra=log_record(
                 event="meta-coordinator-bootstrap-bypass",
                 workflow_count=len(workflows),
             ),
         )
         ready = True
+
+    logger.info(
+        "✅ prelaunch ROI coordination complete" if ready else "❌ prelaunch ROI coordination incomplete",
+        extra=log_record(
+            event="prelaunch-complete",
+            ready=ready,
+            roi_backoff=roi_backoff,
+            bootstrap_mode=bootstrap_mode,
+        ),
+    )
 
     return ready, roi_backoff
 
