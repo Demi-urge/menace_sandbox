@@ -229,40 +229,47 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.setdefault("META_PLANNING_LOOP", "1")
                 os.environ.setdefault("META_PLANNING_INTERVAL", "10")
                 os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
+                from self_improvement import meta_planning
+                from self_improvement.meta_planning import (  # noqa: F401
+                    self_improvement_cycle,
+                )
+
+                meta_planning.reload_settings(settings)
+                planner_cls = meta_planning.resolve_meta_workflow_planner(
+                    force_reload=True
+                )
+                if planner_cls is None:
+                    logger.error(
+                        "MetaWorkflowPlanner not found; aborting sandbox launch",
+                        extra=log_record(event="meta-planning-missing"),
+                    )
+                    sys.exit(1)
+
+                interval = float(
+                    os.getenv(
+                        "META_PLANNING_INTERVAL",
+                        getattr(settings, "meta_planning_interval", 10),
+                    )
+                )
+                workflows = _build_self_improvement_workflows(bootstrap_context)
                 try:
-                    from self_improvement import meta_planning
-                    from self_improvement.meta_planning import (  # noqa: F401
-                        self_improvement_cycle,
-                    )
-
-                    meta_planning.reload_settings(settings)
-                    planner_cls = meta_planning.resolve_meta_workflow_planner(
-                        force_reload=True
-                    )
-                    if planner_cls is None:
-                        raise RuntimeError("MetaWorkflowPlanner required for sandbox bootstrap")
-
-                    interval = float(
-                        os.getenv(
-                            "META_PLANNING_INTERVAL",
-                            getattr(settings, "meta_planning_interval", 10),
-                        )
-                    )
-                    workflows = _build_self_improvement_workflows(bootstrap_context)
                     thread = meta_planning.start_self_improvement_cycle(
                         workflows,
                         event_bus=shared_event_bus,
                         interval=interval,
                     )
-                    thread.start()
-                    logger.info(
-                        "meta planning loop started",
-                        extra=log_record(event="meta-planning-start"),
-                    )
                 except Exception:
                     logger.exception(
-                        "failed to start meta planning loop", extra=log_record(event="meta-loop-error")
+                        "failed to initialize meta planning loop; sandbox launch halted",
+                        extra=log_record(event="meta-loop-error"),
                     )
+                    sys.exit(1)
+
+                thread.start()
+                logger.info(
+                    "meta planning loop thread started successfully",
+                    extra=log_record(event="meta-planning-start"),
+                )
                 logger.info(
                     "preseeded bootstrap context in use; pipeline and manager are cached",
                     extra=log_record(event="bootstrap-preseed"),
