@@ -53,6 +53,7 @@ except Exception:  # pragma: no cover - fallback when run as a module
 
 from shared_event_bus import event_bus as shared_event_bus
 from workflow_evolution_manager import WorkflowEvolutionManager
+from self_improvement.workflow_discovery import discover_workflow_specs
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -153,7 +154,11 @@ def _emit_health_report(
     sys.stdout.flush()
 
 
-def _load_workflow_records(settings: SandboxSettings) -> list[Mapping[str, Any]]:
+def _load_workflow_records(
+    settings: SandboxSettings,
+    *,
+    discovered_specs: Sequence[Mapping[str, Any]] | None = None,
+) -> list[Mapping[str, Any]]:
     """Load workflow specs from configuration and the WorkflowDB if available."""
 
     records: list[Mapping[str, Any]] = []
@@ -163,6 +168,9 @@ def _load_workflow_records(settings: SandboxSettings) -> list[Mapping[str, Any]]
     )
     if isinstance(configured, Sequence) and not isinstance(configured, (str, bytes)):
         records.extend([spec for spec in configured if isinstance(spec, Mapping)])
+
+    if discovered_specs:
+        records.extend([spec for spec in discovered_specs if isinstance(spec, Mapping)])
 
     if WorkflowDB is not None:
         try:
@@ -180,6 +188,7 @@ def _build_self_improvement_workflows(
     workflow_evolver: WorkflowEvolutionManager,
     *,
     logger: logging.Logger,
+    discovered_specs: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Callable[[], Any]]:
     """Return workflow callables derived from bootstrap and stored records."""
 
@@ -199,7 +208,7 @@ def _build_self_improvement_workflows(
 
         workflows[f"preseeded_{name}"] = (lambda v=value: v)
 
-    records = _load_workflow_records(settings)
+    records = _load_workflow_records(settings, discovered_specs=discovered_specs)
     for record in records:
         seq = record.get("workflow") or record.get("task_sequence") or []
         workflow_id = str(
@@ -318,11 +327,20 @@ def main(argv: list[str] | None = None) -> None:
                         getattr(settings, "meta_planning_interval", 10),
                     )
                 )
+                discovered_specs = []
+                try:
+                    discovered_specs = discover_workflow_specs(logger=logger)
+                except Exception:
+                    logger.exception(
+                        "failed to auto-discover workflow specs",
+                        extra=log_record(event="workflow-discovery-error"),
+                    )
                 workflows = _build_self_improvement_workflows(
                     bootstrap_context,
                     settings,
                     workflow_evolver,
                     logger=logger,
+                    discovered_specs=discovered_specs,
                 )
                 try:
                     thread = meta_planning.start_self_improvement_cycle(
