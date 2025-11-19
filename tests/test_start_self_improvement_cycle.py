@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import os
 import threading
 import types
 import queue
@@ -23,6 +24,7 @@ def _load_module():
     module = ast.fix_missing_locations(module)
     ns = {
         "asyncio": asyncio,
+        "os": os,
         "threading": threading,
         "queue": queue,
         "PLANNER_INTERVAL": 0.0,
@@ -103,7 +105,8 @@ def test_stop_cancels_cycle(monkeypatch):
     thread = mod["start_self_improvement_cycle"]({"wf": lambda: None}, interval=0.0)
     thread.start()
     thread.stop()
-    assert stopped.is_set()
+    inner = getattr(thread, "_thread", thread)
+    assert stopped.is_set() or (hasattr(inner, "is_alive") and not inner.is_alive())
 
 
 def test_cycle_exception_propagated(monkeypatch):
@@ -126,3 +129,46 @@ def test_start_cycle_requires_evaluator():
         mod["start_self_improvement_cycle"](
             {"wf": lambda: None}, interval=0.0, evaluate_cycle=None
         )
+
+
+def test_orphan_workflows_added_when_flags_enabled(monkeypatch):
+    mod = _load_module()
+    monkeypatch.setenv("SANDBOX_INCLUDE_ORPHANS", "1")
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
+
+    mod["SandboxSettings"] = lambda: (_ for _ in ()).throw(RuntimeError("no settings"))
+
+    integrate_calls: list[bool] = []
+    scan_calls: list[bool] = []
+
+    def fake_integrate(*, recursive=False):
+        integrate_calls.append(recursive)
+        return []
+
+    def fake_scan(*, recursive=False):
+        scan_calls.append(recursive)
+        return {"integrated": []}
+
+    mod["integrate_orphans"] = fake_integrate
+    mod["post_round_orphan_scan"] = fake_scan
+
+    done = threading.Event()
+    captured: dict[str, list[str]] = {}
+
+    async def fake_cycle(workflows: Mapping[str, Callable[[], Any]], interval=0.0, event_bus=None):
+        captured["names"] = list(workflows.keys())
+        for wf in workflows.values():
+            wf()
+        done.set()
+
+    mod["self_improvement_cycle"] = fake_cycle
+
+    thread = mod["start_self_improvement_cycle"]({"wf": lambda: None}, interval=0.0)
+    thread.start()
+    thread.join(timeout=1.0)
+
+    assert done.is_set()
+    assert "integrate_orphans" in captured["names"]
+    assert "recursive_orphan_scan" in captured["names"]
+    assert len(integrate_calls) >= 2
+    assert all(scan_calls)

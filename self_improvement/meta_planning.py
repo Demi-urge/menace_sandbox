@@ -1644,16 +1644,49 @@ def start_self_improvement_cycle(
     if evaluate_cycle is None:
         raise ValueError("evaluate_cycle callable required")
 
+    def _env_flag(name: str) -> bool | None:
+        val = os.getenv(name)
+        if val is None:
+            return None
+        return val.lower() in {"1", "true", "yes", "on"}
+
     try:
         settings = SandboxSettings()
-        discover_orphans = bool(
-            getattr(settings, "include_orphans", True)
-            and not getattr(settings, "disable_orphans", False)
-        )
-        recursive_orphans = bool(getattr(settings, "recursive_orphan_scan", False))
     except Exception:
-        discover_orphans = False
-        recursive_orphans = False
+        settings = None
+
+    include_env = _env_flag("SANDBOX_INCLUDE_ORPHANS")
+    recursive_env = _env_flag("SANDBOX_RECURSIVE_ORPHANS")
+
+    include_cfg = getattr(settings, "include_orphans", None) if settings else None
+    disable_cfg = getattr(settings, "disable_orphans", False) if settings else False
+    recursive_cfg = getattr(settings, "recursive_orphan_scan", False) if settings else False
+
+    include_orphans = (
+        include_env
+        if include_env is not None
+        else (bool(include_cfg) if include_cfg is not None else False)
+    )
+    discover_orphans = bool(include_orphans and not disable_cfg)
+
+    recursive_orphans = (
+        recursive_env if recursive_env is not None else bool(recursive_cfg)
+    )
+
+    workflow_plan: dict[str, Callable[[], Any]] = dict(workflows)
+
+    if discover_orphans:
+        workflow_plan.setdefault(
+            "integrate_orphans",
+            lambda recursive=recursive_orphans: integrate_orphans(
+                recursive=recursive
+            ),
+        )
+        if recursive_orphans:
+            workflow_plan.setdefault(
+                "recursive_orphan_scan",
+                lambda: post_round_orphan_scan(recursive=True),
+            )
 
     if discover_orphans:
         try:
@@ -1707,7 +1740,7 @@ def start_self_improvement_cycle(
                 kwargs["evaluate_cycle"] = self._evaluate_cycle
             print("💡 SI-9: scheduling self-improvement cycle coroutine")
             self._task = self._loop.create_task(
-                self_improvement_cycle(workflows, **kwargs)
+                self_improvement_cycle(workflow_plan, **kwargs)
             )
             self._task.add_done_callback(self._finished)
             try:
