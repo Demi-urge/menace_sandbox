@@ -1072,7 +1072,24 @@ def main(argv: list[str] | None = None) -> None:
                 if ready_to_launch:
                     logger.info(
                         "✅ readiness gate cleared; preparing to start meta planning loop",
-                        extra=log_record(event="meta-planning-ready", roi_backoff=roi_backoff_triggered),
+                        extra=log_record(
+                            event="meta-planning-ready",
+                            roi_backoff=roi_backoff_triggered,
+                            workflow_count=len(workflows),
+                            planner_resolved=planner_cls is not None,
+                            bootstrap_mode=bootstrap_mode,
+                            prelaunch_ready=ready_to_launch,
+                        ),
+                    )
+                    logger.info(
+                        "✅ meta-planning launch prerequisites satisfied",
+                        extra=log_record(
+                            event="meta-planning-prereqs",
+                            planner_cls=str(planner_cls),
+                            interval_seconds=interval,
+                            workflow_ids=list(workflows.keys()),
+                            workflow_graph_built=workflow_graph_obj is not None,
+                        ),
                     )
                     try:
                         thread = meta_planning.start_self_improvement_cycle(
@@ -1083,7 +1100,11 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         logger.info(
                             "✅ meta planning thread object created",
-                            extra=log_record(event="meta-planning-thread-created"),
+                            extra=log_record(
+                                event="meta-planning-thread-created",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
+                            ),
                         )
                     except Exception:
                         logger.exception(
@@ -1096,7 +1117,11 @@ def main(argv: list[str] | None = None) -> None:
                         thread.start()
                         logger.info(
                             "✅ meta planning loop thread started successfully",
-                            extra=log_record(event="meta-planning-start"),
+                            extra=log_record(
+                                event="meta-planning-start",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                is_alive=getattr(thread, "is_alive", lambda: False)(),
+                            ),
                         )
                     except Exception:
                         logger.exception(
@@ -1105,6 +1130,17 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         sys.exit(1)
                 else:
+                    logger.error(
+                        "❌ readiness gate failed; meta planning launch conditions not met",
+                        extra=log_record(
+                            event="meta-planning-readiness-failure",
+                            roi_backoff=roi_backoff_triggered,
+                            ready_to_launch=ready_to_launch,
+                            planner_available=planner_cls is not None,
+                            workflow_count=len(workflows),
+                            workflow_ids=list(workflows.keys()),
+                        ),
+                    )
                     failure_reason = readiness_error or (
                         "workflows did not reach ROI stagnation; sandbox launch aborted"
                     )
@@ -1146,7 +1182,13 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         logger.info(
                             "✅ sandbox orchestrator object created",  # emoji for quick scanning
-                            extra=log_record(event="orchestrator-created"),
+                            extra=log_record(
+                                event="orchestrator-created",
+                                workflow_count=len(workflows),
+                                loop_interval=os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30"),
+                                diminishing_threshold=os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01"),
+                                patience=os.getenv("GLOBAL_ROI_PATIENCE", "3"),
+                            ),
                         )
                     except Exception:
                         logger.exception(
@@ -1164,7 +1206,12 @@ def main(argv: list[str] | None = None) -> None:
                         orchestrator_thread.start()
                         logger.info(
                             "✅ sandbox orchestrator started",  # emoji for quick scanning
-                            extra=log_record(event="orchestrator-start"),
+                            extra=log_record(
+                                event="orchestrator-start",
+                                thread_name="sandbox-orchestrator",
+                                is_alive=orchestrator_thread.is_alive(),
+                                workflow_count=len(workflows),
+                            ),
                         )
                     except Exception:
                         logger.exception(
