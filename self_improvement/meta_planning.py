@@ -1547,6 +1547,28 @@ def start_self_improvement_cycle(
         raise ValueError("evaluate_cycle callable required")
 
     try:
+        settings = SandboxSettings()
+        discover_orphans = bool(
+            getattr(settings, "include_orphans", True)
+            and not getattr(settings, "disable_orphans", False)
+        )
+        recursive_orphans = bool(getattr(settings, "recursive_orphan_scan", False))
+    except Exception:
+        discover_orphans = False
+        recursive_orphans = False
+
+    if discover_orphans:
+        try:
+            integrate_orphans(recursive=recursive_orphans)
+            if recursive_orphans:
+                post_round_orphan_scan(recursive=True)
+        except Exception:
+            get_logger(__name__).exception(
+                "startup orphan discovery failed",
+                extra=log_record(event="pre-cycle-orphans"),
+            )
+
+    try:
         _init.workflow_graph = workflow_graph
     except Exception:
         get_logger(__name__).debug(
