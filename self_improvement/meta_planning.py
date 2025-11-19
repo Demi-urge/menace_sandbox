@@ -72,6 +72,14 @@ try:  # pragma: no cover - allow flat package layout
 except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
     from lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT  # type: ignore
 
+try:  # pragma: no cover - allow flat package layout
+    from menace_sandbox.workflow_evolution_manager import WorkflowCycleController
+except (ImportError, ValueError):  # pragma: no cover - fallback for manual_bootstrap environments
+    try:
+        from workflow_evolution_manager import WorkflowCycleController  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        WorkflowCycleController = None  # type: ignore
+
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 from .orphan_handling import integrate_orphans, post_round_orphan_scan
 
@@ -1111,6 +1119,65 @@ async def self_improvement_cycle(
     roi_weight = cfg.meta_roi_weight
     domain_penalty = cfg.meta_domain_penalty
     stagnated_workflows: dict[str, dict[str, float]] = {}
+    threshold = ROI_BACKOFF_THRESHOLD if ROI_BACKOFF_THRESHOLD != 0 else 0.0
+    streak_required = max(1, ROI_BACKOFF_CONSECUTIVE)
+    controller: WorkflowCycleController | None = None
+
+    def _controller_status(
+        workflow_id: str, status: str, stats: Mapping[str, Any]
+    ) -> None:
+        payload = {
+            "workflow_id": workflow_id,
+            "status": status,
+            "roi_delta": float(stats.get("delta_roi", 0.0)),
+            "non_positive_streak": int(stats.get("non_positive_streak", 0)),
+            "threshold": float(stats.get("threshold", threshold)),
+            "streak_required": int(stats.get("streak_required", streak_required)),
+            "iterations": int(stats.get("iterations", 0)),
+        }
+        logger.info(
+            "workflow %s controller status %s (roi delta %.4f)",
+            workflow_id,
+            status,
+            payload["roi_delta"],
+            extra=log_record(
+                workflow_id=workflow_id,
+                roi_delta=payload["roi_delta"],
+                non_positive_streak=payload["non_positive_streak"],
+                streak_required=payload["streak_required"],
+                controller_status=status,
+                iterations=payload["iterations"],
+            ),
+        )
+        if event_bus is not None:
+            try:
+                event_bus.publish("meta-planning.workflow-status", payload)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to publish workflow controller status",
+                    extra=log_record(workflow_id=workflow_id),
+                    exc_info=exc,
+                )
+
+    if WorkflowCycleController is not None:
+        try:
+            controller = WorkflowCycleController(
+                roi_db=getattr(planner, "roi_db", None),
+                threshold=threshold,
+                streak_required=streak_required,
+                status_callback=_controller_status,
+                logger=logger,
+            )
+            try:
+                setattr(planner, "workflow_controller", controller)
+            except Exception:
+                logger.debug(
+                    "planner does not expose workflow_controller hook",
+                    extra=log_record(component=type(planner).__name__),
+                )
+        except Exception:
+            logger.exception("failed to initialize workflow controller")
+            controller = None
 
     for name, value in {
         "mutation_rate": mutation_rate,
@@ -1408,29 +1475,60 @@ async def self_improvement_cycle(
                 chain_id = "->".join(rec.get("chain", [])) if rec.get("chain") else None
                 stagnant_stats: dict[str, float] = {}
                 if chain_id:
-                    stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
-                    if stagnant:
-                        _debug_cycle(
-                            "skipped",
-                            reason="roi_stagnation",
-                            roi_delta=stagnant_stats.get("delta_roi", 0.0),
-                            stagnation_streak=stagnant_stats.get("non_positive_streak", 0),
-                            workflow_id=chain_id,
-                        )
-                        outcome_logged = True
-                        logger.info(
-                            "workflow %s paused due to ROI stagnation",
-                            chain_id,
-                            extra=log_record(
-                                workflow_id=chain_id,
+                    if controller is not None:
+                        active_chain, stats = controller.record(chain_id, roi_delta=roi)
+                        stagnant_stats = {k: float(v) for k, v in stats.items()}
+                        if not active_chain:
+                            stagnated_workflows[chain_id] = stagnant_stats
+                            _debug_cycle(
+                                "skipped",
+                                reason="roi_stagnation",
                                 roi_delta=stagnant_stats.get("delta_roi", 0.0),
-                                non_positive_streak=stagnant_stats.get(
+                                stagnation_streak=stagnant_stats.get(
                                     "non_positive_streak", 0
                                 ),
-                                decision="pause",
-                            ),
-                        )
-                        continue
+                                workflow_id=chain_id,
+                            )
+                            outcome_logged = True
+                            logger.info(
+                                "workflow %s paused due to ROI stagnation",
+                                chain_id,
+                                extra=log_record(
+                                    workflow_id=chain_id,
+                                    roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                    non_positive_streak=stagnant_stats.get(
+                                        "non_positive_streak", 0
+                                    ),
+                                    decision="pause",
+                                ),
+                            )
+                            continue
+                        else:
+                            stagnated_workflows.pop(chain_id, None)
+                    else:
+                        stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
+                        if stagnant:
+                            _debug_cycle(
+                                "skipped",
+                                reason="roi_stagnation",
+                                roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                stagnation_streak=stagnant_stats.get("non_positive_streak", 0),
+                                workflow_id=chain_id,
+                            )
+                            outcome_logged = True
+                            logger.info(
+                                "workflow %s paused due to ROI stagnation",
+                                chain_id,
+                                extra=log_record(
+                                    workflow_id=chain_id,
+                                    roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                    non_positive_streak=stagnant_stats.get(
+                                        "non_positive_streak", 0
+                                    ),
+                                    decision="pause",
+                                ),
+                            )
+                            continue
                 if encode_fn is None:
                     momentum = getattr(tracker, "momentum", 1.0) or 1.0
                     roi_delta = tracker.delta("roi") * momentum
