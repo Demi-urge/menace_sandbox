@@ -443,11 +443,25 @@ def _build_self_improvement_workflows(
     return workflows, graph
 
 
+def _roi_baseline_available() -> bool:
+    """Return ``True`` when historical ROI signals exist on disk."""
+
+    history_path = Path(
+        os.environ.get(
+            "WORKFLOW_ROI_HISTORY_PATH",
+            resolve_path("workflow_roi_history.json"),
+        )
+    )
+    return history_path.exists()
+
+
 def _run_prelaunch_improvement_cycles(
     workflows: Mapping[str, Callable[[], Any]],
     planner_cls: type | None,
     settings: SandboxSettings,
     logger: logging.Logger,
+    *,
+    bootstrap_mode: bool = False,
 ) -> tuple[bool, bool]:
     """Iterate each workflow through ROI-gated improvement before launch."""
 
@@ -486,7 +500,25 @@ def _run_prelaunch_improvement_cycles(
         )
         roi_backoff = roi_backoff or system_backoff
 
-    return system_ready and all(per_workflow_ready.values()), roi_backoff
+    ready = system_ready and all(per_workflow_ready.values())
+
+    if (
+        bootstrap_mode
+        and workflows
+        and planner_cls is not None
+        and not roi_backoff
+        and not ready
+    ):
+        logger.info(
+            "bypassing diminishing returns gate during bootstrap; ROI baseline unavailable",
+            extra=log_record(
+                event="meta-coordinator-bootstrap-bypass",
+                workflow_count=len(workflows),
+            ),
+        )
+        ready = True
+
+    return ready, roi_backoff
 
 
 def _coordinate_workflows_until_stagnation(
@@ -809,11 +841,13 @@ def main(argv: list[str] | None = None) -> None:
                     logger=logger,
                     discovered_specs=[*discovered_specs, *orphan_specs],
                 )
+                bootstrap_mode = not _roi_baseline_available()
                 ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
                     workflows,
                     planner_cls=planner_cls,
                     settings=settings,
                     logger=logger,
+                    bootstrap_mode=bootstrap_mode,
                 )
 
                 meta_planning.reload_settings(settings)
