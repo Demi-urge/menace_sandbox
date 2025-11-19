@@ -678,11 +678,19 @@ def _coordinate_workflows_until_stagnation(
         ),
     )
 
+    logger.info(
+        "🔍 attempting to initialize meta planner for ROI coordination",
+        extra=log_record(event="meta-coordinator-init-begin"),
+    )
     try:
         planner = planner_cls(context_builder=create_context_builder())
+        logger.info(
+            "✅ meta planner initialized for ROI coordination",
+            extra=log_record(event="meta-coordinator-init-success"),
+        )
     except Exception:
         logger.exception(
-            "failed to initialize meta planner for ROI coordination",
+            "❌ failed to initialize meta planner for ROI coordination",
             extra=log_record(event="meta-coordinator-init-error"),
         )
         raise
@@ -694,6 +702,19 @@ def _coordinate_workflows_until_stagnation(
     }.items():
         if hasattr(planner, name):
             setattr(planner, name, value)
+            logger.info(
+                "✅ applied planner setting",  # emoji for quick scanning
+                extra=log_record(
+                    event="meta-coordinator-setting-applied",
+                    setting=name,
+                    value=value,
+                ),
+            )
+        else:
+            logger.debug(
+                "ℹ️ planner setting skipped; attribute missing",
+                extra=log_record(event="meta-coordinator-setting-skipped", setting=name),
+            )
 
     diminishing: set[str] = set()
     roi_backoff_triggered = False
@@ -704,14 +725,14 @@ def _coordinate_workflows_until_stagnation(
             records = planner.discover_and_persist(workflows)
         except Exception:
             logger.exception(
-                "meta planner coordination failed",
+                "❌ meta planner coordination failed",
                 extra=log_record(event="meta-coordinator-error", cycle=cycle),
             )
             break
 
         if not records:
             logger.info(
-                "meta planner returned no records; assuming diminishing returns",
+                "✅ meta planner returned no records; assuming diminishing returns",
                 extra=log_record(event="meta-coordinator-empty", cycle=cycle),
             )
             break
@@ -742,10 +763,10 @@ def _coordinate_workflows_until_stagnation(
             if controller_state.get("status") == "halted":
                 stagnated = True
                 logger.info(
-                    "workflow controller halted improvements",
+                    "✅ workflow controller halted improvements",
                     extra=log_record(
                         workflow_id=chain_id,
-                        roi_delta=controller_state.get("last_delta", roi_delta),
+                        roi_delta=controller_state.get("last_delta", roi_gain),
                         threshold=controller_state.get("threshold", threshold),
                         event="meta-controller-halt",
                     ),
@@ -1069,6 +1090,19 @@ def main(argv: list[str] | None = None) -> None:
                         planner_available=planner_cls is not None,
                     ),
                 )
+                logger.info(
+                    "🔍 evaluating meta planning launch gate",
+                    extra=log_record(
+                        event="meta-planning-launch-eval",
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        planner_resolved=planner_cls is not None,
+                        workflow_count=len(workflows),
+                        workflow_ids=list(workflows.keys()),
+                        bootstrap_mode=bootstrap_mode,
+                        readiness_error=readiness_error,
+                    ),
+                )
                 if ready_to_launch:
                     logger.info(
                         "✅ readiness gate cleared; preparing to start meta planning loop",
@@ -1089,6 +1123,15 @@ def main(argv: list[str] | None = None) -> None:
                             interval_seconds=interval,
                             workflow_ids=list(workflows.keys()),
                             workflow_graph_built=workflow_graph_obj is not None,
+                        ),
+                    )
+                    logger.info(
+                        "🔧 configuring meta planning loop thread creation",
+                        extra=log_record(
+                            event="meta-planning-thread-config",
+                            interval_seconds=interval,
+                            workflow_graph_built=workflow_graph_obj is not None,
+                            workflow_count=len(workflows),
                         ),
                     )
                     try:
@@ -1130,6 +1173,17 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         sys.exit(1)
                 else:
+                    logger.error(
+                        "❌ meta planning loop launch gate failed",  # emoji for quick scanning
+                        extra=log_record(
+                            event="meta-planning-gate-failed",
+                            roi_backoff=roi_backoff_triggered,
+                            ready_to_launch=ready_to_launch,
+                            planner_available=planner_cls is not None,
+                            workflow_count=len(workflows),
+                            readiness_error=readiness_error,
+                        ),
+                    )
                     logger.error(
                         "❌ readiness gate failed; meta planning launch conditions not met",
                         extra=log_record(
