@@ -61,6 +61,10 @@ from self_improvement.component_workflow_synthesis import discover_component_wor
 from sandbox_orchestrator import SandboxOrchestrator
 from context_builder_util import create_context_builder
 from self_improvement.orphan_handling import integrate_orphans, post_round_orphan_scan
+from self_improvement.meta_planning import (
+    record_workflow_iteration,
+    workflow_controller_status,
+)
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -486,6 +490,13 @@ def _run_prelaunch_improvement_cycles(
         )
         roi_backoff = roi_backoff or system_backoff
 
+    snapshot = workflow_controller_status()
+    if snapshot:
+        logger.info(
+            "workflow controller status snapshot",
+            extra=log_record(event="prelaunch-controller-status", controllers=snapshot),
+        )
+
     return system_ready and all(per_workflow_ready.values()), roi_backoff
 
 
@@ -582,7 +593,25 @@ def _coordinate_workflows_until_stagnation(
 
             roi_delta = float(stats.get("delta_roi", roi_gain))
             streak = int(stats.get("non_positive_streak", 0))
+            controller_state = record_workflow_iteration(
+                chain_id,
+                roi_gain=roi_gain,
+                roi_delta=roi_delta,
+                threshold=threshold,
+                patience=streak_required,
+            )
             stagnated = roi_delta <= threshold and streak >= streak_required
+            if controller_state.get("status") == "halted":
+                stagnated = True
+                logger.info(
+                    "workflow controller halted improvements",
+                    extra=log_record(
+                        workflow_id=chain_id,
+                        roi_delta=controller_state.get("last_delta", roi_delta),
+                        threshold=controller_state.get("threshold", threshold),
+                        event="meta-controller-halt",
+                    ),
+                )
 
             logger.info(
                 "meta planning progress",
@@ -593,6 +622,7 @@ def _coordinate_workflows_until_stagnation(
                     stagnation_threshold=threshold,
                     non_positive_streak=streak,
                     stagnation_met=stagnated,
+                    controller_status=controller_state,
                     diminishing_complete=len(diminishing),
                     diminishing_target=len(workflows),
                     cycle=cycle,

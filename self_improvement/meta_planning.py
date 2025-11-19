@@ -110,6 +110,139 @@ _cycle_thread: Any | None = None
 _stop_event: threading.Event | None = None
 
 
+class _WorkflowROICycleController:
+    """Track ROI deltas for a workflow across repeated iterations.
+
+    Controllers keep running until the observed ROI delta drops below the
+    configured ``threshold`` after at least ``patience`` iterations.  This
+    mirrors the ROI backoff configuration so the controller behaviour aligns
+    with the rest of the meta-planning pipeline.
+    """
+
+    __slots__ = (
+        "workflow_id",
+        "threshold",
+        "patience",
+        "iteration",
+        "last_roi",
+        "last_delta",
+        "status",
+        "halted_at",
+        "updated_at",
+    )
+
+    def __init__(self, workflow_id: str, threshold: float, patience: int) -> None:
+        self.workflow_id = workflow_id
+        self.threshold = float(threshold)
+        self.patience = max(1, int(patience))
+        self.iteration = 0
+        self.last_roi = 0.0
+        self.last_delta = 0.0
+        self.status = "pending"
+        self.halted_at: float | None = None
+        self.updated_at: float | None = None
+
+    # ------------------------------------------------------------------
+    def matches(self, threshold: float, patience: int) -> bool:
+        """Return ``True`` when controller configuration matches inputs."""
+
+        return self.threshold == float(threshold) and self.patience == max(1, int(patience))
+
+    # ------------------------------------------------------------------
+    def observe(self, roi_gain: float, roi_delta: float | None) -> bool:
+        """Record an iteration and return ``True`` if improvements continue."""
+
+        self.iteration += 1
+        self.last_roi = float(roi_gain)
+        self.last_delta = float(roi_delta if roi_delta is not None else roi_gain)
+        self.updated_at = time.time()
+
+        if self.threshold <= 0:
+            self.status = "running"
+            return True
+
+        if self.iteration < self.patience:
+            self.status = "running"
+            return True
+
+        if self.last_delta > self.threshold:
+            self.status = "running"
+            return True
+
+        self.status = "halted"
+        if self.halted_at is None:
+            self.halted_at = self.updated_at
+        return False
+
+    # ------------------------------------------------------------------
+    def snapshot(self) -> Mapping[str, Any]:
+        """Return a serialisable snapshot of the controller state."""
+
+        return {
+            "workflow_id": self.workflow_id,
+            "status": self.status,
+            "iterations": self.iteration,
+            "last_roi": self.last_roi,
+            "last_delta": self.last_delta,
+            "threshold": self.threshold,
+            "patience": self.patience,
+            "halted_at": self.halted_at,
+            "updated_at": self.updated_at,
+        }
+
+
+_WORKFLOW_CONTROLLERS: dict[str, _WorkflowROICycleController] = {}
+_WORKFLOW_CONTROLLER_LOCK = threading.Lock()
+
+
+def _controller_key(workflow_id: str | int) -> str:
+    """Normalise *workflow_id* to a string key."""
+
+    return str(workflow_id)
+
+
+def _get_or_create_controller(
+    workflow_id: str, *, threshold: float, patience: int
+) -> _WorkflowROICycleController:
+    """Return a workflow controller configured for *workflow_id*."""
+
+    controller = _WORKFLOW_CONTROLLERS.get(workflow_id)
+    if controller is None or not controller.matches(threshold, patience):
+        controller = _WorkflowROICycleController(workflow_id, threshold, patience)
+        _WORKFLOW_CONTROLLERS[workflow_id] = controller
+    return controller
+
+
+def record_workflow_iteration(
+    workflow_id: str | int,
+    *,
+    roi_gain: float,
+    roi_delta: float | None,
+    threshold: float | None = None,
+    patience: int | None = None,
+) -> Mapping[str, Any]:
+    """Record an iteration for *workflow_id* and return controller status."""
+
+    effective_threshold = float(
+        ROI_BACKOFF_THRESHOLD if threshold is None else threshold
+    )
+    effective_patience = max(1, int(patience if patience is not None else ROI_BACKOFF_CONSECUTIVE))
+    key = _controller_key(workflow_id)
+    with _WORKFLOW_CONTROLLER_LOCK:
+        controller = _get_or_create_controller(
+            key, threshold=effective_threshold, patience=effective_patience
+        )
+        controller.observe(float(roi_gain), roi_delta)
+        return dict(controller.snapshot())
+
+
+def workflow_controller_status() -> Mapping[str, Mapping[str, Any]]:
+    """Return a snapshot of all workflow controller states."""
+
+    with _WORKFLOW_CONTROLLER_LOCK:
+        return {key: dict(ctrl.snapshot()) for key, ctrl in _WORKFLOW_CONTROLLERS.items()}
+
+
 if __package__:  # pragma: no cover - support package imports
     try:  # pragma: no cover - optional dependency
         from menace_sandbox.unified_event_bus import UnifiedEventBus
@@ -1407,8 +1540,41 @@ async def self_improvement_cycle(
                 encode_fn = should_encode
                 chain_id = "->".join(rec.get("chain", [])) if rec.get("chain") else None
                 stagnant_stats: dict[str, float] = {}
+                controller_state: Mapping[str, Any] | None = None
                 if chain_id:
                     stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
+                    controller_state = record_workflow_iteration(
+                        chain_id,
+                        roi_gain=roi,
+                        roi_delta=float(stagnant_stats.get("delta_roi", roi)),
+                        threshold=ROI_BACKOFF_THRESHOLD,
+                        patience=max(1, ROI_BACKOFF_CONSECUTIVE),
+                    )
+                    if controller_state.get("status") == "halted":
+                        _debug_cycle(
+                            "skipped",
+                            reason="controller_threshold",
+                            roi_delta=controller_state.get("last_delta", 0.0),
+                            workflow_id=chain_id,
+                            controller_threshold=controller_state.get("threshold", 0.0),
+                        )
+                        outcome_logged = True
+                        logger.info(
+                            "workflow %s halted by ROI controller",
+                            chain_id,
+                            extra=log_record(
+                                workflow_id=chain_id,
+                                roi_delta=controller_state.get("last_delta", 0.0),
+                                non_positive_streak=stagnant_stats.get(
+                                    "non_positive_streak", 0
+                                ),
+                                decision="controller_halt",
+                                controller_threshold=controller_state.get(
+                                    "threshold", 0.0
+                                ),
+                            ),
+                        )
+                        continue
                     if stagnant:
                         _debug_cycle(
                             "skipped",
@@ -1715,6 +1881,8 @@ __all__ = [
     "stop_self_improvement_cycle",
     "reload_settings",
     "resolve_meta_workflow_planner",
+    "record_workflow_iteration",
+    "workflow_controller_status",
     "PLANNER_INTERVAL",
     "MUTATION_RATE",
     "ROI_WEIGHT",
