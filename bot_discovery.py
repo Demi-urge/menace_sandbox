@@ -3,16 +3,51 @@ from __future__ import annotations
 """Utility to discover coding bots and register them with core services."""
 
 from pathlib import Path
+import importlib.util
 import logging
+import sys
 from typing import Iterable
 
-from .bot_registry import BotRegistry
-from .threshold_service import threshold_service
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
+
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+
+try:  # optional import to satisfy type checkers at runtime
+    from .bot_registry import BotRegistry
+except Exception:  # pragma: no cover - fallback when run flat
+    from bot_registry import BotRegistry  # type: ignore
+
+try:
+    from .threshold_service import threshold_service
+except Exception:  # pragma: no cover - fallback when run flat
+    from threshold_service import threshold_service  # type: ignore
 
 try:  # optional import to satisfy type checkers at runtime
     from .evolution_orchestrator import EvolutionOrchestrator
 except Exception:  # pragma: no cover - avoid hard dependency during startup
-    EvolutionOrchestrator = None  # type: ignore
+    try:  # pragma: no cover - fallback when executed as flat module
+        from evolution_orchestrator import EvolutionOrchestrator  # type: ignore
+    except Exception:  # pragma: no cover - degrade gracefully
+        EvolutionOrchestrator = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
