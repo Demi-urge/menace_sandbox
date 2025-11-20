@@ -1024,6 +1024,15 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 readiness_error: str | None = None
+                logger.info(
+                    "🧭 meta-planning gate: beginning last-mile checks before launch",
+                    extra=log_record(
+                        event="meta-planning-gate-begin",
+                        workflow_ids=list(workflows.keys()),
+                        planner_resolved=planner_cls is not None,
+                        bootstrap_mode=bootstrap_mode,
+                    ),
+                )
                 try:
                     ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
                         workflows,
@@ -1100,6 +1109,50 @@ def main(argv: list[str] | None = None) -> None:
                         roi_backoff="✅ none" if not roi_backoff_triggered else "❌ backoff",
                         readiness_error=readiness_error,
                         workflow_ids=list(workflows.keys()),
+                    ),
+                )
+                logger.info(
+                    "🧭 meta-planning gate: evaluating final decision criteria",
+                    extra=log_record(
+                        event="meta-planning-gate-eval",
+                        has_workflows=bool(workflows),
+                        planner_resolved=planner_cls is not None,
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        bootstrap_mode=bootstrap_mode,
+                    ),
+                )
+                logger.info(
+                    "✅ checkpoint: workflows present" if workflows else "❌ checkpoint failed: no workflows present",
+                    extra=log_record(
+                        event="meta-planning-gate-workflows",
+                        condition_passed=bool(workflows),
+                        workflow_count=len(workflows),
+                    ),
+                )
+                logger.info(
+                    "✅ checkpoint: planner resolved" if planner_cls is not None else "❌ checkpoint failed: planner missing",
+                    extra=log_record(
+                        event="meta-planning-gate-planner",
+                        condition_passed=planner_cls is not None,
+                        planner_cls=str(planner_cls),
+                    ),
+                )
+                logger.info(
+                    "✅ checkpoint: prelaunch ROI gate cleared" if ready_to_launch else "❌ checkpoint failed: ROI gate blocked",
+                    extra=log_record(
+                        event="meta-planning-gate-roi-ready",
+                        condition_passed=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        readiness_error=readiness_error,
+                    ),
+                )
+                logger.info(
+                    "✅ checkpoint: no ROI backoff detected" if not roi_backoff_triggered else "❌ checkpoint failed: ROI backoff active",
+                    extra=log_record(
+                        event="meta-planning-gate-roi-backoff",
+                        condition_passed=not roi_backoff_triggered,
+                        roi_backoff=roi_backoff_triggered,
                     ),
                 )
                 logger.info(
