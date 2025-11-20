@@ -173,13 +173,25 @@ def initialize_bootstrap_context(
             LOGGER.info(
                 "seeding research aggregator with bootstrap manager before pipeline preparation"
             )
+            LOGGER.info(
+                "before _push_bootstrap_context (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             placeholder_context = _push_bootstrap_context(
                 registry=registry,
                 data_bot=data_bot,
                 manager=bootstrap_manager,
                 pipeline=bootstrap_manager,
             )
+            LOGGER.info(
+                "after _push_bootstrap_context (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             LOGGER.info("_push_bootstrap_context completed (step=push_placeholder)")
+            LOGGER.info(
+                "before _seed_research_aggregator_context (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             _seed_research_aggregator_context(
                 registry=registry,
                 data_bot=data_bot,
@@ -187,6 +199,10 @@ def initialize_bootstrap_context(
                 engine=engine,
                 pipeline=bootstrap_manager,
                 manager=bootstrap_manager,
+            )
+            LOGGER.info(
+                "after _seed_research_aggregator_context (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
             )
             LOGGER.info("invoking prepare_pipeline_for_bootstrap after bootstrap seeding")
             prepare_start = perf_counter()
@@ -222,6 +238,10 @@ def initialize_bootstrap_context(
         _mark_bootstrap_step("internalize_coding_bot")
         internalize_start = perf_counter()
         try:
+            LOGGER.info(
+                "before internalize_coding_bot (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             manager = internalize_coding_bot(
                 bot_name,
                 engine,
@@ -236,21 +256,41 @@ def initialize_bootstrap_context(
         except Exception:
             LOGGER.exception("internalize_coding_bot failed (step=internalize_coding_bot)")
             raise
+        LOGGER.info(
+            "after internalize_coding_bot (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+        )
         _log_step("internalize_coding_bot", internalize_start)
         _mark_bootstrap_step("promote_pipeline")
         promote_start = perf_counter()
         try:
+            LOGGER.info(
+                "before promote_pipeline (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+            )
             promote_pipeline(manager)
         except Exception:
             LOGGER.exception("promote_pipeline failed (step=promote_pipeline)")
             raise
+        LOGGER.info(
+            "after promote_pipeline (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+        )
         _log_step("promote_pipeline", promote_start)
 
         _mark_bootstrap_step("seed_final_context")
+        LOGGER.info(
+            "before _push_bootstrap_context (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
+        )
         _push_bootstrap_context(
             registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
         )
+        LOGGER.info(
+            "after _push_bootstrap_context (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+        )
         LOGGER.info("_push_bootstrap_context completed (step=push_final_context)")
+        LOGGER.info(
+            "before _seed_research_aggregator_context (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
+        )
         _seed_research_aggregator_context(
             registry=registry,
             data_bot=data_bot,
@@ -258,6 +298,10 @@ def initialize_bootstrap_context(
             engine=engine,
             pipeline=pipeline,
             manager=manager,
+        )
+        LOGGER.info(
+            "after _seed_research_aggregator_context (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
 
@@ -275,6 +319,7 @@ def initialize_bootstrap_context(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
         )
+        print(f"bootstrap return (last_step={BOOTSTRAP_PROGRESS['last_step']})")
         return bootstrap_context
 
 
