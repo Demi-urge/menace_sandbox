@@ -74,6 +74,15 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 LOGGER = logging.getLogger(__name__)
 
 
+def _emit_meta_trace(logger: logging.Logger, message: str, **details: Any) -> None:
+    """Log and print a dense meta-planning breadcrumb for immediate visibility."""
+
+    payload = log_record(event="meta-trace", **details)
+    logger.info(message, extra=payload)
+    summary_bits = ", ".join(f"{k}={v}" for k, v in sorted(details.items()))
+    print(f"[META-TRACE] {message} :: {summary_bits}", flush=True)
+
+
 def _resolve_dependency_mode(settings: SandboxSettings) -> DependencyMode:
     """Resolve the effective dependency handling policy for *settings*."""
 
@@ -767,6 +776,14 @@ def _coordinate_workflows_until_stagnation(
             "✅ meta planner initialized for ROI coordination",
             extra=log_record(event="meta-coordinator-init-success"),
         )
+        _emit_meta_trace(
+            logger,
+            "meta planner instantiated",
+            planner_class=getattr(planner_cls, "__name__", str(planner_cls)),
+            continuous_monitor=continuous_monitor,
+            cycle_budget=cycle_budget,
+            workflow_count=len(workflows),
+        )
     except Exception:
         logger.exception(
             "❌ failed to initialize meta planner for ROI coordination",
@@ -789,10 +806,23 @@ def _coordinate_workflows_until_stagnation(
                     value=value,
                 ),
             )
+            _emit_meta_trace(
+                logger,
+                "planner attribute updated",
+                setting=name,
+                value=value,
+                planner_class=getattr(planner_cls, "__name__", str(planner_cls)),
+            )
         else:
             logger.debug(
                 "ℹ️ planner setting skipped; attribute missing",
                 extra=log_record(event="meta-coordinator-setting-skipped", setting=name),
+            )
+            _emit_meta_trace(
+                logger,
+                "planner attribute missing; skipped update",
+                setting=name,
+                planner_class=getattr(planner_cls, "__name__", str(planner_cls)),
             )
 
     diminishing: set[str] = set()
@@ -800,6 +830,14 @@ def _coordinate_workflows_until_stagnation(
     budget = cycle_budget or max(len(workflows) * streak_required * 2, 3)
 
     for cycle in range(budget):
+        _emit_meta_trace(
+            logger,
+            "meta planner coordination cycle start",
+            cycle=cycle,
+            budget=budget,
+            workflow_count=len(workflows),
+            diminishing=len(diminishing),
+        )
         try:
             records = planner.discover_and_persist(workflows)
         except Exception:
@@ -813,6 +851,13 @@ def _coordinate_workflows_until_stagnation(
             logger.info(
                 "✅ meta planner returned no records; assuming diminishing returns",
                 extra=log_record(event="meta-coordinator-empty", cycle=cycle),
+            )
+            _emit_meta_trace(
+                logger,
+                "meta planner returned no records",
+                cycle=cycle,
+                diminishing=len(diminishing),
+                workflow_count=len(workflows),
             )
             break
 
@@ -866,6 +911,17 @@ def _coordinate_workflows_until_stagnation(
                     cycle=cycle,
                 ),
             )
+            _emit_meta_trace(
+                logger,
+                "meta planning record processed",
+                workflow_id=chain_id,
+                roi_gain=roi_gain,
+                roi_delta=roi_delta,
+                stagnated=stagnated,
+                streak=streak,
+                cycle=cycle,
+                diminishing=len(diminishing),
+            )
 
             if stagnated and isinstance(chain_id, str):
                 diminishing.add(chain_id)
@@ -882,6 +938,15 @@ def _coordinate_workflows_until_stagnation(
                         event="roi-backoff",
                     ),
                 )
+                _emit_meta_trace(
+                    logger,
+                    "roi backoff triggered",
+                    workflow_id=chain_id,
+                    roi_delta=roi_delta,
+                    threshold=threshold,
+                    streak=streak,
+                    cycle=cycle,
+                )
                 break
 
         if roi_backoff_triggered or len(diminishing) >= len(workflows):
@@ -897,6 +962,16 @@ def _coordinate_workflows_until_stagnation(
                 event="meta-coordinator-incomplete",
             ),
         )
+
+    _emit_meta_trace(
+        logger,
+        "meta coordination completed",
+        ready=ready,
+        roi_backoff_triggered=roi_backoff_triggered,
+        diminishing=len(diminishing),
+        workflow_count=len(workflows),
+        cycles_budget=budget,
+    )
 
     return ready, roi_backoff_triggered
 
@@ -998,10 +1073,20 @@ def main(argv: list[str] | None = None) -> None:
                 planner_cls = meta_planning.resolve_meta_workflow_planner(
                     force_reload=True
                 )
+                _emit_meta_trace(
+                    logger,
+                    "meta workflow planner resolution attempted",
+                    planner_resolved=planner_cls is not None,
+                    planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                )
                 if planner_cls is None:
                     logger.error(
                         "MetaWorkflowPlanner not found; aborting sandbox launch",
                         extra=log_record(event="meta-planning-missing"),
+                    )
+                    print(
+                        "[META-TRACE] planner resolution failed; aborting launch pipeline",
+                        flush=True,
                     )
                     sys.exit(1)
 
@@ -1020,6 +1105,12 @@ def main(argv: list[str] | None = None) -> None:
                             event="workflow-discovery-complete",
                             discovered_count=len(discovered_specs),
                         ),
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "workflow discovery completed",
+                        discovered_count=len(discovered_specs),
+                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
                     )
                 except Exception:
                     logger.exception(
@@ -1073,10 +1164,18 @@ def main(argv: list[str] | None = None) -> None:
                                     if isinstance(module, str)
                                 )
                         except Exception:
-                            logger.exception(
-                                "startup recursive orphan scan failed",
-                                extra=log_record(event="startup-orphan-recursive"),
-                            )
+                        logger.exception(
+                            "startup recursive orphan scan failed",
+                            extra=log_record(event="startup-orphan-recursive"),
+                        )
+
+                _emit_meta_trace(
+                    logger,
+                    "orphan integration complete",
+                    include_orphans=include_orphans,
+                    recursive_orphans=recursive_orphans,
+                    orphan_specs=len(orphan_specs),
+                )
 
                 workflows, workflow_graph_obj = _build_self_improvement_workflows(
                     bootstrap_context,
@@ -1084,6 +1183,13 @@ def main(argv: list[str] | None = None) -> None:
                     workflow_evolver,
                     logger=logger,
                     discovered_specs=[*discovered_specs, *orphan_specs],
+                )
+                _emit_meta_trace(
+                    logger,
+                    "workflows built for meta planning",
+                    workflow_count=len(workflows),
+                    graph_nodes=len(getattr(workflow_graph_obj, "graph", {})),
+                    planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
                 )
                 logger.info(
                     "workflow registration result",
@@ -1117,6 +1223,13 @@ def main(argv: list[str] | None = None) -> None:
                         planner_available=planner_cls is not None,
                         bootstrap_mode=bootstrap_mode,
                     ),
+                )
+                _emit_meta_trace(
+                    logger,
+                    "startup readiness evaluation beginning",
+                    workflow_count=len(workflows),
+                    planner_available=planner_cls is not None,
+                    bootstrap_mode=bootstrap_mode,
                 )
                 readiness_error: str | None = None
                 logger.info(
@@ -1182,6 +1295,13 @@ def main(argv: list[str] | None = None) -> None:
                             readiness_error=readiness_error,
                         ),
                     )
+                    _emit_meta_trace(
+                        logger,
+                        "prelaunch ROI cycle invocation finished",
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        readiness_error=readiness_error,
+                    )
 
                 if (
                     not ready_to_launch
@@ -1235,6 +1355,14 @@ def main(argv: list[str] | None = None) -> None:
                         roi_backoff=roi_backoff_triggered,
                         planner_available=planner_cls is not None,
                     ),
+                )
+                _emit_meta_trace(
+                    logger,
+                    "startup readiness evaluation complete",
+                    workflow_count=len(workflows),
+                    ready_to_launch=ready_to_launch,
+                    roi_backoff=roi_backoff_triggered,
+                    planner_available=planner_cls is not None,
                 )
                 logger.info(
                     "🔬 meta-planning readiness diagnostics collected",
