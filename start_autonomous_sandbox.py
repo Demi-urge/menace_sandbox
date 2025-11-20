@@ -840,6 +840,22 @@ def _coordinate_workflows_until_stagnation(
         )
         try:
             records = planner.discover_and_persist(workflows)
+            logger.info(
+                "meta planner cycle executed",  # dense trace per cycle
+                extra=log_record(
+                    event="meta-coordinator-cycle",
+                    cycle=cycle,
+                    budget=budget,
+                    record_count=len(records) if records else 0,
+                    diminishing=len(diminishing),
+                    workflows=list(workflows.keys()),
+                ),
+            )
+            print(
+                "[META-TRACE] planner cycle %d completed; records=%d diminishing=%d"
+                % (cycle, len(records) if records else 0, len(diminishing)),
+                flush=True,
+            )
         except Exception:
             logger.exception(
                 "❌ meta planner coordination failed",
@@ -922,6 +938,11 @@ def _coordinate_workflows_until_stagnation(
                 cycle=cycle,
                 diminishing=len(diminishing),
             )
+            print(
+                "[META-TRACE] record processed; chain=%s roi_gain=%.4f roi_delta=%.4f stagnated=%s streak=%d"
+                % (chain_id, roi_gain, roi_delta, stagnated, streak),
+                flush=True,
+            )
 
             if stagnated and isinstance(chain_id, str):
                 diminishing.add(chain_id)
@@ -961,6 +982,17 @@ def _coordinate_workflows_until_stagnation(
                 total=len(workflows),
                 event="meta-coordinator-incomplete",
             ),
+        )
+        print(
+            "[META-TRACE] diminishing returns incomplete; achieved=%d total=%d"
+            % (len(diminishing), len(workflows)),
+            flush=True,
+        )
+    else:
+        print(
+            "[META-TRACE] diminishing returns reached for all workflows; ready=%s backoff=%s"
+            % (ready, roi_backoff_triggered),
+            flush=True,
         )
 
     _emit_meta_trace(
@@ -1071,6 +1103,18 @@ def main(argv: list[str] | None = None) -> None:
                     improvement_threshold=os.environ.get("META_IMPROVEMENT_THRESHOLD"),
                 )
                 from self_improvement import meta_planning
+                print(
+                    "[META-TRACE] meta_planning module import completed; capturing module attributes",
+                    flush=True,
+                )
+                logger.info(
+                    "meta_planning module imported for autonomous sandbox",
+                    extra=log_record(
+                        event="meta-planning-import",
+                        module=str(meta_planning),
+                        module_dir=list(sorted(dir(meta_planning))),
+                    ),
+                )
                 _emit_meta_trace(
                     logger,
                     "meta planning module imported",
@@ -1082,6 +1126,10 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
                 meta_planning.reload_settings(settings)
+                print(
+                    "[META-TRACE] meta_planning.reload_settings invoked; settings synchronized",
+                    flush=True,
+                )
                 _emit_meta_trace(
                     logger,
                     "meta planning settings reloaded",
@@ -1090,6 +1138,10 @@ def main(argv: list[str] | None = None) -> None:
                     log_level=settings.sandbox_log_level,
                 )
                 workflow_evolver = WorkflowEvolutionManager()
+                print(
+                    "[META-TRACE] WorkflowEvolutionManager instantiated; preparing planner resolution",
+                    flush=True,
+                )
                 _emit_meta_trace(
                     logger,
                     "workflow evolver instantiated for meta planning",
@@ -1097,6 +1149,19 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 planner_cls = meta_planning.resolve_meta_workflow_planner(
                     force_reload=True
+                )
+                logger.info(
+                    "meta workflow planner resolved",  # dense log for planner resolution
+                    extra=log_record(
+                        event="meta-planning-planner-resolved",
+                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                        force_reload=True,
+                    ),
+                )
+                print(
+                    "[META-TRACE] meta workflow planner resolution finished; class=%s"
+                    % getattr(planner_cls, "__name__", str(planner_cls)),
+                    flush=True,
                 )
                 _emit_meta_trace(
                     logger,
@@ -1121,6 +1186,19 @@ def main(argv: list[str] | None = None) -> None:
                         getattr(settings, "meta_planning_interval", 10),
                     )
                 )
+                logger.info(
+                    "meta planning cadence calculated",
+                    extra=log_record(
+                        event="meta-planning-interval",
+                        interval=interval,
+                        source_env=os.getenv("META_PLANNING_INTERVAL"),
+                        settings_interval=getattr(settings, "meta_planning_interval", None),
+                    ),
+                )
+                print(
+                    "[META-TRACE] meta planning interval established at %.2fs" % interval,
+                    flush=True,
+                )
                 discovered_specs = []
                 try:
                     discovered_specs = discover_workflow_specs(logger=logger)
@@ -1137,6 +1215,11 @@ def main(argv: list[str] | None = None) -> None:
                         discovered_count=len(discovered_specs),
                         planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
                     )
+                    print(
+                        "[META-TRACE] workflow discovery finished; discovered=%d"
+                        % len(discovered_specs),
+                        flush=True,
+                    )
                 except Exception:
                     logger.exception(
                         "failed to auto-discover workflow specs",
@@ -1151,6 +1234,19 @@ def main(argv: list[str] | None = None) -> None:
                 recursive_orphans = bool(
                     getattr(settings, "recursive_orphan_scan", False)
                 )
+                logger.info(
+                    "orphan inclusion parameters evaluated",
+                    extra=log_record(
+                        event="orphan-parameters",
+                        include_orphans=include_orphans,
+                        recursive_orphans=recursive_orphans,
+                    ),
+                )
+                print(
+                    "[META-TRACE] orphan settings finalized; include=%s recursive=%s"
+                    % (include_orphans, recursive_orphans),
+                    flush=True,
+                )
                 if include_orphans:
                     try:
                         orphan_modules = integrate_orphans(recursive=recursive_orphans)
@@ -1163,6 +1259,20 @@ def main(argv: list[str] | None = None) -> None:
                             }
                             for module in orphan_modules
                             if isinstance(module, str)
+                        )
+                        logger.info(
+                            "orphan integration completed",
+                            extra=log_record(
+                                event="orphan-integration-complete",
+                                orphan_modules=orphan_modules,
+                                orphan_spec_count=len(orphan_specs),
+                                recursive=recursive_orphans,
+                            ),
+                        )
+                        print(
+                            "[META-TRACE] orphan integration complete; modules=%s specs=%d"
+                            % (orphan_modules, len(orphan_specs)),
+                            flush=True,
                         )
                     except Exception:
                         logger.exception(
@@ -1188,11 +1298,24 @@ def main(argv: list[str] | None = None) -> None:
                                     for module in integrated
                                     if isinstance(module, str)
                                 )
+                                logger.info(
+                                    "recursive orphan scan integrated modules",
+                                    extra=log_record(
+                                        event="recursive-orphan-scan",
+                                        integrated=integrated,
+                                        orphan_spec_count=len(orphan_specs),
+                                    ),
+                                )
+                                print(
+                                    "[META-TRACE] recursive orphan scan added modules=%s"
+                                    % integrated,
+                                    flush=True,
+                                )
                         except Exception:
-                        logger.exception(
-                            "startup recursive orphan scan failed",
-                            extra=log_record(event="startup-orphan-recursive"),
-                        )
+                            logger.exception(
+                                "startup recursive orphan scan failed",
+                                extra=log_record(event="startup-orphan-recursive"),
+                            )
 
                 _emit_meta_trace(
                     logger,
