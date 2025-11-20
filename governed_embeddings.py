@@ -209,6 +209,7 @@ _SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "30"))
 _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_STOP_EVENT: threading.Event | None = None
+_EMBEDDER_DISABLED = False
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
@@ -1192,10 +1193,26 @@ def _identify_embedder_requester() -> str | None:
         del stack
 
 
-def _ensure_embedder_thread_locked() -> threading.Event:
+def _embedder_disabled(stop_event: threading.Event | None = None) -> bool:
+    return _EMBEDDER_DISABLED or _embedder_stop_requested(stop_event)
+
+
+def _ensure_embedder_thread_locked(
+    stop_event: threading.Event | None = None,
+) -> threading.Event:
     """Ensure the background embedder initialisation thread is running."""
 
     global _EMBEDDER_INIT_THREAD, _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_TIMEOUT_REACHED
+
+    if _embedder_disabled(stop_event):
+        _EMBEDDER_INIT_EVENT.set()
+        _trace(
+            "thread.skip",
+            reason="embedder_disabled",
+            disabled=_EMBEDDER_DISABLED,
+            stop_requested=_embedder_stop_requested(stop_event),
+        )
+        return _EMBEDDER_INIT_EVENT
 
     if _EMBEDDER_INIT_THREAD is not None and _EMBEDDER_INIT_THREAD.is_alive():
         _trace("thread.exists", thread_name=_EMBEDDER_INIT_THREAD.name)
@@ -1272,6 +1289,15 @@ def _initialise_embedder_with_timeout(
 
     global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED, _EMBEDDER_STOP_EVENT
 
+    if _embedder_disabled(stop_event):
+        logger.info(
+            "embedder initialisation skipped because embedder is disabled",  # pragma: no cover - logging only
+            extra={"model": _MODEL_NAME},
+        )
+        _EMBEDDER_TIMEOUT_REACHED = True
+        _EMBEDDER_INIT_EVENT.set()
+        return
+
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
             return
@@ -1279,7 +1305,7 @@ def _initialise_embedder_with_timeout(
             _EMBEDDER_STOP_EVENT = None
         if stop_event is not None:
             _EMBEDDER_STOP_EVENT = stop_event
-        event = _ensure_embedder_thread_locked()
+        event = _ensure_embedder_thread_locked(stop_event)
 
     if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
         thread = _EMBEDDER_INIT_THREAD
@@ -1547,6 +1573,7 @@ def _initialise_embedder_with_timeout(
 def _cancel_embedder_initialisation(
     stop_event: threading.Event | None, *, reason: str, join_timeout: float = 2.0
 ) -> None:
+    global _EMBEDDER_INIT_THREAD
     if stop_event is None:
         return
     stop_event.set()
@@ -1565,6 +1592,31 @@ def _cancel_embedder_initialisation(
             "embedder initialisation thread cancelled",
             extra={"model": _MODEL_NAME, "reason": reason},
         )
+    _EMBEDDER_INIT_THREAD = None
+
+
+def disable_embedder(
+    *,
+    reason: str = "disabled",
+    stop_event: threading.Event | None = None,
+    join_timeout: float = 2.0,
+) -> None:
+    """Disable embedder initialisation for the current process."""
+
+    global _EMBEDDER_DISABLED, _EMBEDDER_STOP_EVENT
+    _EMBEDDER_DISABLED = True
+    if stop_event is not None:
+        _EMBEDDER_STOP_EVENT = stop_event
+    _cancel_embedder_initialisation(
+        stop_event or _EMBEDDER_STOP_EVENT,
+        reason=reason,
+        join_timeout=join_timeout,
+    )
+    _EMBEDDER_INIT_EVENT.set()
+    logger.info(
+        "embedder initialisation disabled",  # pragma: no cover - logging only
+        extra={"model": _MODEL_NAME, "reason": reason},
+    )
 
 
 def _embedder_stop_requested(stop_event: threading.Event | None = None) -> bool:
@@ -2011,6 +2063,7 @@ def embedder_diagnostics() -> dict[str, Any]:
     diagnostics: dict[str, Any] = {
         "embedder_ready": _EMBEDDER is not None,
         "fallback_announced": _FALLBACK_ANNOUNCED,
+        "embedder_disabled": _EMBEDDER_DISABLED,
         "timeout_logged": _EMBEDDER_TIMEOUT_LOGGED,
         "timeout_reached": _EMBEDDER_TIMEOUT_REACHED,
     }
@@ -2050,6 +2103,7 @@ __all__ = [
     "governed_embed",
     "get_embedder",
     "cancel_embedder_initialisation",
+    "disable_embedder",
     "embedder_diagnostics",
     "initialise_sentence_transformer",
 ]

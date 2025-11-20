@@ -144,7 +144,7 @@ def _ensure_not_stopped(stop_event: threading.Event | None) -> None:
         raise TimeoutError("initialize_bootstrap_context cancelled via stop event")
 
 
-def _bootstrap_embedder(timeout: float) -> None:
+def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = None) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
     if timeout <= 0:
@@ -154,6 +154,7 @@ def _bootstrap_embedder(timeout: float) -> None:
     try:
         from menace_sandbox.governed_embeddings import (
             cancel_embedder_initialisation,
+            disable_embedder,
             get_embedder,
         )
     except Exception:  # pragma: no cover - optional dependency
@@ -161,7 +162,7 @@ def _bootstrap_embedder(timeout: float) -> None:
         return
 
     result: Dict[str, Any] = {}
-    stop_event = threading.Event()
+    stop_event = stop_event or threading.Event()
 
     def _worker() -> None:
         try:
@@ -180,6 +181,7 @@ def _bootstrap_embedder(timeout: float) -> None:
         )
         stop_event.set()
         cancel_embedder_initialisation(stop_event, reason="bootstrap_timeout", join_timeout=2.0)
+        disable_embedder(reason="bootstrap_timeout")
         thread.join(2.0)
         if thread.is_alive():
             LOGGER.debug(
@@ -229,7 +231,7 @@ def initialize_bootstrap_context(
     _ensure_not_stopped(stop_event)
 
     _mark_bootstrap_step("embedder_preload")
-    _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT)
+    _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT, stop_event=stop_event)
 
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
