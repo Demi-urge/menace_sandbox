@@ -1286,6 +1286,17 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 logger.info(
+                    "🧭 meta-planning gate summary computed; preparing branch selection",
+                    extra=log_record(
+                        event="meta-planning-gate-branch-summary",
+                        ready_to_launch=ready_to_launch,
+                        roi_backoff=roi_backoff_triggered,
+                        planner_available=planner_cls is not None,
+                        workflows_present=bool(workflows),
+                        failure_reasons=failure_reasons,
+                    ),
+                )
+                logger.info(
                     "🔎 launch condition breakdown: workflows=%s, planner=%s, roi_backoff=%s, readiness_error=%s",
                     bool(workflows),
                     bool(planner_cls),
@@ -1396,6 +1407,10 @@ def main(argv: list[str] | None = None) -> None:
                             interval_seconds=interval,
                             workflow_graph_present=workflow_graph_obj is not None,
                             event_bus_available=shared_event_bus is not None,
+                            workflow_graph_nodes=
+                                list(workflow_graph_obj.keys())
+                                if isinstance(workflow_graph_obj, Mapping)
+                                else None,
                         ),
                     )
                     try:
@@ -1406,6 +1421,7 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_count=len(workflows),
                                 planner_cls=str(planner_cls),
                                 interval_seconds=interval,
+                                workflow_graph_present=workflow_graph_obj is not None,
                             ),
                         )
                         logger.info(
@@ -1418,6 +1434,7 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_graph_keys=list((workflow_graph_obj or {}).keys())
                                 if isinstance(workflow_graph_obj, Mapping)
                                 else None,
+                                workflow_graph_type=type(workflow_graph_obj).__name__,
                             ),
                         )
                         thread = meta_planning.start_self_improvement_cycle(
@@ -1442,6 +1459,16 @@ def main(argv: list[str] | None = None) -> None:
                                 extra=log_record(event="meta-planning-thread-none"),
                             )
                             raise RuntimeError("meta planning bootstrap returned None")
+                        logger.info(
+                            "🛰️ meta planning bootstrap returned valid thread object; proceeding to post-call checks",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-post-call",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
+                                alive=getattr(thread, "is_alive", lambda: False)(),
+                                planner_cls=str(planner_cls),
+                            ),
+                        )
                         logger.info(
                             "✅ meta planning bootstrap call returned",
                             extra=log_record(
@@ -1504,6 +1531,15 @@ def main(argv: list[str] | None = None) -> None:
 
                     try:
                         logger.info(
+                            "🧭 entering meta planning thread.start() block",  # explicit boundary marker
+                            extra=log_record(
+                                event="meta-planning-thread-start-boundary",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                daemon=getattr(thread, "daemon", None),
+                                alive_pre=getattr(thread, "is_alive", lambda: False)(),
+                            ),
+                        )
+                        logger.info(
                             "🔧 attempting to start meta planning loop thread",
                             extra=log_record(
                                 event="meta-planning-start-attempt",
@@ -1537,6 +1573,7 @@ def main(argv: list[str] | None = None) -> None:
                                 is_alive=getattr(thread, "is_alive", lambda: False)(),
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
+                                workflow_graph_present=workflow_graph_obj is not None,
                             ),
                         )
                         logger.info(
@@ -1575,6 +1612,16 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
                                 is_alive=getattr(thread, "is_alive", lambda: False)(),
+                            ),
+                        )
+                        logger.info(
+                            "🎯 meta planning start block completed without exceptions; handing off to orchestrator",
+                            extra=log_record(
+                                event="meta-planning-start-block-complete",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                alive=getattr(thread, "is_alive", lambda: False)(),
+                                planner_cls=str(planner_cls),
+                                workflow_ids=list(workflows.keys()),
                             ),
                         )
                     except Exception:
