@@ -8,6 +8,7 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from time import perf_counter
 from typing import Any, Dict
@@ -35,6 +36,7 @@ _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMEOUT = 30.0
+BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
@@ -138,6 +140,53 @@ def _ensure_not_stopped(stop_event: threading.Event | None) -> None:
         raise TimeoutError("initialize_bootstrap_context cancelled via stop event")
 
 
+def _bootstrap_embedder(timeout: float) -> None:
+    """Attempt to initialise the shared embedder without blocking bootstrap."""
+
+    if timeout <= 0:
+        LOGGER.info("bootstrap embedder timeout disabled; skipping embedder preload")
+        return
+
+    try:
+        from menace_sandbox.governed_embeddings import get_embedder
+    except Exception:  # pragma: no cover - optional dependency
+        LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
+        return
+
+    result: Dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            result["embedder"] = get_embedder(timeout=timeout)
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            result["error"] = exc
+
+    thread = threading.Thread(target=_worker, name="bootstrap-embedder", daemon=True)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        LOGGER.warning(
+            "embedding model load exceeded %.1fs during bootstrap; continuing without embedder",
+            timeout,
+        )
+        return
+
+    if "error" in result:
+        LOGGER.info("embedder preload failed; bootstrap will proceed without embeddings")
+        LOGGER.debug("embedder preload error", exc_info=result["error"])
+        return
+
+    embedder = result.get("embedder")
+    if embedder is None:
+        LOGGER.info(
+            "embedder unavailable after %.1fs wait; proceeding without embeddings",
+            timeout,
+        )
+    else:
+        LOGGER.info("bootstrap embedder ready: %s", type(embedder).__name__)
+
+
 def initialize_bootstrap_context(
     bot_name: str = "ResearchAggregatorBot",
     *,
@@ -159,6 +208,9 @@ def initialize_bootstrap_context(
         LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
 
     _ensure_not_stopped(stop_event)
+
+    _mark_bootstrap_step("embedder_preload")
+    _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT)
 
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
