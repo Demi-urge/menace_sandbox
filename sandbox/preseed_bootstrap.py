@@ -34,12 +34,55 @@ LOGGER = logging.getLogger(__name__)
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
+BOOTSTRAP_STEP_TIMEOUT = 30.0
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
     """Record the latest bootstrap step for external visibility."""
 
     BOOTSTRAP_PROGRESS["last_step"] = step_name
+
+
+def _run_with_timeout(
+    fn,
+    *,
+    timeout: float,
+    description: str,
+    abort_on_timeout: bool = True,
+    **kwargs: Any,
+):
+    """Execute ``fn`` with a timeout to avoid indefinite hangs."""
+
+    result: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            result["value"] = fn(**kwargs)
+        except Exception as exc:  # pragma: no cover - error propagation
+            result["exc"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        LOGGER.error(
+            "%s timed out after %.1fs (last_step=%s)",
+            description,
+            timeout,
+            BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+        )
+        if abort_on_timeout:
+            raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
+
+        LOGGER.warning("skipping %s due to timeout", description)
+        return None
+
+    if "exc" in result:
+        LOGGER.exception("%s failed", description, exc_info=result["exc"])
+        raise result["exc"]
+
+    return result.get("value")
 
 
 def _seed_research_aggregator_context(
@@ -177,7 +220,11 @@ def initialize_bootstrap_context(
                 "before _push_bootstrap_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
-            placeholder_context = _push_bootstrap_context(
+            placeholder_context = _run_with_timeout(
+                _push_bootstrap_context,
+                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                description="_push_bootstrap_context placeholder",
+                abort_on_timeout=True,
                 registry=registry,
                 data_bot=data_bot,
                 manager=bootstrap_manager,
@@ -192,7 +239,11 @@ def initialize_bootstrap_context(
                 "before _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
-            _seed_research_aggregator_context(
+            _run_with_timeout(
+                _seed_research_aggregator_context,
+                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                description="_seed_research_aggregator_context placeholder",
+                abort_on_timeout=False,
                 registry=registry,
                 data_bot=data_bot,
                 context_builder=context_builder,
@@ -280,8 +331,15 @@ def initialize_bootstrap_context(
             "before _push_bootstrap_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
-        _push_bootstrap_context(
-            registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
+        _run_with_timeout(
+            _push_bootstrap_context,
+            timeout=BOOTSTRAP_STEP_TIMEOUT,
+            description="_push_bootstrap_context final",
+            abort_on_timeout=True,
+            registry=registry,
+            data_bot=data_bot,
+            manager=manager,
+            pipeline=pipeline,
         )
         LOGGER.info(
             "after _push_bootstrap_context (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
@@ -291,7 +349,11 @@ def initialize_bootstrap_context(
             "before _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
-        _seed_research_aggregator_context(
+        _run_with_timeout(
+            _seed_research_aggregator_context,
+            timeout=BOOTSTRAP_STEP_TIMEOUT,
+            description="_seed_research_aggregator_context final",
+            abort_on_timeout=False,
             registry=registry,
             data_bot=data_bot,
             context_builder=context_builder,
@@ -319,7 +381,9 @@ def initialize_bootstrap_context(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
         )
-        print(f"bootstrap return (last_step={BOOTSTRAP_PROGRESS['last_step']})")
+        LOGGER.info(
+            "bootstrap return (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+        )
         return bootstrap_context
 
 
