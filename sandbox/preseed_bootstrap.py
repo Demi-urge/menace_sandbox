@@ -33,6 +33,13 @@ LOGGER = logging.getLogger(__name__)
 
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
+BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
+
+
+def _mark_bootstrap_step(step_name: str) -> None:
+    """Record the latest bootstrap step for external visibility."""
+
+    BOOTSTRAP_PROGRESS["last_step"] = step_name
 
 
 def _seed_research_aggregator_context(
@@ -119,6 +126,7 @@ def initialize_bootstrap_context(
                 )
                 return cached_context
 
+        _mark_bootstrap_step("context_builder")
         ctx_builder_start = perf_counter()
         try:
             context_builder = create_context_builder()
@@ -127,6 +135,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("context_builder", ctx_builder_start)
 
+        _mark_bootstrap_step("bot_registry")
         registry_start = perf_counter()
         try:
             registry = BotRegistry()
@@ -135,6 +144,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("bot_registry", registry_start)
 
+        _mark_bootstrap_step("data_bot")
         data_bot_start = perf_counter()
         try:
             data_bot = DataBot(start_server=False)
@@ -143,6 +153,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("data_bot", data_bot_start)
 
+        _mark_bootstrap_step("self_coding_engine")
         engine_start = perf_counter()
         try:
             engine = SelfCodingEngine(
@@ -155,6 +166,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("self_coding_engine", engine_start)
 
+        _mark_bootstrap_step("prepare_pipeline")
         with fallback_helper_manager(
             bot_registry=registry, data_bot=data_bot
         ) as bootstrap_manager:
@@ -194,6 +206,7 @@ def initialize_bootstrap_context(
                 _pop_bootstrap_context(placeholder_context)
             _log_step("prepare_pipeline_for_bootstrap", prepare_start)
 
+        _mark_bootstrap_step("threshold_persistence")
         thresholds = get_thresholds(bot_name)
         try:
             persist_sc_thresholds(
@@ -206,6 +219,7 @@ def initialize_bootstrap_context(
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
 
+        _mark_bootstrap_step("internalize_coding_bot")
         internalize_start = perf_counter()
         try:
             manager = internalize_coding_bot(
@@ -223,6 +237,7 @@ def initialize_bootstrap_context(
             LOGGER.exception("internalize_coding_bot failed (step=internalize_coding_bot)")
             raise
         _log_step("internalize_coding_bot", internalize_start)
+        _mark_bootstrap_step("promote_pipeline")
         promote_start = perf_counter()
         try:
             promote_pipeline(manager)
@@ -231,6 +246,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("promote_pipeline", promote_start)
 
+        _mark_bootstrap_step("seed_final_context")
         _push_bootstrap_context(
             registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
         )
