@@ -1422,6 +1422,8 @@ def main(argv: list[str] | None = None) -> None:
                                 planner_cls=str(planner_cls),
                                 interval_seconds=interval,
                                 workflow_graph_present=workflow_graph_obj is not None,
+                                workflow_graph_len=len(workflow_graph_obj or {}),
+                                event_bus_connected=shared_event_bus is not None,
                             ),
                         )
                         logger.info(
@@ -1435,6 +1437,18 @@ def main(argv: list[str] | None = None) -> None:
                                 if isinstance(workflow_graph_obj, Mapping)
                                 else None,
                                 workflow_graph_type=type(workflow_graph_obj).__name__,
+                                event_bus_type=type(shared_event_bus).__name__
+                                if shared_event_bus is not None
+                                else None,
+                            ),
+                        )
+                        logger.info(
+                            "🛰️ verifying start_self_improvement_cycle callable availability before invoke",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-pre-call-verify",
+                                callable_present=hasattr(meta_planning, "start_self_improvement_cycle"),
+                                planner_cls=str(planner_cls),
+                                workflow_count=len(workflows),
                             ),
                         )
                         thread = meta_planning.start_self_improvement_cycle(
@@ -1449,6 +1463,7 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-bootstrap-returned",
                                 thread_is_none=thread is None,
                                 thread_type=type(thread).__name__ if thread is not None else None,
+                                thread_dir=list(sorted(set(dir(thread)) if thread is not None else [])),
                                 workflow_count=len(workflows),
                                 interval_seconds=interval,
                             ),
@@ -1456,7 +1471,11 @@ def main(argv: list[str] | None = None) -> None:
                         if thread is None:
                             logger.error(
                                 "❌ meta planning bootstrap returned None thread",
-                                extra=log_record(event="meta-planning-thread-none"),
+                                extra=log_record(
+                                    event="meta-planning-thread-none",
+                                    planner_cls=str(planner_cls),
+                                    workflow_ids=list(workflows.keys()),
+                                ),
                             )
                             raise RuntimeError("meta planning bootstrap returned None")
                         logger.info(
@@ -1467,6 +1486,10 @@ def main(argv: list[str] | None = None) -> None:
                                 daemon=getattr(thread, "daemon", None),
                                 alive=getattr(thread, "is_alive", lambda: False)(),
                                 planner_cls=str(planner_cls),
+                                workflow_ids=list(workflows.keys()),
+                                event_bus_type=type(shared_event_bus).__name__
+                                if shared_event_bus is not None
+                                else None,
                             ),
                         )
                         logger.info(
@@ -1475,6 +1498,7 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-bootstrap-return",
                                 thread_repr=repr(thread),
                                 thread_name=getattr(thread, "name", "unknown"),
+                                thread_ident=getattr(thread, "ident", None),
                             ),
                         )
                         logger.info(
@@ -1485,6 +1509,7 @@ def main(argv: list[str] | None = None) -> None:
                                 daemon=getattr(thread, "daemon", None),
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
+                                target=getattr(thread, "_target", None),
                             ),
                         )
                         logger.info(
@@ -1494,6 +1519,7 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
                                 alive=getattr(thread, "is_alive", lambda: False)(),
+                                thread_ident=getattr(thread, "ident", None),
                             ),
                         )
                         logger.info(
@@ -1503,9 +1529,10 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
                                 planner_cls=str(planner_cls),
+                                alive_pre_start=getattr(thread, "is_alive", lambda: False)(),
                             ),
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "❌ meta planning loop bootstrap failed; thread object missing",
                             extra=log_record(
@@ -1513,6 +1540,8 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_count=len(workflows),
                                 planner_cls=str(planner_cls),
                                 interval_seconds=interval,
+                                error_type=type(exc).__name__,
+                                error_message=str(exc),
                             ),
                         )
                         logger.exception(
@@ -1521,6 +1550,7 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-thread-invalid",
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
+                                error_type=type(exc).__name__,
                             ),
                         )
                         logger.exception(
