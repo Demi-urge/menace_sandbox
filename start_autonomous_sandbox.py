@@ -456,7 +456,86 @@ def _roi_baseline_available() -> bool:
             resolve_path("workflow_roi_history.json"),
         )
     )
-    return history_path.exists()
+
+    if not history_path.exists():
+        LOGGER.warning(
+            "prelaunch ROI baseline unavailable: history file missing; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-missing",
+                history_path=str(history_path),
+            ),
+        )
+        return False
+
+    try:
+        raw = history_path.read_text()
+    except Exception:
+        LOGGER.exception(
+            "prelaunch ROI baseline unavailable: unable to read history file; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-read-error",
+                history_path=str(history_path),
+            ),
+        )
+        return False
+
+    if not raw.strip():
+        LOGGER.warning(
+            "prelaunch ROI baseline unavailable: history file is empty; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-empty",
+                history_path=str(history_path),
+            ),
+        )
+        return False
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        LOGGER.warning(
+            "prelaunch ROI baseline unavailable: history file contains invalid JSON; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-invalid-json",
+                history_path=str(history_path),
+            ),
+        )
+        return False
+
+    if not isinstance(data, Mapping):
+        LOGGER.warning(
+            "prelaunch ROI baseline unavailable: unexpected history format; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-invalid-format",
+                history_path=str(history_path),
+                data_type=type(data).__name__,
+            ),
+        )
+        return False
+
+    valid_entries = 0
+    for _, values in data.items():
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+            continue
+
+        for value in values:
+            try:
+                float(value)
+            except Exception:
+                continue
+            valid_entries += 1
+            break
+
+    if not valid_entries:
+        LOGGER.warning(
+            "prelaunch ROI baseline unavailable: no valid ROI entries found; forcing bootstrap mode",
+            extra=log_record(
+                event="roi-baseline-empty-data",
+                history_path=str(history_path),
+            ),
+        )
+        return False
+
+    return True
 
 
 def _run_prelaunch_improvement_cycles(
