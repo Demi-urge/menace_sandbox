@@ -1411,6 +1411,16 @@ def main(argv: list[str] | None = None) -> None:
                                 list(workflow_graph_obj.keys())
                                 if isinstance(workflow_graph_obj, Mapping)
                                 else None,
+                            workflow_graph_type=type(workflow_graph_obj).__name__,
+                            workflow_graph_is_graph=(
+                                getattr(workflow_graph_obj, "graph", None) is not None
+                            ),
+                            event_bus_type=type(shared_event_bus).__name__
+                            if shared_event_bus is not None
+                            else None,
+                            event_bus_handlers=getattr(
+                                shared_event_bus, "listeners", None
+                            ),
                         ),
                     )
                     try:
@@ -1424,6 +1434,18 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_graph_present=workflow_graph_obj is not None,
                                 workflow_graph_len=len(workflow_graph_obj or {}),
                                 event_bus_connected=shared_event_bus is not None,
+                            ),
+                        )
+                        logger.info(
+                            "🛰️ recording meta planning invocation parameters for traceability",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-args",
+                                workflow_ids=list(workflows.keys()),
+                                workflow_count=len(workflows),
+                                interval_seconds=interval,
+                                planner_cls=str(planner_cls),
+                                workflow_graph_repr=repr(workflow_graph_obj),
+                                event_bus_repr=repr(shared_event_bus),
                             ),
                         )
                         logger.info(
@@ -1449,8 +1471,46 @@ def main(argv: list[str] | None = None) -> None:
                                 callable_present=hasattr(meta_planning, "start_self_improvement_cycle"),
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
+                                callable_object=getattr(
+                                    meta_planning, "start_self_improvement_cycle", None
+                                ),
+                                callable_is_function=callable(
+                                    getattr(
+                                        meta_planning, "start_self_improvement_cycle", None
+                                    )
+                                ),
                             ),
                         )
+                        if not hasattr(meta_planning, "start_self_improvement_cycle"):
+                            logger.error(
+                                "❌ start_self_improvement_cycle missing on meta_planning module",
+                                extra=log_record(
+                                    event="meta-planning-missing-entrypoint",
+                                    module_dir=list(dir(meta_planning)),
+                                    planner_cls=str(planner_cls),
+                                ),
+                            )
+                            raise RuntimeError(
+                                "start_self_improvement_cycle missing on meta_planning"
+                            )
+                        if not callable(
+                            getattr(meta_planning, "start_self_improvement_cycle", None)
+                        ):
+                            logger.error(
+                                "❌ start_self_improvement_cycle present but not callable",
+                                extra=log_record(
+                                    event="meta-planning-entrypoint-not-callable",
+                                    type_info=type(
+                                        getattr(
+                                            meta_planning, "start_self_improvement_cycle", None
+                                        )
+                                    ).__name__,
+                                    planner_cls=str(planner_cls),
+                                ),
+                            )
+                            raise RuntimeError(
+                                "start_self_improvement_cycle is not callable"
+                            )
                         thread = meta_planning.start_self_improvement_cycle(
                             workflows,
                             event_bus=shared_event_bus,
@@ -1466,6 +1526,9 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_dir=list(sorted(set(dir(thread)) if thread is not None else [])),
                                 workflow_count=len(workflows),
                                 interval_seconds=interval,
+                                thread_target=getattr(thread, "_target", None),
+                                thread_args=getattr(thread, "_args", None),
+                                thread_kwargs=getattr(thread, "_kwargs", None),
                             ),
                         )
                         if thread is None:
@@ -1510,6 +1573,8 @@ def main(argv: list[str] | None = None) -> None:
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
                                 target=getattr(thread, "_target", None),
+                                native_id=getattr(thread, "native_id", None),
+                                ident=getattr(thread, "ident", None),
                             ),
                         )
                         logger.info(
@@ -1520,6 +1585,7 @@ def main(argv: list[str] | None = None) -> None:
                                 daemon=getattr(thread, "daemon", None),
                                 alive=getattr(thread, "is_alive", lambda: False)(),
                                 thread_ident=getattr(thread, "ident", None),
+                                native_id=getattr(thread, "native_id", None),
                             ),
                         )
                         logger.info(
@@ -1604,6 +1670,7 @@ def main(argv: list[str] | None = None) -> None:
                                 planner_cls=str(planner_cls),
                                 workflow_count=len(workflows),
                                 workflow_graph_present=workflow_graph_obj is not None,
+                                native_id=getattr(thread, "native_id", None),
                             ),
                         )
                         logger.info(
