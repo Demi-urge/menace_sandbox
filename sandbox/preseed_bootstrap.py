@@ -133,8 +133,16 @@ def _seed_research_aggregator_context(
         LOGGER.debug("unable to seed research aggregator runtime state", exc_info=True)
 
 
+def _ensure_not_stopped(stop_event: threading.Event | None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        raise TimeoutError("initialize_bootstrap_context cancelled via stop event")
+
+
 def initialize_bootstrap_context(
-    bot_name: str = "ResearchAggregatorBot", *, use_cache: bool = True
+    bot_name: str = "ResearchAggregatorBot",
+    *,
+    use_cache: bool = True,
+    stop_event: threading.Event | None = None,
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
@@ -150,6 +158,8 @@ def initialize_bootstrap_context(
     def _log_step(step_name: str, start_time: float) -> None:
         LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
 
+    _ensure_not_stopped(stop_event)
+
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
         if cached_context:
@@ -160,6 +170,7 @@ def initialize_bootstrap_context(
             return cached_context
 
     with _BOOTSTRAP_CACHE_LOCK:
+        _ensure_not_stopped(stop_event)
         if use_cache:
             cached_context = _BOOTSTRAP_CACHE.get(bot_name)
             if cached_context:
@@ -169,6 +180,7 @@ def initialize_bootstrap_context(
                 )
                 return cached_context
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("context_builder")
         ctx_builder_start = perf_counter()
         try:
@@ -178,6 +190,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("context_builder", ctx_builder_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("bot_registry")
         registry_start = perf_counter()
         try:
@@ -187,6 +200,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("bot_registry", registry_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("data_bot")
         data_bot_start = perf_counter()
         try:
@@ -196,6 +210,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("data_bot", data_bot_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("self_coding_engine")
         engine_start = perf_counter()
         try:
@@ -209,6 +224,7 @@ def initialize_bootstrap_context(
             raise
         _log_step("self_coding_engine", engine_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("prepare_pipeline")
         with fallback_helper_manager(
             bot_registry=registry, data_bot=data_bot
@@ -273,6 +289,7 @@ def initialize_bootstrap_context(
                 _pop_bootstrap_context(placeholder_context)
             _log_step("prepare_pipeline_for_bootstrap", prepare_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("threshold_persistence")
         thresholds = get_thresholds(bot_name)
         try:
@@ -286,6 +303,7 @@ def initialize_bootstrap_context(
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("internalize_coding_bot")
         internalize_start = perf_counter()
         try:
@@ -311,6 +329,7 @@ def initialize_bootstrap_context(
             "after internalize_coding_bot (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
         )
         _log_step("internalize_coding_bot", internalize_start)
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("promote_pipeline")
         promote_start = perf_counter()
         try:
@@ -326,6 +345,7 @@ def initialize_bootstrap_context(
         )
         _log_step("promote_pipeline", promote_start)
 
+        _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("seed_final_context")
         LOGGER.info(
             "before _push_bootstrap_context (last_step=%s)",
