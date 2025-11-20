@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from time import perf_counter
 from typing import Any, Dict
 
 from menace_sandbox.bot_registry import BotRegistry
@@ -96,6 +97,9 @@ def initialize_bootstrap_context(
 
     global _BOOTSTRAP_CACHE
 
+    def _log_step(step_name: str, start_time: float) -> None:
+        LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
+
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
         if cached_context:
@@ -115,14 +119,41 @@ def initialize_bootstrap_context(
                 )
                 return cached_context
 
-        context_builder = create_context_builder()
-        registry = BotRegistry()
-        data_bot = DataBot(start_server=False)
-        engine = SelfCodingEngine(
-            CodeDB(),
-            MenaceMemoryManager(),
-            context_builder=context_builder,
-        )
+        ctx_builder_start = perf_counter()
+        try:
+            context_builder = create_context_builder()
+        except Exception:
+            LOGGER.exception("context_builder creation failed (step=context_builder)")
+            raise
+        _log_step("context_builder", ctx_builder_start)
+
+        registry_start = perf_counter()
+        try:
+            registry = BotRegistry()
+        except Exception:
+            LOGGER.exception("BotRegistry initialization failed (step=bot_registry)")
+            raise
+        _log_step("bot_registry", registry_start)
+
+        data_bot_start = perf_counter()
+        try:
+            data_bot = DataBot(start_server=False)
+        except Exception:
+            LOGGER.exception("DataBot setup failed (step=data_bot)")
+            raise
+        _log_step("data_bot", data_bot_start)
+
+        engine_start = perf_counter()
+        try:
+            engine = SelfCodingEngine(
+                CodeDB(),
+                MenaceMemoryManager(),
+                context_builder=context_builder,
+            )
+        except Exception:
+            LOGGER.exception("SelfCodingEngine instantiation failed (step=self_coding_engine)")
+            raise
+        _log_step("self_coding_engine", engine_start)
 
         with fallback_helper_manager(
             bot_registry=registry, data_bot=data_bot
@@ -136,6 +167,7 @@ def initialize_bootstrap_context(
                 manager=bootstrap_manager,
                 pipeline=bootstrap_manager,
             )
+            LOGGER.info("_push_bootstrap_context completed (step=push_placeholder)")
             _seed_research_aggregator_context(
                 registry=registry,
                 data_bot=data_bot,
@@ -145,6 +177,7 @@ def initialize_bootstrap_context(
                 manager=bootstrap_manager,
             )
             LOGGER.info("invoking prepare_pipeline_for_bootstrap after bootstrap seeding")
+            prepare_start = perf_counter()
             try:
                 pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
                     pipeline_cls=ModelAutomationPipeline,
@@ -154,8 +187,12 @@ def initialize_bootstrap_context(
                     bootstrap_runtime_manager=bootstrap_manager,
                     manager=bootstrap_manager,
                 )
+            except Exception:
+                LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
+                raise
             finally:
                 _pop_bootstrap_context(placeholder_context)
+            _log_step("prepare_pipeline_for_bootstrap", prepare_start)
 
         thresholds = get_thresholds(bot_name)
         try:
@@ -165,25 +202,39 @@ def initialize_bootstrap_context(
                 error_increase=thresholds.error_increase,
                 test_failure_increase=thresholds.test_failure_increase,
             )
+            LOGGER.info("persist_sc_thresholds completed (step=threshold_persistence)")
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
 
-        manager = internalize_coding_bot(
-            bot_name,
-            engine,
-            pipeline,
-            data_bot=data_bot,
-            bot_registry=registry,
-            threshold_service=ThresholdService(),
-            roi_threshold=thresholds.roi_drop,
-            error_threshold=thresholds.error_increase,
-            test_failure_threshold=thresholds.test_failure_increase,
-        )
-        promote_pipeline(manager)
+        internalize_start = perf_counter()
+        try:
+            manager = internalize_coding_bot(
+                bot_name,
+                engine,
+                pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                threshold_service=ThresholdService(),
+                roi_threshold=thresholds.roi_drop,
+                error_threshold=thresholds.error_increase,
+                test_failure_threshold=thresholds.test_failure_increase,
+            )
+        except Exception:
+            LOGGER.exception("internalize_coding_bot failed (step=internalize_coding_bot)")
+            raise
+        _log_step("internalize_coding_bot", internalize_start)
+        promote_start = perf_counter()
+        try:
+            promote_pipeline(manager)
+        except Exception:
+            LOGGER.exception("promote_pipeline failed (step=promote_pipeline)")
+            raise
+        _log_step("promote_pipeline", promote_start)
 
         _push_bootstrap_context(
             registry=registry, data_bot=data_bot, manager=manager, pipeline=pipeline
         )
+        LOGGER.info("_push_bootstrap_context completed (step=push_final_context)")
         _seed_research_aggregator_context(
             registry=registry,
             data_bot=data_bot,
@@ -192,6 +243,7 @@ def initialize_bootstrap_context(
             pipeline=pipeline,
             manager=manager,
         )
+        LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
 
         bootstrap_context = {
             "registry": registry,
@@ -203,6 +255,10 @@ def initialize_bootstrap_context(
         }
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+        LOGGER.info(
+            "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
+            bot_name,
+        )
         return bootstrap_context
 
 
