@@ -208,6 +208,7 @@ _MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
 _SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "30"))
 _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
+_EMBEDDER_STOP_EVENT: threading.Event | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
@@ -1212,8 +1213,15 @@ def _ensure_embedder_thread_locked() -> threading.Event:
         _trace("thread.loader.start")
         logger.info("embedder initialisation thread started", extra={"model": _MODEL_NAME})
         try:
-            result = _load_embedder()
-            if result is not None:
+            if _embedder_stop_requested():
+                logger.info(
+                    "embedder initialisation cancelled before start",
+                    extra={"model": _MODEL_NAME},
+                )
+                _trace("thread.loader.cancelled", reason="pre-start")
+                return
+            result = _load_embedder(stop_event=_EMBEDDER_STOP_EVENT)
+            if result is not None and not _embedder_stop_requested():
                 _EMBEDDER = result
         except Exception:  # pragma: no cover - defensive logging
             logger.debug("sentence transformer initialisation raised", exc_info=True)
@@ -1252,6 +1260,7 @@ def _initialise_embedder_with_timeout(
     *,
     suppress_timeout_log: bool = False,
     requester: str | None = None,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Initialise the shared embedder without blocking indefinitely.
 
@@ -1266,6 +1275,11 @@ def _initialise_embedder_with_timeout(
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
             return
+        if stop_event is None and _EMBEDDER_STOP_EVENT is not None and _EMBEDDER_STOP_EVENT.is_set():
+            _EMBEDDER_STOP_EVENT = None
+        if stop_event is not None:
+            global _EMBEDDER_STOP_EVENT
+            _EMBEDDER_STOP_EVENT = stop_event
         event = _ensure_embedder_thread_locked()
 
     if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
@@ -1445,6 +1459,7 @@ def _initialise_embedder_with_timeout(
         return
 
     _dump_embedder_thread("wait_timeout", waited or wait_time or 0.0)
+    _cancel_embedder_initialisation(stop_event, reason="wait_timeout")
     cleaned = _force_cleanup_embedder_locks()
     if cleaned:
         _trace(
@@ -1527,12 +1542,46 @@ def _initialise_embedder_with_timeout(
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
+        _cancel_embedder_initialisation(stop_event, reason="timeout_logged")
 
 
-def _load_embedder() -> SentenceTransformer | None:
+def _cancel_embedder_initialisation(
+    stop_event: threading.Event | None, *, reason: str, join_timeout: float = 2.0
+) -> None:
+    if stop_event is None:
+        return
+    stop_event.set()
+    _EMBEDDER_INIT_EVENT.set()
+    thread = _EMBEDDER_INIT_THREAD
+    if thread is None:
+        return
+    thread.join(join_timeout)
+    if thread.is_alive():
+        logger.debug(
+            "embedder initialisation thread still running after cancellation",
+            extra={"model": _MODEL_NAME, "reason": reason, "timeout": join_timeout},
+        )
+    else:
+        logger.info(
+            "embedder initialisation thread cancelled",
+            extra={"model": _MODEL_NAME, "reason": reason},
+        )
+
+
+def _embedder_stop_requested(stop_event: threading.Event | None = None) -> bool:
+    event = stop_event if stop_event is not None else _EMBEDDER_STOP_EVENT
+    return bool(event and event.is_set())
+
+
+def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransformer | None:
     """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
 
     global model
+
+    if _embedder_stop_requested(stop_event):
+        logger.info("embedder initialisation cancelled", extra={"model": _MODEL_NAME})
+        _trace("load.cancelled")
+        return None
 
     if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
         fallback = _load_bundled_embedder()
@@ -1708,6 +1757,14 @@ def _load_embedder() -> SentenceTransformer | None:
         os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", token)
         os.environ.setdefault("HF_HUB_TOKEN", token)
 
+    if _embedder_stop_requested(stop_event):
+        logger.info(
+            "embedder initialisation cancelled before hub load",
+            extra={"model": _MODEL_NAME},
+        )
+        _trace("load.cancelled", stage="hub")
+        return None
+
     try:
         logger.info(
             "loading sentence transformer via hub",
@@ -1803,7 +1860,9 @@ def _load_embedder() -> SentenceTransformer | None:
         return None
 
 
-def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
+def get_embedder(
+    timeout: float | None = None, *, stop_event: threading.Event | None = None
+) -> SentenceTransformer | None:
     """Return a lazily-instantiated shared :class:`SentenceTransformer`.
 
     The model is created on first use and reused for subsequent calls.  Errors
@@ -1852,6 +1911,7 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
             timeout_override=wait_override,
             suppress_timeout_log=wait_override is not None,
             requester=requester,
+            stop_event=stop_event,
         )
         return _EMBEDDER
 
@@ -1863,6 +1923,7 @@ def get_embedder(timeout: float | None = None) -> SentenceTransformer | None:
                     timeout_override=wait_override,
                     suppress_timeout_log=wait_override is not None,
                     requester=requester,
+                    stop_event=stop_event,
                 )
                 break
         except LockTimeout:
@@ -1967,12 +2028,29 @@ def embedder_diagnostics() -> dict[str, Any]:
     return diagnostics
 
 
+def cancel_embedder_initialisation(
+    stop_event: threading.Event | None = None,
+    *,
+    reason: str = "requested",
+    join_timeout: float = 2.0,
+) -> None:
+    """Signal the embedder initialisation thread to stop and wait briefly."""
+
+    if stop_event is None:
+        stop_event = _EMBEDDER_STOP_EVENT
+    else:
+        global _EMBEDDER_STOP_EVENT
+        _EMBEDDER_STOP_EVENT = stop_event
+    _cancel_embedder_initialisation(stop_event, reason=reason, join_timeout=join_timeout)
+
+
 __all__ = [
     "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
     "canonical_model_id",
     "SENTENCE_TRANSFORMER_DEVICE",
     "governed_embed",
     "get_embedder",
+    "cancel_embedder_initialisation",
     "embedder_diagnostics",
     "initialise_sentence_transformer",
 ]

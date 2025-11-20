@@ -152,16 +152,20 @@ def _bootstrap_embedder(timeout: float) -> None:
         return
 
     try:
-        from menace_sandbox.governed_embeddings import get_embedder
+        from menace_sandbox.governed_embeddings import (
+            cancel_embedder_initialisation,
+            get_embedder,
+        )
     except Exception:  # pragma: no cover - optional dependency
         LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
         return
 
     result: Dict[str, Any] = {}
+    stop_event = threading.Event()
 
     def _worker() -> None:
         try:
-            result["embedder"] = get_embedder(timeout=timeout)
+            result["embedder"] = get_embedder(timeout=timeout, stop_event=stop_event)
         except Exception as exc:  # pragma: no cover - diagnostics only
             result["error"] = exc
 
@@ -174,6 +178,16 @@ def _bootstrap_embedder(timeout: float) -> None:
             "embedding model load exceeded %.1fs during bootstrap; continuing without embedder",
             timeout,
         )
+        stop_event.set()
+        cancel_embedder_initialisation(stop_event, reason="bootstrap_timeout", join_timeout=2.0)
+        thread.join(2.0)
+        if thread.is_alive():
+            LOGGER.debug(
+                "bootstrap embedder preload worker still running after cancellation",
+                extra={"timeout": timeout},
+            )
+        else:
+            LOGGER.info("bootstrap embedder preload worker cancelled due to timeout")
         return
 
     if "error" in result:
