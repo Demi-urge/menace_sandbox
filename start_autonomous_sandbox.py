@@ -1210,6 +1210,25 @@ def main(argv: list[str] | None = None) -> None:
                         readiness_error=readiness_error,
                     ),
                 )
+                gating_checklist = {
+                    "workflows_present": bool(workflows),
+                    "planner_resolved": planner_cls is not None,
+                    "roi_gate_clear": ready_to_launch,
+                    "roi_backoff_clear": not roi_backoff_triggered,
+                }
+                for check, passed in gating_checklist.items():
+                    logger.info(
+                        "✅ gating checkpoint passed: %s" % check
+                        if passed
+                        else "❌ gating checkpoint failed: %s" % check,
+                        extra=log_record(
+                            event="meta-planning-gate-check", check=check, passed=passed
+                        ),
+                    )
+                logger.info(
+                    "🔦 meta-planning gate checklist compiled",
+                    extra=log_record(event="meta-planning-gate-checklist", **gating_checklist),
+                )
                 logger.info(
                     "✅ meta planning gate decision computed; entering final launch guard",
                     extra=log_record(
@@ -1245,6 +1264,27 @@ def main(argv: list[str] | None = None) -> None:
                             readiness_error=readiness_error,
                         ),
                     )
+                failure_reasons: list[str] = []
+                if not workflows:
+                    failure_reasons.append("no workflows discovered for meta planning")
+                if planner_cls is None:
+                    failure_reasons.append("MetaWorkflowPlanner unresolved")
+                if roi_backoff_triggered:
+                    failure_reasons.append("ROI backoff triggered before launch")
+                if readiness_error:
+                    failure_reasons.append(readiness_error)
+                if not ready_to_launch and not readiness_error:
+                    failure_reasons.append(
+                        "workflows did not meet diminishing returns threshold"
+                    )
+                logger.info(
+                    "🔦 meta-planning gate failure reasons compiled",
+                    extra=log_record(
+                        event="meta-planning-gate-failure-reasons",
+                        failure_reasons=failure_reasons,
+                        checklist=gating_checklist,
+                    ),
+                )
                 logger.info(
                     "🔎 launch condition breakdown: workflows=%s, planner=%s, roi_backoff=%s, readiness_error=%s",
                     bool(workflows),
@@ -1307,6 +1347,14 @@ def main(argv: list[str] | None = None) -> None:
                             interval_seconds=interval,
                             workflow_ids=list(workflows.keys()),
                             workflow_graph_built=workflow_graph_obj is not None,
+                        ),
+                    )
+                    logger.info(
+                        "✅ gating checklist satisfied; proceeding to meta planning bootstrap",
+                        extra=log_record(
+                            event="meta-planning-gate-green-checklist",
+                            checklist=gating_checklist,
+                            workflow_ids=list(workflows.keys()),
                         ),
                     )
                     logger.info(
@@ -1452,6 +1500,27 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-thread-alive",
                                 thread_name=getattr(thread, "name", "unknown"),
                                 is_alive=getattr(thread, "is_alive", lambda: False)(),
+                            ),
+                        )
+                        alive_state = getattr(thread, "is_alive", lambda: False)()
+                        if not alive_state:
+                            logger.error(
+                                "❌ meta planning loop thread reported not alive after start",
+                                extra=log_record(
+                                    event="meta-planning-thread-not-alive",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                ),
+                            )
+                            raise RuntimeError("meta planning loop thread failed to stay alive")
+                        logger.info(
+                            "✅ meta planning loop thread alive verification passed",
+                            extra=log_record(
+                                event="meta-planning-thread-alive-verified",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                planner_cls=str(planner_cls),
+                                workflow_count=len(workflows),
                             ),
                         )
                         logger.info(
