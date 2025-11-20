@@ -770,6 +770,15 @@ def _coordinate_workflows_until_stagnation(
         "🔍 attempting to initialize meta planner for ROI coordination",
         extra=log_record(event="meta-coordinator-init-begin"),
     )
+    print(
+        "[META-TRACE] initializing meta planner class=%s continuous_monitor=%s cycle_budget=%s"
+        % (
+            getattr(planner_cls, "__name__", str(planner_cls)),
+            continuous_monitor,
+            cycle_budget,
+        ),
+        flush=True,
+    )
     try:
         planner = planner_cls(context_builder=create_context_builder())
         logger.info(
@@ -783,6 +792,11 @@ def _coordinate_workflows_until_stagnation(
             continuous_monitor=continuous_monitor,
             cycle_budget=cycle_budget,
             workflow_count=len(workflows),
+        )
+        print(
+            "[META-TRACE] meta planner instantiated with workflows=%d context_builder_ready=%s"
+            % (len(workflows), hasattr(planner, "context_builder")),
+            flush=True,
         )
     except Exception:
         logger.exception(
@@ -806,6 +820,10 @@ def _coordinate_workflows_until_stagnation(
                     value=value,
                 ),
             )
+            print(
+                "[META-TRACE] planner attribute %s set to %s" % (name, value),
+                flush=True,
+            )
             _emit_meta_trace(
                 logger,
                 "planner attribute updated",
@@ -824,10 +842,19 @@ def _coordinate_workflows_until_stagnation(
                 setting=name,
                 planner_class=getattr(planner_cls, "__name__", str(planner_cls)),
             )
+            print(
+                "[META-TRACE] planner missing attribute %s; leaving default" % name,
+                flush=True,
+            )
 
     diminishing: set[str] = set()
     roi_backoff_triggered = False
     budget = cycle_budget or max(len(workflows) * streak_required * 2, 3)
+    print(
+        "[META-TRACE] planner cycle budget established at %d (workflows=%d streak_required=%d threshold=%.4f)"
+        % (budget, len(workflows), streak_required, threshold),
+        flush=True,
+    )
 
     for cycle in range(budget):
         _emit_meta_trace(
@@ -854,6 +881,10 @@ def _coordinate_workflows_until_stagnation(
             print(
                 "[META-TRACE] planner cycle %d completed; records=%d diminishing=%d"
                 % (cycle, len(records) if records else 0, len(diminishing)),
+                flush=True,
+            )
+            print(
+                "[META-TRACE] planner cycle %d outputs=%s" % (cycle, records),
                 flush=True,
             )
         except Exception:
@@ -971,6 +1002,11 @@ def _coordinate_workflows_until_stagnation(
                 break
 
         if roi_backoff_triggered or len(diminishing) >= len(workflows):
+            print(
+                "[META-TRACE] planner terminating early; roi_backoff=%s diminishing=%d/%d"
+                % (roi_backoff_triggered, len(diminishing), len(workflows)),
+                flush=True,
+            )
             break
 
     ready = len(diminishing) >= len(workflows)
@@ -1003,6 +1039,11 @@ def _coordinate_workflows_until_stagnation(
         diminishing=len(diminishing),
         workflow_count=len(workflows),
         cycles_budget=budget,
+    )
+    print(
+        "[META-TRACE] meta coordination complete; ready=%s roi_backoff=%s diminishing=%d/%d"
+        % (ready, roi_backoff_triggered, len(diminishing), len(workflows)),
+        flush=True,
     )
 
     return ready, roi_backoff_triggered
