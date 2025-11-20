@@ -20,7 +20,7 @@ from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
 from vector_utils import persist_embedding, cosine_similarity
 from cache_utils import get_cached_chain, set_cached_chain
-from logging_utils import get_logger
+from logging_utils import get_logger, log_record
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -28,6 +28,15 @@ except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
 logger = get_logger(__name__)
+
+
+def _dense_trace(message: str, **details: Any) -> None:
+    """Emit a noisy, high fidelity trace for meta planner actions."""
+
+    payload = log_record(event="meta-planner-trace", **details)
+    logger.info(message, extra=payload)
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(details.items()))
+    print(f"[META-TRACE] {message} :: {summary}", flush=True)
 
 # Decay factor applied when persisting/loading cluster metrics to favor recent runs
 _DECAY_FACTOR = 0.9
@@ -160,40 +169,69 @@ class MetaWorkflowPlanner:
         if self.graph is None:
             try:
                 self.graph = WorkflowGraph()
+                _dense_trace("workflow graph initialized", has_networkx=_HAS_NX)
             except Exception:
                 self.graph = None
+                _dense_trace("workflow graph initialization failed; graph disabled")
         if self.roi_db is None:
             try:
                 self.roi_db = ROIResultsDB()
+                _dense_trace(
+                    "ROI results database initialized",
+                    roi_path=getattr(self.roi_db, "db_path", "unknown"),
+                )
             except Exception:
                 self.roi_db = None
+                _dense_trace("ROI results database unavailable; continuing without persistence")
         if self.roi_tracker is None and ROITracker is not None:
             try:
                 self.roi_tracker = ROITracker(
                     window=self.roi_window, results_db=self.roi_db
                 )
+                _dense_trace(
+                    "ROI tracker configured",
+                    window=self.roi_window,
+                    results_db_available=self.roi_db is not None,
+                )
             except Exception:
                 self.roi_tracker = None
+                _dense_trace("ROI tracker configuration failed; tracker disabled")
         if self.stability_db is None and WorkflowStabilityDB is not None:
             try:
                 self.stability_db = WorkflowStabilityDB()
+                _dense_trace(
+                    "stability database initialized",
+                    db_path=getattr(self.stability_db, "db_path", "unknown"),
+                )
             except Exception:
                 self.stability_db = None
+                _dense_trace("stability database unavailable; skipping resilience tracking")
         if self.code_db is None and CodeDB is not None:
             try:
                 self.code_db = CodeDB()
+                _dense_trace("code database initialized", db_path=getattr(self.code_db, "db_path", "unknown"))
             except Exception:
                 self.code_db = None
+                _dense_trace("code database unavailable; disabling code context enrichment")
         if self.context_builder is None:
             raise ValueError("context_builder is required")
         if not hasattr(self.context_builder, "build"):
             raise TypeError("context_builder must implement build()")
         try:
             ensure_fresh_weights(self.context_builder)
+            _dense_trace("context builder weights refreshed", builder_type=type(self.context_builder).__name__)
         except Exception as exc:
             logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
         self._load_cluster_map()
+        _dense_trace(
+            "meta planner bootstrap complete",
+            graph_ready=self.graph is not None,
+            roi_db_ready=self.roi_db is not None,
+            roi_tracker_ready=self.roi_tracker is not None,
+            stability_db_ready=self.stability_db is not None,
+            code_db_ready=self.code_db is not None,
+        )
 
     # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:
@@ -207,13 +245,27 @@ class MetaWorkflowPlanner:
         if self.roi_tracker is not None:
             try:
                 self.roi_tracker.set_run_context(workflow_id, run_id, self.roi_db)
+                _dense_trace(
+                    "ROI tracker run context set",
+                    workflow_id=workflow_id,
+                    run_id=run_id,
+                    roi_db_available=self.roi_db is not None,
+                )
             except Exception:
                 logger.exception("failed to configure ROITracker run context")
+                _dense_trace(
+                    "ROI tracker run context configuration failed",
+                    workflow_id=workflow_id,
+                    run_id=run_id,
+                )
 
     # ------------------------------------------------------------------
     def encode(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:
         """Return embedding for ``workflow`` and persist it."""
 
+        _dense_trace(
+            "encoding workflow", workflow_id=workflow_id, max_functions=self.max_functions
+        )
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
         (
