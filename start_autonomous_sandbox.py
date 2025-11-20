@@ -1312,6 +1312,18 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 if ready_to_launch:
                     logger.info(
+                        "🚦 meta planning launch block reached; beginning verbose instrumentation",
+                        extra=log_record(
+                            event="meta-planning-launch-block-entry",
+                            workflow_count=len(workflows),
+                            planner_cls=str(planner_cls),
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                            bootstrap_mode=bootstrap_mode,
+                            correlation_id=cid,
+                        ),
+                    )
+                    logger.info(
                         "✅ gating green: all launch conditions satisfied; proceeding to thread bootstrap",
                         extra=log_record(
                             event="meta-planning-gate-green",
@@ -1423,6 +1435,20 @@ def main(argv: list[str] | None = None) -> None:
                             ),
                         ),
                     )
+                    logger.info(
+                        "🛰️ verifying meta_planning module attributes prior to start_self_improvement_cycle()",
+                        extra=log_record(
+                            event="meta-planning-module-precheck",
+                            module_dir=list(sorted(dir(meta_planning))),
+                            has_reload_settings=hasattr(meta_planning, "reload_settings"),
+                            has_self_improvement_cycle=hasattr(
+                                meta_planning, "start_self_improvement_cycle"
+                            ),
+                            callable_self_improvement_cycle=callable(
+                                getattr(meta_planning, "start_self_improvement_cycle", None)
+                            ),
+                        ),
+                    )
                     try:
                         logger.info(
                             "🔧 invoking meta planning loop bootstrap",
@@ -1434,6 +1460,26 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_graph_present=workflow_graph_obj is not None,
                                 workflow_graph_len=len(workflow_graph_obj or {}),
                                 event_bus_connected=shared_event_bus is not None,
+                            ),
+                        )
+                        logger.info(
+                            "🛰️ deep-dive meta planning bootstrap parameter snapshot",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-param-snapshot",
+                                workflow_keys=list(workflows.keys()),
+                                workflow_len=len(workflows),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                                workflow_graph_type=type(workflow_graph_obj).__name__,
+                                workflow_graph_keys=list((workflow_graph_obj or {}).keys())
+                                if isinstance(workflow_graph_obj, Mapping)
+                                else None,
+                                event_bus_type=type(shared_event_bus).__name__
+                                if shared_event_bus is not None
+                                else None,
+                                event_bus_has_listeners=bool(
+                                    getattr(shared_event_bus, "listeners", None)
+                                ),
                             ),
                         )
                         logger.info(
@@ -1511,11 +1557,32 @@ def main(argv: list[str] | None = None) -> None:
                             raise RuntimeError(
                                 "start_self_improvement_cycle is not callable"
                             )
+                        logger.info(
+                            "🛰️ start_self_improvement_cycle() callable confirmed; executing with detailed context",
+                            extra=log_record(
+                                event="meta-planning-callable-confirmed",
+                                workflow_count=len(workflows),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                                workflow_graph_snapshot=repr(workflow_graph_obj),
+                                event_bus_snapshot=repr(shared_event_bus),
+                                caller_module=__name__,
+                            ),
+                        )
                         thread = meta_planning.start_self_improvement_cycle(
                             workflows,
                             event_bus=shared_event_bus,
                             interval=interval,
                             workflow_graph=workflow_graph_obj,
+                        )
+                        logger.info(
+                            "🛰️ start_self_improvement_cycle() invocation completed; capturing return object",
+                            extra=log_record(
+                                event="meta-planning-post-invoke",
+                                returned_type=type(thread).__name__ if thread is not None else None,
+                                returned_is_thread=isinstance(thread, threading.Thread),
+                                returned_repr=repr(thread),
+                            ),
                         )
                         logger.info(
                             "🛰️ meta planning bootstrap call returned from start_self_improvement_cycle()",
@@ -1633,6 +1700,9 @@ def main(argv: list[str] | None = None) -> None:
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
                                 alive_pre=getattr(thread, "is_alive", lambda: False)(),
+                                thread_ident=getattr(thread, "ident", None),
+                                thread_native_id=getattr(thread, "native_id", None),
+                                thread_target=getattr(thread, "_target", None),
                             ),
                         )
                         logger.info(
@@ -1659,6 +1729,8 @@ def main(argv: list[str] | None = None) -> None:
                                 event="meta-planning-start-invoke",
                                 thread_name=getattr(thread, "name", "unknown"),
                                 daemon=getattr(thread, "daemon", None),
+                                thread_ident=getattr(thread, "ident", None),
+                                native_id=getattr(thread, "native_id", None),
                             ),
                         )
                         logger.info(
@@ -1671,6 +1743,20 @@ def main(argv: list[str] | None = None) -> None:
                                 workflow_count=len(workflows),
                                 workflow_graph_present=workflow_graph_obj is not None,
                                 native_id=getattr(thread, "native_id", None),
+                            ),
+                        )
+                        logger.info(
+                            "🛰️ meta planning loop thread start diagnostics captured",
+                            extra=log_record(
+                                event="meta-planning-thread-start-diagnostics",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                thread_ident=getattr(thread, "ident", None),
+                                native_id=getattr(thread, "native_id", None),
+                                daemon=getattr(thread, "daemon", None),
+                                alive=getattr(thread, "is_alive", lambda: False)(),
+                                target=getattr(thread, "_target", None),
+                                args=getattr(thread, "_args", None),
+                                kwargs=getattr(thread, "_kwargs", None),
                             ),
                         )
                         logger.info(
