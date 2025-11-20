@@ -162,11 +162,13 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
         return
 
     result: Dict[str, Any] = {}
-    stop_event = stop_event or threading.Event()
+    embedder_stop_event = threading.Event()
 
     def _worker() -> None:
         try:
-            result["embedder"] = get_embedder(timeout=timeout, stop_event=stop_event)
+            result["embedder"] = get_embedder(
+                timeout=timeout, stop_event=embedder_stop_event
+            )
         except Exception as exc:  # pragma: no cover - diagnostics only
             result["error"] = exc
 
@@ -179,8 +181,10 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
             "embedding model load exceeded %.1fs during bootstrap; continuing without embedder",
             timeout,
         )
-        stop_event.set()
-        cancel_embedder_initialisation(stop_event, reason="bootstrap_timeout", join_timeout=2.0)
+        embedder_stop_event.set()
+        cancel_embedder_initialisation(
+            embedder_stop_event, reason="bootstrap_timeout", join_timeout=2.0
+        )
         disable_embedder(reason="bootstrap_timeout")
         thread.join(2.0)
         if thread.is_alive():
