@@ -1105,6 +1105,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv_list)
 
+    print(
+        f"[DEBUG] Parsed args: {args}; health_check={getattr(args, 'health_check', None)}",
+        flush=True,
+    )
+
     if args.include_orphans is not None:
         os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if args.include_orphans else "0"
         settings.include_orphans = bool(args.include_orphans)
@@ -1132,7 +1137,37 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if not args.health_check:
             try:
-                bootstrap_context = initialize_bootstrap_context()
+                print(
+                    "[DEBUG] About to call initialize_bootstrap_context()",
+                    flush=True,
+                )
+                logger.info(
+                    "initialize_bootstrap_context starting",
+                    extra=log_record(
+                        event="bootstrap-context-start",
+                        health_check=args.health_check,
+                    ),
+                )
+                try:
+                    bootstrap_context = initialize_bootstrap_context()
+                except Exception as bootstrap_exc:
+                    print(
+                        f"[DEBUG] initialize_bootstrap_context raised: {bootstrap_exc}",
+                        flush=True,
+                    )
+                    logger.exception(
+                        "initialize_bootstrap_context encountered an exception",
+                        extra=log_record(event="bootstrap-context-error"),
+                    )
+                    raise
+                print(
+                    "[DEBUG] initialize_bootstrap_context completed successfully",
+                    flush=True,
+                )
+                logger.info(
+                    "initialize_bootstrap_context completed",
+                    extra=log_record(event="bootstrap-context-complete"),
+                )
                 os.environ.setdefault("META_PLANNING_LOOP", "1")
                 os.environ.setdefault("META_PLANNING_INTERVAL", "10")
                 os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
