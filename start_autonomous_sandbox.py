@@ -1014,6 +1014,13 @@ def main(argv: list[str] | None = None) -> None:
                 discovered_specs = []
                 try:
                     discovered_specs = discover_workflow_specs(logger=logger)
+                    logger.info(
+                        "workflow discovery completed",
+                        extra=log_record(
+                            event="workflow-discovery-complete",
+                            discovered_count=len(discovered_specs),
+                        ),
+                    )
                 except Exception:
                     logger.exception(
                         "failed to auto-discover workflow specs",
@@ -1077,6 +1084,14 @@ def main(argv: list[str] | None = None) -> None:
                     workflow_evolver,
                     logger=logger,
                     discovered_specs=[*discovered_specs, *orphan_specs],
+                )
+                logger.info(
+                    "workflow registration result",
+                    extra=log_record(
+                        event="workflow-registration",
+                        workflow_count=len(workflows),
+                        planner_available=planner_cls is not None,
+                    ),
                 )
                 if not workflows:
                     logger.error(
@@ -1167,6 +1182,22 @@ def main(argv: list[str] | None = None) -> None:
                             readiness_error=readiness_error,
                         ),
                     )
+
+                if (
+                    not ready_to_launch
+                    and bootstrap_mode
+                    and not roi_backoff_triggered
+                    and planner_cls is not None
+                    and workflows
+                ):
+                    logger.info(
+                        "✅ bootstrap mode overriding diminishing returns gate; ROI baseline unavailable",
+                        extra=log_record(
+                            event="startup-bootstrap-diminishing-bypass",
+                            workflow_count=len(workflows),
+                        ),
+                    )
+                    ready_to_launch = True
 
                 if not ready_to_launch:
                     failure_reasons: list[str] = []
@@ -1429,6 +1460,24 @@ def main(argv: list[str] | None = None) -> None:
                             correlation_id=cid,
                         ),
                     )
+                    logger.info(
+                        "meta planning loop prerequisites verified",
+                        extra=log_record(
+                            event="meta-planning-loop-prereq",
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
+                    if not workflows or planner_cls is None:
+                        logger.error(
+                            "❌ meta planning loop prerequisites missing; aborting start",
+                            extra=log_record(
+                                event="meta-planning-loop-prereq-missing",
+                                workflow_count=len(workflows),
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                        sys.exit(1)
                     logger.info(
                         "✅ gating green: all launch conditions satisfied; proceeding to thread bootstrap",
                         extra=log_record(
