@@ -3473,8 +3473,6 @@ def internalize_coding_bot(
                 manager.logger.exception("rollback failed for %s", bot_name)
         _emit_failure(str(exc))
         raise
-    finally:
-        _end_step("run_post_patch_cycle", post_cycle_timer)
     else:
         if event_bus:
             payload = {
@@ -3496,6 +3494,8 @@ def internalize_coding_bot(
                     "failed to publish internalize patch_attempt for %s",
                     bot_name,
                 )
+    finally:
+        _end_step("run_post_patch_cycle", post_cycle_timer)
     print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
     return manager
 
