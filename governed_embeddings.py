@@ -1270,7 +1270,7 @@ def _initialise_embedder_with_timeout(
     background initialisation thread alive.
     """
 
-    global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED
+    global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED, _EMBEDDER_STOP_EVENT
 
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
@@ -1278,7 +1278,6 @@ def _initialise_embedder_with_timeout(
         if stop_event is None and _EMBEDDER_STOP_EVENT is not None and _EMBEDDER_STOP_EVENT.is_set():
             _EMBEDDER_STOP_EVENT = None
         if stop_event is not None:
-            global _EMBEDDER_STOP_EVENT
             _EMBEDDER_STOP_EVENT = stop_event
         event = _ensure_embedder_thread_locked()
 
@@ -2036,10 +2035,10 @@ def cancel_embedder_initialisation(
 ) -> None:
     """Signal the embedder initialisation thread to stop and wait briefly."""
 
+    global _EMBEDDER_STOP_EVENT
     if stop_event is None:
         stop_event = _EMBEDDER_STOP_EVENT
     else:
-        global _EMBEDDER_STOP_EVENT
         _EMBEDDER_STOP_EVENT = stop_event
     _cancel_embedder_initialisation(stop_event, reason=reason, join_timeout=join_timeout)
 
