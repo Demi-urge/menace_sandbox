@@ -1063,13 +1063,38 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.setdefault("META_PLANNING_LOOP", "1")
                 os.environ.setdefault("META_PLANNING_INTERVAL", "10")
                 os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
+                _emit_meta_trace(
+                    logger,
+                    "preparing meta planning environment",
+                    loop=os.environ.get("META_PLANNING_LOOP"),
+                    interval=os.environ.get("META_PLANNING_INTERVAL"),
+                    improvement_threshold=os.environ.get("META_IMPROVEMENT_THRESHOLD"),
+                )
                 from self_improvement import meta_planning
+                _emit_meta_trace(
+                    logger,
+                    "meta planning module imported",
+                    module=str(meta_planning),
+                    meta_planning_interval=os.environ.get("META_PLANNING_INTERVAL"),
+                )
                 from self_improvement.meta_planning import (  # noqa: F401
                     self_improvement_cycle,
                 )
 
                 meta_planning.reload_settings(settings)
+                _emit_meta_trace(
+                    logger,
+                    "meta planning settings reloaded",
+                    include_orphans=settings.include_orphans,
+                    recursive_orphans=settings.recursive_orphan_scan,
+                    log_level=settings.sandbox_log_level,
+                )
                 workflow_evolver = WorkflowEvolutionManager()
+                _emit_meta_trace(
+                    logger,
+                    "workflow evolver instantiated for meta planning",
+                    evolver_class=WorkflowEvolutionManager.__name__,
+                )
                 planner_cls = meta_planning.resolve_meta_workflow_planner(
                     force_reload=True
                 )
