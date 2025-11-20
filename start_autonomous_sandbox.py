@@ -31,7 +31,7 @@ if "--health-check" in sys.argv[1:]:
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
-from sandbox.preseed_bootstrap import initialize_bootstrap_context
+from sandbox.preseed_bootstrap import BOOTSTRAP_PROGRESS, initialize_bootstrap_context
 from sandbox_runner.bootstrap import (
     auto_configure_env,
     bootstrap_environment,
@@ -1155,13 +1155,26 @@ def main(argv: list[str] | None = None) -> None:
                         last_pre_meta_trace_step = "initialize_bootstrap_context invocation"
                         bootstrap_context = initialize_bootstrap_context()
                     except Exception as bootstrap_exc:
+                        last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
+                            "last_step", "unknown"
+                        )
                         print(
-                            f"[DEBUG] initialize_bootstrap_context raised: {bootstrap_exc}",
+                            "[DEBUG] initialize_bootstrap_context raised: "
+                            f"{bootstrap_exc} (last_step={last_bootstrap_step})",
+                            flush=True,
+                        )
+                        print(
+                            "[BOOTSTRAP-TRACE] bootstrap failed before meta-trace; "
+                            f"last_step={last_bootstrap_step}",
                             flush=True,
                         )
                         logger.exception(
                             "initialize_bootstrap_context encountered an exception",
-                            extra=log_record(event="bootstrap-context-error"),
+                            extra=log_record(
+                                event="bootstrap-context-error",
+                                last_bootstrap_step=last_bootstrap_step,
+                                last_pre_meta_trace_step=last_pre_meta_trace_step,
+                            ),
                         )
                         raise
                     print(
