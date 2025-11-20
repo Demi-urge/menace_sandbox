@@ -1168,6 +1168,32 @@ def main(argv: list[str] | None = None) -> None:
                         ),
                     )
 
+                if not ready_to_launch:
+                    failure_reasons: list[str] = []
+                    if not workflows:
+                        failure_reasons.append("no workflows discovered")
+                    if planner_cls is None:
+                        failure_reasons.append("MetaWorkflowPlanner unavailable")
+                    if readiness_error:
+                        failure_reasons.append(readiness_error)
+                    elif roi_backoff_triggered:
+                        failure_reasons.append("ROI backoff triggered before launch")
+                    else:
+                        failure_reasons.append("ROI gate not satisfied")
+
+                    logger.error(
+                        "❌ sandbox readiness failed; aborting launch: %s",
+                        "; ".join(failure_reasons),
+                        extra=log_record(
+                            event="startup-readiness-failed",
+                            failure_reasons=failure_reasons,
+                            planner_available=planner_cls is not None,
+                            workflow_count=len(workflows),
+                            roi_backoff=roi_backoff_triggered,
+                        ),
+                    )
+                    sys.exit(1)
+
                 meta_planning.reload_settings(settings)
                 logger.info(
                     "startup readiness evaluation complete",
@@ -1817,11 +1843,11 @@ def main(argv: list[str] | None = None) -> None:
                             "✅ meta planning loop thread started successfully",
                             extra=log_record(
                                 event="meta-planning-start",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                is_alive=getattr(thread, "is_alive", lambda: False)(),
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                                workflow_graph_present=workflow_graph_obj is not None,
+                        thread_name=getattr(thread, "name", "unknown"),
+                        is_alive=getattr(thread, "is_alive", lambda: False)(),
+                        planner_cls=str(planner_cls),
+                        workflow_count=len(workflows),
+                        workflow_graph_present=workflow_graph_obj is not None,
                                 native_id=getattr(thread, "native_id", None),
                             ),
                         )
@@ -1859,6 +1885,15 @@ def main(argv: list[str] | None = None) -> None:
                                 ),
                             )
                             raise RuntimeError("meta planning loop thread failed to stay alive")
+                        logger.info(
+                            "🟢 meta planning loop thread running",
+                            extra=log_record(
+                                event="meta-planning-thread-running",
+                                thread_name=getattr(thread, "name", "unknown"),
+                                native_id=getattr(thread, "native_id", None),
+                                ident=getattr(thread, "ident", None),
+                            ),
+                        )
                         logger.info(
                             "✅ meta planning loop thread alive verification passed",
                             extra=log_record(
