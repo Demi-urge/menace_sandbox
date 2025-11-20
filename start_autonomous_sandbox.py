@@ -1310,6 +1310,18 @@ def main(argv: list[str] | None = None) -> None:
                         ),
                     )
                     logger.info(
+                        "🧭 meta planning start: entering bootstrap+thread block (expect subsequent checkpoints)",
+                        extra=log_record(
+                            event="meta-planning-start-block-enter",
+                            workflow_ids=list(workflows.keys()),
+                            planner_resolved=planner_cls is not None,
+                            interval_seconds=interval,
+                            bootstrap_mode=bootstrap_mode,
+                            roi_backoff=roi_backoff_triggered,
+                            ready_to_launch=ready_to_launch,
+                        ),
+                    )
+                    logger.info(
                         "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
                         extra=log_record(
                             event="meta-planning-launch-sequence-begin",
@@ -1375,6 +1387,17 @@ def main(argv: list[str] | None = None) -> None:
                             workflow_count=len(workflows),
                         ),
                     )
+                    logger.info(
+                        "🧠 preparing to invoke start_self_improvement_cycle() with event bus and workflow graph",
+                        extra=log_record(
+                            event="meta-planning-pre-bootstrap-call",
+                            workflow_ids=list(workflows.keys()),
+                            planner_cls=str(planner_cls),
+                            interval_seconds=interval,
+                            workflow_graph_present=workflow_graph_obj is not None,
+                            event_bus_available=shared_event_bus is not None,
+                        ),
+                    )
                     try:
                         logger.info(
                             "🔧 invoking meta planning loop bootstrap",
@@ -1385,11 +1408,33 @@ def main(argv: list[str] | None = None) -> None:
                                 interval_seconds=interval,
                             ),
                         )
+                        logger.info(
+                            "🛰️ meta planning bootstrap call about to execute start_self_improvement_cycle()",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-about-to-call",
+                                workflow_count=len(workflows),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                                workflow_graph_keys=list((workflow_graph_obj or {}).keys())
+                                if isinstance(workflow_graph_obj, Mapping)
+                                else None,
+                            ),
+                        )
                         thread = meta_planning.start_self_improvement_cycle(
                             workflows,
                             event_bus=shared_event_bus,
                             interval=interval,
                             workflow_graph=workflow_graph_obj,
+                        )
+                        logger.info(
+                            "🛰️ meta planning bootstrap call returned from start_self_improvement_cycle()",
+                            extra=log_record(
+                                event="meta-planning-bootstrap-returned",
+                                thread_is_none=thread is None,
+                                thread_type=type(thread).__name__ if thread is not None else None,
+                                workflow_count=len(workflows),
+                                interval_seconds=interval,
+                            ),
                         )
                         if thread is None:
                             logger.error(
