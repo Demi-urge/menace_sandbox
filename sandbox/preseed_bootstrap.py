@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from time import perf_counter
 from typing import Any, Dict
 
@@ -37,6 +38,9 @@ _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMEOUT = 30.0
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
+SELF_CODING_MIN_REMAINING_BUDGET = float(
+    os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
+)
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
@@ -192,6 +196,7 @@ def initialize_bootstrap_context(
     *,
     use_cache: bool = True,
     stop_event: threading.Event | None = None,
+    bootstrap_deadline: float | None = None,
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
@@ -261,6 +266,60 @@ def initialize_bootstrap_context(
             LOGGER.exception("DataBot setup failed (step=data_bot)")
             raise
         _log_step("data_bot", data_bot_start)
+
+        remaining_budget = (
+            bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
+        )
+        if remaining_budget is not None and remaining_budget < SELF_CODING_MIN_REMAINING_BUDGET:
+            LOGGER.warning(
+                "remaining bootstrap budget is low (%.1fs < %.1fs); skipping self-coding bootstrap",
+                max(remaining_budget, 0.0),
+                SELF_CODING_MIN_REMAINING_BUDGET,
+            )
+            _ensure_not_stopped(stop_event)
+            with fallback_helper_manager(
+                bot_registry=registry, data_bot=data_bot
+            ) as bootstrap_manager:
+                _mark_bootstrap_step("push_final_context")
+                _run_with_timeout(
+                    _push_bootstrap_context,
+                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    description="_push_bootstrap_context final",
+                    abort_on_timeout=True,
+                    registry=registry,
+                    data_bot=data_bot,
+                    manager=bootstrap_manager,
+                    pipeline=bootstrap_manager,
+                )
+                _mark_bootstrap_step("seed_final_context")
+                _run_with_timeout(
+                    _seed_research_aggregator_context,
+                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    description="_seed_research_aggregator_context final",
+                    abort_on_timeout=False,
+                    registry=registry,
+                    data_bot=data_bot,
+                    context_builder=context_builder,
+                    engine=getattr(bootstrap_manager, "engine", None),
+                    pipeline=bootstrap_manager,
+                    manager=bootstrap_manager,
+                )
+
+            bootstrap_context = {
+                "registry": registry,
+                "data_bot": data_bot,
+                "context_builder": context_builder,
+                "engine": getattr(bootstrap_manager, "engine", None),
+                "pipeline": bootstrap_manager,
+                "manager": bootstrap_manager,
+            }
+            if use_cache:
+                _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+            LOGGER.info(
+                "initialize_bootstrap_context completed with disabled self-coding due to budget constraints",
+                extra={"remaining_budget": remaining_budget},
+            )
+            return bootstrap_context
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("self_coding_engine")
