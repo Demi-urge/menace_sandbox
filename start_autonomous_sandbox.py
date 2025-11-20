@@ -1173,11 +1173,14 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_context_result: dict[str, Any] | None = None
                         bootstrap_error: BaseException | None = None
                         bootstrap_start = time.monotonic()
+                        bootstrap_stop_event = threading.Event()
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
                             try:
-                                bootstrap_context_result = initialize_bootstrap_context()
+                                bootstrap_context_result = initialize_bootstrap_context(
+                                    stop_event=bootstrap_stop_event
+                                )
                             except BaseException as exc:  # pragma: no cover - propagate errors
                                 bootstrap_error = exc
 
@@ -1199,6 +1202,7 @@ def main(argv: list[str] | None = None) -> None:
                                 f"last_step={last_bootstrap_step})",
                                 flush=True,
                             )
+                            bootstrap_stop_event.set()
                             logger.error(
                                 "initialize_bootstrap_context exceeded timeout",
                                 extra=log_record(
@@ -1217,7 +1221,7 @@ def main(argv: list[str] | None = None) -> None:
                                     extra=log_record(event="bootstrap-timeout-cleanup-error"),
                                 )
                             try:
-                                bootstrap_thread.join(1)
+                                bootstrap_thread.join(2)
                             except Exception:
                                 logger.debug(
                                     "bootstrap thread join after timeout raised",
