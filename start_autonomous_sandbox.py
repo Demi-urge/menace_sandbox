@@ -1136,1472 +1136,1495 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         if not args.health_check:
+            last_pre_meta_trace_step = "entering non-health-check bootstrap block"
             try:
-                print(
-                    "[DEBUG] About to call initialize_bootstrap_context()",
-                    flush=True,
-                )
-                logger.info(
-                    "initialize_bootstrap_context starting",
-                    extra=log_record(
-                        event="bootstrap-context-start",
-                        health_check=args.health_check,
-                    ),
-                )
                 try:
-                    bootstrap_context = initialize_bootstrap_context()
-                except Exception as bootstrap_exc:
+                    last_pre_meta_trace_step = "initialize_bootstrap_context entry"
                     print(
-                        f"[DEBUG] initialize_bootstrap_context raised: {bootstrap_exc}",
+                        "[DEBUG] About to call initialize_bootstrap_context()",
                         flush=True,
                     )
-                    logger.exception(
-                        "initialize_bootstrap_context encountered an exception",
-                        extra=log_record(event="bootstrap-context-error"),
-                    )
-                    raise
-                print(
-                    "[DEBUG] initialize_bootstrap_context completed successfully",
-                    flush=True,
-                )
-                logger.info(
-                    "initialize_bootstrap_context completed",
-                    extra=log_record(event="bootstrap-context-complete"),
-                )
-                os.environ.setdefault("META_PLANNING_LOOP", "1")
-                os.environ.setdefault("META_PLANNING_INTERVAL", "10")
-                os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
-                _emit_meta_trace(
-                    logger,
-                    "preparing meta planning environment",
-                    loop=os.environ.get("META_PLANNING_LOOP"),
-                    interval=os.environ.get("META_PLANNING_INTERVAL"),
-                    improvement_threshold=os.environ.get("META_IMPROVEMENT_THRESHOLD"),
-                )
-                from self_improvement import meta_planning
-                print(
-                    "[META-TRACE] meta_planning module import completed; capturing module attributes",
-                    flush=True,
-                )
-                logger.info(
-                    "meta_planning module import completed; enumerating attributes",
-                    extra=log_record(
-                        event="meta-planning-import-finished",
-                        attr_count=len(dir(meta_planning)),
-                        attrs_preview=list(sorted(dir(meta_planning)))[:25],
-                    ),
-                )
-                logger.info(
-                    "meta_planning module imported for autonomous sandbox",
-                    extra=log_record(
-                        event="meta-planning-import",
-                        module=str(meta_planning),
-                        module_dir=list(sorted(dir(meta_planning))),
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "meta planning module imported",
-                    module=str(meta_planning),
-                    meta_planning_interval=os.environ.get("META_PLANNING_INTERVAL"),
-                )
-                from self_improvement.meta_planning import (  # noqa: F401
-                    self_improvement_cycle,
-                )
-                print(
-                    "[META-TRACE] self_improvement_cycle imported; meta planner wiring begins",
-                    flush=True,
-                )
-                logger.info(
-                    "self_improvement_cycle imported; preparing to reload settings",
-                    extra=log_record(
-                        event="meta-planning-cycle-imported",
-                        module_has_cycle=hasattr(meta_planning, "self_improvement_cycle"),
-                    ),
-                )
-
-                meta_planning.reload_settings(settings)
-                print(
-                    "[META-TRACE] meta_planning.reload_settings invoked; settings synchronized",
-                    flush=True,
-                )
-                logger.info(
-                    "meta planning settings synchronized",
-                    extra=log_record(
-                        event="meta-planning-settings-reloaded",
-                        include_orphans=settings.include_orphans,
-                        recursive_orphans=settings.recursive_orphan_scan,
-                        sandbox_log_level=settings.sandbox_log_level,
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "meta planning settings reloaded",
-                    include_orphans=settings.include_orphans,
-                    recursive_orphans=settings.recursive_orphan_scan,
-                    log_level=settings.sandbox_log_level,
-                )
-                workflow_evolver = WorkflowEvolutionManager()
-                print(
-                    "[META-TRACE] WorkflowEvolutionManager instantiated; preparing planner resolution",
-                    flush=True,
-                )
-                _emit_meta_trace(
-                    logger,
-                    "workflow evolver instantiated for meta planning",
-                    evolver_class=WorkflowEvolutionManager.__name__,
-                )
-                print(
-                    "[META-TRACE] workflow evolver ready; resolving planner with force reload",
-                    flush=True,
-                )
-                planner_cls = meta_planning.resolve_meta_workflow_planner(
-                    force_reload=True
-                )
-                logger.info(
-                    "meta workflow planner resolved",  # dense log for planner resolution
-                    extra=log_record(
-                        event="meta-planning-planner-resolved",
-                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
-                        force_reload=True,
-                    ),
-                )
-                print(
-                    "[META-TRACE] meta workflow planner resolution finished; class=%s"
-                    % getattr(planner_cls, "__name__", str(planner_cls)),
-                    flush=True,
-                )
-                logger.info(
-                    "meta workflow planner resolution detailed trace",
-                    extra=log_record(
-                        event="meta-planning-planner-resolution-detail",
-                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
-                        planner_module=getattr(planner_cls, "__module__", None),
-                        planner_dict=sorted(list(getattr(planner_cls, "__dict__", {}).keys())),
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "meta workflow planner resolution attempted",
-                    planner_resolved=planner_cls is not None,
-                    planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
-                )
-                if planner_cls is None:
-                    logger.error(
-                        "MetaWorkflowPlanner not found; aborting sandbox launch",
-                        extra=log_record(event="meta-planning-missing"),
-                    )
-                    print(
-                        "[META-TRACE] planner resolution failed; aborting launch pipeline",
-                        flush=True,
-                    )
-                    sys.exit(1)
-
-                interval = float(
-                    os.getenv(
-                        "META_PLANNING_INTERVAL",
-                        getattr(settings, "meta_planning_interval", 10),
-                    )
-                )
-                logger.info(
-                    "meta planning cadence calculated",
-                    extra=log_record(
-                        event="meta-planning-interval",
-                        interval=interval,
-                        source_env=os.getenv("META_PLANNING_INTERVAL"),
-                        settings_interval=getattr(settings, "meta_planning_interval", None),
-                        settings_namespace=vars(settings),
-                    ),
-                )
-                print(
-                    "[META-TRACE] meta planning interval established at %.2fs" % interval,
-                    flush=True,
-                )
-                logger.info(
-                    "meta planning cadence fully resolved with environment and settings context",
-                    extra=log_record(
-                        event="meta-planning-interval-detail",
-                        interval=interval,
-                        env_interval=os.getenv("META_PLANNING_INTERVAL"),
-                        env_loop=os.getenv("META_PLANNING_LOOP"),
-                        improvement_threshold=os.getenv("META_IMPROVEMENT_THRESHOLD"),
-                    ),
-                )
-                discovered_specs = []
-                try:
-                    discovered_specs = discover_workflow_specs(logger=logger)
                     logger.info(
-                        "workflow discovery completed",
+                        "initialize_bootstrap_context starting",
                         extra=log_record(
-                            event="workflow-discovery-complete",
-                            discovered_count=len(discovered_specs),
+                            event="bootstrap-context-start",
+                            health_check=args.health_check,
+                        ),
+                    )
+                    try:
+                        last_pre_meta_trace_step = "initialize_bootstrap_context invocation"
+                        bootstrap_context = initialize_bootstrap_context()
+                    except Exception as bootstrap_exc:
+                        print(
+                            f"[DEBUG] initialize_bootstrap_context raised: {bootstrap_exc}",
+                            flush=True,
+                        )
+                        logger.exception(
+                            "initialize_bootstrap_context encountered an exception",
+                            extra=log_record(event="bootstrap-context-error"),
+                        )
+                        raise
+                    print(
+                        "[DEBUG] initialize_bootstrap_context completed successfully",
+                        flush=True,
+                    )
+                    logger.info(
+                        "initialize_bootstrap_context completed",
+                        extra=log_record(event="bootstrap-context-complete"),
+                    )
+                    os.environ.setdefault("META_PLANNING_LOOP", "1")
+                    os.environ.setdefault("META_PLANNING_INTERVAL", "10")
+                    os.environ.setdefault("META_IMPROVEMENT_THRESHOLD", "0.01")
+                    _emit_meta_trace(
+                        logger,
+                        "preparing meta planning environment",
+                        loop=os.environ.get("META_PLANNING_LOOP"),
+                        interval=os.environ.get("META_PLANNING_INTERVAL"),
+                        improvement_threshold=os.environ.get("META_IMPROVEMENT_THRESHOLD"),
+                    )
+                    last_pre_meta_trace_step = "importing self_improvement.meta_planning"
+                    from self_improvement import meta_planning
+                    print(
+                        "[META-TRACE] meta_planning module import completed; capturing module attributes",
+                        flush=True,
+                    )
+                    logger.info(
+                        "meta_planning module import completed; enumerating attributes",
+                        extra=log_record(
+                            event="meta-planning-import-finished",
+                            attr_count=len(dir(meta_planning)),
+                            attrs_preview=list(sorted(dir(meta_planning)))[:25],
+                        ),
+                    )
+                    logger.info(
+                        "meta_planning module imported for autonomous sandbox",
+                        extra=log_record(
+                            event="meta-planning-import",
+                            module=str(meta_planning),
+                            module_dir=list(sorted(dir(meta_planning))),
                         ),
                     )
                     _emit_meta_trace(
                         logger,
-                        "workflow discovery completed",
-                        discovered_count=len(discovered_specs),
-                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                        "meta planning module imported",
+                        module=str(meta_planning),
+                        meta_planning_interval=os.environ.get("META_PLANNING_INTERVAL"),
+                    )
+                    last_pre_meta_trace_step = "importing self_improvement_cycle"
+                    from self_improvement.meta_planning import (  # noqa: F401
+                        self_improvement_cycle,
                     )
                     print(
-                        "[META-TRACE] workflow discovery finished; discovered=%d"
-                        % len(discovered_specs),
+                        "[META-TRACE] self_improvement_cycle imported; meta planner wiring begins",
                         flush=True,
                     )
-                except Exception:
-                    logger.exception(
-                        "failed to auto-discover workflow specs",
-                        extra=log_record(event="workflow-discovery-error"),
+                    logger.info(
+                        "self_improvement_cycle imported; preparing to reload settings",
+                        extra=log_record(
+                            event="meta-planning-cycle-imported",
+                            module_has_cycle=hasattr(meta_planning, "self_improvement_cycle"),
+                        ),
                     )
-                print(
-                    "[META-TRACE] workflow discovery post-processing; specs=%s"
-                    % [spec.get("workflow_id") for spec in discovered_specs],
-                    flush=True,
-                )
-                logger.info(
-                    "workflow discovery snapshot",
-                    extra=log_record(
-                        event="workflow-discovery-snapshot",
-                        discovered_ids=[spec.get("workflow_id") for spec in discovered_specs],
-                        discovered_preview=discovered_specs[:3],
-                    ),
-                )
-
-                orphan_specs: list[Mapping[str, Any]] = []
-                include_orphans = bool(
-                    getattr(settings, "include_orphans", False)
-                    and not getattr(settings, "disable_orphans", False)
-                )
-                recursive_orphans = bool(
-                    getattr(settings, "recursive_orphan_scan", False)
-                )
-                logger.info(
-                    "orphan inclusion parameters evaluated",
-                    extra=log_record(
-                        event="orphan-parameters",
-                        include_orphans=include_orphans,
-                        recursive_orphans=recursive_orphans,
-                    ),
-                )
-                print(
-                    "[META-TRACE] orphan settings finalized; include=%s recursive=%s"
-                    % (include_orphans, recursive_orphans),
-                    flush=True,
-                )
-                logger.info(
-                    "orphan settings finalized for meta planning",
-                    extra=log_record(
-                        event="orphan-settings-finalized",
-                        include_orphans=include_orphans,
-                        recursive_orphans=recursive_orphans,
+    
+                    last_pre_meta_trace_step = "reloading meta_planning settings"
+                    meta_planning.reload_settings(settings)
+                    print(
+                        "[META-TRACE] meta_planning.reload_settings invoked; settings synchronized",
+                        flush=True,
+                    )
+                    logger.info(
+                        "meta planning settings synchronized",
+                        extra=log_record(
+                            event="meta-planning-settings-reloaded",
+                            include_orphans=settings.include_orphans,
+                            recursive_orphans=settings.recursive_orphan_scan,
+                            sandbox_log_level=settings.sandbox_log_level,
+                        ),
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "meta planning settings reloaded",
+                        include_orphans=settings.include_orphans,
+                        recursive_orphans=settings.recursive_orphan_scan,
+                        log_level=settings.sandbox_log_level,
+                    )
+                    workflow_evolver = WorkflowEvolutionManager()
+                    print(
+                        "[META-TRACE] WorkflowEvolutionManager instantiated; preparing planner resolution",
+                        flush=True,
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "workflow evolver instantiated for meta planning",
+                        evolver_class=WorkflowEvolutionManager.__name__,
+                    )
+                    print(
+                        "[META-TRACE] workflow evolver ready; resolving planner with force reload",
+                        flush=True,
+                    )
+                    planner_cls = meta_planning.resolve_meta_workflow_planner(
+                        force_reload=True
+                    )
+                    logger.info(
+                        "meta workflow planner resolved",  # dense log for planner resolution
+                        extra=log_record(
+                            event="meta-planning-planner-resolved",
+                            planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                            force_reload=True,
+                        ),
+                    )
+                    print(
+                        "[META-TRACE] meta workflow planner resolution finished; class=%s"
+                        % getattr(planner_cls, "__name__", str(planner_cls)),
+                        flush=True,
+                    )
+                    logger.info(
+                        "meta workflow planner resolution detailed trace",
+                        extra=log_record(
+                            event="meta-planning-planner-resolution-detail",
+                            planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                            planner_module=getattr(planner_cls, "__module__", None),
+                            planner_dict=sorted(list(getattr(planner_cls, "__dict__", {}).keys())),
+                        ),
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "meta workflow planner resolution attempted",
+                        planner_resolved=planner_cls is not None,
                         planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
-                    ),
-                )
-                if include_orphans:
-                    try:
-                        orphan_modules = integrate_orphans(recursive=recursive_orphans)
-                        orphan_specs.extend(
-                            {
-                                "workflow": [module],
-                                "workflow_id": module,
-                                "task_sequence": [module],
-                                "source": "orphan_discovery",
-                            }
-                            for module in orphan_modules
-                            if isinstance(module, str)
-                        )
-                        logger.info(
-                            "orphan integration completed",
-                            extra=log_record(
-                                event="orphan-integration-complete",
-                                orphan_modules=orphan_modules,
-                                orphan_spec_count=len(orphan_specs),
-                                recursive=recursive_orphans,
-                            ),
+                    )
+                    if planner_cls is None:
+                        logger.error(
+                            "MetaWorkflowPlanner not found; aborting sandbox launch",
+                            extra=log_record(event="meta-planning-missing"),
                         )
                         print(
-                            "[META-TRACE] orphan integration complete; modules=%s specs=%d"
-                            % (orphan_modules, len(orphan_specs)),
+                            "[META-TRACE] planner resolution failed; aborting launch pipeline",
+                            flush=True,
+                        )
+                        sys.exit(1)
+    
+                    interval = float(
+                        os.getenv(
+                            "META_PLANNING_INTERVAL",
+                            getattr(settings, "meta_planning_interval", 10),
+                        )
+                    )
+                    logger.info(
+                        "meta planning cadence calculated",
+                        extra=log_record(
+                            event="meta-planning-interval",
+                            interval=interval,
+                            source_env=os.getenv("META_PLANNING_INTERVAL"),
+                            settings_interval=getattr(settings, "meta_planning_interval", None),
+                            settings_namespace=vars(settings),
+                        ),
+                    )
+                    print(
+                        "[META-TRACE] meta planning interval established at %.2fs" % interval,
+                        flush=True,
+                    )
+                    logger.info(
+                        "meta planning cadence fully resolved with environment and settings context",
+                        extra=log_record(
+                            event="meta-planning-interval-detail",
+                            interval=interval,
+                            env_interval=os.getenv("META_PLANNING_INTERVAL"),
+                            env_loop=os.getenv("META_PLANNING_LOOP"),
+                            improvement_threshold=os.getenv("META_IMPROVEMENT_THRESHOLD"),
+                        ),
+                    )
+                    discovered_specs = []
+                    try:
+                        discovered_specs = discover_workflow_specs(logger=logger)
+                        logger.info(
+                            "workflow discovery completed",
+                            extra=log_record(
+                                event="workflow-discovery-complete",
+                                discovered_count=len(discovered_specs),
+                            ),
+                        )
+                        _emit_meta_trace(
+                            logger,
+                            "workflow discovery completed",
+                            discovered_count=len(discovered_specs),
+                            planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                        )
+                        print(
+                            "[META-TRACE] workflow discovery finished; discovered=%d"
+                            % len(discovered_specs),
                             flush=True,
                         )
                     except Exception:
                         logger.exception(
-                            "startup orphan integration failed",
-                            extra=log_record(event="startup-orphan-discovery"),
+                            "failed to auto-discover workflow specs",
+                            extra=log_record(event="workflow-discovery-error"),
                         )
-
-                if include_orphans:
                     print(
-                        "[META-TRACE] orphan discovery sequence completed; total specs now=%d" % len(orphan_specs),
+                        "[META-TRACE] workflow discovery post-processing; specs=%s"
+                        % [spec.get("workflow_id") for spec in discovered_specs],
                         flush=True,
                     )
-                    if recursive_orphans:
+                    logger.info(
+                        "workflow discovery snapshot",
+                        extra=log_record(
+                            event="workflow-discovery-snapshot",
+                            discovered_ids=[spec.get("workflow_id") for spec in discovered_specs],
+                            discovered_preview=discovered_specs[:3],
+                        ),
+                    )
+    
+                    orphan_specs: list[Mapping[str, Any]] = []
+                    include_orphans = bool(
+                        getattr(settings, "include_orphans", False)
+                        and not getattr(settings, "disable_orphans", False)
+                    )
+                    recursive_orphans = bool(
+                        getattr(settings, "recursive_orphan_scan", False)
+                    )
+                    logger.info(
+                        "orphan inclusion parameters evaluated",
+                        extra=log_record(
+                            event="orphan-parameters",
+                            include_orphans=include_orphans,
+                            recursive_orphans=recursive_orphans,
+                        ),
+                    )
+                    print(
+                        "[META-TRACE] orphan settings finalized; include=%s recursive=%s"
+                        % (include_orphans, recursive_orphans),
+                        flush=True,
+                    )
+                    logger.info(
+                        "orphan settings finalized for meta planning",
+                        extra=log_record(
+                            event="orphan-settings-finalized",
+                            include_orphans=include_orphans,
+                            recursive_orphans=recursive_orphans,
+                            planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                        ),
+                    )
+                    if include_orphans:
                         try:
-                            result = post_round_orphan_scan(recursive=True)
-                            integrated = (
-                                result.get("integrated")
-                                if isinstance(result, Mapping)
-                                else None
+                            orphan_modules = integrate_orphans(recursive=recursive_orphans)
+                            orphan_specs.extend(
+                                {
+                                    "workflow": [module],
+                                    "workflow_id": module,
+                                    "task_sequence": [module],
+                                    "source": "orphan_discovery",
+                                }
+                                for module in orphan_modules
+                                if isinstance(module, str)
                             )
-                            if integrated:
-                                orphan_specs.extend(
-                                    {
-                                        "workflow": [module],
-                                        "workflow_id": module,
-                                        "task_sequence": [module],
-                                        "source": "recursive_orphan_discovery",
-                                    }
-                                    for module in integrated
-                                    if isinstance(module, str)
-                                )
-                                logger.info(
-                                    "recursive orphan scan integrated modules",
-                                    extra=log_record(
-                                        event="recursive-orphan-scan",
-                                        integrated=integrated,
-                                        orphan_spec_count=len(orphan_specs),
-                                    ),
-                                )
-                                print(
-                                    "[META-TRACE] recursive orphan scan added modules=%s"
-                                    % integrated,
-                                    flush=True,
-                                )
+                            logger.info(
+                                "orphan integration completed",
+                                extra=log_record(
+                                    event="orphan-integration-complete",
+                                    orphan_modules=orphan_modules,
+                                    orphan_spec_count=len(orphan_specs),
+                                    recursive=recursive_orphans,
+                                ),
+                            )
+                            print(
+                                "[META-TRACE] orphan integration complete; modules=%s specs=%d"
+                                % (orphan_modules, len(orphan_specs)),
+                                flush=True,
+                            )
                         except Exception:
                             logger.exception(
-                                "startup recursive orphan scan failed",
-                                extra=log_record(event="startup-orphan-recursive"),
+                                "startup orphan integration failed",
+                                extra=log_record(event="startup-orphan-discovery"),
                             )
-
-                _emit_meta_trace(
-                    logger,
-                    "orphan integration complete",
-                    include_orphans=include_orphans,
-                    recursive_orphans=recursive_orphans,
-                    orphan_specs=len(orphan_specs),
-                )
-                print(
-                    "[META-TRACE] orphan integration trace emitted; combined specs=%d"
-                    % (len(discovered_specs) + len(orphan_specs)),
-                    flush=True,
-                )
-
-                workflows, workflow_graph_obj = _build_self_improvement_workflows(
-                    bootstrap_context,
-                    settings,
-                    workflow_evolver,
-                    logger=logger,
-                    discovered_specs=[*discovered_specs, *orphan_specs],
-                )
-                print(
-                    "[META-TRACE] self-improvement workflows constructed; workflow_count=%d graph_nodes=%d"
-                    % (
-                        len(workflows),
-                        len(getattr(workflow_graph_obj, "graph", {}) or {}),
-                    ),
-                    flush=True,
-                )
-                logger.info(
-                    "self-improvement workflows constructed for meta planner",
-                    extra=log_record(
-                        event="workflows-constructed",
-                        workflow_ids=list(workflows.keys()),
-                        graph_summary=getattr(workflow_graph_obj, "graph", {}),
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "workflows built for meta planning",
-                    workflow_count=len(workflows),
-                    graph_nodes=len(getattr(workflow_graph_obj, "graph", {})),
-                    planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
-                )
-                print(
-                    "[META-TRACE] workflow build meta trace emitted; planner=%s"
-                    % getattr(planner_cls, "__name__", str(planner_cls)),
-                    flush=True,
-                )
-                logger.info(
-                    "workflow registration result",
-                    extra=log_record(
-                        event="workflow-registration",
-                        workflow_count=len(workflows),
-                        planner_available=planner_cls is not None,
-                    ),
-                )
-                logger.info(
-                    "workflow registration snapshot",
-                    extra=log_record(
-                        event="workflow-registration-detail",
-                        workflow_keys=list(workflows.keys()),
-                        workflow_graph_nodes=len(
-                            getattr(workflow_graph_obj, "graph", {}) or {}
-                        ),
-                    ),
-                )
-                if not workflows:
-                    logger.error(
-                        "no workflows discovered; startup halted before launching sandbox",
-                        extra=log_record(
-                            event="startup-no-workflows",
-                            planner_available=planner_cls is not None,
-                        ),
+    
+                    if include_orphans:
+                        print(
+                            "[META-TRACE] orphan discovery sequence completed; total specs now=%d" % len(orphan_specs),
+                            flush=True,
+                        )
+                        if recursive_orphans:
+                            try:
+                                result = post_round_orphan_scan(recursive=True)
+                                integrated = (
+                                    result.get("integrated")
+                                    if isinstance(result, Mapping)
+                                    else None
+                                )
+                                if integrated:
+                                    orphan_specs.extend(
+                                        {
+                                            "workflow": [module],
+                                            "workflow_id": module,
+                                            "task_sequence": [module],
+                                            "source": "recursive_orphan_discovery",
+                                        }
+                                        for module in integrated
+                                        if isinstance(module, str)
+                                    )
+                                    logger.info(
+                                        "recursive orphan scan integrated modules",
+                                        extra=log_record(
+                                            event="recursive-orphan-scan",
+                                            integrated=integrated,
+                                            orphan_spec_count=len(orphan_specs),
+                                        ),
+                                    )
+                                    print(
+                                        "[META-TRACE] recursive orphan scan added modules=%s"
+                                        % integrated,
+                                        flush=True,
+                                    )
+                            except Exception:
+                                logger.exception(
+                                    "startup recursive orphan scan failed",
+                                    extra=log_record(event="startup-orphan-recursive"),
+                                )
+    
+                    _emit_meta_trace(
+                        logger,
+                        "orphan integration complete",
+                        include_orphans=include_orphans,
+                        recursive_orphans=recursive_orphans,
+                        orphan_specs=len(orphan_specs),
                     )
-                    sys.exit(1)
-                if planner_cls is None:
-                    logger.error(
-                        "planner resolution failed; cannot coordinate ROI for launch",
-                        extra=log_record(event="startup-no-planner", workflow_count=len(workflows)),
+                    print(
+                        "[META-TRACE] orphan integration trace emitted; combined specs=%d"
+                        % (len(discovered_specs) + len(orphan_specs)),
+                        flush=True,
                     )
-                    sys.exit(1)
-                bootstrap_mode = not _roi_baseline_available()
-                logger.info(
-                    "evaluating sandbox startup readiness",
-                    extra=log_record(
-                        event="startup-readiness",
-                        workflow_count=len(workflows),
-                        planner_available=planner_cls is not None,
-                        bootstrap_mode=bootstrap_mode,
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "startup readiness evaluation beginning",
-                    workflow_count=len(workflows),
-                    planner_available=planner_cls is not None,
-                    bootstrap_mode=bootstrap_mode,
-                )
-                print(
-                    "[META-TRACE] startup readiness evaluation initiated; workflows=%d planner=%s bootstrap=%s"
-                    % (
-                        len(workflows),
-                        getattr(planner_cls, "__name__", str(planner_cls)),
-                        bootstrap_mode,
-                    ),
-                    flush=True,
-                )
-                readiness_error: str | None = None
-                logger.info(
-                    "🧭 meta-planning gate: beginning last-mile checks before launch",
-                    extra=log_record(
-                        event="meta-planning-gate-begin",
-                        workflow_ids=list(workflows.keys()),
-                        planner_resolved=planner_cls is not None,
-                        bootstrap_mode=bootstrap_mode,
-                    ),
-                )
-                try:
-                    ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
-                        workflows,
-                        planner_cls=planner_cls,
-                        settings=settings,
+    
+                    workflows, workflow_graph_obj = _build_self_improvement_workflows(
+                        bootstrap_context,
+                        settings,
+                        workflow_evolver,
                         logger=logger,
-                        bootstrap_mode=bootstrap_mode,
+                        discovered_specs=[*discovered_specs, *orphan_specs],
                     )
                     print(
-                        "[META-TRACE] prelaunch ROI cycles completed; ready=%s backoff=%s"
-                        % (ready_to_launch, roi_backoff_triggered),
+                        "[META-TRACE] self-improvement workflows constructed; workflow_count=%d graph_nodes=%d"
+                        % (
+                            len(workflows),
+                            len(getattr(workflow_graph_obj, "graph", {}) or {}),
+                        ),
                         flush=True,
                     )
                     logger.info(
-                        "✅ prelaunch ROI cycles finished without raising",  # emoji for quick scanning
+                        "self-improvement workflows constructed for meta planner",
                         extra=log_record(
-                            event="startup-prelaunch-success",
-                            ready_to_launch=ready_to_launch,
-                            roi_backoff=roi_backoff_triggered,
-                            workflow_count=len(workflows),
-                            planner_available=planner_cls is not None,
+                            event="workflows-constructed",
+                            workflow_ids=list(workflows.keys()),
+                            graph_summary=getattr(workflow_graph_obj, "graph", {}),
                         ),
-                    )
-                except RuntimeError as exc:
-                    readiness_error = str(exc)
-                    ready_to_launch = False
-                    roi_backoff_triggered = False
-                    logger.error(
-                        "❌ runtime error during prelaunch ROI cycles",  # emoji for quick scanning
-                        extra=log_record(
-                            event="startup-prelaunch-runtime-error",
-                            readiness_error=readiness_error,
-                            workflow_count=len(workflows),
-                            planner_available=planner_cls is not None,
-                        ),
-                    )
-                except Exception as exc:
-                    readiness_error = f"unexpected prelaunch failure: {exc}"
-                    ready_to_launch = False
-                    roi_backoff_triggered = False
-                    logger.exception(
-                        "❌ unexpected exception during prelaunch ROI cycles",  # emoji for quick scanning
-                        extra=log_record(
-                            event="startup-prelaunch-unexpected-error",
-                            readiness_error=readiness_error,
-                            workflow_count=len(workflows),
-                            planner_available=planner_cls is not None,
-                        ),
-                    )
-                finally:
-                    logger.info(
-                        "ℹ️ prelaunch ROI cycle invocation finished",
-                        extra=log_record(
-                            event="startup-prelaunch-finished",
-                            ready_to_launch=ready_to_launch,
-                            roi_backoff=roi_backoff_triggered,
-                            readiness_error=readiness_error,
-                        ),
-                    )
-                    print(
-                        "[META-TRACE] prelaunch ROI cycle finished; ready=%s backoff=%s error=%s"
-                        % (ready_to_launch, roi_backoff_triggered, readiness_error),
-                        flush=True,
                     )
                     _emit_meta_trace(
                         logger,
-                        "prelaunch ROI cycle invocation finished",
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
+                        "workflows built for meta planning",
+                        workflow_count=len(workflows),
+                        graph_nodes=len(getattr(workflow_graph_obj, "graph", {})),
+                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
                     )
-
-                if (
-                    not ready_to_launch
-                    and bootstrap_mode
-                    and not roi_backoff_triggered
-                    and planner_cls is not None
-                    and workflows
-                ):
+                    print(
+                        "[META-TRACE] workflow build meta trace emitted; planner=%s"
+                        % getattr(planner_cls, "__name__", str(planner_cls)),
+                        flush=True,
+                    )
                     logger.info(
-                        "✅ bootstrap mode overriding diminishing returns gate; ROI baseline unavailable",
+                        "workflow registration result",
                         extra=log_record(
-                            event="startup-bootstrap-diminishing-bypass",
+                            event="workflow-registration",
                             workflow_count=len(workflows),
-                        ),
-                    )
-                    ready_to_launch = True
-
-                if not ready_to_launch:
-                    failure_reasons: list[str] = []
-                    if not workflows:
-                        failure_reasons.append("no workflows discovered")
-                    if planner_cls is None:
-                        failure_reasons.append("MetaWorkflowPlanner unavailable")
-                    if readiness_error:
-                        failure_reasons.append(readiness_error)
-                    elif roi_backoff_triggered:
-                        failure_reasons.append("ROI backoff triggered before launch")
-                    else:
-                        failure_reasons.append("ROI gate not satisfied")
-
-                    logger.error(
-                        "❌ sandbox readiness failed; aborting launch: %s",
-                        "; ".join(failure_reasons),
-                        extra=log_record(
-                            event="startup-readiness-failed",
-                            failure_reasons=failure_reasons,
                             planner_available=planner_cls is not None,
-                            workflow_count=len(workflows),
-                            roi_backoff=roi_backoff_triggered,
                         ),
                     )
-                    sys.exit(1)
-
-                meta_planning.reload_settings(settings)
-                logger.info(
-                    "startup readiness evaluation complete",
-                    extra=log_record(
-                        event="startup-readiness-result",
-                        workflow_count=len(workflows),
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        planner_available=planner_cls is not None,
-                    ),
-                )
-                _emit_meta_trace(
-                    logger,
-                    "startup readiness evaluation complete",
-                    workflow_count=len(workflows),
-                    ready_to_launch=ready_to_launch,
-                    roi_backoff=roi_backoff_triggered,
-                    planner_available=planner_cls is not None,
-                )
-                logger.info(
-                    "🔬 meta-planning readiness diagnostics collected",
-                    extra=log_record(
-                        event="meta-planning-readiness-diagnostics",
-                        planner_status="✅ available" if planner_cls else "❌ missing",
-                        workflow_status="✅ present" if workflows else "❌ none discovered",
-                        roi_gate="✅ clear" if ready_to_launch else "❌ blocked",
-                        roi_backoff="✅ none" if not roi_backoff_triggered else "❌ backoff",
-                        readiness_error=readiness_error,
-                        workflow_ids=list(workflows.keys()),
-                    ),
-                )
-                logger.info(
-                    "🧭 meta-planning gate: evaluating final decision criteria",
-                    extra=log_record(
-                        event="meta-planning-gate-eval",
-                        has_workflows=bool(workflows),
-                        planner_resolved=planner_cls is not None,
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        bootstrap_mode=bootstrap_mode,
-                    ),
-                )
-                logger.info(
-                    "✅ checkpoint: workflows present" if workflows else "❌ checkpoint failed: no workflows present",
-                    extra=log_record(
-                        event="meta-planning-gate-workflows",
-                        condition_passed=bool(workflows),
-                        workflow_count=len(workflows),
-                    ),
-                )
-                logger.info(
-                    "✅ checkpoint: planner resolved" if planner_cls is not None else "❌ checkpoint failed: planner missing",
-                    extra=log_record(
-                        event="meta-planning-gate-planner",
-                        condition_passed=planner_cls is not None,
-                        planner_cls=str(planner_cls),
-                    ),
-                )
-                logger.info(
-                    "✅ checkpoint: prelaunch ROI gate cleared" if ready_to_launch else "❌ checkpoint failed: ROI gate blocked",
-                    extra=log_record(
-                        event="meta-planning-gate-roi-ready",
-                        condition_passed=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                logger.info(
-                    "✅ checkpoint: no ROI backoff detected" if not roi_backoff_triggered else "❌ checkpoint failed: ROI backoff active",
-                    extra=log_record(
-                        event="meta-planning-gate-roi-backoff",
-                        condition_passed=not roi_backoff_triggered,
-                        roi_backoff=roi_backoff_triggered,
-                    ),
-                )
-                logger.info(
-                    "🔎 meta-planning launch decision inputs gathered",
-                    extra=log_record(
-                        event="meta-planning-gate-inputs",
-                        ready_to_launch=ready_to_launch,
-                        planner_resolved=planner_cls is not None,
-                        workflow_count=len(workflows),
-                        bootstrap_mode=bootstrap_mode,
-                        roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                logger.info(
-                    "🔍 evaluating meta planning launch gate",
-                    extra=log_record(
-                        event="meta-planning-launch-eval",
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        planner_resolved=planner_cls is not None,
-                        workflow_count=len(workflows),
-                        workflow_ids=list(workflows.keys()),
-                        bootstrap_mode=bootstrap_mode,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                logger.info(
-                    "🔁 meta-planning gate status report (workflows=%s, planner=%s, backoff=%s, ready=%s)",
-                    len(workflows),
-                    bool(planner_cls),
-                    roi_backoff_triggered,
-                    ready_to_launch,
-                    extra=log_record(
-                        event="meta-planning-gate-status",
-                        workflow_count=len(workflows),
-                        planner_resolved=planner_cls is not None,
-                        roi_backoff=roi_backoff_triggered,
-                        ready_to_launch=ready_to_launch,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                logger.info(
-                    "🔎 meta planning gate checkpoints: workflows=%d, planner=%s, ready=%s, backoff=%s",
-                    len(workflows),
-                    bool(planner_cls),
-                    ready_to_launch,
-                    roi_backoff_triggered,
-                    extra=log_record(
-                        event="meta-planning-gate-checkpoints",
-                        workflow_count=len(workflows),
-                        planner_resolved=planner_cls is not None,
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                gating_checklist = {
-                    "workflows_present": bool(workflows),
-                    "planner_resolved": planner_cls is not None,
-                    "roi_gate_clear": ready_to_launch,
-                    "roi_backoff_clear": not roi_backoff_triggered,
-                }
-                for check, passed in gating_checklist.items():
                     logger.info(
-                        "✅ gating checkpoint passed: %s" % check
-                        if passed
-                        else "❌ gating checkpoint failed: %s" % check,
+                        "workflow registration snapshot",
                         extra=log_record(
-                            event="meta-planning-gate-check", check=check, passed=passed
+                            event="workflow-registration-detail",
+                            workflow_keys=list(workflows.keys()),
+                            workflow_graph_nodes=len(
+                                getattr(workflow_graph_obj, "graph", {}) or {}
+                            ),
                         ),
                     )
-                logger.info(
-                    "🔦 meta-planning gate checklist compiled",
-                    extra=log_record(event="meta-planning-gate-checklist", **gating_checklist),
-                )
-                logger.info(
-                    "✅ meta planning gate decision computed; entering final launch guard",
-                    extra=log_record(
-                        event="meta-planning-gate-decision",
-                        workflows_present=bool(workflows),
+                    if not workflows:
+                        logger.error(
+                            "no workflows discovered; startup halted before launching sandbox",
+                            extra=log_record(
+                                event="startup-no-workflows",
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                        sys.exit(1)
+                    if planner_cls is None:
+                        logger.error(
+                            "planner resolution failed; cannot coordinate ROI for launch",
+                            extra=log_record(event="startup-no-planner", workflow_count=len(workflows)),
+                        )
+                        sys.exit(1)
+                    bootstrap_mode = not _roi_baseline_available()
+                    logger.info(
+                        "evaluating sandbox startup readiness",
+                        extra=log_record(
+                            event="startup-readiness",
+                            workflow_count=len(workflows),
+                            planner_available=planner_cls is not None,
+                            bootstrap_mode=bootstrap_mode,
+                        ),
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "startup readiness evaluation beginning",
+                        workflow_count=len(workflows),
                         planner_available=planner_cls is not None,
+                        bootstrap_mode=bootstrap_mode,
+                    )
+                    print(
+                        "[META-TRACE] startup readiness evaluation initiated; workflows=%d planner=%s bootstrap=%s"
+                        % (
+                            len(workflows),
+                            getattr(planner_cls, "__name__", str(planner_cls)),
+                            bootstrap_mode,
+                        ),
+                        flush=True,
+                    )
+                    readiness_error: str | None = None
+                    logger.info(
+                        "🧭 meta-planning gate: beginning last-mile checks before launch",
+                        extra=log_record(
+                            event="meta-planning-gate-begin",
+                            workflow_ids=list(workflows.keys()),
+                            planner_resolved=planner_cls is not None,
+                            bootstrap_mode=bootstrap_mode,
+                        ),
+                    )
+                    try:
+                        ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
+                            workflows,
+                            planner_cls=planner_cls,
+                            settings=settings,
+                            logger=logger,
+                            bootstrap_mode=bootstrap_mode,
+                        )
+                        print(
+                            "[META-TRACE] prelaunch ROI cycles completed; ready=%s backoff=%s"
+                            % (ready_to_launch, roi_backoff_triggered),
+                            flush=True,
+                        )
+                        logger.info(
+                            "✅ prelaunch ROI cycles finished without raising",  # emoji for quick scanning
+                            extra=log_record(
+                                event="startup-prelaunch-success",
+                                ready_to_launch=ready_to_launch,
+                                roi_backoff=roi_backoff_triggered,
+                                workflow_count=len(workflows),
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                    except RuntimeError as exc:
+                        readiness_error = str(exc)
+                        ready_to_launch = False
+                        roi_backoff_triggered = False
+                        logger.error(
+                            "❌ runtime error during prelaunch ROI cycles",  # emoji for quick scanning
+                            extra=log_record(
+                                event="startup-prelaunch-runtime-error",
+                                readiness_error=readiness_error,
+                                workflow_count=len(workflows),
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                    except Exception as exc:
+                        readiness_error = f"unexpected prelaunch failure: {exc}"
+                        ready_to_launch = False
+                        roi_backoff_triggered = False
+                        logger.exception(
+                            "❌ unexpected exception during prelaunch ROI cycles",  # emoji for quick scanning
+                            extra=log_record(
+                                event="startup-prelaunch-unexpected-error",
+                                readiness_error=readiness_error,
+                                workflow_count=len(workflows),
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                    finally:
+                        logger.info(
+                            "ℹ️ prelaunch ROI cycle invocation finished",
+                            extra=log_record(
+                                event="startup-prelaunch-finished",
+                                ready_to_launch=ready_to_launch,
+                                roi_backoff=roi_backoff_triggered,
+                                readiness_error=readiness_error,
+                            ),
+                        )
+                        print(
+                            "[META-TRACE] prelaunch ROI cycle finished; ready=%s backoff=%s error=%s"
+                            % (ready_to_launch, roi_backoff_triggered, readiness_error),
+                            flush=True,
+                        )
+                        _emit_meta_trace(
+                            logger,
+                            "prelaunch ROI cycle invocation finished",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                        )
+    
+                    if (
+                        not ready_to_launch
+                        and bootstrap_mode
+                        and not roi_backoff_triggered
+                        and planner_cls is not None
+                        and workflows
+                    ):
+                        logger.info(
+                            "✅ bootstrap mode overriding diminishing returns gate; ROI baseline unavailable",
+                            extra=log_record(
+                                event="startup-bootstrap-diminishing-bypass",
+                                workflow_count=len(workflows),
+                            ),
+                        )
+                        ready_to_launch = True
+    
+                    if not ready_to_launch:
+                        failure_reasons: list[str] = []
+                        if not workflows:
+                            failure_reasons.append("no workflows discovered")
+                        if planner_cls is None:
+                            failure_reasons.append("MetaWorkflowPlanner unavailable")
+                        if readiness_error:
+                            failure_reasons.append(readiness_error)
+                        elif roi_backoff_triggered:
+                            failure_reasons.append("ROI backoff triggered before launch")
+                        else:
+                            failure_reasons.append("ROI gate not satisfied")
+    
+                        logger.error(
+                            "❌ sandbox readiness failed; aborting launch: %s",
+                            "; ".join(failure_reasons),
+                            extra=log_record(
+                                event="startup-readiness-failed",
+                                failure_reasons=failure_reasons,
+                                planner_available=planner_cls is not None,
+                                workflow_count=len(workflows),
+                                roi_backoff=roi_backoff_triggered,
+                            ),
+                        )
+                        sys.exit(1)
+    
+                    meta_planning.reload_settings(settings)
+                    logger.info(
+                        "startup readiness evaluation complete",
+                        extra=log_record(
+                            event="startup-readiness-result",
+                            workflow_count=len(workflows),
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            planner_available=planner_cls is not None,
+                        ),
+                    )
+                    _emit_meta_trace(
+                        logger,
+                        "startup readiness evaluation complete",
+                        workflow_count=len(workflows),
                         ready_to_launch=ready_to_launch,
                         roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
-                        bootstrap_mode=bootstrap_mode,
-                    ),
-                )
-                if not workflows:
-                    logger.error(
-                        "❌ gating halted: no workflows discovered for meta planning",
-                        extra=log_record(event="meta-planning-gate-no-workflows"),
+                        planner_available=planner_cls is not None,
                     )
-                if planner_cls is None:
-                    logger.error(
-                        "❌ gating halted: MetaWorkflowPlanner unresolved",
-                        extra=log_record(event="meta-planning-gate-no-planner"),
-                    )
-                if roi_backoff_triggered:
-                    logger.error(
-                        "❌ gating halted: ROI backoff triggered before launch",
-                        extra=log_record(event="meta-planning-gate-backoff"),
-                    )
-                if readiness_error:
-                    logger.error(
-                        "❌ gating halted: readiness error encountered",
+                    logger.info(
+                        "🔬 meta-planning readiness diagnostics collected",
                         extra=log_record(
-                            event="meta-planning-gate-readiness-error",
+                            event="meta-planning-readiness-diagnostics",
+                            planner_status="✅ available" if planner_cls else "❌ missing",
+                            workflow_status="✅ present" if workflows else "❌ none discovered",
+                            roi_gate="✅ clear" if ready_to_launch else "❌ blocked",
+                            roi_backoff="✅ none" if not roi_backoff_triggered else "❌ backoff",
+                            readiness_error=readiness_error,
+                            workflow_ids=list(workflows.keys()),
+                        ),
+                    )
+                    logger.info(
+                        "🧭 meta-planning gate: evaluating final decision criteria",
+                        extra=log_record(
+                            event="meta-planning-gate-eval",
+                            has_workflows=bool(workflows),
+                            planner_resolved=planner_cls is not None,
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            bootstrap_mode=bootstrap_mode,
+                        ),
+                    )
+                    logger.info(
+                        "✅ checkpoint: workflows present" if workflows else "❌ checkpoint failed: no workflows present",
+                        extra=log_record(
+                            event="meta-planning-gate-workflows",
+                            condition_passed=bool(workflows),
+                            workflow_count=len(workflows),
+                        ),
+                    )
+                    logger.info(
+                        "✅ checkpoint: planner resolved" if planner_cls is not None else "❌ checkpoint failed: planner missing",
+                        extra=log_record(
+                            event="meta-planning-gate-planner",
+                            condition_passed=planner_cls is not None,
+                            planner_cls=str(planner_cls),
+                        ),
+                    )
+                    logger.info(
+                        "✅ checkpoint: prelaunch ROI gate cleared" if ready_to_launch else "❌ checkpoint failed: ROI gate blocked",
+                        extra=log_record(
+                            event="meta-planning-gate-roi-ready",
+                            condition_passed=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
                             readiness_error=readiness_error,
                         ),
                     )
-                failure_reasons = []
-                if not workflows:
-                    failure_reasons.append("no workflows discovered for meta planning")
-                if planner_cls is None:
-                    failure_reasons.append("MetaWorkflowPlanner unresolved")
-                if roi_backoff_triggered:
-                    failure_reasons.append("ROI backoff triggered before launch")
-                if readiness_error:
-                    failure_reasons.append(readiness_error)
-                if not ready_to_launch and not readiness_error:
-                    failure_reasons.append(
-                        "workflows did not meet diminishing returns threshold"
-                    )
-                logger.info(
-                    "🔦 meta-planning gate failure reasons compiled",
-                    extra=log_record(
-                        event="meta-planning-gate-failure-reasons",
-                        failure_reasons=failure_reasons,
-                        checklist=gating_checklist,
-                    ),
-                )
-                logger.info(
-                    "🧭 meta-planning gate summary computed; preparing branch selection",
-                    extra=log_record(
-                        event="meta-planning-gate-branch-summary",
-                        ready_to_launch=ready_to_launch,
-                        roi_backoff=roi_backoff_triggered,
-                        planner_available=planner_cls is not None,
-                        workflows_present=bool(workflows),
-                        failure_reasons=failure_reasons,
-                    ),
-                )
-                logger.info(
-                    "🔎 launch condition breakdown: workflows=%s, planner=%s, roi_backoff=%s, readiness_error=%s",
-                    bool(workflows),
-                    bool(planner_cls),
-                    roi_backoff_triggered,
-                    readiness_error,
-                    extra=log_record(
-                        event="meta-planning-launch-breakdown",
-                        has_workflows=bool(workflows),
-                        planner_available=planner_cls is not None,
-                        roi_backoff=roi_backoff_triggered,
-                        readiness_error=readiness_error,
-                    ),
-                )
-                if ready_to_launch:
                     logger.info(
-                        "🚦 meta planning launch block reached; beginning verbose instrumentation",
+                        "✅ checkpoint: no ROI backoff detected" if not roi_backoff_triggered else "❌ checkpoint failed: ROI backoff active",
                         extra=log_record(
-                            event="meta-planning-launch-block-entry",
+                            event="meta-planning-gate-roi-backoff",
+                            condition_passed=not roi_backoff_triggered,
+                            roi_backoff=roi_backoff_triggered,
+                        ),
+                    )
+                    logger.info(
+                        "🔎 meta-planning launch decision inputs gathered",
+                        extra=log_record(
+                            event="meta-planning-gate-inputs",
+                            ready_to_launch=ready_to_launch,
+                            planner_resolved=planner_cls is not None,
                             workflow_count=len(workflows),
-                            planner_cls=str(planner_cls),
+                            bootstrap_mode=bootstrap_mode,
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                    logger.info(
+                        "🔍 evaluating meta planning launch gate",
+                        extra=log_record(
+                            event="meta-planning-launch-eval",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            planner_resolved=planner_cls is not None,
+                            workflow_count=len(workflows),
+                            workflow_ids=list(workflows.keys()),
+                            bootstrap_mode=bootstrap_mode,
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                    logger.info(
+                        "🔁 meta-planning gate status report (workflows=%s, planner=%s, backoff=%s, ready=%s)",
+                        len(workflows),
+                        bool(planner_cls),
+                        roi_backoff_triggered,
+                        ready_to_launch,
+                        extra=log_record(
+                            event="meta-planning-gate-status",
+                            workflow_count=len(workflows),
+                            planner_resolved=planner_cls is not None,
+                            roi_backoff=roi_backoff_triggered,
+                            ready_to_launch=ready_to_launch,
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                    logger.info(
+                        "🔎 meta planning gate checkpoints: workflows=%d, planner=%s, ready=%s, backoff=%s",
+                        len(workflows),
+                        bool(planner_cls),
+                        ready_to_launch,
+                        roi_backoff_triggered,
+                        extra=log_record(
+                            event="meta-planning-gate-checkpoints",
+                            workflow_count=len(workflows),
+                            planner_resolved=planner_cls is not None,
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                    gating_checklist = {
+                        "workflows_present": bool(workflows),
+                        "planner_resolved": planner_cls is not None,
+                        "roi_gate_clear": ready_to_launch,
+                        "roi_backoff_clear": not roi_backoff_triggered,
+                    }
+                    for check, passed in gating_checklist.items():
+                        logger.info(
+                            "✅ gating checkpoint passed: %s" % check
+                            if passed
+                            else "❌ gating checkpoint failed: %s" % check,
+                            extra=log_record(
+                                event="meta-planning-gate-check", check=check, passed=passed
+                            ),
+                        )
+                    logger.info(
+                        "🔦 meta-planning gate checklist compiled",
+                        extra=log_record(event="meta-planning-gate-checklist", **gating_checklist),
+                    )
+                    logger.info(
+                        "✅ meta planning gate decision computed; entering final launch guard",
+                        extra=log_record(
+                            event="meta-planning-gate-decision",
+                            workflows_present=bool(workflows),
+                            planner_available=planner_cls is not None,
+                            ready_to_launch=ready_to_launch,
                             roi_backoff=roi_backoff_triggered,
                             readiness_error=readiness_error,
                             bootstrap_mode=bootstrap_mode,
-                            correlation_id=cid,
+                        ),
+                    )
+                    if not workflows:
+                        logger.error(
+                            "❌ gating halted: no workflows discovered for meta planning",
+                            extra=log_record(event="meta-planning-gate-no-workflows"),
+                        )
+                    if planner_cls is None:
+                        logger.error(
+                            "❌ gating halted: MetaWorkflowPlanner unresolved",
+                            extra=log_record(event="meta-planning-gate-no-planner"),
+                        )
+                    if roi_backoff_triggered:
+                        logger.error(
+                            "❌ gating halted: ROI backoff triggered before launch",
+                            extra=log_record(event="meta-planning-gate-backoff"),
+                        )
+                    if readiness_error:
+                        logger.error(
+                            "❌ gating halted: readiness error encountered",
+                            extra=log_record(
+                                event="meta-planning-gate-readiness-error",
+                                readiness_error=readiness_error,
+                            ),
+                        )
+                    failure_reasons = []
+                    if not workflows:
+                        failure_reasons.append("no workflows discovered for meta planning")
+                    if planner_cls is None:
+                        failure_reasons.append("MetaWorkflowPlanner unresolved")
+                    if roi_backoff_triggered:
+                        failure_reasons.append("ROI backoff triggered before launch")
+                    if readiness_error:
+                        failure_reasons.append(readiness_error)
+                    if not ready_to_launch and not readiness_error:
+                        failure_reasons.append(
+                            "workflows did not meet diminishing returns threshold"
+                        )
+                    logger.info(
+                        "🔦 meta-planning gate failure reasons compiled",
+                        extra=log_record(
+                            event="meta-planning-gate-failure-reasons",
+                            failure_reasons=failure_reasons,
+                            checklist=gating_checklist,
                         ),
                     )
                     logger.info(
-                        "meta planning loop prerequisites verified",
+                        "🧭 meta-planning gate summary computed; preparing branch selection",
                         extra=log_record(
-                            event="meta-planning-loop-prereq",
-                            workflow_count=len(workflows),
+                            event="meta-planning-gate-branch-summary",
+                            ready_to_launch=ready_to_launch,
+                            roi_backoff=roi_backoff_triggered,
                             planner_available=planner_cls is not None,
+                            workflows_present=bool(workflows),
+                            failure_reasons=failure_reasons,
                         ),
                     )
-                    if not workflows or planner_cls is None:
-                        logger.error(
-                            "❌ meta planning loop prerequisites missing; aborting start",
+                    logger.info(
+                        "🔎 launch condition breakdown: workflows=%s, planner=%s, roi_backoff=%s, readiness_error=%s",
+                        bool(workflows),
+                        bool(planner_cls),
+                        roi_backoff_triggered,
+                        readiness_error,
+                        extra=log_record(
+                            event="meta-planning-launch-breakdown",
+                            has_workflows=bool(workflows),
+                            planner_available=planner_cls is not None,
+                            roi_backoff=roi_backoff_triggered,
+                            readiness_error=readiness_error,
+                        ),
+                    )
+                    if ready_to_launch:
+                        logger.info(
+                            "🚦 meta planning launch block reached; beginning verbose instrumentation",
                             extra=log_record(
-                                event="meta-planning-loop-prereq-missing",
+                                event="meta-planning-launch-block-entry",
+                                workflow_count=len(workflows),
+                                planner_cls=str(planner_cls),
+                                roi_backoff=roi_backoff_triggered,
+                                readiness_error=readiness_error,
+                                bootstrap_mode=bootstrap_mode,
+                                correlation_id=cid,
+                            ),
+                        )
+                        logger.info(
+                            "meta planning loop prerequisites verified",
+                            extra=log_record(
+                                event="meta-planning-loop-prereq",
+                                workflow_count=len(workflows),
+                                planner_available=planner_cls is not None,
+                            ),
+                        )
+                        if not workflows or planner_cls is None:
+                            logger.error(
+                                "❌ meta planning loop prerequisites missing; aborting start",
+                                extra=log_record(
+                                    event="meta-planning-loop-prereq-missing",
+                                    workflow_count=len(workflows),
+                                    planner_available=planner_cls is not None,
+                                ),
+                            )
+                            sys.exit(1)
+                        logger.info(
+                            "✅ gating green: all launch conditions satisfied; proceeding to thread bootstrap",
+                            extra=log_record(
+                                event="meta-planning-gate-green",
+                                workflow_count=len(workflows),
+                                planner_resolved=planner_cls is not None,
+                                roi_backoff=roi_backoff_triggered,
+                            ),
+                        )
+                        logger.info(
+                            "🧭 meta planning start: entering bootstrap+thread block (expect subsequent checkpoints)",
+                            extra=log_record(
+                                event="meta-planning-start-block-enter",
+                                workflow_ids=list(workflows.keys()),
+                                planner_resolved=planner_cls is not None,
+                                interval_seconds=interval,
+                                bootstrap_mode=bootstrap_mode,
+                                roi_backoff=roi_backoff_triggered,
+                                ready_to_launch=ready_to_launch,
+                            ),
+                        )
+                        logger.info(
+                            "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
+                            extra=log_record(
+                                event="meta-planning-launch-sequence-begin",
+                                workflow_ids=list(workflows.keys()),
+                                planner_class=str(planner_cls),
+                                roi_backoff=roi_backoff_triggered,
+                                bootstrap_mode=bootstrap_mode,
+                            ),
+                        )
+                        logger.info(
+                            "✅ launch gate green: ROI stagnation satisfied and planner resolved",
+                            extra=log_record(
+                                event="meta-planning-launch-green",
+                                workflow_ids=list(workflows.keys()),
+                                planner_cls=str(planner_cls),
+                                roi_backoff=roi_backoff_triggered,
+                            ),
+                        )
+                        logger.info(
+                            "✅ readiness gate cleared; preparing to start meta planning loop",
+                            extra=log_record(
+                                event="meta-planning-ready",
+                                roi_backoff=roi_backoff_triggered,
+                                workflow_count=len(workflows),
+                                planner_resolved=planner_cls is not None,
+                                bootstrap_mode=bootstrap_mode,
+                                prelaunch_ready=ready_to_launch,
+                            ),
+                        )
+                        logger.info(
+                            "✅ meta-planning launch prerequisites satisfied",
+                            extra=log_record(
+                                event="meta-planning-prereqs",
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                                workflow_ids=list(workflows.keys()),
+                                workflow_graph_built=workflow_graph_obj is not None,
+                            ),
+                        )
+                        logger.info(
+                            "✅ gating checklist satisfied; proceeding to meta planning bootstrap",
+                            extra=log_record(
+                                event="meta-planning-gate-green-checklist",
+                                checklist=gating_checklist,
+                                workflow_ids=list(workflows.keys()),
+                            ),
+                        )
+                        logger.info(
+                            "✅ meta planning gate satisfied; initializing launch choreography",
+                            extra=log_record(
+                                event="meta-planning-gate-satisfied",
+                                workflow_ids=list(workflows.keys()),
+                                planner_resolved=planner_cls is not None,
+                                bootstrap_mode=bootstrap_mode,
+                            ),
+                        )
+                        logger.info(
+                            "🔧 configuring meta planning loop thread creation",
+                            extra=log_record(
+                                event="meta-planning-thread-config",
+                                interval_seconds=interval,
+                                workflow_graph_built=workflow_graph_obj is not None,
+                                workflow_count=len(workflows),
+                            ),
+                        )
+                        logger.info(
+                            "🧠 preparing to invoke start_self_improvement_cycle() with event bus and workflow graph",
+                            extra=log_record(
+                                event="meta-planning-pre-bootstrap-call",
+                                workflow_ids=list(workflows.keys()),
+                                planner_cls=str(planner_cls),
+                                interval_seconds=interval,
+                                workflow_graph_present=workflow_graph_obj is not None,
+                                event_bus_available=shared_event_bus is not None,
+                                workflow_graph_nodes=
+                                    list(workflow_graph_obj.keys())
+                                    if isinstance(workflow_graph_obj, Mapping)
+                                    else None,
+                                workflow_graph_type=type(workflow_graph_obj).__name__,
+                                workflow_graph_is_graph=(
+                                    getattr(workflow_graph_obj, "graph", None) is not None
+                                ),
+                                event_bus_type=type(shared_event_bus).__name__
+                                if shared_event_bus is not None
+                                else None,
+                                event_bus_handlers=getattr(
+                                    shared_event_bus, "listeners", None
+                                ),
+                            ),
+                        )
+                        logger.info(
+                            "🛰️ verifying meta_planning module attributes prior to start_self_improvement_cycle()",
+                            extra=log_record(
+                                event="meta-planning-module-precheck",
+                                module_dir=list(sorted(dir(meta_planning))),
+                                has_reload_settings=hasattr(meta_planning, "reload_settings"),
+                                has_self_improvement_cycle=hasattr(
+                                    meta_planning, "start_self_improvement_cycle"
+                                ),
+                                callable_self_improvement_cycle=callable(
+                                    getattr(meta_planning, "start_self_improvement_cycle", None)
+                                ),
+                            ),
+                        )
+                        try:
+                            logger.info(
+                                "🔧 invoking meta planning loop bootstrap",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-call",
+                                    workflow_count=len(workflows),
+                                    planner_cls=str(planner_cls),
+                                    interval_seconds=interval,
+                                    workflow_graph_present=workflow_graph_obj is not None,
+                                    workflow_graph_len=len(workflow_graph_obj or {}),
+                                    event_bus_connected=shared_event_bus is not None,
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ deep-dive meta planning bootstrap parameter snapshot",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-param-snapshot",
+                                    workflow_keys=list(workflows.keys()),
+                                    workflow_len=len(workflows),
+                                    planner_cls=str(planner_cls),
+                                    interval_seconds=interval,
+                                    workflow_graph_type=type(workflow_graph_obj).__name__,
+                                    workflow_graph_keys=list((workflow_graph_obj or {}).keys())
+                                    if isinstance(workflow_graph_obj, Mapping)
+                                    else None,
+                                    event_bus_type=type(shared_event_bus).__name__
+                                    if shared_event_bus is not None
+                                    else None,
+                                    event_bus_has_listeners=bool(
+                                        getattr(shared_event_bus, "listeners", None)
+                                    ),
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ recording meta planning invocation parameters for traceability",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-args",
+                                    workflow_ids=list(workflows.keys()),
+                                    workflow_count=len(workflows),
+                                    interval_seconds=interval,
+                                    planner_cls=str(planner_cls),
+                                    workflow_graph_repr=repr(workflow_graph_obj),
+                                    event_bus_repr=repr(shared_event_bus),
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ meta planning bootstrap call about to execute start_self_improvement_cycle()",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-about-to-call",
+                                    workflow_count=len(workflows),
+                                    planner_cls=str(planner_cls),
+                                    interval_seconds=interval,
+                                    workflow_graph_keys=list((workflow_graph_obj or {}).keys())
+                                    if isinstance(workflow_graph_obj, Mapping)
+                                    else None,
+                                    workflow_graph_type=type(workflow_graph_obj).__name__,
+                                    event_bus_type=type(shared_event_bus).__name__
+                                    if shared_event_bus is not None
+                                    else None,
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ verifying start_self_improvement_cycle callable availability before invoke",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-pre-call-verify",
+                                    callable_present=hasattr(meta_planning, "start_self_improvement_cycle"),
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                    callable_object=getattr(
+                                        meta_planning, "start_self_improvement_cycle", None
+                                    ),
+                                    callable_is_function=callable(
+                                        getattr(
+                                            meta_planning, "start_self_improvement_cycle", None
+                                        )
+                                    ),
+                                ),
+                            )
+                            if not hasattr(meta_planning, "start_self_improvement_cycle"):
+                                logger.error(
+                                    "❌ start_self_improvement_cycle missing on meta_planning module",
+                                    extra=log_record(
+                                        event="meta-planning-missing-entrypoint",
+                                        module_dir=list(dir(meta_planning)),
+                                        planner_cls=str(planner_cls),
+                                    ),
+                                )
+                                raise RuntimeError(
+                                    "start_self_improvement_cycle missing on meta_planning"
+                                )
+                            if not callable(
+                                getattr(meta_planning, "start_self_improvement_cycle", None)
+                            ):
+                                logger.error(
+                                    "❌ start_self_improvement_cycle present but not callable",
+                                    extra=log_record(
+                                        event="meta-planning-entrypoint-not-callable",
+                                        type_info=type(
+                                            getattr(
+                                                meta_planning, "start_self_improvement_cycle", None
+                                            )
+                                        ).__name__,
+                                        planner_cls=str(planner_cls),
+                                    ),
+                                )
+                                raise RuntimeError(
+                                    "start_self_improvement_cycle is not callable"
+                                )
+                            logger.info(
+                                "🛰️ start_self_improvement_cycle() callable confirmed; executing with detailed context",
+                                extra=log_record(
+                                    event="meta-planning-callable-confirmed",
+                                    workflow_count=len(workflows),
+                                    planner_cls=str(planner_cls),
+                                    interval_seconds=interval,
+                                    workflow_graph_snapshot=repr(workflow_graph_obj),
+                                    event_bus_snapshot=repr(shared_event_bus),
+                                    caller_module=__name__,
+                                ),
+                            )
+                            thread = meta_planning.start_self_improvement_cycle(
+                                workflows,
+                                event_bus=shared_event_bus,
+                                interval=interval,
+                                workflow_graph=workflow_graph_obj,
+                            )
+                            logger.info(
+                                "🛰️ start_self_improvement_cycle() invocation completed; capturing return object",
+                                extra=log_record(
+                                    event="meta-planning-post-invoke",
+                                    returned_type=type(thread).__name__ if thread is not None else None,
+                                    returned_is_thread=isinstance(thread, threading.Thread),
+                                    returned_repr=repr(thread),
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ meta planning bootstrap call returned from start_self_improvement_cycle()",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-returned",
+                                    thread_is_none=thread is None,
+                                    thread_type=type(thread).__name__ if thread is not None else None,
+                                    thread_dir=list(sorted(set(dir(thread)) if thread is not None else [])),
+                                    workflow_count=len(workflows),
+                                    interval_seconds=interval,
+                                    thread_target=getattr(thread, "_target", None),
+                                    thread_args=getattr(thread, "_args", None),
+                                    thread_kwargs=getattr(thread, "_kwargs", None),
+                                ),
+                            )
+                            if thread is None:
+                                logger.error(
+                                    "❌ meta planning bootstrap returned None thread",
+                                    extra=log_record(
+                                        event="meta-planning-thread-none",
+                                        planner_cls=str(planner_cls),
+                                        workflow_ids=list(workflows.keys()),
+                                    ),
+                                )
+                                raise RuntimeError("meta planning bootstrap returned None")
+                            logger.info(
+                                "🛰️ meta planning bootstrap returned valid thread object; proceeding to post-call checks",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-post-call",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    alive=getattr(thread, "is_alive", lambda: False)(),
+                                    planner_cls=str(planner_cls),
+                                    workflow_ids=list(workflows.keys()),
+                                    event_bus_type=type(shared_event_bus).__name__
+                                    if shared_event_bus is not None
+                                    else None,
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning bootstrap call returned",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-return",
+                                    thread_repr=repr(thread),
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    thread_ident=getattr(thread, "ident", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning thread object created",
+                                extra=log_record(
+                                    event="meta-planning-thread-created",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                    target=getattr(thread, "_target", None),
+                                    native_id=getattr(thread, "native_id", None),
+                                    ident=getattr(thread, "ident", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning thread attributes captured",
+                                extra=log_record(
+                                    event="meta-planning-thread-attrs",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    alive=getattr(thread, "is_alive", lambda: False)(),
+                                    thread_ident=getattr(thread, "ident", None),
+                                    native_id=getattr(thread, "native_id", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning bootstrap pipeline completed; preparing start() call",
+                                extra=log_record(
+                                    event="meta-planning-bootstrap-finished",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    planner_cls=str(planner_cls),
+                                    alive_pre_start=getattr(thread, "is_alive", lambda: False)(),
+                                ),
+                            )
+                        except Exception as exc:
+                            logger.exception(
+                                "❌ meta planning loop bootstrap failed; thread object missing",
+                                extra=log_record(
+                                    event="meta-loop-error",
+                                    workflow_count=len(workflows),
+                                    planner_cls=str(planner_cls),
+                                    interval_seconds=interval,
+                                    error_type=type(exc).__name__,
+                                    error_message=str(exc),
+                                ),
+                            )
+                            logger.exception(
+                                "❌ meta planning bootstrap returned invalid thread",
+                                extra=log_record(
+                                    event="meta-planning-thread-invalid",
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                    error_type=type(exc).__name__,
+                                ),
+                            )
+                            logger.exception(
+                                "failed to initialize meta planning loop; sandbox launch halted",
+                                extra=log_record(event="meta-loop-error"),
+                            )
+                            sys.exit(1)
+    
+                        try:
+                            logger.info(
+                                "🧭 entering meta planning thread.start() block",  # explicit boundary marker
+                                extra=log_record(
+                                    event="meta-planning-thread-start-boundary",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    alive_pre=getattr(thread, "is_alive", lambda: False)(),
+                                    thread_ident=getattr(thread, "ident", None),
+                                    thread_native_id=getattr(thread, "native_id", None),
+                                    thread_target=getattr(thread, "_target", None),
+                                ),
+                            )
+                            logger.info(
+                                "🔧 attempting to start meta planning loop thread",
+                                extra=log_record(
+                                    event="meta-planning-start-attempt",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                ),
+                            )
+                            thread.start()
+                            logger.info(
+                                "✅ thread.start() invoked successfully for meta planning loop",
+                                extra=log_record(
+                                    event="meta-planning-thread-start-invoked",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning thread start invoked",
+                                extra=log_record(
+                                    event="meta-planning-start-invoke",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    thread_ident=getattr(thread, "ident", None),
+                                    native_id=getattr(thread, "native_id", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning loop thread started successfully",
+                                extra=log_record(
+                                    event="meta-planning-start",
+                            thread_name=getattr(thread, "name", "unknown"),
+                            is_alive=getattr(thread, "is_alive", lambda: False)(),
+                            planner_cls=str(planner_cls),
+                            workflow_count=len(workflows),
+                            workflow_graph_present=workflow_graph_obj is not None,
+                                    native_id=getattr(thread, "native_id", None),
+                                ),
+                            )
+                            logger.info(
+                                "🛰️ meta planning loop thread start diagnostics captured",
+                                extra=log_record(
+                                    event="meta-planning-thread-start-diagnostics",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    thread_ident=getattr(thread, "ident", None),
+                                    native_id=getattr(thread, "native_id", None),
+                                    daemon=getattr(thread, "daemon", None),
+                                    alive=getattr(thread, "is_alive", lambda: False)(),
+                                    target=getattr(thread, "_target", None),
+                                    args=getattr(thread, "_args", None),
+                                    kwargs=getattr(thread, "_kwargs", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning thread alive status confirmed",
+                                extra=log_record(
+                                    event="meta-planning-thread-alive",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    is_alive=getattr(thread, "is_alive", lambda: False)(),
+                                ),
+                            )
+                            alive_state = getattr(thread, "is_alive", lambda: False)()
+                            if not alive_state:
+                                logger.error(
+                                    "❌ meta planning loop thread reported not alive after start",
+                                    extra=log_record(
+                                        event="meta-planning-thread-not-alive",
+                                        thread_name=getattr(thread, "name", "unknown"),
+                                        planner_cls=str(planner_cls),
+                                        workflow_count=len(workflows),
+                                    ),
+                                )
+                                raise RuntimeError("meta planning loop thread failed to stay alive")
+                            logger.info(
+                                "🟢 meta planning loop thread running",
+                                extra=log_record(
+                                    event="meta-planning-thread-running",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    native_id=getattr(thread, "native_id", None),
+                                    ident=getattr(thread, "ident", None),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning loop thread alive verification passed",
+                                extra=log_record(
+                                    event="meta-planning-thread-alive-verified",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    planner_cls=str(planner_cls),
+                                    workflow_count=len(workflows),
+                                ),
+                            )
+                            logger.info(
+                                "✅ meta planning loop start confirmed; orchestrator warm-up next",
+                                extra=log_record(
+                                    event="meta-planning-start-confirm",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    daemon=getattr(thread, "daemon", None),
+                                    is_alive=getattr(thread, "is_alive", lambda: False)(),
+                                ),
+                            )
+                            logger.info(
+                                "🎯 meta planning start block completed without exceptions; handing off to orchestrator",
+                                extra=log_record(
+                                    event="meta-planning-start-block-complete",
+                                    thread_name=getattr(thread, "name", "unknown"),
+                                    alive=getattr(thread, "is_alive", lambda: False)(),
+                                    planner_cls=str(planner_cls),
+                                    workflow_ids=list(workflows.keys()),
+                                ),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "❌ meta planning loop thread failed to start",  # emoji for quick scanning
+                                extra=log_record(event="meta-planning-start-error"),
+                            )
+                            sys.exit(1)
+                    else:
+                        logger.error(
+                            "❌ gating red: prelaunch ROI or planner checks failed; aborting meta-planning start",
+                            extra=log_record(
+                                event="meta-planning-gate-red-summary",
+                                ready_to_launch=ready_to_launch,
+                                roi_backoff=roi_backoff_triggered,
+                                planner_available=planner_cls is not None,
+                                workflows_present=bool(workflows),
+                                readiness_error=readiness_error,
+                            ),
+                        )
+                        logger.error(
+                            "❌ meta planning loop launch gate failed",  # emoji for quick scanning
+                            extra=log_record(
+                                event="meta-planning-gate-failed",
+                                roi_backoff=roi_backoff_triggered,
+                                ready_to_launch=ready_to_launch,
+                                planner_available=planner_cls is not None,
+                                workflow_count=len(workflows),
+                                readiness_error=readiness_error,
+                            ),
+                        )
+                        logger.error(
+                            "❌ readiness gate failed; meta planning launch conditions not met",
+                            extra=log_record(
+                                event="meta-planning-readiness-failure",
+                                roi_backoff=roi_backoff_triggered,
+                                ready_to_launch=ready_to_launch,
+                                planner_available=planner_cls is not None,
+                                workflow_count=len(workflows),
+                                workflow_ids=list(workflows.keys()),
+                            ),
+                        )
+                        failure_reason = readiness_error or (
+                            "workflows did not reach ROI stagnation; sandbox launch aborted"
+                        )
+                        logger.error(
+                            "❌ launch gate red; blocking meta planning loop",  # emoji for quick scanning
+                            extra=log_record(
+                                event="meta-planning-gate-red",
+                                planner_available=planner_cls is not None,
+                                workflow_count=len(workflows),
+                                roi_backoff=roi_backoff_triggered,
+                                ready_to_launch=ready_to_launch,
+                                readiness_error=readiness_error,
+                            ),
+                        )
+                        logger.error(
+                            "❌ meta planning launch vetoed after readiness evaluation",
+                            extra=log_record(
+                                event="meta-planning-veto",
+                                reason=failure_reason,
+                                planner_available=planner_cls is not None,
+                                workflow_count=len(workflows),
+                                roi_backoff=roi_backoff_triggered,
+                            ),
+                        )
+                        logger.error(
+                            "❌ readiness gate blocked meta planning loop",
+                            extra=log_record(
+                                event="meta-planning-ready-false",
+                                reason=failure_reason,
+                                roi_backoff=roi_backoff_triggered,
+                                ready_to_launch=ready_to_launch,
+                            ),
+                        )
+                        logger.error(
+                            "meta planning loop not started: %s",
+                            failure_reason,
+                            extra=log_record(
+                                event="meta-planning-skipped",
+                                reason=failure_reason,
                                 workflow_count=len(workflows),
                                 planner_available=planner_cls is not None,
                             ),
                         )
                         sys.exit(1)
                     logger.info(
-                        "✅ gating green: all launch conditions satisfied; proceeding to thread bootstrap",
-                        extra=log_record(
-                            event="meta-planning-gate-green",
-                            workflow_count=len(workflows),
-                            planner_resolved=planner_cls is not None,
-                            roi_backoff=roi_backoff_triggered,
-                        ),
+                        "preseeded bootstrap context in use; pipeline and manager are cached",
+                        extra=log_record(event="bootstrap-preseed"),
                     )
-                    logger.info(
-                        "🧭 meta planning start: entering bootstrap+thread block (expect subsequent checkpoints)",
-                        extra=log_record(
-                            event="meta-planning-start-block-enter",
-                            workflow_ids=list(workflows.keys()),
-                            planner_resolved=planner_cls is not None,
-                            interval_seconds=interval,
-                            bootstrap_mode=bootstrap_mode,
-                            roi_backoff=roi_backoff_triggered,
-                            ready_to_launch=ready_to_launch,
-                        ),
-                    )
-                    logger.info(
-                        "✅ prelaunch checks passed; proceeding with meta-planning start sequence",
-                        extra=log_record(
-                            event="meta-planning-launch-sequence-begin",
-                            workflow_ids=list(workflows.keys()),
-                            planner_class=str(planner_cls),
-                            roi_backoff=roi_backoff_triggered,
-                            bootstrap_mode=bootstrap_mode,
-                        ),
-                    )
-                    logger.info(
-                        "✅ launch gate green: ROI stagnation satisfied and planner resolved",
-                        extra=log_record(
-                            event="meta-planning-launch-green",
-                            workflow_ids=list(workflows.keys()),
-                            planner_cls=str(planner_cls),
-                            roi_backoff=roi_backoff_triggered,
-                        ),
-                    )
-                    logger.info(
-                        "✅ readiness gate cleared; preparing to start meta planning loop",
-                        extra=log_record(
-                            event="meta-planning-ready",
-                            roi_backoff=roi_backoff_triggered,
-                            workflow_count=len(workflows),
-                            planner_resolved=planner_cls is not None,
-                            bootstrap_mode=bootstrap_mode,
-                            prelaunch_ready=ready_to_launch,
-                        ),
-                    )
-                    logger.info(
-                        "✅ meta-planning launch prerequisites satisfied",
-                        extra=log_record(
-                            event="meta-planning-prereqs",
-                            planner_cls=str(planner_cls),
-                            interval_seconds=interval,
-                            workflow_ids=list(workflows.keys()),
-                            workflow_graph_built=workflow_graph_obj is not None,
-                        ),
-                    )
-                    logger.info(
-                        "✅ gating checklist satisfied; proceeding to meta planning bootstrap",
-                        extra=log_record(
-                            event="meta-planning-gate-green-checklist",
-                            checklist=gating_checklist,
-                            workflow_ids=list(workflows.keys()),
-                        ),
-                    )
-                    logger.info(
-                        "✅ meta planning gate satisfied; initializing launch choreography",
-                        extra=log_record(
-                            event="meta-planning-gate-satisfied",
-                            workflow_ids=list(workflows.keys()),
-                            planner_resolved=planner_cls is not None,
-                            bootstrap_mode=bootstrap_mode,
-                        ),
-                    )
-                    logger.info(
-                        "🔧 configuring meta planning loop thread creation",
-                        extra=log_record(
-                            event="meta-planning-thread-config",
-                            interval_seconds=interval,
-                            workflow_graph_built=workflow_graph_obj is not None,
-                            workflow_count=len(workflows),
-                        ),
-                    )
-                    logger.info(
-                        "🧠 preparing to invoke start_self_improvement_cycle() with event bus and workflow graph",
-                        extra=log_record(
-                            event="meta-planning-pre-bootstrap-call",
-                            workflow_ids=list(workflows.keys()),
-                            planner_cls=str(planner_cls),
-                            interval_seconds=interval,
-                            workflow_graph_present=workflow_graph_obj is not None,
-                            event_bus_available=shared_event_bus is not None,
-                            workflow_graph_nodes=
-                                list(workflow_graph_obj.keys())
-                                if isinstance(workflow_graph_obj, Mapping)
-                                else None,
-                            workflow_graph_type=type(workflow_graph_obj).__name__,
-                            workflow_graph_is_graph=(
-                                getattr(workflow_graph_obj, "graph", None) is not None
-                            ),
-                            event_bus_type=type(shared_event_bus).__name__
-                            if shared_event_bus is not None
-                            else None,
-                            event_bus_handlers=getattr(
-                                shared_event_bus, "listeners", None
-                            ),
-                        ),
-                    )
-                    logger.info(
-                        "🛰️ verifying meta_planning module attributes prior to start_self_improvement_cycle()",
-                        extra=log_record(
-                            event="meta-planning-module-precheck",
-                            module_dir=list(sorted(dir(meta_planning))),
-                            has_reload_settings=hasattr(meta_planning, "reload_settings"),
-                            has_self_improvement_cycle=hasattr(
-                                meta_planning, "start_self_improvement_cycle"
-                            ),
-                            callable_self_improvement_cycle=callable(
-                                getattr(meta_planning, "start_self_improvement_cycle", None)
-                            ),
-                        ),
-                    )
-                    try:
-                        logger.info(
-                            "🔧 invoking meta planning loop bootstrap",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-call",
-                                workflow_count=len(workflows),
-                                planner_cls=str(planner_cls),
-                                interval_seconds=interval,
-                                workflow_graph_present=workflow_graph_obj is not None,
-                                workflow_graph_len=len(workflow_graph_obj or {}),
-                                event_bus_connected=shared_event_bus is not None,
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ deep-dive meta planning bootstrap parameter snapshot",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-param-snapshot",
-                                workflow_keys=list(workflows.keys()),
-                                workflow_len=len(workflows),
-                                planner_cls=str(planner_cls),
-                                interval_seconds=interval,
-                                workflow_graph_type=type(workflow_graph_obj).__name__,
-                                workflow_graph_keys=list((workflow_graph_obj or {}).keys())
-                                if isinstance(workflow_graph_obj, Mapping)
-                                else None,
-                                event_bus_type=type(shared_event_bus).__name__
-                                if shared_event_bus is not None
-                                else None,
-                                event_bus_has_listeners=bool(
-                                    getattr(shared_event_bus, "listeners", None)
+    
+                    if ready_to_launch:
+                        try:
+                            orchestrator = SandboxOrchestrator(
+                                workflows,
+                                logger=logger,
+                                loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
+                                diminishing_threshold=float(
+                                    os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
                                 ),
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ recording meta planning invocation parameters for traceability",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-args",
-                                workflow_ids=list(workflows.keys()),
-                                workflow_count=len(workflows),
-                                interval_seconds=interval,
-                                planner_cls=str(planner_cls),
-                                workflow_graph_repr=repr(workflow_graph_obj),
-                                event_bus_repr=repr(shared_event_bus),
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ meta planning bootstrap call about to execute start_self_improvement_cycle()",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-about-to-call",
-                                workflow_count=len(workflows),
-                                planner_cls=str(planner_cls),
-                                interval_seconds=interval,
-                                workflow_graph_keys=list((workflow_graph_obj or {}).keys())
-                                if isinstance(workflow_graph_obj, Mapping)
-                                else None,
-                                workflow_graph_type=type(workflow_graph_obj).__name__,
-                                event_bus_type=type(shared_event_bus).__name__
-                                if shared_event_bus is not None
-                                else None,
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ verifying start_self_improvement_cycle callable availability before invoke",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-pre-call-verify",
-                                callable_present=hasattr(meta_planning, "start_self_improvement_cycle"),
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                                callable_object=getattr(
-                                    meta_planning, "start_self_improvement_cycle", None
-                                ),
-                                callable_is_function=callable(
-                                    getattr(
-                                        meta_planning, "start_self_improvement_cycle", None
-                                    )
-                                ),
-                            ),
-                        )
-                        if not hasattr(meta_planning, "start_self_improvement_cycle"):
-                            logger.error(
-                                "❌ start_self_improvement_cycle missing on meta_planning module",
+                                patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
+                            )
+                            logger.info(
+                                "✅ sandbox orchestrator object created",  # emoji for quick scanning
                                 extra=log_record(
-                                    event="meta-planning-missing-entrypoint",
-                                    module_dir=list(dir(meta_planning)),
-                                    planner_cls=str(planner_cls),
+                                    event="orchestrator-created",
+                                    workflow_count=len(workflows),
+                                    loop_interval=os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30"),
+                                    diminishing_threshold=os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01"),
+                                    patience=os.getenv("GLOBAL_ROI_PATIENCE", "3"),
                                 ),
                             )
-                            raise RuntimeError(
-                                "start_self_improvement_cycle missing on meta_planning"
+                        except Exception:
+                            logger.exception(
+                                "❌ failed to build sandbox orchestrator",  # emoji for quick scanning
+                                extra=log_record(event="orchestrator-build-error"),
                             )
-                        if not callable(
-                            getattr(meta_planning, "start_self_improvement_cycle", None)
-                        ):
-                            logger.error(
-                                "❌ start_self_improvement_cycle present but not callable",
+                            sys.exit(1)
+    
+                        try:
+                            orchestrator_thread = threading.Thread(
+                                target=orchestrator.run,
+                                name="sandbox-orchestrator",
+                                daemon=True,
+                            )
+                            orchestrator_thread.start()
+                            logger.info(
+                                "✅ sandbox orchestrator started",  # emoji for quick scanning
                                 extra=log_record(
-                                    event="meta-planning-entrypoint-not-callable",
-                                    type_info=type(
-                                        getattr(
-                                            meta_planning, "start_self_improvement_cycle", None
-                                        )
-                                    ).__name__,
-                                    planner_cls=str(planner_cls),
-                                ),
-                            )
-                            raise RuntimeError(
-                                "start_self_improvement_cycle is not callable"
-                            )
-                        logger.info(
-                            "🛰️ start_self_improvement_cycle() callable confirmed; executing with detailed context",
-                            extra=log_record(
-                                event="meta-planning-callable-confirmed",
-                                workflow_count=len(workflows),
-                                planner_cls=str(planner_cls),
-                                interval_seconds=interval,
-                                workflow_graph_snapshot=repr(workflow_graph_obj),
-                                event_bus_snapshot=repr(shared_event_bus),
-                                caller_module=__name__,
-                            ),
-                        )
-                        thread = meta_planning.start_self_improvement_cycle(
-                            workflows,
-                            event_bus=shared_event_bus,
-                            interval=interval,
-                            workflow_graph=workflow_graph_obj,
-                        )
-                        logger.info(
-                            "🛰️ start_self_improvement_cycle() invocation completed; capturing return object",
-                            extra=log_record(
-                                event="meta-planning-post-invoke",
-                                returned_type=type(thread).__name__ if thread is not None else None,
-                                returned_is_thread=isinstance(thread, threading.Thread),
-                                returned_repr=repr(thread),
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ meta planning bootstrap call returned from start_self_improvement_cycle()",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-returned",
-                                thread_is_none=thread is None,
-                                thread_type=type(thread).__name__ if thread is not None else None,
-                                thread_dir=list(sorted(set(dir(thread)) if thread is not None else [])),
-                                workflow_count=len(workflows),
-                                interval_seconds=interval,
-                                thread_target=getattr(thread, "_target", None),
-                                thread_args=getattr(thread, "_args", None),
-                                thread_kwargs=getattr(thread, "_kwargs", None),
-                            ),
-                        )
-                        if thread is None:
-                            logger.error(
-                                "❌ meta planning bootstrap returned None thread",
-                                extra=log_record(
-                                    event="meta-planning-thread-none",
-                                    planner_cls=str(planner_cls),
-                                    workflow_ids=list(workflows.keys()),
-                                ),
-                            )
-                            raise RuntimeError("meta planning bootstrap returned None")
-                        logger.info(
-                            "🛰️ meta planning bootstrap returned valid thread object; proceeding to post-call checks",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-post-call",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                alive=getattr(thread, "is_alive", lambda: False)(),
-                                planner_cls=str(planner_cls),
-                                workflow_ids=list(workflows.keys()),
-                                event_bus_type=type(shared_event_bus).__name__
-                                if shared_event_bus is not None
-                                else None,
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning bootstrap call returned",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-return",
-                                thread_repr=repr(thread),
-                                thread_name=getattr(thread, "name", "unknown"),
-                                thread_ident=getattr(thread, "ident", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning thread object created",
-                            extra=log_record(
-                                event="meta-planning-thread-created",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                                target=getattr(thread, "_target", None),
-                                native_id=getattr(thread, "native_id", None),
-                                ident=getattr(thread, "ident", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning thread attributes captured",
-                            extra=log_record(
-                                event="meta-planning-thread-attrs",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                alive=getattr(thread, "is_alive", lambda: False)(),
-                                thread_ident=getattr(thread, "ident", None),
-                                native_id=getattr(thread, "native_id", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning bootstrap pipeline completed; preparing start() call",
-                            extra=log_record(
-                                event="meta-planning-bootstrap-finished",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                planner_cls=str(planner_cls),
-                                alive_pre_start=getattr(thread, "is_alive", lambda: False)(),
-                            ),
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "❌ meta planning loop bootstrap failed; thread object missing",
-                            extra=log_record(
-                                event="meta-loop-error",
-                                workflow_count=len(workflows),
-                                planner_cls=str(planner_cls),
-                                interval_seconds=interval,
-                                error_type=type(exc).__name__,
-                                error_message=str(exc),
-                            ),
-                        )
-                        logger.exception(
-                            "❌ meta planning bootstrap returned invalid thread",
-                            extra=log_record(
-                                event="meta-planning-thread-invalid",
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                                error_type=type(exc).__name__,
-                            ),
-                        )
-                        logger.exception(
-                            "failed to initialize meta planning loop; sandbox launch halted",
-                            extra=log_record(event="meta-loop-error"),
-                        )
-                        sys.exit(1)
-
-                    try:
-                        logger.info(
-                            "🧭 entering meta planning thread.start() block",  # explicit boundary marker
-                            extra=log_record(
-                                event="meta-planning-thread-start-boundary",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                alive_pre=getattr(thread, "is_alive", lambda: False)(),
-                                thread_ident=getattr(thread, "ident", None),
-                                thread_native_id=getattr(thread, "native_id", None),
-                                thread_target=getattr(thread, "_target", None),
-                            ),
-                        )
-                        logger.info(
-                            "🔧 attempting to start meta planning loop thread",
-                            extra=log_record(
-                                event="meta-planning-start-attempt",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                            ),
-                        )
-                        thread.start()
-                        logger.info(
-                            "✅ thread.start() invoked successfully for meta planning loop",
-                            extra=log_record(
-                                event="meta-planning-thread-start-invoked",
-                                thread_name=getattr(thread, "name", "unknown"),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning thread start invoked",
-                            extra=log_record(
-                                event="meta-planning-start-invoke",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                thread_ident=getattr(thread, "ident", None),
-                                native_id=getattr(thread, "native_id", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning loop thread started successfully",
-                            extra=log_record(
-                                event="meta-planning-start",
-                        thread_name=getattr(thread, "name", "unknown"),
-                        is_alive=getattr(thread, "is_alive", lambda: False)(),
-                        planner_cls=str(planner_cls),
-                        workflow_count=len(workflows),
-                        workflow_graph_present=workflow_graph_obj is not None,
-                                native_id=getattr(thread, "native_id", None),
-                            ),
-                        )
-                        logger.info(
-                            "🛰️ meta planning loop thread start diagnostics captured",
-                            extra=log_record(
-                                event="meta-planning-thread-start-diagnostics",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                thread_ident=getattr(thread, "ident", None),
-                                native_id=getattr(thread, "native_id", None),
-                                daemon=getattr(thread, "daemon", None),
-                                alive=getattr(thread, "is_alive", lambda: False)(),
-                                target=getattr(thread, "_target", None),
-                                args=getattr(thread, "_args", None),
-                                kwargs=getattr(thread, "_kwargs", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning thread alive status confirmed",
-                            extra=log_record(
-                                event="meta-planning-thread-alive",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                is_alive=getattr(thread, "is_alive", lambda: False)(),
-                            ),
-                        )
-                        alive_state = getattr(thread, "is_alive", lambda: False)()
-                        if not alive_state:
-                            logger.error(
-                                "❌ meta planning loop thread reported not alive after start",
-                                extra=log_record(
-                                    event="meta-planning-thread-not-alive",
-                                    thread_name=getattr(thread, "name", "unknown"),
-                                    planner_cls=str(planner_cls),
+                                    event="orchestrator-start",
+                                    thread_name="sandbox-orchestrator",
+                                    is_alive=orchestrator_thread.is_alive(),
                                     workflow_count=len(workflows),
                                 ),
                             )
-                            raise RuntimeError("meta planning loop thread failed to stay alive")
-                        logger.info(
-                            "🟢 meta planning loop thread running",
-                            extra=log_record(
-                                event="meta-planning-thread-running",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                native_id=getattr(thread, "native_id", None),
-                                ident=getattr(thread, "ident", None),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning loop thread alive verification passed",
-                            extra=log_record(
-                                event="meta-planning-thread-alive-verified",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                planner_cls=str(planner_cls),
-                                workflow_count=len(workflows),
-                            ),
-                        )
-                        logger.info(
-                            "✅ meta planning loop start confirmed; orchestrator warm-up next",
-                            extra=log_record(
-                                event="meta-planning-start-confirm",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                daemon=getattr(thread, "daemon", None),
-                                is_alive=getattr(thread, "is_alive", lambda: False)(),
-                            ),
-                        )
-                        logger.info(
-                            "🎯 meta planning start block completed without exceptions; handing off to orchestrator",
-                            extra=log_record(
-                                event="meta-planning-start-block-complete",
-                                thread_name=getattr(thread, "name", "unknown"),
-                                alive=getattr(thread, "is_alive", lambda: False)(),
-                                planner_cls=str(planner_cls),
-                                workflow_ids=list(workflows.keys()),
-                            ),
-                        )
-                    except Exception:
-                        logger.exception(
-                            "❌ meta planning loop thread failed to start",  # emoji for quick scanning
-                            extra=log_record(event="meta-planning-start-error"),
-                        )
-                        sys.exit(1)
-                else:
-                    logger.error(
-                        "❌ gating red: prelaunch ROI or planner checks failed; aborting meta-planning start",
-                        extra=log_record(
-                            event="meta-planning-gate-red-summary",
-                            ready_to_launch=ready_to_launch,
-                            roi_backoff=roi_backoff_triggered,
-                            planner_available=planner_cls is not None,
-                            workflows_present=bool(workflows),
-                            readiness_error=readiness_error,
-                        ),
+                        except Exception:
+                            logger.exception(
+                                "❌ failed to start sandbox orchestrator thread",  # emoji for quick scanning
+                                extra=log_record(event="orchestrator-start-error"),
+                            )
+                            sys.exit(1)
+                except Exception:  # pragma: no cover - defensive bootstrap hint
+                    logger.exception(
+                        "failed to preseed bootstrap context before bot loading",
+                        extra=log_record(event="bootstrap-preseed-error"),
                     )
-                    logger.error(
-                        "❌ meta planning loop launch gate failed",  # emoji for quick scanning
-                        extra=log_record(
-                            event="meta-planning-gate-failed",
-                            roi_backoff=roi_backoff_triggered,
-                            ready_to_launch=ready_to_launch,
-                            planner_available=planner_cls is not None,
-                            workflow_count=len(workflows),
-                            readiness_error=readiness_error,
-                        ),
-                    )
-                    logger.error(
-                        "❌ readiness gate failed; meta planning launch conditions not met",
-                        extra=log_record(
-                            event="meta-planning-readiness-failure",
-                            roi_backoff=roi_backoff_triggered,
-                            ready_to_launch=ready_to_launch,
-                            planner_available=planner_cls is not None,
-                            workflow_count=len(workflows),
-                            workflow_ids=list(workflows.keys()),
-                        ),
-                    )
-                    failure_reason = readiness_error or (
-                        "workflows did not reach ROI stagnation; sandbox launch aborted"
-                    )
-                    logger.error(
-                        "❌ launch gate red; blocking meta planning loop",  # emoji for quick scanning
-                        extra=log_record(
-                            event="meta-planning-gate-red",
-                            planner_available=planner_cls is not None,
-                            workflow_count=len(workflows),
-                            roi_backoff=roi_backoff_triggered,
-                            ready_to_launch=ready_to_launch,
-                            readiness_error=readiness_error,
-                        ),
-                    )
-                    logger.error(
-                        "❌ meta planning launch vetoed after readiness evaluation",
-                        extra=log_record(
-                            event="meta-planning-veto",
-                            reason=failure_reason,
-                            planner_available=planner_cls is not None,
-                            workflow_count=len(workflows),
-                            roi_backoff=roi_backoff_triggered,
-                        ),
-                    )
-                    logger.error(
-                        "❌ readiness gate blocked meta planning loop",
-                        extra=log_record(
-                            event="meta-planning-ready-false",
-                            reason=failure_reason,
-                            roi_backoff=roi_backoff_triggered,
-                            ready_to_launch=ready_to_launch,
-                        ),
-                    )
-                    logger.error(
-                        "meta planning loop not started: %s",
-                        failure_reason,
-                        extra=log_record(
-                            event="meta-planning-skipped",
-                            reason=failure_reason,
-                            workflow_count=len(workflows),
-                            planner_available=planner_cls is not None,
-                        ),
-                    )
-                    sys.exit(1)
-                logger.info(
-                    "preseeded bootstrap context in use; pipeline and manager are cached",
-                    extra=log_record(event="bootstrap-preseed"),
-                )
 
-                if ready_to_launch:
-                    try:
-                        orchestrator = SandboxOrchestrator(
-                            workflows,
-                            logger=logger,
-                            loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
-                            diminishing_threshold=float(
-                                os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
-                            ),
-                            patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
-                        )
-                        logger.info(
-                            "✅ sandbox orchestrator object created",  # emoji for quick scanning
-                            extra=log_record(
-                                event="orchestrator-created",
-                                workflow_count=len(workflows),
-                                loop_interval=os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30"),
-                                diminishing_threshold=os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01"),
-                                patience=os.getenv("GLOBAL_ROI_PATIENCE", "3"),
-                            ),
-                        )
-                    except Exception:
-                        logger.exception(
-                            "❌ failed to build sandbox orchestrator",  # emoji for quick scanning
-                            extra=log_record(event="orchestrator-build-error"),
-                        )
-                        sys.exit(1)
-
-                    try:
-                        orchestrator_thread = threading.Thread(
-                            target=orchestrator.run,
-                            name="sandbox-orchestrator",
-                            daemon=True,
-                        )
-                        orchestrator_thread.start()
-                        logger.info(
-                            "✅ sandbox orchestrator started",  # emoji for quick scanning
-                            extra=log_record(
-                                event="orchestrator-start",
-                                thread_name="sandbox-orchestrator",
-                                is_alive=orchestrator_thread.is_alive(),
-                                workflow_count=len(workflows),
-                            ),
-                        )
-                    except Exception:
-                        logger.exception(
-                            "❌ failed to start sandbox orchestrator thread",  # emoji for quick scanning
-                            extra=log_record(event="orchestrator-start-error"),
-                        )
-                        sys.exit(1)
-            except Exception:  # pragma: no cover - defensive bootstrap hint
+            except Exception as exc:
                 logger.exception(
-                    "failed to preseed bootstrap context before bot loading",
-                    extra=log_record(event="bootstrap-preseed-error"),
+                    "Early startup failure before meta-trace instrumentation",
+                    extra=log_record(
+                        event="startup-pre-meta-trace-failure",
+                        last_step=last_pre_meta_trace_step,
+                        error_type=type(exc).__name__,
+                    ),
                 )
+                print(
+                    "[DEBUG] startup failed before META-TRACE logging; last_step=%s; error=%s"
+                    % (last_pre_meta_trace_step, exc),
+                    flush=True,
+                )
+                raise
 
         if args.health_check:
             bootstrap_environment(
