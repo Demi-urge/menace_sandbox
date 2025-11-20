@@ -1173,13 +1173,15 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_context_result: dict[str, Any] | None = None
                         bootstrap_error: BaseException | None = None
                         bootstrap_start = time.monotonic()
+                        bootstrap_deadline = bootstrap_start + args.bootstrap_timeout
                         bootstrap_stop_event = threading.Event()
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
                             try:
                                 bootstrap_context_result = initialize_bootstrap_context(
-                                    stop_event=bootstrap_stop_event
+                                    stop_event=bootstrap_stop_event,
+                                    bootstrap_deadline=bootstrap_deadline,
                                 )
                             except BaseException as exc:  # pragma: no cover - propagate errors
                                 bootstrap_error = exc
@@ -1190,7 +1192,28 @@ def main(argv: list[str] | None = None) -> None:
                             daemon=True,
                         )
                         bootstrap_thread.start()
-                        bootstrap_thread.join(args.bootstrap_timeout)
+                        initial_wait = max(args.bootstrap_timeout - 5.0, 0.0)
+                        bootstrap_thread.join(initial_wait)
+
+                        if bootstrap_thread.is_alive():
+                            time_remaining = bootstrap_deadline - time.monotonic()
+                            if (
+                                time_remaining <= 5.0
+                                and BOOTSTRAP_PROGRESS.get("last_step")
+                                == "embedder_preload"
+                            ):
+                                LOGGER.warning(
+                                    "bootstrap embedder still active with %.1fs remaining; "
+                                    "requesting early self-coding abort",
+                                    max(time_remaining, 0.0),
+                                )
+                                bootstrap_stop_event.set()
+
+                        if bootstrap_thread.is_alive():
+                            final_wait = max(bootstrap_deadline - time.monotonic(), 0.0)
+                            if final_wait:
+                                bootstrap_thread.join(final_wait)
+
                         elapsed = time.monotonic() - bootstrap_start
                         if bootstrap_thread.is_alive():
                             last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
