@@ -1072,6 +1072,17 @@ def main(argv: list[str] | None = None) -> None:
     # Reload settings to pick up any values written by ``auto_configure_env``.
     settings = SandboxSettings()
 
+    bootstrap_timeout_default = 300.0
+    env_bootstrap_timeout = os.getenv("BOOTSTRAP_CONTEXT_TIMEOUT")
+    if env_bootstrap_timeout:
+        try:
+            bootstrap_timeout_default = float(env_bootstrap_timeout)
+        except ValueError:
+            print(
+                "[WARN] BOOTSTRAP_CONTEXT_TIMEOUT is not a number; using 300s default",
+                flush=True,
+            )
+
     parser = argparse.ArgumentParser(description="Launch the autonomous sandbox")
     parser.add_argument(
         "--log-level",
@@ -1088,6 +1099,12 @@ def main(argv: list[str] | None = None) -> None:
         "--monitor-roi-backoff",
         action="store_true",
         help="Continuously monitor ROI backoff and pause launch when triggered",
+    )
+    parser.add_argument(
+        "--bootstrap-timeout",
+        type=float,
+        default=bootstrap_timeout_default,
+        help="Maximum seconds to wait for initialize_bootstrap_context before failing",
     )
     parser.add_argument(
         "--include-orphans",
@@ -1153,7 +1170,68 @@ def main(argv: list[str] | None = None) -> None:
                     )
                     try:
                         last_pre_meta_trace_step = "initialize_bootstrap_context invocation"
-                        bootstrap_context = initialize_bootstrap_context()
+                        bootstrap_context_result: dict[str, Any] | None = None
+                        bootstrap_error: BaseException | None = None
+                        bootstrap_start = time.monotonic()
+
+                        def _run_bootstrap() -> None:
+                            nonlocal bootstrap_context_result, bootstrap_error
+                            try:
+                                bootstrap_context_result = initialize_bootstrap_context()
+                            except BaseException as exc:  # pragma: no cover - propagate errors
+                                bootstrap_error = exc
+
+                        bootstrap_thread = threading.Thread(
+                            target=_run_bootstrap,
+                            name="bootstrap-context",
+                            daemon=True,
+                        )
+                        bootstrap_thread.start()
+                        bootstrap_thread.join(args.bootstrap_timeout)
+                        elapsed = time.monotonic() - bootstrap_start
+                        if bootstrap_thread.is_alive():
+                            last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
+                                "last_step", "unknown"
+                            )
+                            print(
+                                "[BOOTSTRAP-TRACE] initialize_bootstrap_context exceeded "
+                                f"timeout after {elapsed:.1f}s (limit={args.bootstrap_timeout}s, "
+                                f"last_step={last_bootstrap_step})",
+                                flush=True,
+                            )
+                            logger.error(
+                                "initialize_bootstrap_context exceeded timeout",
+                                extra=log_record(
+                                    event="bootstrap-context-timeout",
+                                    elapsed=elapsed,
+                                    timeout=args.bootstrap_timeout,
+                                    last_bootstrap_step=last_bootstrap_step,
+                                    last_pre_meta_trace_step=last_pre_meta_trace_step,
+                                ),
+                            )
+                            try:
+                                shutdown_autonomous_sandbox(timeout=5)
+                            except Exception:  # pragma: no cover - best effort cleanup
+                                logger.exception(
+                                    "cleanup after bootstrap timeout failed",
+                                    extra=log_record(event="bootstrap-timeout-cleanup-error"),
+                                )
+                            try:
+                                bootstrap_thread.join(1)
+                            except Exception:
+                                logger.debug(
+                                    "bootstrap thread join after timeout raised",
+                                    exc_info=True,
+                                )
+                            raise TimeoutError(
+                                "initialize_bootstrap_context exceeded timeout; "
+                                f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
+                            )
+
+                        if bootstrap_error:
+                            raise bootstrap_error
+
+                        bootstrap_context = bootstrap_context_result
                     except Exception as bootstrap_exc:
                         last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
                             "last_step", "unknown"
