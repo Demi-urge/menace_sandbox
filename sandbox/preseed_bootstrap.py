@@ -41,6 +41,8 @@ BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
+_BOOTSTRAP_EMBEDDER_DISABLED = False
+_BOOTSTRAP_EMBEDDER_STARTED = False
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
@@ -147,8 +149,18 @@ def _ensure_not_stopped(stop_event: threading.Event | None) -> None:
 def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = None) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
+    global _BOOTSTRAP_EMBEDDER_DISABLED, _BOOTSTRAP_EMBEDDER_STARTED
+
     if timeout <= 0:
         LOGGER.info("bootstrap embedder timeout disabled; skipping embedder preload")
+        return
+
+    if _BOOTSTRAP_EMBEDDER_DISABLED:
+        LOGGER.info("embedder preload disabled for this bootstrap run; skipping")
+        return
+
+    if _BOOTSTRAP_EMBEDDER_STARTED:
+        LOGGER.debug("embedder preload already started; refusing to create another thread")
         return
 
     try:
@@ -163,6 +175,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
 
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
+    _BOOTSTRAP_EMBEDDER_STARTED = True
 
     def _worker() -> None:
         try:
@@ -185,13 +198,16 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
         cancel_embedder_initialisation(
             embedder_stop_event, reason="bootstrap_timeout", join_timeout=2.0
         )
-        disable_embedder(reason="bootstrap_timeout")
+        disable_embedder(
+            reason="bootstrap_timeout", stop_event=embedder_stop_event, join_timeout=2.0
+        )
         thread.join(2.0)
         if thread.is_alive():
-            LOGGER.debug(
-                "bootstrap embedder preload worker still running after cancellation",
+            LOGGER.warning(
+                "forcing bootstrap embedder preload worker shutdown after timeout grace period",
                 extra={"timeout": timeout},
             )
+            _BOOTSTRAP_EMBEDDER_DISABLED = True
         else:
             LOGGER.info("bootstrap embedder preload worker cancelled due to timeout")
         return
@@ -199,6 +215,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
     if "error" in result:
         LOGGER.info("embedder preload failed; bootstrap will proceed without embeddings")
         LOGGER.debug("embedder preload error", exc_info=result["error"])
+        _BOOTSTRAP_EMBEDDER_DISABLED = True
         return
 
     embedder = result.get("embedder")
@@ -207,6 +224,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
             "embedder unavailable after %.1fs wait; proceeding without embeddings",
             timeout,
         )
+        _BOOTSTRAP_EMBEDDER_DISABLED = True
     else:
         LOGGER.info("bootstrap embedder ready: %s", type(embedder).__name__)
 
