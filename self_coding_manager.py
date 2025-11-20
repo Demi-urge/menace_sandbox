@@ -3265,6 +3265,17 @@ def internalize_coding_bot(
         time.sleep(delay)
 
     print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
+    
+    def _start_step(step: str) -> float:
+        print(f"[debug] {bot_name}: starting {step}")
+        return time.monotonic()
+
+    def _end_step(step: str, started_at: float) -> float:
+        elapsed = time.monotonic() - started_at
+        print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
+        return elapsed
+
+    manager_timer = _start_step("manager construction")
     manager = SelfCodingManager(
         engine,
         pipeline,
@@ -3275,9 +3286,11 @@ def internalize_coding_bot(
         error_rate_threshold=error_threshold,
         **manager_kwargs,
     )
+    _end_step("manager construction", manager_timer)
     if manager.quick_fix is None:
         raise ImportError("QuickFixEngine failed to initialise")
     manager.evolution_orchestrator = evolution_orchestrator
+    register_timer = _start_step("bot_registry.register_bot")
     bot_registry.register_bot(
         bot_name,
         roi_threshold=roi_threshold,
@@ -3287,15 +3300,20 @@ def internalize_coding_bot(
         data_bot=data_bot,
         is_coding_bot=True,
     )
+    _end_step("bot_registry.register_bot", register_timer)
+    schedule_timer = _start_step("data_bot.schedule_monitoring")
     try:
         data_bot.schedule_monitoring(bot_name)
     except Exception:  # pragma: no cover - best effort
         manager.logger.exception(
             "failed to schedule monitoring for %s", bot_name
         )
+    finally:
+        _end_step("data_bot.schedule_monitoring", schedule_timer)
     settings = getattr(data_bot, "settings", None)
     thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
     if bot_name not in thresholds:
+        threshold_timer = _start_step("threshold persistence")
         try:
             persist_sc_thresholds(
                 bot_name,
@@ -3322,7 +3340,10 @@ def internalize_coding_bot(
             manager.logger.exception(
                 "failed to persist thresholds for %s", bot_name
             )
+        finally:
+            _end_step("threshold persistence", threshold_timer)
     if evolution_orchestrator is not None:
+        orchestrator_timer = _start_step("evolution orchestrator registration")
         evolution_orchestrator.selfcoding_manager = manager
         try:
             evolution_orchestrator.register_bot(bot_name)
@@ -3341,11 +3362,17 @@ def internalize_coding_bot(
                 manager.logger.exception(
                     "failed to subscribe degradation events for %s", bot_name
                 )
+        _end_step("evolution orchestrator registration", orchestrator_timer)
+    else:
+        print(
+            f"[debug] {bot_name}: skipping evolution orchestrator registration (not provided)"
+        )
     event_bus = (
         getattr(manager, "event_bus", None)
         or getattr(evolution_orchestrator, "event_bus", None)
         or getattr(data_bot, "event_bus", None)
     )
+    module_resolution_timer = _start_step("module path resolution")
     module_path: Path | None = None
     try:
         node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
@@ -3375,11 +3402,14 @@ def internalize_coding_bot(
                     module_path = candidate
     if module_path is not None and module_path.exists():
         module_path = module_path.resolve()
+    _end_step("module path resolution", module_resolution_timer)
+    provenance_timer = _start_step("provenance token acquisition")
     provenance_token = None
     if getattr(manager, "evolution_orchestrator", None) is not None:
         provenance_token = getattr(manager.evolution_orchestrator, "provenance_token", None)
     if provenance_token is None and evolution_orchestrator is not None:
         provenance_token = getattr(evolution_orchestrator, "provenance_token", None)
+    _end_step("provenance token acquisition", provenance_timer)
     description = f"internalize:{bot_name}"
 
     def _emit_failure(reason: str) -> None:
@@ -3427,6 +3457,7 @@ def internalize_coding_bot(
     if provenance_token is None:
         _emit_failure("missing_provenance")
         raise PermissionError("missing provenance token for post patch validation")
+    post_cycle_timer = _start_step("run_post_patch_cycle")
     try:
         post_details = manager.run_post_patch_cycle(
             module_path,
@@ -3442,6 +3473,8 @@ def internalize_coding_bot(
                 manager.logger.exception("rollback failed for %s", bot_name)
         _emit_failure(str(exc))
         raise
+    finally:
+        _end_step("run_post_patch_cycle", post_cycle_timer)
     else:
         if event_bus:
             payload = {
