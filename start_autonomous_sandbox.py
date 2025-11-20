@@ -1149,6 +1149,14 @@ def main(argv: list[str] | None = None) -> None:
                     flush=True,
                 )
                 logger.info(
+                    "meta_planning module import completed; enumerating attributes",
+                    extra=log_record(
+                        event="meta-planning-import-finished",
+                        attr_count=len(dir(meta_planning)),
+                        attrs_preview=list(sorted(dir(meta_planning)))[:25],
+                    ),
+                )
+                logger.info(
                     "meta_planning module imported for autonomous sandbox",
                     extra=log_record(
                         event="meta-planning-import",
@@ -1165,11 +1173,31 @@ def main(argv: list[str] | None = None) -> None:
                 from self_improvement.meta_planning import (  # noqa: F401
                     self_improvement_cycle,
                 )
+                print(
+                    "[META-TRACE] self_improvement_cycle imported; meta planner wiring begins",
+                    flush=True,
+                )
+                logger.info(
+                    "self_improvement_cycle imported; preparing to reload settings",
+                    extra=log_record(
+                        event="meta-planning-cycle-imported",
+                        module_has_cycle=hasattr(meta_planning, "self_improvement_cycle"),
+                    ),
+                )
 
                 meta_planning.reload_settings(settings)
                 print(
                     "[META-TRACE] meta_planning.reload_settings invoked; settings synchronized",
                     flush=True,
+                )
+                logger.info(
+                    "meta planning settings synchronized",
+                    extra=log_record(
+                        event="meta-planning-settings-reloaded",
+                        include_orphans=settings.include_orphans,
+                        recursive_orphans=settings.recursive_orphan_scan,
+                        sandbox_log_level=settings.sandbox_log_level,
+                    ),
                 )
                 _emit_meta_trace(
                     logger,
@@ -1188,6 +1216,10 @@ def main(argv: list[str] | None = None) -> None:
                     "workflow evolver instantiated for meta planning",
                     evolver_class=WorkflowEvolutionManager.__name__,
                 )
+                print(
+                    "[META-TRACE] workflow evolver ready; resolving planner with force reload",
+                    flush=True,
+                )
                 planner_cls = meta_planning.resolve_meta_workflow_planner(
                     force_reload=True
                 )
@@ -1203,6 +1235,15 @@ def main(argv: list[str] | None = None) -> None:
                     "[META-TRACE] meta workflow planner resolution finished; class=%s"
                     % getattr(planner_cls, "__name__", str(planner_cls)),
                     flush=True,
+                )
+                logger.info(
+                    "meta workflow planner resolution detailed trace",
+                    extra=log_record(
+                        event="meta-planning-planner-resolution-detail",
+                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                        planner_module=getattr(planner_cls, "__module__", None),
+                        planner_dict=sorted(list(getattr(planner_cls, "__dict__", {}).keys())),
+                    ),
                 )
                 _emit_meta_trace(
                     logger,
@@ -1234,11 +1275,22 @@ def main(argv: list[str] | None = None) -> None:
                         interval=interval,
                         source_env=os.getenv("META_PLANNING_INTERVAL"),
                         settings_interval=getattr(settings, "meta_planning_interval", None),
+                        settings_namespace=vars(settings),
                     ),
                 )
                 print(
                     "[META-TRACE] meta planning interval established at %.2fs" % interval,
                     flush=True,
+                )
+                logger.info(
+                    "meta planning cadence fully resolved with environment and settings context",
+                    extra=log_record(
+                        event="meta-planning-interval-detail",
+                        interval=interval,
+                        env_interval=os.getenv("META_PLANNING_INTERVAL"),
+                        env_loop=os.getenv("META_PLANNING_LOOP"),
+                        improvement_threshold=os.getenv("META_IMPROVEMENT_THRESHOLD"),
+                    ),
                 )
                 discovered_specs = []
                 try:
@@ -1266,6 +1318,19 @@ def main(argv: list[str] | None = None) -> None:
                         "failed to auto-discover workflow specs",
                         extra=log_record(event="workflow-discovery-error"),
                     )
+                print(
+                    "[META-TRACE] workflow discovery post-processing; specs=%s"
+                    % [spec.get("workflow_id") for spec in discovered_specs],
+                    flush=True,
+                )
+                logger.info(
+                    "workflow discovery snapshot",
+                    extra=log_record(
+                        event="workflow-discovery-snapshot",
+                        discovered_ids=[spec.get("workflow_id") for spec in discovered_specs],
+                        discovered_preview=discovered_specs[:3],
+                    ),
+                )
 
                 orphan_specs: list[Mapping[str, Any]] = []
                 include_orphans = bool(
@@ -1287,6 +1352,15 @@ def main(argv: list[str] | None = None) -> None:
                     "[META-TRACE] orphan settings finalized; include=%s recursive=%s"
                     % (include_orphans, recursive_orphans),
                     flush=True,
+                )
+                logger.info(
+                    "orphan settings finalized for meta planning",
+                    extra=log_record(
+                        event="orphan-settings-finalized",
+                        include_orphans=include_orphans,
+                        recursive_orphans=recursive_orphans,
+                        planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
+                    ),
                 )
                 if include_orphans:
                     try:
@@ -1320,6 +1394,12 @@ def main(argv: list[str] | None = None) -> None:
                             "startup orphan integration failed",
                             extra=log_record(event="startup-orphan-discovery"),
                         )
+
+                if include_orphans:
+                    print(
+                        "[META-TRACE] orphan discovery sequence completed; total specs now=%d" % len(orphan_specs),
+                        flush=True,
+                    )
                     if recursive_orphans:
                         try:
                             result = post_round_orphan_scan(recursive=True)
@@ -1365,6 +1445,11 @@ def main(argv: list[str] | None = None) -> None:
                     recursive_orphans=recursive_orphans,
                     orphan_specs=len(orphan_specs),
                 )
+                print(
+                    "[META-TRACE] orphan integration trace emitted; combined specs=%d"
+                    % (len(discovered_specs) + len(orphan_specs)),
+                    flush=True,
+                )
 
                 workflows, workflow_graph_obj = _build_self_improvement_workflows(
                     bootstrap_context,
@@ -1373,6 +1458,22 @@ def main(argv: list[str] | None = None) -> None:
                     logger=logger,
                     discovered_specs=[*discovered_specs, *orphan_specs],
                 )
+                print(
+                    "[META-TRACE] self-improvement workflows constructed; workflow_count=%d graph_nodes=%d"
+                    % (
+                        len(workflows),
+                        len(getattr(workflow_graph_obj, "graph", {}) or {}),
+                    ),
+                    flush=True,
+                )
+                logger.info(
+                    "self-improvement workflows constructed for meta planner",
+                    extra=log_record(
+                        event="workflows-constructed",
+                        workflow_ids=list(workflows.keys()),
+                        graph_summary=getattr(workflow_graph_obj, "graph", {}),
+                    ),
+                )
                 _emit_meta_trace(
                     logger,
                     "workflows built for meta planning",
@@ -1380,12 +1481,27 @@ def main(argv: list[str] | None = None) -> None:
                     graph_nodes=len(getattr(workflow_graph_obj, "graph", {})),
                     planner_cls=getattr(planner_cls, "__name__", str(planner_cls)),
                 )
+                print(
+                    "[META-TRACE] workflow build meta trace emitted; planner=%s"
+                    % getattr(planner_cls, "__name__", str(planner_cls)),
+                    flush=True,
+                )
                 logger.info(
                     "workflow registration result",
                     extra=log_record(
                         event="workflow-registration",
                         workflow_count=len(workflows),
                         planner_available=planner_cls is not None,
+                    ),
+                )
+                logger.info(
+                    "workflow registration snapshot",
+                    extra=log_record(
+                        event="workflow-registration-detail",
+                        workflow_keys=list(workflows.keys()),
+                        workflow_graph_nodes=len(
+                            getattr(workflow_graph_obj, "graph", {}) or {}
+                        ),
                     ),
                 )
                 if not workflows:
@@ -1420,6 +1536,15 @@ def main(argv: list[str] | None = None) -> None:
                     planner_available=planner_cls is not None,
                     bootstrap_mode=bootstrap_mode,
                 )
+                print(
+                    "[META-TRACE] startup readiness evaluation initiated; workflows=%d planner=%s bootstrap=%s"
+                    % (
+                        len(workflows),
+                        getattr(planner_cls, "__name__", str(planner_cls)),
+                        bootstrap_mode,
+                    ),
+                    flush=True,
+                )
                 readiness_error: str | None = None
                 logger.info(
                     "🧭 meta-planning gate: beginning last-mile checks before launch",
@@ -1437,6 +1562,11 @@ def main(argv: list[str] | None = None) -> None:
                         settings=settings,
                         logger=logger,
                         bootstrap_mode=bootstrap_mode,
+                    )
+                    print(
+                        "[META-TRACE] prelaunch ROI cycles completed; ready=%s backoff=%s"
+                        % (ready_to_launch, roi_backoff_triggered),
+                        flush=True,
                     )
                     logger.info(
                         "✅ prelaunch ROI cycles finished without raising",  # emoji for quick scanning
@@ -1483,6 +1613,11 @@ def main(argv: list[str] | None = None) -> None:
                             roi_backoff=roi_backoff_triggered,
                             readiness_error=readiness_error,
                         ),
+                    )
+                    print(
+                        "[META-TRACE] prelaunch ROI cycle finished; ready=%s backoff=%s error=%s"
+                        % (ready_to_launch, roi_backoff_triggered, readiness_error),
+                        flush=True,
                     )
                     _emit_meta_trace(
                         logger,
