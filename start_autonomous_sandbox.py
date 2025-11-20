@@ -979,6 +979,7 @@ def main(argv: list[str] | None = None) -> None:
 
     ready_to_launch = True
     roi_backoff_triggered = False
+    failure_reasons: list[str] = []
 
     try:
         if not args.health_check:
@@ -1343,7 +1344,7 @@ def main(argv: list[str] | None = None) -> None:
                             readiness_error=readiness_error,
                         ),
                     )
-                failure_reasons: list[str] = []
+                failure_reasons = []
                 if not workflows:
                     failure_reasons.append("no workflows discovered for meta planning")
                 if planner_cls is None:
@@ -2075,18 +2076,24 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 sys.exit(2)
             return
-        if roi_backoff_triggered:
-            logger.warning(
-                "sandbox launch halted due to ROI backoff",
-                extra=log_record(event="roi-backoff-block", correlation_id=cid),
+        if roi_backoff_triggered or not ready_to_launch:
+            if roi_backoff_triggered and "ROI backoff triggered before launch" not in failure_reasons:
+                failure_reasons.append("ROI backoff triggered before launch")
+            summary = "; ".join(failure_reasons) if failure_reasons else "launch conditions not met"
+            logger.error(
+                "sandbox launch blocked: %s",
+                summary,
+                extra=log_record(
+                    event="sandbox-launch-blocked",
+                    failure_reasons=failure_reasons,
+                    roi_backoff=roi_backoff_triggered,
+                    ready_to_launch=ready_to_launch,
+                    correlation_id=cid,
+                ),
             )
-            return
-        if not ready_to_launch:
-            logger.warning(
-                "sandbox launch gated until workflows reach diminishing returns",
-                extra=log_record(event="diminishing-returns-pending"),
-            )
-            return
+            sys.stderr.write(f"sandbox launch blocked: {summary}\n")
+            sys.stderr.flush()
+            sys.exit(3)
         print("[start_autonomous_sandbox] launching sandbox", flush=True)
         launch_sandbox()
         print("[start_autonomous_sandbox] sandbox exited", flush=True)
