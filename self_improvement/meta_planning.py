@@ -275,10 +275,16 @@ else:  # pragma: no cover - script execution fallback
         )
         UnifiedEventBus = None  # type: ignore
 
+
 def _load_meta_workflow_planner() -> Any | None:
     """Import :class:`MetaWorkflowPlanner` handling flat/packaged layouts."""
 
     logger = get_logger(__name__)
+
+    logger.info(
+        "meta workflow planner load requested", extra=log_record(component=__name__)
+    )
+    print("[META-TRACE] initiating meta_workflow_planner import resolution", flush=True)
 
     candidate_modules: list[str] = []
 
@@ -293,8 +299,28 @@ def _load_meta_workflow_planner() -> Any | None:
         candidate_modules.append("meta_workflow_planner")
 
     for module_name in candidate_modules:
+        logger.info(
+            "attempting meta_workflow_planner import",
+            extra=log_record(
+                component=__name__, dependency="meta_workflow_planner", module=module_name
+            ),
+        )
+        print(
+            f"[META-TRACE] trying meta_workflow_planner import from {module_name}",
+            flush=True,
+        )
         try:  # pragma: no cover - optional dependency
             module = import_module(module_name)
+            logger.info(
+                "meta_workflow_planner import succeeded",
+                extra=log_record(
+                    component=__name__, dependency="meta_workflow_planner", module=module_name
+                ),
+            )
+            print(
+                f"[META-TRACE] meta_workflow_planner loaded from {module_name}",
+                flush=True,
+            )
             return getattr(module, "MetaWorkflowPlanner")
         except Exception as exc:  # pragma: no cover - gracefully degrade
             logger.warning(
@@ -303,6 +329,9 @@ def _load_meta_workflow_planner() -> Any | None:
                     component=__name__, dependency="meta_workflow_planner", module=module_name
                 ),
                 exc_info=exc,
+            )
+            print(
+                f"[META-TRACE] import failed for {module_name}: {exc}", flush=True
             )
 
     return None
@@ -322,15 +351,53 @@ def resolve_meta_workflow_planner(force_reload: bool = False) -> Any | None:
 
     global MetaWorkflowPlanner, _META_PLANNER_RESOLVED
 
+    logger = get_logger(__name__)
+    logger.info(
+        "meta workflow planner resolution invoked",
+        extra=log_record(component=__name__, force_reload=force_reload),
+    )
+    print(
+        f"[META-TRACE] resolve_meta_workflow_planner called (force_reload={force_reload})",
+        flush=True,
+    )
+
     if force_reload:
         MetaWorkflowPlanner = None
         _META_PLANNER_RESOLVED = False
+        logger.info(
+            "meta workflow planner cache cleared",
+            extra=log_record(component=__name__, action="force_reload"),
+        )
+        print("[META-TRACE] cleared cached meta planner", flush=True)
 
     if _META_PLANNER_RESOLVED:
+        logger.info(
+            "meta workflow planner already resolved",
+            extra=log_record(
+                component=__name__,
+                planner_cached=MetaWorkflowPlanner is not None,
+                planner_class=getattr(MetaWorkflowPlanner, "__name__", str(MetaWorkflowPlanner)),
+            ),
+        )
+        print(
+            f"[META-TRACE] returning cached meta planner {MetaWorkflowPlanner}",
+            flush=True,
+        )
         return MetaWorkflowPlanner
 
     MetaWorkflowPlanner = _load_meta_workflow_planner()
     _META_PLANNER_RESOLVED = True
+    logger.info(
+        "meta workflow planner resolution complete",
+        extra=log_record(
+            component=__name__,
+            planner_found=MetaWorkflowPlanner is not None,
+            planner_class=getattr(MetaWorkflowPlanner, "__name__", str(MetaWorkflowPlanner)),
+        ),
+    )
+    print(
+        f"[META-TRACE] meta planner resolved to {MetaWorkflowPlanner}", flush=True
+    )
     return MetaWorkflowPlanner
 
 
