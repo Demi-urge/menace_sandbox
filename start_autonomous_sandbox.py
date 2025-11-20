@@ -1196,23 +1196,56 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_thread.join(initial_wait)
 
                         if bootstrap_thread.is_alive():
-                            time_remaining = bootstrap_deadline - time.monotonic()
-                            if (
-                                time_remaining <= 5.0
-                                and BOOTSTRAP_PROGRESS.get("last_step")
-                                == "embedder_preload"
-                            ):
-                                LOGGER.warning(
-                                    "bootstrap embedder still active with %.1fs remaining; "
-                                    "requesting early self-coding abort",
-                                    max(time_remaining, 0.0),
+                            critical_bootstrap_steps = {
+                                "self_coding_engine",
+                                "prepare_pipeline",
+                                "internalize_coding_bot",
+                                "promote_pipeline",
+                                "seed_final_context",
+                                "push_final_context",
+                            }
+                            while bootstrap_thread.is_alive():
+                                time_remaining = bootstrap_deadline - time.monotonic()
+                                last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
+                                    "last_step", "unknown"
                                 )
-                                bootstrap_stop_event.set()
+                                if (
+                                    time_remaining <= 5.0
+                                    and last_bootstrap_step == "embedder_preload"
+                                ):
+                                    LOGGER.warning(
+                                        "bootstrap embedder still active with %.1fs remaining; "
+                                        "requesting early self-coding abort",
+                                        max(time_remaining, 0.0),
+                                    )
+                                    bootstrap_stop_event.set()
 
-                        if bootstrap_thread.is_alive():
-                            final_wait = max(bootstrap_deadline - time.monotonic(), 0.0)
-                            if final_wait:
-                                bootstrap_thread.join(final_wait)
+                                if (
+                                    last_bootstrap_step in critical_bootstrap_steps
+                                    and time_remaining <= 10.0
+                                ):
+                                    LOGGER.error(
+                                        "bootstrap still in %s with only %.1fs remaining; "
+                                        "signaling stop event",
+                                        last_bootstrap_step,
+                                        max(time_remaining, 0.0),
+                                        extra=log_record(
+                                            event="bootstrap-deadline-guard",
+                                            last_bootstrap_step=last_bootstrap_step,
+                                            time_remaining=max(time_remaining, 0.0),
+                                        ),
+                                    )
+                                    bootstrap_stop_event.set()
+                                    raise TimeoutError(
+                                        "bootstrap approaching timeout during %s; "
+                                        "aborting before hard deadline"
+                                        % last_bootstrap_step
+                                    )
+
+                                wait_time = min(max(time_remaining, 0.0), 1.0)
+                                if wait_time <= 0:
+                                    break
+                                bootstrap_thread.join(wait_time)
 
                         elapsed = time.monotonic() - bootstrap_start
                         if bootstrap_thread.is_alive():
