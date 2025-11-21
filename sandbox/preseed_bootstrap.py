@@ -451,10 +451,17 @@ def initialize_bootstrap_context(
                 "after _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
-            LOGGER.info("invoking prepare_pipeline_for_bootstrap after bootstrap seeding")
+            LOGGER.info(
+                "starting prepare_pipeline_for_bootstrap (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             prepare_start = perf_counter()
             try:
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline, promote_pipeline = _run_with_timeout(
+                    prepare_pipeline_for_bootstrap,
+                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    description="prepare_pipeline_for_bootstrap",
+                    abort_on_timeout=True,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,
                     bot_registry=registry,
@@ -467,6 +474,10 @@ def initialize_bootstrap_context(
                 raise
             finally:
                 _pop_bootstrap_context(placeholder_context)
+            LOGGER.info(
+                "prepare_pipeline_for_bootstrap finished (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
+            )
             _log_step("prepare_pipeline_for_bootstrap", prepare_start)
 
         _ensure_not_stopped(stop_event)
@@ -514,21 +525,29 @@ def initialize_bootstrap_context(
         promote_start = perf_counter()
         try:
             LOGGER.info(
-                "before promote_pipeline (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+                "starting promote_pipeline (last_step=%s)",
+                BOOTSTRAP_PROGRESS["last_step"],
             )
-            promote_pipeline(manager)
+            _run_with_timeout(
+                promote_pipeline,
+                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                description="promote_pipeline",
+                abort_on_timeout=True,
+                manager=manager,
+            )
         except Exception:
             LOGGER.exception("promote_pipeline failed (step=promote_pipeline)")
             raise
         LOGGER.info(
-            "after promote_pipeline (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+            "promote_pipeline finished (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
         )
         _log_step("promote_pipeline", promote_start)
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("seed_final_context")
         LOGGER.info(
-            "before _push_bootstrap_context (last_step=%s)",
+            "starting _push_bootstrap_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
         _run_with_timeout(
@@ -542,11 +561,12 @@ def initialize_bootstrap_context(
             pipeline=pipeline,
         )
         LOGGER.info(
-            "after _push_bootstrap_context (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+            "_push_bootstrap_context finished (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_push_bootstrap_context completed (step=push_final_context)")
         LOGGER.info(
-            "before _seed_research_aggregator_context (last_step=%s)",
+            "starting _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
         _run_with_timeout(
@@ -562,7 +582,7 @@ def initialize_bootstrap_context(
             manager=manager,
         )
         LOGGER.info(
-            "after _seed_research_aggregator_context (last_step=%s)",
+            "_seed_research_aggregator_context finished (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
@@ -581,6 +601,7 @@ def initialize_bootstrap_context(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
         )
+        LOGGER.info("bootstrap complete; returning to caller")
         LOGGER.info(
             "bootstrap return (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
         )
