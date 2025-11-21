@@ -37,6 +37,7 @@ _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMEOUT = 30.0
+PREPARE_PIPELINE_TIMEOUT = 60.0
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
@@ -479,7 +480,7 @@ def initialize_bootstrap_context(
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
                     prepare_pipeline_for_bootstrap,
-                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    timeout=PREPARE_PIPELINE_TIMEOUT,
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
