@@ -508,22 +508,10 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
-        try:
-            clayer = self.engine.cognition_layer
-        except AttributeError as exc:
-            raise RuntimeError(
-                "engine must provide a cognition_layer with a context_builder"
-            ) from exc
-        if clayer is None:
-            raise RuntimeError(
-                "engine.cognition_layer must provide a context_builder"
-            )
-        try:
-            builder = clayer.context_builder
-        except AttributeError as exc:
-            raise RuntimeError(
-                "engine.cognition_layer must provide a context_builder"
-            ) from exc
+        clayer = getattr(self.engine, "cognition_layer", None)
+        builder = getattr(clayer, "context_builder", None)
+        if builder is None:
+            builder = getattr(self.engine, "context_builder", None)
         if builder is None:
             raise RuntimeError(
                 "engine.cognition_layer must provide a context_builder"
