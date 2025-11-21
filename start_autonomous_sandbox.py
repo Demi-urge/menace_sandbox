@@ -1175,6 +1175,8 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_start = time.monotonic()
                         bootstrap_deadline = bootstrap_start + args.bootstrap_timeout
                         bootstrap_stop_event = threading.Event()
+                        critical_grace_extension_applied = False
+                        critical_grace_extension_seconds = 15.0
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
@@ -1220,27 +1222,41 @@ def main(argv: list[str] | None = None) -> None:
                                     )
                                     bootstrap_stop_event.set()
 
-                                if (
-                                    last_bootstrap_step in critical_bootstrap_steps
-                                    and time_remaining <= 10.0
-                                ):
-                                    LOGGER.error(
-                                        "bootstrap still in %s with only %.1fs remaining; "
-                                        "signaling stop event",
-                                        last_bootstrap_step,
-                                        max(time_remaining, 0.0),
-                                        extra=log_record(
-                                            event="bootstrap-deadline-guard",
-                                            last_bootstrap_step=last_bootstrap_step,
-                                            time_remaining=max(time_remaining, 0.0),
-                                        ),
-                                    )
-                                    bootstrap_stop_event.set()
-                                    raise TimeoutError(
-                                        "bootstrap approaching timeout during %s; "
-                                        "aborting before hard deadline"
-                                        % last_bootstrap_step
-                                    )
+                                if last_bootstrap_step in critical_bootstrap_steps:
+                                    if (
+                                        time_remaining <= 10.0
+                                        and not critical_grace_extension_applied
+                                    ):
+                                        LOGGER.warning(
+                                            "bootstrap still in %s with %.1fs remaining; "
+                                            "granting one-time grace window",
+                                            last_bootstrap_step,
+                                            max(time_remaining, 0.0),
+                                            extra=log_record(
+                                                event="bootstrap-deadline-guard",
+                                                last_bootstrap_step=last_bootstrap_step,
+                                                time_remaining=max(time_remaining, 0.0),
+                                                grace_applied=True,
+                                                grace_seconds=critical_grace_extension_seconds,
+                                            ),
+                                        )
+                                        critical_grace_extension_applied = True
+                                        bootstrap_deadline += critical_grace_extension_seconds
+                                        time_remaining = bootstrap_deadline - time.monotonic()
+                                    elif time_remaining <= 2.0:
+                                        LOGGER.error(
+                                            "bootstrap still in %s with %.1fs remaining after grace; "
+                                            "signaling stop event",
+                                            last_bootstrap_step,
+                                            max(time_remaining, 0.0),
+                                            extra=log_record(
+                                                event="bootstrap-deadline-guard",
+                                                last_bootstrap_step=last_bootstrap_step,
+                                                time_remaining=max(time_remaining, 0.0),
+                                                grace_applied=critical_grace_extension_applied,
+                                            ),
+                                        )
+                                        bootstrap_stop_event.set()
 
                                 wait_time = min(max(time_remaining, 0.0), 1.0)
                                 if wait_time <= 0:
