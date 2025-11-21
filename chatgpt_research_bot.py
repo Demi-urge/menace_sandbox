@@ -178,10 +178,23 @@ def _fallback_summarize(text: str, ratio: float = 0.2, word_count: int | None = 
     return " ".join(sentences[:target])
 
 
+def _fallback_summarizer_factory() -> Callable[[str, float, int | None], str]:
+    """Return a callable compatible with ``gensim.summarization.summarize``.
+
+    ``DependencyManager`` expects zero-argument callables for fallbacks. The
+    previous implementation passed ``_fallback_summarize`` directly, causing a
+    ``TypeError`` when the dependency loader invoked it without parameters.
+    Wrapping it in a factory preserves the richer signature while satisfying the
+    loader contract.
+    """
+
+    return _fallback_summarize
+
+
 summarize = _deps.load(
     "gensim_summarize",
     lambda: __import__("gensim.summarization", fromlist=["summarize"]).summarize,
-    fallback=_fallback_summarize,
+    fallback=_fallback_summarizer_factory,
     on_error=lambda exc: logger.info(
         "gensim summarizer unavailable (%s); using deterministic fallback", exc
     ),
