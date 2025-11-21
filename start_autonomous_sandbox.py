@@ -20,6 +20,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from urllib.error import URLError, HTTPError
+from urllib.request import Request, urlopen
 
 def _maybe_exit_early_for_help(argv: Sequence[str]) -> None:
     """Print CLI help without triggering heavyweight imports.
@@ -137,6 +139,29 @@ def _auto_install_missing_dependencies() -> list[str]:
         except Exception:
             return False
 
+    def _pypi_reachable(package: str) -> tuple[bool, str | None]:
+        """Check whether the requested package can be fetched from PyPI.
+
+        Network restrictions inside the sandbox (for example missing proxy
+        configuration) can make pip retries painfully slow and noisy. Probing
+        the simple index endpoint before attempting installation keeps startup
+        responsive when connectivity is unavailable while still allowing
+        best-effort installs when PyPI is reachable.
+        """
+
+        index_url = os.getenv("PIP_INDEX_URL", "https://pypi.org/simple/")
+        probe_url = f"{index_url.rstrip('/')}/{package}/"
+        try:
+            request = Request(probe_url, method="HEAD")
+            with urlopen(request, timeout=3) as response:
+                return 200 <= response.getcode() < 400, None
+        except HTTPError as exc:
+            return False, f"index probe failed with status {exc.code}"
+        except URLError as exc:
+            return False, f"index probe failed: {exc.reason}"
+        except Exception as exc:  # pragma: no cover - defensive catch-all
+            return False, f"index probe unexpected error: {exc}"
+
     missing: list[str] = []
     for package, module_name in default_targets.items():
         if not _is_module_available(module_name):
@@ -150,6 +175,17 @@ def _auto_install_missing_dependencies() -> list[str]:
         flush=True,
     )
     for package in missing:
+        reachable, reason = _pypi_reachable(package)
+        if not reachable:
+            print(
+                (
+                    f"[start_autonomous_sandbox] skipping auto-install for {package}: "
+                    f"{reason or 'PyPI unreachable'}; continuing with sandbox fallbacks"
+                ),
+                flush=True,
+            )
+            continue
+
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
         except Exception as exc:  # pragma: no cover - best effort remediation
