@@ -21,6 +21,7 @@ def integrate_and_graph_orphans(
     repo: Path,
     modules: Iterable[str] | None = None,
     *,
+    recursive: bool = True,
     logger=None,
     router=None,
     context_builder: "ContextBuilder",
@@ -35,6 +36,11 @@ def integrate_and_graph_orphans(
         Optional iterable of repository-relative module paths to integrate. When
         omitted, :func:`sandbox_runner.orphan_discovery.discover_recursive_orphans`
         is used to locate candidates automatically.
+    recursive:
+        When ``True`` (default) recursively discovered orphan modules are
+        integrated. If ``False`` only top-level orphan modules are considered and
+        recursive inclusion is disabled when adding modules to the sandbox
+        environment.
     logger:
         Optional logger instance used for diagnostics.
     router:
@@ -56,15 +62,21 @@ def integrate_and_graph_orphans(
     paths: List[str]
     if modules is None:
         try:
-            from .orphan_discovery import discover_recursive_orphans
+            if recursive:
+                from .orphan_discovery import discover_recursive_orphans
 
-            mapping = discover_recursive_orphans(str(repo))
+                mapping = discover_recursive_orphans(str(repo))
+                names = mapping.keys()
+            else:
+                from .orphan_discovery import discover_orphan_modules
+
+                names = discover_orphan_modules(str(repo), recursive=False)
         except Exception:  # pragma: no cover - best effort
-            log.exception("discover_recursive_orphans failed")
+            log.exception("orphan discovery failed")
             return None, {}, [], False, False
-        if not mapping:
+        if not names:
             return None, {}, [], False, False
-        paths = [resolve_module_path(name).as_posix() for name in mapping]
+        paths = [resolve_module_path(name).as_posix() for name in names]
     else:
         paths = [resolve_path(m).as_posix() for m in modules]
         if not paths:
@@ -79,7 +91,7 @@ def integrate_and_graph_orphans(
     builder = context_builder
     try:
         tracker, tested = auto_include_modules(
-            paths, recursive=True, router=router, context_builder=builder
+            paths, recursive=recursive, router=router, context_builder=builder
         )
     except Exception:  # pragma: no cover - best effort
         log.exception("auto include of discovered orphans failed")
@@ -208,6 +220,7 @@ def post_round_orphan_scan(
     repo: Path,
     modules: Iterable[str] | None = None,
     *,
+    recursive: bool = True,
     logger=None,
     router=None,
     context_builder: "ContextBuilder",
@@ -226,7 +239,12 @@ def post_round_orphan_scan(
     log = logger or get_logger(__name__)
 
     _tracker, tested, _updated, syn_ok, cl_ok = integrate_and_graph_orphans(
-        repo, modules, logger=log, router=router, context_builder=context_builder
+        repo,
+        modules,
+        recursive=recursive,
+        logger=log,
+        router=router,
+        context_builder=context_builder,
     )
     added = tested.get("added", [])
     count = len(added)
