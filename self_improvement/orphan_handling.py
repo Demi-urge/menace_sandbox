@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict
 
 import logging
+from pathlib import Path
 
 from sandbox_settings import SandboxSettings
 
@@ -19,6 +20,8 @@ from metrics_exporter import (
     orphan_integration_success_total,
     orphan_integration_failure_total,
 )
+
+from context_builder_util import create_context_builder
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,8 @@ def _load_orphan_module(attr: str) -> Callable[..., Any]:
 
 def integrate_orphans(
     *args: object,
+    repo: str | Path | None = None,
+    context_builder: object | None = None,
     retries: int | None = None,
     delay: float | None = None,
     **kwargs: object,
@@ -49,10 +54,20 @@ def integrate_orphans(
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+
+    call_args = list(args)
+    repo_path = Path(repo or settings.sandbox_repo_path)
+    if not call_args:
+        call_args.append(repo_path)
+    if "context_builder" not in kwargs:
+        kwargs["context_builder"] = context_builder or create_context_builder(
+            repo_root=repo_path
+        )
+
     func = _load_orphan_module("integrate_orphans")
     try:
         modules = _call_with_retries(
-            func, *args, retries=retries, delay=delay, **kwargs
+            func, *call_args, retries=retries, delay=delay, **kwargs
         )
     except Exception:
         orphan_integration_failure_total.inc()
@@ -66,6 +81,8 @@ def integrate_orphans(
 
 def post_round_orphan_scan(
     *args: object,
+    repo: str | Path | None = None,
+    context_builder: object | None = None,
     retries: int | None = None,
     delay: float | None = None,
     **kwargs: object,
@@ -74,10 +91,20 @@ def post_round_orphan_scan(
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+
+    call_args = list(args)
+    repo_path = Path(repo or settings.sandbox_repo_path)
+    if not call_args:
+        call_args.append(repo_path)
+    if "context_builder" not in kwargs:
+        kwargs["context_builder"] = context_builder or create_context_builder(
+            repo_root=repo_path
+        )
+
     func = _load_orphan_module("post_round_orphan_scan")
     try:
         result = _call_with_retries(
-            func, *args, retries=retries, delay=delay, **kwargs
+            func, *call_args, retries=retries, delay=delay, **kwargs
         )
     except Exception:
         orphan_integration_failure_total.inc()
