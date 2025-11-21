@@ -20,6 +20,41 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+def _maybe_exit_early_for_help(argv: Sequence[str]) -> None:
+    """Print CLI help without triggering heavyweight imports.
+
+    The sandbox bootstrapping stack performs extensive dynamic imports that can
+    span several seconds even when callers only request ``--help``. To keep the
+    help path responsive and side-effect free, we short-circuit before loading
+    the rest of the module graph whenever a help flag is present.
+    """
+
+    if not any(arg in {"-h", "--help"} for arg in argv):
+        return
+
+    parser = argparse.ArgumentParser(description="Launch the autonomous sandbox")
+    parser.add_argument("--log-level", dest="log_level", default="INFO")
+    parser.add_argument("--health-check", action="store_true")
+    parser.add_argument("--monitor-roi-backoff", action="store_true")
+    parser.add_argument("--bootstrap-timeout", type=float, default=300.0)
+    parser.add_argument(
+        "--include-orphans",
+        dest="include_orphans",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--recursive-orphan-scan",
+        dest="recursive_orphan_scan",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.print_help()
+    sys.exit(0)
+
+
+_maybe_exit_early_for_help(sys.argv[1:])
+
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
@@ -1102,13 +1137,6 @@ def main(argv: list[str] | None = None) -> None:
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
 
-    settings = SandboxSettings()
-    # Automatically configure the environment before proceeding so the caller
-    # does not need to pre-populate configuration files or model paths.
-    auto_configure_env(settings)
-    # Reload settings to pick up any values written by ``auto_configure_env``.
-    settings = SandboxSettings()
-
     bootstrap_timeout_default = 300.0
     env_bootstrap_timeout = os.getenv("BOOTSTRAP_CONTEXT_TIMEOUT")
     if env_bootstrap_timeout:
@@ -1124,7 +1152,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--log-level",
         dest="log_level",
-        default=settings.sandbox_log_level,
+        default=None,
         help="Logging level (e.g. DEBUG, INFO, WARNING)",
     )
     parser.add_argument(
@@ -1159,11 +1187,22 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv_list)
 
+    if args.health_check and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
+        os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
+
+    settings = SandboxSettings()
+    # Automatically configure the environment before proceeding so the caller
+    # does not need to pre-populate configuration files or model paths.
+    auto_configure_env(settings)
+    # Reload settings to pick up any values written by ``auto_configure_env``.
+    settings = SandboxSettings()
+
     print(
         f"[DEBUG] Parsed args: {args}; health_check={getattr(args, 'health_check', None)}",
         flush=True,
     )
 
+    resolved_log_level = args.log_level or settings.sandbox_log_level
     if args.include_orphans is not None:
         os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if args.include_orphans else "0"
         settings.include_orphans = bool(args.include_orphans)
@@ -1175,9 +1214,11 @@ def main(argv: list[str] | None = None) -> None:
 
     root_logger = logging.getLogger()
     if not root_logger.handlers:
-        setup_logging(level=args.log_level)
+        setup_logging(level=resolved_log_level)
     else:
-        root_logger.setLevel(getattr(logging, str(args.log_level).upper(), logging.INFO))
+        root_logger.setLevel(
+            getattr(logging, str(resolved_log_level).upper(), logging.INFO)
+        )
     cid = f"sas-{uuid.uuid4()}"
     set_correlation_id(cid)
     logger = get_logger(__name__)
