@@ -169,31 +169,70 @@ except ImportError as exc:  # pragma: no cover - optional dependency
         def __init__(self, score: float) -> None:
             self.linter = SimpleNamespace(stats=SimpleNamespace(global_note=score))
 
-    def _score_source(text: str) -> float:
-        """Heuristically score ``text`` to approximate pylint's global note."""
+    def _collect_fallback_issues(text: str) -> tuple[list[str], float]:
+        """Return lint-like issues and a numeric penalty for ``text``.
 
-        lines = text.splitlines()
+        The routine aims to provide production-grade feedback even when the real
+        :mod:`pylint` dependency is unavailable (for example, due to offline or
+        proxied environments). It inspects the AST to flag common code quality
+        pitfalls and computes a penalty that mirrors pylint's global note.
+        """
+
+        issues: list[str] = []
         penalty = 0.0
-        long_lines = sum(1 for line in lines if len(line) > 120)
-        penalty += long_lines * 0.05
+        lines = text.splitlines()
+        for line_no, line in enumerate(lines, start=1):
+            overage = max(len(line) - 100, 0)
+            if overage > 0:
+                penalty += min(overage * 0.01, 1.0)
+                issues.append(f"{line_no}: line too long ({len(line)} > 100)")
+            if "TODO" in line or "FIXME" in line:
+                penalty += 0.05
+                issues.append(f"{line_no}: TODO/FIXME left in code")
+
         try:
             tree = ast.parse(text)
-        except SyntaxError:
-            return 0.0
+        except SyntaxError as exc:
+            issues.append(f"syntax-error:{exc.lineno}:{exc.msg}")
+            return issues, 10.0
 
         if ast.get_docstring(tree) is None:
             penalty += 0.5
+            issues.append("module: missing module docstring")
+
+        def _node_span(n: ast.AST) -> int:
+            start = getattr(n, "lineno", 0) or 0
+            end = getattr(n, "end_lineno", None) or start
+            return max(end - start + 1, 1)
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 if ast.get_docstring(node) is None:
                     penalty += 0.2
-                body_len = len(getattr(node, "body", []) or [])
-                if body_len > 80:
-                    penalty += min((body_len - 80) * 0.01, 2.0)
+                    issues.append(f"{node.lineno}: {node.__class__.__name__} missing docstring")
+                span = _node_span(node)
+                if span > 120:
+                    penalty += min((span - 120) * 0.01, 2.0)
+                    issues.append(f"{node.lineno}: {node.__class__.__name__} too long ({span} lines)")
+            if isinstance(node, ast.ExceptHandler) and node.type is None:
+                penalty += 0.5
+                issues.append(f"{node.lineno}: bare except detected")
+            if isinstance(node, ast.Try):
+                handlers = len(getattr(node, "handlers", []) or [])
+                if handlers > 3:
+                    penalty += 0.1
+                    issues.append(f"{node.lineno}: try/except has many handlers ({handlers})")
+            if isinstance(node, ast.BoolOp):
+                terms = len(getattr(node, "values", []) or [])
+                if terms > 3:
+                    penalty += 0.05
+                    issues.append(f"{node.lineno}: complex boolean expression ({terms} terms)")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
+                penalty += 0.05
+                issues.append(f"{node.lineno}: debug print statement")
 
         score = max(0.0, 10.0 - penalty)
-        return round(score, 2)
+        return issues, round(score, 2)
 
     def _fallback_pylint_run(args: list[str], reporter: Any | None = None, exit: bool = False) -> _FallbackLintResult:  # type: ignore[override]
         target = Path(args[-1])
@@ -202,11 +241,13 @@ except ImportError as exc:  # pragma: no cover - optional dependency
         except OSError:
             return _FallbackLintResult(0.0)
 
-        score = _score_source(text)
+        issues, score = _collect_fallback_issues(text)
         log_message = f"[fallback-lint] {target.name}: score={score}"
         if reporter is not None and hasattr(reporter, "write"):
+            for issue in issues:
+                reporter.write(f"{target.name}:{issue}\n")
             reporter.write(log_message)
-        logger.debug(log_message)
+        logger.debug("%s issues=%s", log_message, issues)
         return _FallbackLintResult(score)
 
     logger.info(
