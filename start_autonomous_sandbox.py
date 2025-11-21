@@ -1197,11 +1197,14 @@ def main(argv: list[str] | None = None) -> None:
                         initial_wait = max(args.bootstrap_timeout - 5.0, 0.0)
                         bootstrap_thread.join(initial_wait)
 
+                        bootstrap_completed = False
+
                         last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
                             "last_step", "unknown"
                         )
                         if last_bootstrap_step == "bootstrap_complete":
                             bootstrap_thread.join()
+                            bootstrap_completed = True
                             _emit_meta_trace(
                                 logger,
                                 "bootstrap thread finished; fast-forwarding to meta planning",
@@ -1305,6 +1308,33 @@ def main(argv: list[str] | None = None) -> None:
                                 if wait_time <= 0:
                                     break
                                 bootstrap_thread.join(wait_time)
+
+                        if not bootstrap_completed and not bootstrap_thread.is_alive():
+                            last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
+                                "last_step", "unknown"
+                            )
+                            if last_bootstrap_step == "bootstrap_complete":
+                                bootstrap_completed = True
+                                _emit_meta_trace(
+                                    logger,
+                                    "bootstrap completed after guarded wait; entering meta planning",
+                                    last_step=last_bootstrap_step,
+                                    elapsed=round(time.monotonic() - bootstrap_start, 3),
+                                )
+                            else:
+                                LOGGER.error(
+                                    "bootstrap thread exited without reporting completion (last_step=%s)",
+                                    last_bootstrap_step,
+                                    extra=log_record(
+                                        event="bootstrap-missing-meta-trace",
+                                        last_bootstrap_step=last_bootstrap_step,
+                                        elapsed=round(time.monotonic() - bootstrap_start, 3),
+                                    ),
+                                )
+                                raise RuntimeError(
+                                    "bootstrap thread finished without reaching bootstrap_complete; "
+                                    f"last_step={last_bootstrap_step}"
+                                )
 
                         elapsed = time.monotonic() - bootstrap_start
                         if bootstrap_thread.is_alive():
