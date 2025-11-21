@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from yaml.parser import ParserError
 
 from menace_sandbox import self_coding_thresholds as sct
 
@@ -25,6 +26,28 @@ def test_load_config_recursion_falls_back(tmp_path: Path, monkeypatch: pytest.Mo
 
     data = sct._load_config(cfg)
     assert data == fallback_result
+
+
+def test_parser_error_switches_to_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Parsing errors should be handled without bubbling up exceptions."""
+
+    cfg = tmp_path / "self_coding_thresholds.yaml"
+    cfg.write_text("bots:\n  - invalid: [\n", encoding="utf-8")
+
+    monkeypatch.setattr(sct, "_FORCED_FALLBACK_PATHS", set())
+
+    def _boom(_: str):
+        raise ParserError("while parsing a block mapping", None, "expected <block end>", None)
+
+    fallback_result = {"bots": {"demo": {"roi_drop": -0.1}}}
+
+    monkeypatch.setattr(sct.yaml, "safe_load", _boom)
+    monkeypatch.setattr(sct._FALLBACK_YAML, "safe_load", lambda text: fallback_result)
+
+    data = sct._load_config(cfg)
+
+    assert data == fallback_result
+    assert cfg.resolve(strict=False) in sct._FORCED_FALLBACK_PATHS
 
 
 def test_recursion_switches_future_loads_to_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
