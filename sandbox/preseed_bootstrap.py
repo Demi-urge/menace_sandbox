@@ -86,6 +86,7 @@ def _run_with_timeout(
 
     if thread.is_alive():
         last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
+        BOOTSTRAP_PROGRESS["last_error"] = f"{description}:timeout"
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
