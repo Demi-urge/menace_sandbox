@@ -298,6 +298,15 @@ _SC_WATCHER: "Observer | None" = None
 _SC_CACHE: Dict[str, SelfCodingThresholds] = {}
 _SC_SETTINGS: SandboxSettings | None = None
 _SC_PATH: Path | None = None
+_SC_INITIALIZED = False
+_SC_WATCHER_DISABLED = False
+
+
+def _set_default_sc_path() -> None:
+    """Assign the default self-coding threshold configuration path."""
+
+    global _SC_PATH
+    _SC_PATH = Path("config/self_coding_thresholds.yaml")
 
 
 def _reload_sc_cache(bus: UnifiedEventBus | None = None) -> None:
@@ -332,8 +341,14 @@ def _reload_sc_cache(bus: UnifiedEventBus | None = None) -> None:
 
 def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
     """Start watcher on ``self_coding_thresholds.yaml`` if available."""
-    global _SC_WATCHER
-    if _SC_PATH is None or Observer is None or _SC_WATCHER is not None:
+
+    global _SC_WATCHER, _SC_WATCHER_DISABLED
+    if (
+        _SC_PATH is None
+        or Observer is None
+        or _SC_WATCHER is not None
+        or _SC_WATCHER_DISABLED
+    ):
         return
 
     # When the thresholds file or its parent directory is missing, the
@@ -341,9 +356,10 @@ def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
     # Skip watcher setup in that case so callers can still load thresholds
     # without crashing.
     if not _SC_PATH.parent.exists():
-        logger.warning(
+        logger.info(
             "skipping threshold watcher because %s does not exist", _SC_PATH.parent
         )
+        _SC_WATCHER_DISABLED = True
         return
 
     class _ThresholdHandler(FileSystemEventHandler):
@@ -367,11 +383,27 @@ def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
     try:
         observer.start()
     except FileNotFoundError:
-        logger.warning(
+        logger.info(
             "skipping threshold watcher because %s is unavailable", _SC_PATH.parent
         )
+        _SC_WATCHER_DISABLED = True
         return
     _SC_WATCHER = observer
+
+
+def _initialize_thresholds(bus: UnifiedEventBus | None = None) -> None:
+    """Load thresholds and start watchers a single time."""
+
+    global _SC_INITIALIZED
+    if _SC_INITIALIZED:
+        return
+
+    if _SC_PATH is None:
+        _set_default_sc_path()
+
+    _reload_sc_cache(bus)
+    _start_threshold_watcher(bus)
+    _SC_INITIALIZED = True
 
 
 def persist_sc_thresholds(
@@ -459,19 +491,18 @@ def load_sc_thresholds(
 
     bus = event_bus or _SHARED_EVENT_BUS
 
-    global _SC_SETTINGS, _SC_PATH
+    global _SC_SETTINGS, _SC_PATH, _SC_INITIALIZED, _SC_WATCHER_DISABLED
     if settings is not None:
         _SC_SETTINGS = settings
     if path is not None:
         _SC_PATH = Path(path)
         _SC_CACHE.clear()
+        _SC_INITIALIZED = False
+        _SC_WATCHER_DISABLED = False
     elif _SC_PATH is None:
-        _SC_PATH = Path("config/self_coding_thresholds.yaml")
+        _set_default_sc_path()
 
-    if not _SC_CACHE:
-        _reload_sc_cache()
-
-    _start_threshold_watcher(bus)
+    _initialize_thresholds(bus)
 
     try:
         if bot:
