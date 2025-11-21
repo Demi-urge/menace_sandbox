@@ -210,6 +210,11 @@ _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_STOP_EVENT: threading.Event | None = None
 _EMBEDDER_DISABLED = False
+_EMBEDDER_DISABLE_REASON: str | None = None
+_EMBEDDER_DISABLE_CALLER: str | None = None
+_EMBEDDER_DISABLE_TRIGGER: str | None = None
+_EMBEDDER_STOP_REASON: str | None = None
+_EMBEDDER_STOP_CALLER: str | None = None
 _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
@@ -1193,7 +1198,43 @@ def _identify_embedder_requester() -> str | None:
         del stack
 
 
+def _record_embedder_disable(
+    reason: str | None, caller: str | None, *, trigger: str | None
+) -> None:
+    """Persist metadata about the embedder being disabled."""
+
+    global _EMBEDDER_DISABLE_REASON, _EMBEDDER_DISABLE_CALLER, _EMBEDDER_DISABLE_TRIGGER
+    _EMBEDDER_DISABLE_REASON = reason
+    _EMBEDDER_DISABLE_CALLER = caller
+    _EMBEDDER_DISABLE_TRIGGER = trigger
+
+
+def _record_stop_event_metadata(reason: str | None, caller: str | None) -> None:
+    """Persist metadata about a stop event preventing initialisation."""
+
+    global _EMBEDDER_STOP_REASON, _EMBEDDER_STOP_CALLER
+    _EMBEDDER_STOP_REASON = reason
+    _EMBEDDER_STOP_CALLER = caller
+
+
+def _clear_embedder_disable_metadata() -> None:
+    """Reset cached disable metadata when reinitialising."""
+
+    _record_embedder_disable(None, None, trigger=None)
+    _record_stop_event_metadata(None, None)
+
+
+def _embedder_disable_metadata() -> dict[str, str | None]:
+    return {
+        "disable_reason": _EMBEDDER_DISABLE_REASON,
+        "disable_caller": _EMBEDDER_DISABLE_CALLER,
+        "disable_trigger": _EMBEDDER_DISABLE_TRIGGER,
+    }
+
+
 def _embedder_disabled(stop_event: threading.Event | None = None) -> bool:
+    if _EMBEDDER_DISABLED and _EMBEDDER_DISABLE_REASON is None:
+        _record_embedder_disable("disabled", _identify_embedder_requester(), trigger="disable_embedder")
     return _EMBEDDER_DISABLED or _embedder_stop_requested(stop_event)
 
 
@@ -1213,6 +1254,8 @@ def _ensure_embedder_thread_locked(
             stop_requested=_embedder_stop_requested(stop_event),
         )
         return _EMBEDDER_INIT_EVENT
+
+    _clear_embedder_disable_metadata()
 
     if _EMBEDDER_INIT_THREAD is not None and _EMBEDDER_INIT_THREAD.is_alive():
         _trace("thread.exists", thread_name=_EMBEDDER_INIT_THREAD.name)
@@ -1290,9 +1333,10 @@ def _initialise_embedder_with_timeout(
     global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED, _EMBEDDER_STOP_EVENT
 
     if _embedder_disabled(stop_event):
+        disable_meta = _embedder_disable_metadata()
         logger.info(
             "embedder initialisation skipped because embedder is disabled",  # pragma: no cover - logging only
-            extra={"model": _MODEL_NAME},
+            extra={"model": _MODEL_NAME, **{k: v for k, v in disable_meta.items() if v is not None}},
         )
         _EMBEDDER_TIMEOUT_REACHED = True
         _EMBEDDER_INIT_EVENT.set()
@@ -1576,6 +1620,7 @@ def _cancel_embedder_initialisation(
     global _EMBEDDER_INIT_THREAD
     if stop_event is None:
         return
+    _record_stop_event_metadata(reason, _identify_embedder_requester())
     stop_event.set()
     _EMBEDDER_INIT_EVENT.set()
     thread = _EMBEDDER_INIT_THREAD
@@ -1604,9 +1649,12 @@ def disable_embedder(
     """Disable embedder initialisation for the current process."""
 
     global _EMBEDDER_DISABLED, _EMBEDDER_STOP_EVENT
+    caller = _identify_embedder_requester()
     _EMBEDDER_DISABLED = True
     if stop_event is not None:
         _EMBEDDER_STOP_EVENT = stop_event
+        _record_stop_event_metadata(reason, caller)
+    _record_embedder_disable(reason, caller, trigger="disable_embedder")
     _cancel_embedder_initialisation(
         stop_event or _EMBEDDER_STOP_EVENT,
         reason=reason,
@@ -1621,7 +1669,14 @@ def disable_embedder(
 
 def _embedder_stop_requested(stop_event: threading.Event | None = None) -> bool:
     event = stop_event if stop_event is not None else _EMBEDDER_STOP_EVENT
-    return bool(event and event.is_set())
+    stopped = bool(event and event.is_set())
+    if stopped and _EMBEDDER_DISABLE_REASON is None:
+        _record_embedder_disable(
+            _EMBEDDER_STOP_REASON or "stop_event",
+            _EMBEDDER_STOP_CALLER or _identify_embedder_requester(),
+            trigger="stop_event",
+        )
+    return stopped
 
 
 def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransformer | None:
@@ -2067,6 +2122,11 @@ def embedder_diagnostics() -> dict[str, Any]:
         "timeout_logged": _EMBEDDER_TIMEOUT_LOGGED,
         "timeout_reached": _EMBEDDER_TIMEOUT_REACHED,
     }
+    diagnostics["disable_reason"] = _EMBEDDER_DISABLE_REASON
+    diagnostics["disable_caller"] = _EMBEDDER_DISABLE_CALLER
+    diagnostics["disable_trigger"] = _EMBEDDER_DISABLE_TRIGGER
+    diagnostics["stop_reason"] = _EMBEDDER_STOP_REASON
+    diagnostics["stop_caller"] = _EMBEDDER_STOP_CALLER
     if _EMBEDDER is not None:
         diagnostics["embedder_type"] = type(_EMBEDDER).__name__
     if thread is not None:
