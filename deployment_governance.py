@@ -43,8 +43,62 @@ except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully
     _JSONSCHEMA_IMPORT_ERROR = exc
     _JSONSCHEMA_AVAILABLE = False
 
-    def validate(*_: object, **__: object) -> None:
-        return None
+    def _describe_type(value: object) -> str:
+        return type(value).__name__
+
+    def _validate_instance(instance: object, schema: Mapping[str, object], path: str) -> None:
+        schema_type = schema.get("type")
+        expected_types = {
+            "object": Mapping,
+            "array": (list, tuple),
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "null": type(None),
+        }
+
+        if schema_type:
+            allowed = expected_types.get(schema_type)
+            if allowed and not isinstance(instance, allowed):
+                raise ValidationError(
+                    f"{path}: expected {schema_type} but received {_describe_type(instance)}"
+                )
+
+        if "enum" in schema:
+            options = schema.get("enum", [])
+            if instance not in options:
+                raise ValidationError(f"{path}: value {instance!r} not in enum {options}")
+
+        if schema_type == "object" or "properties" in schema:
+            if not isinstance(instance, Mapping):
+                raise ValidationError(f"{path}: expected object but received {_describe_type(instance)}")
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            for field in required:
+                if field not in instance:
+                    raise ValidationError(f"{path}: missing required field '{field}'")
+            if isinstance(properties, Mapping):
+                for key, value in instance.items():
+                    if key in properties:
+                        subschema = properties[key]
+                        if isinstance(subschema, Mapping):
+                            _validate_instance(value, subschema, f"{path}.{key}")
+
+        if schema_type == "array" or "items" in schema:
+            if not isinstance(instance, (list, tuple)):
+                raise ValidationError(f"{path}: expected array but received {_describe_type(instance)}")
+            item_schema = schema.get("items")
+            if isinstance(item_schema, Mapping):
+                for idx, item in enumerate(instance):
+                    _validate_instance(item, item_schema, f"{path}[{idx}]")
+
+    def validate(instance: object, schema: Mapping[str, object] | None) -> None:
+        """Lightweight schema validation when ``jsonschema`` is unavailable."""
+
+        if not isinstance(schema, Mapping):
+            return None
+        _validate_instance(instance, schema, path="instance")
 else:  # pragma: no cover - attribute used when available
     _JSONSCHEMA_IMPORT_ERROR = None
 
@@ -73,7 +127,9 @@ else:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 if not _JSONSCHEMA_AVAILABLE:
-    logger.warning("jsonschema not available; skipping deployment governance schema validation")
+    logger.warning(
+        "jsonschema not available; using lightweight in-process schema validation"
+    )
 
 
 def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
