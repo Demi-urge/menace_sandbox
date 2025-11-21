@@ -158,7 +158,34 @@ DBRouter = _deps.load(
     "DBRouter", lambda: __import__("menace.db_router", fromlist=["DBRouter"]).DBRouter
 ) or object  # type: ignore
 
-summarize = _deps.load("gensim_summarize", lambda: __import__("gensim.summarization", fromlist=["summarize"]).summarize)
+def _fallback_summarize(text: str, ratio: float = 0.2, word_count: int | None = None) -> str:
+    """Dependency-free summarizer that preserves the first high-signal sentences.
+
+    The routine mirrors :func:`gensim.summarization.summarize`'s core behaviour
+    (selecting the most informative sentences) without requiring SciPy or other
+    heavy dependencies. It intentionally prefers deterministic ordering to keep
+    summaries stable for downstream analytics.
+    """
+
+    sentences = _fallback_sentence_split(text)
+    if not sentences:
+        return text
+    if word_count is not None:
+        target = max(1, word_count)
+    else:
+        ratio = ratio or 0.2
+        target = max(1, int(len(sentences) * ratio))
+    return " ".join(sentences[:target])
+
+
+summarize = _deps.load(
+    "gensim_summarize",
+    lambda: __import__("gensim.summarization", fromlist=["summarize"]).summarize,
+    fallback=_fallback_summarize,
+    on_error=lambda exc: logger.info(
+        "gensim summarizer unavailable (%s); using deterministic fallback", exc
+    ),
+)
 
 def _load_sklearn() -> tuple[object | None, object | None]:
     try:
