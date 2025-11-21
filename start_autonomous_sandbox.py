@@ -1229,6 +1229,9 @@ def main(argv: list[str] | None = None) -> None:
     roi_backoff_triggered = False
     failure_reasons: list[str] = []
 
+    bootstrap_stop_event: threading.Event | None = None
+    bootstrap_thread: threading.Thread | None = None
+
     try:
         if not args.health_check:
             last_pre_meta_trace_step = "entering non-health-check bootstrap block"
@@ -3010,6 +3013,29 @@ def main(argv: list[str] | None = None) -> None:
         launch_sandbox()
         print("[start_autonomous_sandbox] sandbox exited", flush=True)
         logger.info("sandbox shutdown", extra=log_record(event="shutdown"))
+    except KeyboardInterrupt:
+        logger.warning(
+            "sandbox interrupted; requesting shutdown",
+            extra=log_record(
+                event="sandbox-interrupt",
+                bootstrap_alive=bootstrap_thread.is_alive()
+                if bootstrap_thread
+                else False,
+                last_bootstrap_step=BOOTSTRAP_PROGRESS.get("last_step"),
+            ),
+        )
+        if bootstrap_stop_event is not None:
+            bootstrap_stop_event.set()
+        if bootstrap_thread and bootstrap_thread.is_alive():
+            bootstrap_thread.join(timeout=5)
+        try:
+            shutdown_autonomous_sandbox(timeout=5)
+        except Exception:
+            logger.exception(
+                "shutdown after interrupt failed",
+                extra=log_record(event="sandbox-interrupt-shutdown-error"),
+            )
+        raise SystemExit(130)
     except Exception:  # pragma: no cover - defensive catch
         sandbox_crashes_total.inc()
         sandbox_last_failure_ts.set(time.time())
