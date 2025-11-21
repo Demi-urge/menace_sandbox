@@ -13,6 +13,7 @@ import importlib.util
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -99,6 +100,67 @@ def _ensure_package_namespace() -> None:
 
 
 _ensure_package_namespace()
+
+
+def _auto_install_missing_dependencies() -> list[str]:
+    """Best-effort installation of frequently-missed dependencies.
+
+    The sandbox includes several optional integrations (for example ``pylint``
+    or ``pyroute2``) that materially improve diagnostics and networking
+    fidelity. They are declared in ``requirements.txt`` but may be absent in
+    ad-hoc environments where ``pip install -r requirements.txt`` was skipped.
+    To keep the sandbox fully featured for local runs, we opportunistically
+    install a curated subset when they are missing. Installation attempts are
+    logged and failures are tolerated so startup is never blocked.
+    """
+
+    default_targets: Mapping[str, str] = {
+        "pylint": "pylint",
+        "pyroute2": "pyroute2",
+        # Token counting and research helpers frequently used by orchestration
+        # and ROI monitoring flows. These are intentionally narrow to avoid
+        # pulling in the entire ML stack on lightweight executions.
+        "tiktoken": "tiktoken",
+        "nltk": "nltk",
+    }
+
+    opt_out = os.getenv("SANDBOX_AUTO_INSTALL_DEPS", "1").lower()
+    if opt_out in {"0", "false", "no"}:
+        return []
+
+    def _is_module_available(module_name: str) -> bool:
+        if importlib.util.find_spec(module_name) is None:
+            return False
+        try:
+            importlib.import_module(module_name)
+            return True
+        except Exception:
+            return False
+
+    missing: list[str] = []
+    for package, module_name in default_targets.items():
+        if not _is_module_available(module_name):
+            missing.append(package)
+
+    if not missing:
+        return []
+
+    print(
+        f"[start_autonomous_sandbox] auto-installing missing dependencies: {', '.join(missing)}",
+        flush=True,
+    )
+    for package in missing:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        except Exception as exc:  # pragma: no cover - best effort remediation
+            print(
+                f"[start_autonomous_sandbox] failed to install {package}: {exc}",
+                flush=True,
+            )
+    return missing
+
+
+_auto_install_missing_dependencies()
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
