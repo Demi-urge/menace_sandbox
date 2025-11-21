@@ -13,7 +13,9 @@ for _alias in (
         sys.modules[_alias] = _this_module
 del _alias, _this_module
 
+import ast
 import logging
+from io import StringIO
 from pathlib import Path
 
 from logging_utils import get_logger, setup_logging, log_record
@@ -145,10 +147,73 @@ except ImportError as exc:  # pragma: no cover - optional dependency
         description="Static analysis linter",
         reason=str(exc),
         remedy="pip install pylint",
+        metadata={"fallback": "sandbox-linter"},
         logger=logger,
     )
-    PylintRun = None  # type: ignore
-    TextReporter = None  # type: ignore
+
+    class _FallbackTextReporter:
+        """Minimal reporter that mirrors :class:`pylint` output semantics."""
+
+        def __init__(self) -> None:
+            self.buffer = StringIO()
+
+        def write(self, text: str) -> None:
+            self.buffer.write(text)
+
+        def getvalue(self) -> str:
+            return self.buffer.getvalue()
+
+    class _FallbackLintResult:
+        """Container exposing the ``linter.stats.global_note`` attribute."""
+
+        def __init__(self, score: float) -> None:
+            self.linter = SimpleNamespace(stats=SimpleNamespace(global_note=score))
+
+    def _score_source(text: str) -> float:
+        """Heuristically score ``text`` to approximate pylint's global note."""
+
+        lines = text.splitlines()
+        penalty = 0.0
+        long_lines = sum(1 for line in lines if len(line) > 120)
+        penalty += long_lines * 0.05
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return 0.0
+
+        if ast.get_docstring(tree) is None:
+            penalty += 0.5
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if ast.get_docstring(node) is None:
+                    penalty += 0.2
+                body_len = len(getattr(node, "body", []) or [])
+                if body_len > 80:
+                    penalty += min((body_len - 80) * 0.01, 2.0)
+
+        score = max(0.0, 10.0 - penalty)
+        return round(score, 2)
+
+    def _fallback_pylint_run(args: list[str], reporter: Any | None = None, exit: bool = False) -> _FallbackLintResult:  # type: ignore[override]
+        target = Path(args[-1])
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError:
+            return _FallbackLintResult(0.0)
+
+        score = _score_source(text)
+        log_message = f"[fallback-lint] {target.name}: score={score}"
+        if reporter is not None and hasattr(reporter, "write"):
+            reporter.write(log_message)
+        logger.debug(log_message)
+        return _FallbackLintResult(score)
+
+    logger.info(
+        "pylint unavailable; using lightweight sandbox linting heuristics to keep code quality metrics meaningful",
+    )
+    PylintRun = _fallback_pylint_run  # type: ignore
+    TextReporter = _FallbackTextReporter  # type: ignore
 else:
     dependency_registry.mark_available(
         name="pylint",
