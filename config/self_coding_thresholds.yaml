@@ -6,7 +6,43 @@ default:
   model: exponential
   confidence: 0.95
   model_params: null
+  test_command: ["pytest", "-q"]
+  workflow_tests:
+    - tests/workflows/test_default.py::test_smoke
+
 bots:
+  QuickFixEngine:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: null
+    test_command: ["pytest", "tests/quickfix", "-q"]
+    workflow_tests:
+      - tests/workflows/test_quickfix.py::test_happy_path
+
+  BotDevelopmentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: null
+    workflow_tests:
+      - scripts/run_botdev_workflow.py
+
+  ImplementationOptimiserBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: null
+
   _CapitalManagementBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -15,6 +51,7 @@ bots:
     model: exponential
     confidence: 0.95
     model_params: null
+
   PreExecutionROIBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -23,6 +60,7 @@ bots:
     model: exponential
     confidence: 0.95
     model_params: null
+
   TaskHandoffBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -31,6 +69,7 @@ bots:
     model: exponential
     confidence: 0.95
     model_params: null
+
   AverageMetricBot:
     roi_drop: -0.1
     error_increase: 1.0
