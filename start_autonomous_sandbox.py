@@ -1197,7 +1197,18 @@ def main(argv: list[str] | None = None) -> None:
                         initial_wait = max(args.bootstrap_timeout - 5.0, 0.0)
                         bootstrap_thread.join(initial_wait)
 
-                        if bootstrap_thread.is_alive():
+                        last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
+                            "last_step", "unknown"
+                        )
+                        if last_bootstrap_step == "bootstrap_complete":
+                            bootstrap_thread.join()
+                            _emit_meta_trace(
+                                logger,
+                                "bootstrap thread finished; fast-forwarding to meta planning",
+                                last_step=last_bootstrap_step,
+                                elapsed=round(time.monotonic() - bootstrap_start, 3),
+                            )
+                        elif bootstrap_thread.is_alive():
                             critical_bootstrap_steps = {
                                 "self_coding_engine",
                                 "prepare_pipeline",
