@@ -1206,11 +1206,40 @@ def main(argv: list[str] | None = None) -> None:
                                 "seed_final_context",
                                 "push_final_context",
                             }
+                            finalization_steps = {
+                                "prepare_pipeline",
+                                "internalize_coding_bot",
+                                "promote_pipeline",
+                                "seed_final_context",
+                                "push_final_context",
+                            }
+                            finalization_grace_seconds = 5.0
+                            finalization_grace_applied = False
                             while bootstrap_thread.is_alive():
                                 time_remaining = bootstrap_deadline - time.monotonic()
                                 last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
                                     "last_step", "unknown"
                                 )
+                                if (
+                                    time_remaining <= 3.0
+                                    and last_bootstrap_step in finalization_steps
+                                    and not finalization_grace_applied
+                                ):
+                                    LOGGER.warning(
+                                        "bootstrap in %s with %.1fs remaining; applying "
+                                        "finalization grace window",
+                                        last_bootstrap_step,
+                                        max(time_remaining, 0.0),
+                                        extra=log_record(
+                                            event="bootstrap-finalization-grace",
+                                            last_bootstrap_step=last_bootstrap_step,
+                                            time_remaining=max(time_remaining, 0.0),
+                                            grace_seconds=finalization_grace_seconds,
+                                        ),
+                                    )
+                                    finalization_grace_applied = True
+                                    bootstrap_deadline += finalization_grace_seconds
+                                    time_remaining = bootstrap_deadline - time.monotonic()
                                 if (
                                     time_remaining <= 5.0
                                     and last_bootstrap_step == "embedder_preload"
@@ -1243,7 +1272,10 @@ def main(argv: list[str] | None = None) -> None:
                                         critical_grace_extension_applied = True
                                         bootstrap_deadline += critical_grace_extension_seconds
                                         time_remaining = bootstrap_deadline - time.monotonic()
-                                    elif time_remaining <= 2.0:
+                                    elif time_remaining <= 2.0 and not (
+                                        last_bootstrap_step in finalization_steps
+                                        and finalization_grace_applied
+                                    ):
                                         LOGGER.error(
                                             "bootstrap still in %s with %.1fs remaining after grace; "
                                             "signaling stop event",
