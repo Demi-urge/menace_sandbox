@@ -512,6 +512,14 @@ def initialize_bootstrap_context(
                     bootstrap_runtime_manager=bootstrap_manager,
                     manager=bootstrap_manager,
                 )
+            except TimeoutError:
+                LOGGER.error(
+                    "prepare_pipeline_for_bootstrap exceeded timeout (timeout=%.1fs)",
+                    PREPARE_PIPELINE_TIMEOUT,
+                )
+                _pop_bootstrap_context(placeholder_context)
+                BOOTSTRAP_PROGRESS["last_step"] = "prepare_pipeline_timeout"
+                return {}
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 raise
@@ -594,17 +602,24 @@ def initialize_bootstrap_context(
             "starting _push_bootstrap_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
-        _run_with_timeout(
-            _push_bootstrap_context,
-            timeout=BOOTSTRAP_STEP_TIMEOUT,
-            bootstrap_deadline=bootstrap_deadline,
-            description="_push_bootstrap_context final",
-            abort_on_timeout=True,
-            registry=registry,
-            data_bot=data_bot,
-            manager=manager,
-            pipeline=pipeline,
-        )
+        try:
+            _run_with_timeout(
+                _push_bootstrap_context,
+                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                bootstrap_deadline=bootstrap_deadline,
+                description="_push_bootstrap_context final",
+                abort_on_timeout=True,
+                registry=registry,
+                data_bot=data_bot,
+                manager=manager,
+                pipeline=pipeline,
+            )
+        except TimeoutError:
+            LOGGER.error(
+                "_push_bootstrap_context final timed out after %.1fs", BOOTSTRAP_STEP_TIMEOUT
+            )
+            BOOTSTRAP_PROGRESS["last_step"] = "push_bootstrap_timeout"
+            return {}
         LOGGER.info(
             "_push_bootstrap_context finished (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
@@ -614,19 +629,27 @@ def initialize_bootstrap_context(
             "starting _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
-        _run_with_timeout(
-            _seed_research_aggregator_context,
-            timeout=BOOTSTRAP_STEP_TIMEOUT,
-            bootstrap_deadline=bootstrap_deadline,
-            description="_seed_research_aggregator_context final",
-            abort_on_timeout=False,
-            registry=registry,
-            data_bot=data_bot,
-            context_builder=context_builder,
-            engine=engine,
-            pipeline=pipeline,
-            manager=manager,
-        )
+        try:
+            _run_with_timeout(
+                _seed_research_aggregator_context,
+                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                bootstrap_deadline=bootstrap_deadline,
+                description="_seed_research_aggregator_context final",
+                abort_on_timeout=False,
+                registry=registry,
+                data_bot=data_bot,
+                context_builder=context_builder,
+                engine=engine,
+                pipeline=pipeline,
+                manager=manager,
+            )
+        except TimeoutError:
+            LOGGER.error(
+                "_seed_research_aggregator_context final timed out after %.1fs",
+                BOOTSTRAP_STEP_TIMEOUT,
+            )
+            BOOTSTRAP_PROGRESS["last_step"] = "seed_research_timeout"
+            return {}
         LOGGER.info(
             "_seed_research_aggregator_context finished (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
@@ -644,6 +667,7 @@ def initialize_bootstrap_context(
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
         _mark_bootstrap_step("bootstrap_complete")
+        LOGGER.info("bootstrap complete")
         LOGGER.info(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
