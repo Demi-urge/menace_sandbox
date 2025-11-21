@@ -249,6 +249,8 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
         return {}
 
     loader = _FALLBACK_YAML if cache_key in _FORCED_FALLBACK_PATHS else yaml
+    yaml_error = getattr(loader, "YAMLError", Exception)
+    fallback_yaml_error = getattr(_FALLBACK_YAML, "YAMLError", yaml_error)
 
     try:
         data = loader.safe_load(raw) or {}
@@ -275,6 +277,22 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
         except Exception as fb_exc:  # pragma: no cover - defensive guard
             logger.warning(
                 "fallback parser also failed to load %s", cfg_path, exc_info=fb_exc
+            )
+            return {}
+    except yaml_error as exc:
+        logger.warning(
+            "failed to parse self-coding thresholds from %s; retrying with fallback parser",  # noqa: E501
+            cfg_path,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        _FORCED_FALLBACK_PATHS.add(cache_key)
+        try:
+            data = _FALLBACK_YAML.safe_load(raw) or {}
+            cleaned = _decouple_aliases(data)
+            return cleaned if isinstance(cleaned, dict) else {}
+        except (RecursionError, fallback_yaml_error) as fb_exc:
+            logger.warning(
+                "fallback parser also failed to load %s; using defaults", cfg_path, exc_info=fb_exc
             )
             return {}
     except Exception as exc:
