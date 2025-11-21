@@ -626,6 +626,7 @@ def _run_prelaunch_improvement_cycles(
     logger: logging.Logger,
     *,
     bootstrap_mode: bool = False,
+    monitor_roi_backoff: bool = True,
 ) -> tuple[bool, bool]:
     """Iterate each workflow through ROI-gated improvement before launch."""
 
@@ -684,7 +685,7 @@ def _run_prelaunch_improvement_cycles(
             planner_cls=planner_cls,
             settings=settings,
             logger=logger,
-            continuous_monitor=True,
+            continuous_monitor=monitor_roi_backoff,
             cycle_budget=3,
         )
         per_workflow_ready[workflow_id] = ready
@@ -737,7 +738,7 @@ def _run_prelaunch_improvement_cycles(
             planner_cls=planner_cls,
             settings=settings,
             logger=logger,
-            continuous_monitor=True,
+            continuous_monitor=monitor_roi_backoff,
         )
         roi_backoff = roi_backoff or system_backoff
         logger.info(
@@ -1162,8 +1163,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--monitor-roi-backoff",
-        action="store_true",
-        help="Continuously monitor ROI backoff and pause launch when triggered",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Continuously monitor ROI backoff and pause launch when triggered. "
+            "Pass --no-monitor-roi-backoff to disable the guard explicitly."
+        ),
     )
     parser.add_argument(
         "--bootstrap-timeout",
@@ -1224,6 +1229,19 @@ def main(argv: list[str] | None = None) -> None:
     logger = get_logger(__name__)
     sandbox_restart_total.labels(service="start_autonomous", reason="launch").inc()
     logger.info("sandbox start", extra=log_record(event="start"))
+
+    monitor_roi_backoff = (
+        args.monitor_roi_backoff
+        if args.monitor_roi_backoff is not None
+        else True
+    )
+    logger.info(
+        "ROI backoff monitoring %s",
+        "enabled" if monitor_roi_backoff else "disabled",
+        extra=log_record(
+            event="roi-backoff-monitoring", monitor_roi_backoff=monitor_roi_backoff
+        ),
+    )
 
     ready_to_launch = True
     roi_backoff_triggered = False
@@ -1925,6 +1943,7 @@ def main(argv: list[str] | None = None) -> None:
                             settings=settings,
                             logger=logger,
                             bootstrap_mode=bootstrap_mode,
+                            monitor_roi_backoff=monitor_roi_backoff,
                         )
                         print(
                             "[META-TRACE] prelaunch ROI cycles completed; ready=%s backoff=%s"
