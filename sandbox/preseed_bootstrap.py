@@ -201,15 +201,21 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
         disable_embedder(
             reason="bootstrap_timeout", stop_event=embedder_stop_event, join_timeout=2.0
         )
-        thread.join(2.0)
+        for join_timeout in (2.0, 5.0):
+            thread.join(join_timeout)
+            if not thread.is_alive():
+                break
+
         if thread.is_alive():
             LOGGER.warning(
                 "forcing bootstrap embedder preload worker shutdown after timeout grace period",
                 extra={"timeout": timeout},
             )
             _BOOTSTRAP_EMBEDDER_DISABLED = True
+            _BOOTSTRAP_EMBEDDER_STARTED = False
         else:
             LOGGER.info("bootstrap embedder preload worker cancelled due to timeout")
+            LOGGER.info("preload thread terminated")
         return
 
     if "error" in result:
