@@ -67,7 +67,10 @@ def _run_with_timeout(
         time_remaining = bootstrap_deadline - time.monotonic()
         if time_remaining > 0:
             buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
-            timeout = min(max(timeout, buffered_remaining), time_remaining)
+            if buffered_remaining:
+                timeout = min(timeout, buffered_remaining, time_remaining)
+            else:
+                timeout = min(timeout, time_remaining)
 
     result: Dict[str, Any] = {}
 
