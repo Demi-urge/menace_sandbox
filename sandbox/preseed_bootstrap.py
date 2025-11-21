@@ -597,9 +597,14 @@ def initialize_bootstrap_context(
         }
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+        _mark_bootstrap_step("bootstrap_complete")
         LOGGER.info(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
+        )
+        LOGGER.info(
+            "bootstrap marked complete; returning context to caller (last_step=%s)",
+            BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("bootstrap complete; returning to caller")
         LOGGER.info(
