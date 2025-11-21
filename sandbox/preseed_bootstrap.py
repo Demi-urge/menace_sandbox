@@ -41,6 +41,7 @@ BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
+BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
 
@@ -55,11 +56,18 @@ def _run_with_timeout(
     fn,
     *,
     timeout: float,
+    bootstrap_deadline: float | None = None,
     description: str,
     abort_on_timeout: bool = True,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
+
+    if bootstrap_deadline:
+        time_remaining = bootstrap_deadline - time.monotonic()
+        if time_remaining > 0:
+            buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
+            timeout = min(max(timeout, buffered_remaining), time_remaining)
 
     result: Dict[str, Any] = {}
 
@@ -353,6 +361,7 @@ def initialize_bootstrap_context(
                 _run_with_timeout(
                     _push_bootstrap_context,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    bootstrap_deadline=bootstrap_deadline,
                     description="_push_bootstrap_context final",
                     abort_on_timeout=True,
                     registry=registry,
@@ -364,6 +373,7 @@ def initialize_bootstrap_context(
                 _run_with_timeout(
                     _seed_research_aggregator_context,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    bootstrap_deadline=bootstrap_deadline,
                     description="_seed_research_aggregator_context final",
                     abort_on_timeout=False,
                     registry=registry,
@@ -419,6 +429,7 @@ def initialize_bootstrap_context(
             placeholder_context = _run_with_timeout(
                 _push_bootstrap_context,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
+                bootstrap_deadline=bootstrap_deadline,
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
                 registry=registry,
@@ -438,6 +449,7 @@ def initialize_bootstrap_context(
             _run_with_timeout(
                 _seed_research_aggregator_context,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
+                bootstrap_deadline=bootstrap_deadline,
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
                 registry=registry,
@@ -460,6 +472,7 @@ def initialize_bootstrap_context(
                 pipeline, promote_pipeline = _run_with_timeout(
                     prepare_pipeline_for_bootstrap,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
                     pipeline_cls=ModelAutomationPipeline,
@@ -531,6 +544,7 @@ def initialize_bootstrap_context(
             _run_with_timeout(
                 promote_pipeline,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
+                bootstrap_deadline=bootstrap_deadline,
                 description="promote_pipeline",
                 abort_on_timeout=True,
                 manager=manager,
@@ -553,6 +567,7 @@ def initialize_bootstrap_context(
         _run_with_timeout(
             _push_bootstrap_context,
             timeout=BOOTSTRAP_STEP_TIMEOUT,
+            bootstrap_deadline=bootstrap_deadline,
             description="_push_bootstrap_context final",
             abort_on_timeout=True,
             registry=registry,
@@ -572,6 +587,7 @@ def initialize_bootstrap_context(
         _run_with_timeout(
             _seed_research_aggregator_context,
             timeout=BOOTSTRAP_STEP_TIMEOUT,
+            bootstrap_deadline=bootstrap_deadline,
             description="_seed_research_aggregator_context final",
             abort_on_timeout=False,
             registry=registry,
