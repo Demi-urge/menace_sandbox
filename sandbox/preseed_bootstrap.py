@@ -85,14 +85,18 @@ def _run_with_timeout(
     thread.join(timeout)
 
     if thread.is_alive():
+        last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
             timeout,
-            BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+            last_step,
         )
         if abort_on_timeout:
-            raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
+            raise TimeoutError(
+                f"{description} timed out after {timeout:.1f}s "
+                f"(last_step={last_step})"
+            )
 
         LOGGER.warning("skipping %s due to timeout", description)
         return None
