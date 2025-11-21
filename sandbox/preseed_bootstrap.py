@@ -37,7 +37,7 @@ _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMEOUT = 30.0
-PREPARE_PIPELINE_TIMEOUT = 60.0
+DEFAULT_PREPARE_PIPELINE_TIMEOUT = 60.0
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
@@ -45,6 +45,27 @@ SELF_CODING_MIN_REMAINING_BUDGET = float(
 BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
+
+
+def _prepare_pipeline_timeout() -> float:
+    """Return the timeout for preparing the self-coding pipeline."""
+
+    try:
+        from menace_sandbox.coding_bot_interface import _get_bootstrap_wait_timeout
+    except Exception:  # pragma: no cover - defensive import fallback
+        LOGGER.debug(
+            "fallback to default prepare pipeline timeout; helper import failed",
+            exc_info=True,
+        )
+        return DEFAULT_PREPARE_PIPELINE_TIMEOUT
+
+    timeout = _get_bootstrap_wait_timeout()
+    if timeout is None:
+        return DEFAULT_PREPARE_PIPELINE_TIMEOUT
+    return max(DEFAULT_PREPARE_PIPELINE_TIMEOUT, timeout)
+
+
+PREPARE_PIPELINE_TIMEOUT = _prepare_pipeline_timeout()
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
