@@ -175,6 +175,68 @@ def test_get_embedder_configures_hf_timeouts(monkeypatch):
     assert os.environ["HF_HUB_DOWNLOAD_RETRIES"] == "2"
 
 
+def test_disable_embedder_records_reason(monkeypatch):
+    stop_event = threading.Event()
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_EVENT", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_REASON", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_CALLER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_TRIGGER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_REASON", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_CALLER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_identify_embedder_requester", lambda: "tests.disable")
+
+    governed_embeddings.disable_embedder(reason="unit-test", stop_event=stop_event)
+
+    diagnostics = governed_embeddings.embedder_diagnostics()
+    assert diagnostics["disable_reason"] == "unit-test"
+    assert diagnostics["disable_caller"] == "tests.disable"
+    assert diagnostics["disable_trigger"] == "disable_embedder"
+    assert diagnostics["stop_reason"] == "unit-test"
+    assert diagnostics["stop_caller"] == "tests.disable"
+
+
+def test_disable_reason_clears_on_reinitialisation(monkeypatch):
+    stop_event = threading.Event()
+    stop_event.set()
+
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_EVENT", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_REASON", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_CALLER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_DISABLE_TRIGGER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_REASON", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_CALLER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+    monkeypatch.setattr(governed_embeddings, "_identify_embedder_requester", lambda: "tests.stop")
+    monkeypatch.setattr(governed_embeddings, "_load_embedder", lambda stop_event=None: object())
+
+    governed_embeddings.cancel_embedder_initialisation(stop_event=stop_event, reason="halted")
+    governed_embeddings._initialise_embedder_with_timeout(
+        suppress_timeout_log=True, stop_event=stop_event
+    )
+
+    diagnostics = governed_embeddings.embedder_diagnostics()
+    assert diagnostics["disable_reason"] == "halted"
+
+    governed_embeddings._initialise_embedder_with_timeout(
+        suppress_timeout_log=True, stop_event=threading.Event()
+    )
+    governed_embeddings._EMBEDDER_INIT_EVENT.wait(1)
+
+    diagnostics = governed_embeddings.embedder_diagnostics()
+    assert diagnostics["disable_reason"] is None
+    assert diagnostics["disable_caller"] is None
+    assert diagnostics["disable_trigger"] is None
+
+
 def test_resolve_local_snapshot_requires_metadata(tmp_path):
     model_cache = tmp_path / "cache"
     snapshots = model_cache / "snapshots"
