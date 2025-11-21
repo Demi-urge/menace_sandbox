@@ -9,6 +9,7 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
@@ -27,6 +28,42 @@ if "--health-check" in sys.argv[1:]:
     # would normally bootstrap DataBot.
     os.environ.setdefault("MENACE_SANDBOX_MODE", "health_check")
     os.environ.setdefault("MENACE_DISABLE_MONITORING", "1")
+
+
+def _ensure_package_namespace() -> None:
+    """Expose this repository as the ``menace_sandbox`` package when uninstalled.
+
+    The sandbox entrypoints rely on absolute imports such as
+    ``menace_sandbox.bot_registry``. When executed from a checked-out
+    repository without installation, those imports fail because Python does
+    not automatically treat the repo root as a package. This helper builds and
+    registers a module object backed by ``__init__.py`` so downstream imports
+    behave identically to an installed distribution while keeping dynamic
+    path resolution intact.
+    """
+
+    package_name = "menace_sandbox"
+    package_root = Path(__file__).resolve().parent
+    init_path = package_root / "__init__.py"
+
+    if str(package_root) not in sys.path:
+        sys.path.insert(0, str(package_root))
+
+    existing = sys.modules.get(package_name)
+    if existing is None or getattr(existing, "__file__", None) != str(init_path):
+        spec = importlib.util.spec_from_file_location(package_name, init_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            module.__path__ = [str(package_root)]
+            sys.modules[package_name] = module
+            spec.loader.exec_module(module)
+    else:
+        module_path = getattr(existing, "__path__", None)
+        if isinstance(module_path, list) and str(package_root) not in module_path:
+            module_path.append(str(package_root))
+
+
+_ensure_package_namespace()
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
