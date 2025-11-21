@@ -407,6 +407,32 @@ def _prepare_bundled_model_dir() -> Path | None:
     return target_dir
 
 
+def _hub_reachable(timeout: float = 1.5) -> bool:
+    """Return ``True`` when the Hugging Face hub appears reachable.
+
+    The sandbox frequently operates in firewalled or proxy-restricted
+    environments where outbound HTTPS traffic to ``huggingface.co`` is blocked.
+    Instead of relying on the default ``SentenceTransformer`` retry loop (which
+    can take tens of seconds before failing), we proactively probe the host with
+    a lightweight HEAD request. When connectivity is denied we immediately fall
+    back to the bundled/stub embedder so startup continues without long delays
+    or noisy retry spam.
+    """
+
+    host = "huggingface.co"
+    try:
+        import http.client
+
+        conn = http.client.HTTPSConnection(host, timeout=timeout)
+        conn.request("HEAD", "/", headers={"User-Agent": "menace-sandbox-health"})
+        with contextlib.closing(conn):
+            response = conn.getresponse()
+            return 200 <= response.status < 400
+    except Exception as exc:  # pragma: no cover - best effort heuristic
+        logger.debug("huggingface reachability probe failed: %s", exc)
+        return False
+
+
 def _build_stub_embedder() -> Any:
     """Return a minimal stand-in for :class:`SentenceTransformer`."""
 
@@ -1805,6 +1831,21 @@ def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransfo
                 has_refs=cache_has_refs,
                 has_blobs=cache_has_blobs,
             )
+
+        if (
+            not local_kwargs.get("local_files_only")
+            and snapshot_path is None
+            and not cache_has_refs
+            and not cache_has_blobs
+        ):
+            if not _hub_reachable():
+                logger.warning(
+                    "huggingface hub unreachable; using bundled embedder fallback",
+                    extra={"model": _MODEL_NAME},
+                )
+                fallback = _load_bundled_embedder()
+                if fallback is not None:
+                    return cast("SentenceTransformer", fallback)
 
         if snapshot_path is not None:
             try:
