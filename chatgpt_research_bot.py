@@ -24,6 +24,7 @@ _deps = DependencyManager()
 requests = _deps.load("requests", lambda: __import__("requests"))  # type: ignore
 from dataclasses import dataclass, asdict, field
 from typing import Iterable, List, Optional, Callable, Any, Dict, Mapping
+from types import SimpleNamespace
 import re
 from collections import Counter
 np = _deps.load("numpy", lambda: __import__("numpy"))  # type: ignore
@@ -193,8 +194,18 @@ def _load_nltk() -> tuple[object | None, bool]:
                 return nltk, False
         return nltk, True
     except Exception as exc:  # pragma: no cover - optional
-        logger.warning("nltk unavailable: %s", exc)
-        return None, False
+        logger.info(
+            "nltk unavailable (%s); falling back to lightweight sentence splitter",
+            exc,
+        )
+
+        def _fallback_sent_tokenize(text: str) -> List[str]:
+            return [s for s in _fallback_sentence_split(text) if s]
+
+        fallback_nltk = SimpleNamespace(
+            tokenize=SimpleNamespace(sent_tokenize=_fallback_sent_tokenize)
+        )
+        return fallback_nltk, True
 
 nltk, _nltk_available = _load_nltk()
 
@@ -206,8 +217,29 @@ def _load_spacy() -> tuple[object | None, object | None, bool]:
             nlp.add_pipe("sentencizer")
         return spacy, nlp, True
     except Exception as exc:  # pragma: no cover - optional
-        logger.warning("spacy unavailable: %s", exc)
-        return None, None, False
+        logger.info(
+            "spacy unavailable (%s); using regex-based doc splitter", exc
+        )
+
+        class _StubSpan:
+            def __init__(self, text: str):
+                self.text = text
+
+        class _StubDoc:
+            def __init__(self, text: str):
+                self.sents = [_StubSpan(chunk) for chunk in _fallback_sentence_split(text)]
+
+        class _StubSpacy:
+            pipe_names = ("sentencizer",)
+
+            def add_pipe(self, *_: object, **__: object) -> None:
+                return None
+
+            def __call__(self, text: str) -> _StubDoc:
+                return _StubDoc(text)
+
+        stub_spacy = _StubSpacy()
+        return stub_spacy, stub_spacy, True
 
 spacy, _spacy_nlp, _spacy_available = _load_spacy()
 
@@ -348,7 +380,13 @@ def _split_sentences(text: str) -> List[str]:
             return [s.text.strip() for s in doc.sents if s.text.strip()]
         except Exception:  # pragma: no cover - fallback
             pass
-    return [s.strip() for s in re.split(r"[.!?]", text) if s.strip()]
+    return _fallback_sentence_split(text)
+
+
+def _fallback_sentence_split(text: str) -> List[str]:
+    """Lightweight, dependency-free sentence splitter."""
+
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|[\n\r]+", text) if s.strip()]
 
 
 @lru_cache(maxsize=SummaryConfig().cache_size)
