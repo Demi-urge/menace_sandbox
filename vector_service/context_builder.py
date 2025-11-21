@@ -89,13 +89,36 @@ from .embedding_backfill import (
 )
 from prompt_types import Prompt
 
+class _HeuristicTokenizer:
+    """Lightweight tokenizer used when ``tiktoken`` is unavailable.
+
+    The implementation intentionally mirrors the interface of ``tiktoken``'s
+    encoder by exposing an :py:meth:`encode` method that returns a list-like
+    structure.  Tokens are generated using a coarse regex that splits on
+    alphanumeric sequences and individual punctuation characters.  The payloads
+    are stable integer hashes so downstream consumers expecting a list of token
+    IDs continue to behave deterministically even without the optional
+    dependency.
+    """
+
+    _pattern = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+
+    def encode(self, text: str, *_: object, **__: object) -> list[int]:
+        tokens = self._pattern.findall(text)
+        # Stable per-process token IDs; values are not semantically meaningful
+        # but provide deterministic lengths and ordering.
+        return [hash(tok) & 0xFFFFFFFF for tok in tokens]
+
+
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
 
     _FALLBACK_ENCODER = tiktoken.get_encoding("cl100k_base")
+    _TOKENIZER_NOTICE_EMITTED = False
 except Exception:  # pragma: no cover - dependency missing or failed
     tiktoken = None  # type: ignore
-    _FALLBACK_ENCODER = None
+    _FALLBACK_ENCODER = _HeuristicTokenizer()
+    _TOKENIZER_NOTICE_EMITTED = False
 
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
@@ -704,12 +727,23 @@ class ContextBuilder:
         if tok is None:
             tok = getattr(getattr(self.retriever, "embedder", None), "tokenizer", None)
         self._tokenizer = tok
-        if self.precise_token_count and self._tokenizer is None and _FALLBACK_ENCODER is None:
-            logger.warning(
-                "precise token counting requested but tiktoken is unavailable; "
-                "falling back to approximate counts"
-            )
-            self.precise_token_count = False
+
+        global _TOKENIZER_NOTICE_EMITTED
+        if self.precise_token_count and self._tokenizer is None:
+            if isinstance(_FALLBACK_ENCODER, _HeuristicTokenizer):
+                if not _TOKENIZER_NOTICE_EMITTED:
+                    logger.warning(
+                        "precise token counting requested but tiktoken is unavailable; "
+                        "using heuristic tokenizer instead"
+                    )
+                    _TOKENIZER_NOTICE_EMITTED = True
+            elif _FALLBACK_ENCODER is None:
+                logger.warning(
+                    "precise token counting requested but no tokenizer is available; "
+                    "falling back to approximate counts"
+                )
+                self.precise_token_count = False
+
         self._fallback_tokenizer = (
             _FALLBACK_ENCODER if self.precise_token_count else None
         )
