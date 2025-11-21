@@ -30,4 +30,4 @@ bots:
     patch_success_drop: -0.2
     model: exponential
     confidence: 0.95
-    model_params:
+    model_params: null
