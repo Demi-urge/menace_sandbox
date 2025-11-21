@@ -28,6 +28,7 @@ try:
         Text,
         Index,
         create_engine,
+        event,
     )  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     (
@@ -42,7 +43,8 @@ except Exception:  # pragma: no cover - optional dependency
         Text,
         Index,
         create_engine,
-    ) = (None,) * 11  # type: ignore
+        event,
+    ) = (None,) * 12  # type: ignore
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,8 @@ class MenaceDB:
     ) -> None:
         url = url or DATABASE_URL
         self.engine = create_engine(url)
+        if event is not None and self.engine.url.get_backend_name() == "sqlite":
+            event.listen(self.engine, "connect", _configure_sqlite_connection)
         self.meta = MetaData()
         self.queue_path = queue_path
         self.use_queue = bool(os.getenv("USE_DB_QUEUE")) or queue_path is not None
@@ -1101,3 +1105,12 @@ class MenaceDB:
 
 
 __all__ = ["MenaceDB"]
+
+
+def _configure_sqlite_connection(dbapi_connection, _) -> None:
+    """Apply performance-focused pragmas when connecting to SQLite."""
+
+    conn = dbapi_connection
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
