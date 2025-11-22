@@ -47,6 +47,7 @@ def integrate_orphans(
     bootstrap_context: bool = False,
     auto_context_builder: bool = False,
     create_default_context_builder: bool | None = None,
+    lightweight_context: bool = True,
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards.
@@ -54,20 +55,23 @@ def integrate_orphans(
     ``context_builder`` creation is skipped by default so lightweight callers do
     not pay the cost of bootstrapping the full context. Pass an explicit
     ``context_builder`` when downstream sandbox hooks require the richer
-    bootstrap context, or set ``auto_context_builder=True`` (or
-    ``create_default_context_builder=True`` for backwards compatibility) to
-    auto-create one.
+    bootstrap context. Set ``lightweight_context=False`` together with
+    ``auto_context_builder=True`` (or ``create_default_context_builder=True`` for
+    backwards compatibility) to auto-create one.
     """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     auto_context_builder = bool(
-        auto_context_builder
-        or bootstrap_context
-        or (
-            create_default_context_builder
-            if create_default_context_builder is not None
-            else False
+        not lightweight_context
+        and (
+            auto_context_builder
+            or bootstrap_context
+            or (
+                create_default_context_builder
+                if create_default_context_builder is not None
+                else False
+            )
         )
     )
     repo = kwargs.get("repo")
@@ -101,25 +105,30 @@ def post_round_orphan_scan(
     bootstrap_context: bool = False,
     auto_context_builder: bool = False,
     create_default_context_builder: bool | None = None,
+    lightweight_context: bool = True,
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan.
 
     The default code path avoids automatically creating a ``context_builder``
-    to minimize overhead. Supply ``context_builder`` directly (or set
-    ``auto_context_builder=True`` / ``create_default_context_builder=True``) if
-    the sandbox scan needs full bootstrap context.
+    to minimize overhead. Supply ``context_builder`` directly and set
+    ``lightweight_context=False`` when the sandbox scan needs the full bootstrap
+    context (optionally paired with ``auto_context_builder=True`` or
+    ``create_default_context_builder=True``).
     """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     auto_context_builder = bool(
-        auto_context_builder
-        or bootstrap_context
-        or (
-            create_default_context_builder
-            if create_default_context_builder is not None
-            else False
+        not lightweight_context
+        and (
+            auto_context_builder
+            or bootstrap_context
+            or (
+                create_default_context_builder
+                if create_default_context_builder is not None
+                else False
+            )
         )
     )
     repo = kwargs.get("repo")
