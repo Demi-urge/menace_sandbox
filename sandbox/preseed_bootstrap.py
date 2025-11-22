@@ -274,6 +274,7 @@ def initialize_bootstrap_context(
     use_cache: bool = True,
     stop_event: threading.Event | None = None,
     bootstrap_deadline: float | None = None,
+    prepare_pipeline_timeout: float | None = None,
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
@@ -467,11 +468,26 @@ def initialize_bootstrap_context(
                 "starting prepare_pipeline_for_bootstrap (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            deadline_remaining = (
+                bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
+            )
+            prepare_timeout = max(
+                prepare_pipeline_timeout or BOOTSTRAP_STEP_TIMEOUT,
+                deadline_remaining if deadline_remaining is not None else 0.0,
+            )
+            LOGGER.info(
+                "prepare_pipeline_for_bootstrap timeout selected",
+                extra={
+                    "timeout": prepare_timeout,
+                    "deadline_remaining": deadline_remaining,
+                    "configured_timeout": prepare_pipeline_timeout,
+                },
+            )
             prepare_start = perf_counter()
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
                     prepare_pipeline_for_bootstrap,
-                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    timeout=prepare_timeout,
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,

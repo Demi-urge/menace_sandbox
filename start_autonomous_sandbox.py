@@ -1130,6 +1130,15 @@ def main(argv: list[str] | None = None) -> None:
         help="Maximum seconds to wait for initialize_bootstrap_context before failing",
     )
     parser.add_argument(
+        "--prepare-pipeline-timeout",
+        type=float,
+        default=None,
+        help=(
+            "Optional override for prepare_pipeline_for_bootstrap timeout; defaults to "
+            "remaining bootstrap deadline"
+        ),
+    )
+    parser.add_argument(
         "--include-orphans",
         dest="include_orphans",
         action=argparse.BooleanOptionalAction,
@@ -1207,6 +1216,7 @@ def main(argv: list[str] | None = None) -> None:
                                 bootstrap_context_result = initialize_bootstrap_context(
                                     stop_event=bootstrap_stop_event,
                                     bootstrap_deadline=bootstrap_deadline,
+                                    prepare_pipeline_timeout=args.prepare_pipeline_timeout,
                                 )
                             except BaseException as exc:  # pragma: no cover - propagate errors
                                 bootstrap_error = exc
