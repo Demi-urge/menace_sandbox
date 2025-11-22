@@ -44,7 +44,7 @@ def integrate_orphans(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
-    create_default_context_builder: bool = False,
+    create_default_context_builder: bool = True,
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
@@ -79,7 +79,7 @@ def post_round_orphan_scan(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
-    create_default_context_builder: bool = False,
+    create_default_context_builder: bool = True,
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
