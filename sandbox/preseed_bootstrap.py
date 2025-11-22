@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
+import traceback
 from time import perf_counter
 from typing import Any, Dict
 
@@ -70,6 +72,7 @@ def _run_with_timeout(
             timeout = min(max(timeout, buffered_remaining), time_remaining)
 
     result: Dict[str, Any] = {}
+    started_at = time.monotonic()
 
     def _target() -> None:
         try:
@@ -82,6 +85,23 @@ def _run_with_timeout(
     thread.join(timeout)
 
     if thread.is_alive():
+        stack_frames = sys._current_frames()
+        frame = stack_frames.get(thread.ident) if thread.ident is not None else None
+        if frame is not None:
+            LOGGER.error(
+                "Timeout diagnostics for %s after %.3fs (last_step=%s):\n%s",
+                description,
+                time.monotonic() - started_at,
+                BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+                "".join(traceback.format_stack(frame)),
+            )
+        else:
+            LOGGER.error(
+                "Timeout diagnostics for %s after %.3fs (last_step=%s): stack unavailable",
+                description,
+                time.monotonic() - started_at,
+                BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+            )
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,

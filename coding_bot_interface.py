@@ -3488,6 +3488,15 @@ def prepare_pipeline_for_bootstrap(
     instantiation.
     """
 
+    phase_baseline = time.perf_counter()
+
+    def _phase_checkpoint(label: str) -> None:
+        logger.info(
+            "prepare_pipeline_for_bootstrap phase=%s elapsed=%.3fs",
+            label,
+            time.perf_counter() - phase_baseline,
+        )
+
     def _typeerror_rejects_manager(exc: TypeError) -> bool:
         message = str(exc)
         if not message:
@@ -3614,12 +3623,16 @@ def prepare_pipeline_for_bootstrap(
     if extra_candidates:
         managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
+    _phase_checkpoint("sentinels_selected")
+
     try:
+        _phase_checkpoint("bootstrap_context_push_start")
         context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
             manager=runtime_manager,
         )
+        _phase_checkpoint("bootstrap_context_pushed")
         if context is not None and sentinel_manager is not None:
             context.sentinel = sentinel_manager
         init_kwargs = dict(pipeline_kwargs)
@@ -3696,6 +3709,8 @@ def prepare_pipeline_for_bootstrap(
                 return contextlib.nullcontext(None)
             return _runtime_manager_context(runtime_manager)
 
+        _phase_checkpoint("pipeline_constructor_start")
+
         with shim_context as shim_handle:
             if isinstance(shim_handle, _PipelineShimHandle):
                 shim_release_candidate = shim_handle.release
@@ -3764,6 +3779,8 @@ def prepare_pipeline_for_bootstrap(
             if last_error is None:
                 raise RuntimeError("pipeline bootstrap failed")
             raise last_error
+
+        _phase_checkpoint("pipeline_constructed")
         if callable(shim_release_candidate):
             shim_release_callback = shim_release_candidate
         _assign_bootstrap_manager_placeholder(
@@ -3838,6 +3855,8 @@ def prepare_pipeline_for_bootstrap(
                 shim_release_callback = None
             _deregister_bootstrap_helper_callback(_promote)
             _finalize_bootstrap_state()
+
+    _phase_checkpoint("promotion_ready")
 
     register_callback = any(
         _is_bootstrap_placeholder(candidate)
