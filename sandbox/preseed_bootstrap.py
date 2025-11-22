@@ -43,6 +43,9 @@ BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
+PREPARE_PIPELINE_PROGRESS_HEARTBEAT = float(
+    os.getenv("PREPARE_PIPELINE_PROGRESS_HEARTBEAT", "0.0")
+)
 BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
@@ -63,6 +66,7 @@ def _run_with_timeout(
     abort_on_timeout: bool = True,
     cancel: Callable[[], None] | None = None,
     progress_timeout: float | None = None,
+    progress_heartbeat: float | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -107,11 +111,13 @@ def _run_with_timeout(
             current_deadline = min(proposed_deadline, max_deadline)
 
     progress_callback = kwargs.get("progress_callback")
+    wrapped_progress_callback = None
     if progress_callback is not None:
         def _wrapped_progress(sub_step: str) -> None:
             _refresh_deadline(sub_step)
             return progress_callback(sub_step)
 
+        wrapped_progress_callback = _wrapped_progress
         kwargs["progress_callback"] = _wrapped_progress
 
     def _target() -> None:
@@ -120,14 +126,45 @@ def _run_with_timeout(
         except Exception as exc:  # pragma: no cover - error propagation
             result["exc"] = exc
 
+    heartbeat_stop = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+
     thread = threading.Thread(target=_target, daemon=True)
     thread.start()
 
-    while thread.is_alive():
-        remaining = current_deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        thread.join(min(remaining, 0.1))
+    if (
+        progress_heartbeat
+        and progress_heartbeat > 0
+        and wrapped_progress_callback is not None
+    ):
+        LOGGER.info(
+            "starting progress heartbeat for %s", description, extra={"interval": progress_heartbeat}
+        )
+
+        def _heartbeat() -> None:
+            while not heartbeat_stop.wait(progress_heartbeat):
+                try:
+                    wrapped_progress_callback("heartbeat")
+                except Exception:  # pragma: no cover - defensive heartbeat logging
+                    LOGGER.debug(
+                        "progress heartbeat callback failed for %s", description, exc_info=True
+                    )
+
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat, name=f"{description}-heartbeat", daemon=True
+        )
+        heartbeat_thread.start()
+
+    try:
+        while thread.is_alive():
+            remaining = current_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(min(remaining, 0.1))
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(0.5)
 
     if thread.is_alive():
         if thread.ident is not None:
@@ -575,6 +612,7 @@ def initialize_bootstrap_context(
                     "deadline_remaining": deadline_remaining,
                     "configured_timeout": prepare_pipeline_timeout,
                     "timeout_source": timeout_source,
+                    "progress_heartbeat": PREPARE_PIPELINE_PROGRESS_HEARTBEAT,
                 },
             )
             prepare_start = perf_counter()
@@ -587,6 +625,7 @@ def initialize_bootstrap_context(
                     abort_on_timeout=True,
                     cancel=cancel,
                     progress_timeout=prepare_timeout,
+                    progress_heartbeat=PREPARE_PIPELINE_PROGRESS_HEARTBEAT,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,
                     bot_registry=registry,

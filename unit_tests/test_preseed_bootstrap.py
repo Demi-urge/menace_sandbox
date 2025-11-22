@@ -198,6 +198,29 @@ def test_run_with_timeout_extends_on_progress(caplog):
     assert extension_record.sub_step in {"start", "midway"}
 
 
+def test_run_with_timeout_heartbeat_extends_deadline(caplog):
+    caplog.set_level(logging.INFO)
+
+    def worker(progress_callback):
+        time.sleep(0.08)
+        return "complete"
+
+    result = preseed._run_with_timeout(
+        worker,
+        timeout=0.05,
+        progress_timeout=0.05,
+        progress_heartbeat=0.02,
+        description="heartbeat_worker",
+        progress_callback=lambda sub_step: None,
+    )
+
+    assert result == "complete"
+    assert any(
+        record.getMessage() == "starting progress heartbeat for heartbeat_worker"
+        for record in caplog.records
+    )
+
+
 def test_run_with_timeout_respects_upper_bound(monkeypatch):
     base_time = time.monotonic()
     monkeypatch.setattr(preseed, "BOOTSTRAP_DEADLINE_BUFFER", 0.01)
