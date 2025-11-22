@@ -106,7 +106,10 @@ def _run_with_timeout(
                 LOGGER.exception("failed to invoke cancellation for %s", description)
         thread.join(0.1)
         if abort_on_timeout:
-            raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
+            raise TimeoutError(
+                f"{description} timed out after {timeout:.1f}s "
+                f"(last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})"
+            )
 
         LOGGER.warning("skipping %s due to timeout", description)
         return None
@@ -510,6 +513,15 @@ def initialize_bootstrap_context(
                 )
             else:
                 prepare_timeout = base_prepare_timeout
+
+            def _record_prepare_sub_step(sub_step: str) -> None:
+                step_name = f"prepare_pipeline.{sub_step}"
+                _mark_bootstrap_step(step_name)
+                LOGGER.info(
+                    "prepare_pipeline_for_bootstrap progress",
+                    extra={"bootstrap_step": step_name, "sub_step": sub_step},
+                )
+
             LOGGER.info(
                 "prepare_pipeline_for_bootstrap timeout selected",
                 extra={
@@ -534,6 +546,7 @@ def initialize_bootstrap_context(
                     data_bot=data_bot,
                     bootstrap_runtime_manager=bootstrap_manager,
                     manager=bootstrap_manager,
+                    progress_callback=_record_prepare_sub_step,
                 )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
