@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
+import traceback
 from time import perf_counter
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
@@ -59,6 +61,7 @@ def _run_with_timeout(
     bootstrap_deadline: float | None = None,
     description: str,
     abort_on_timeout: bool = True,
+    cancel: Callable[[], None] | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -82,12 +85,26 @@ def _run_with_timeout(
     thread.join(timeout)
 
     if thread.is_alive():
+        if thread.ident is not None:
+            frame = sys._current_frames().get(thread.ident)
+            if frame is not None:
+                LOGGER.error(
+                    "stack trace for %s thread prior to cancellation:\n%s",
+                    description,
+                    "".join(traceback.format_stack(frame)),
+                )
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
             timeout,
             BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
         )
+        if cancel is not None:
+            try:
+                cancel()
+            except Exception:  # pragma: no cover - defensive cancel logging
+                LOGGER.exception("failed to invoke cancellation for %s", description)
+        thread.join(0.1)
         if abort_on_timeout:
             raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
 
@@ -295,6 +312,8 @@ def initialize_bootstrap_context(
     _mark_bootstrap_step("embedder_preload")
     _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT, stop_event=stop_event)
 
+    cancel = stop_event.set if stop_event else None
+
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
         if cached_context:
@@ -365,6 +384,7 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="_push_bootstrap_context final",
                     abort_on_timeout=True,
+                    cancel=cancel,
                     registry=registry,
                     data_bot=data_bot,
                     manager=bootstrap_manager,
@@ -377,6 +397,7 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="_seed_research_aggregator_context final",
                     abort_on_timeout=False,
+                    cancel=cancel,
                     registry=registry,
                     data_bot=data_bot,
                     context_builder=context_builder,
@@ -433,6 +454,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
+                cancel=cancel,
                 registry=registry,
                 data_bot=data_bot,
                 manager=bootstrap_manager,
@@ -453,6 +475,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
+                cancel=cancel,
                 registry=registry,
                 data_bot=data_bot,
                 context_builder=context_builder,
@@ -491,6 +514,7 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
+                    cancel=cancel,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,
                     bot_registry=registry,
@@ -563,6 +587,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="promote_pipeline",
                 abort_on_timeout=True,
+                cancel=cancel,
                 manager=manager,
             )
         except Exception:
@@ -586,6 +611,7 @@ def initialize_bootstrap_context(
             bootstrap_deadline=bootstrap_deadline,
             description="_push_bootstrap_context final",
             abort_on_timeout=True,
+            cancel=cancel,
             registry=registry,
             data_bot=data_bot,
             manager=manager,
@@ -606,6 +632,7 @@ def initialize_bootstrap_context(
             bootstrap_deadline=bootstrap_deadline,
             description="_seed_research_aggregator_context final",
             abort_on_timeout=False,
+            cancel=cancel,
             registry=registry,
             data_bot=data_bot,
             context_builder=context_builder,
