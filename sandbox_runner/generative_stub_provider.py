@@ -29,7 +29,7 @@ from typing import get_origin, get_args, Union
 from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
-from logging_utils import get_logger, set_correlation_id, log_record
+from .logging_utils import get_logger, set_correlation_id, log_record
 from vector_service.context_builder import ContextBuilder, build_prompt
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (

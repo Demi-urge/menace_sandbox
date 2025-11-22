@@ -1,7 +1,7 @@
 """Support modules for sandbox_runner wrapper."""
 import importlib
 
-from logging_utils import get_logger
+from .logging_utils import get_logger
 from sandbox_settings import SandboxSettings
 
 settings = SandboxSettings()

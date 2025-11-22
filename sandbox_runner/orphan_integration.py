@@ -10,7 +10,7 @@ from datetime import datetime
 
 import yaml
 
-from logging_utils import get_logger
+from .logging_utils import get_logger
 from dynamic_path_router import resolve_path, resolve_module_path
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only

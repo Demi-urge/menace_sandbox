@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from logging_utils import get_logger, setup_logging
+from .logging_utils import get_logger, setup_logging
 from typing import Any, Dict, List
 
 # The sandbox_runner package may be executed as a top-level module. In that

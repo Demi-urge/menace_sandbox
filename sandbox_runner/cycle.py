@@ -16,7 +16,7 @@ del _alias, _this_module
 import logging
 from pathlib import Path
 
-from logging_utils import get_logger, setup_logging, log_record
+from .logging_utils import get_logger, setup_logging, log_record
 from dependency_health import (
     dependency_registry,
     DependencyCategory,

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
-from logging_utils import get_logger, setup_logging
+from .logging_utils import get_logger, setup_logging
 from dynamic_path_router import resolve_path, path_for_prompt
 
 logger = get_logger(__name__)
