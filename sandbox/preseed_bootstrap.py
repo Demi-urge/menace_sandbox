@@ -70,7 +70,7 @@ def _run_with_timeout(
         time_remaining = bootstrap_deadline - time.monotonic()
         if time_remaining > 0:
             buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
-            timeout = min(max(timeout, buffered_remaining), time_remaining)
+            timeout = min(timeout, buffered_remaining, time_remaining)
 
     result: Dict[str, Any] = {}
 
@@ -494,10 +494,13 @@ def initialize_bootstrap_context(
             deadline_remaining = (
                 bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
             )
-            prepare_timeout = max(
-                prepare_pipeline_timeout or BOOTSTRAP_STEP_TIMEOUT,
-                deadline_remaining if deadline_remaining is not None else 0.0,
-            )
+            base_prepare_timeout = prepare_pipeline_timeout or BOOTSTRAP_STEP_TIMEOUT
+            if deadline_remaining is not None:
+                prepare_timeout = max(
+                    0.0, min(base_prepare_timeout, deadline_remaining)
+                )
+            else:
+                prepare_timeout = base_prepare_timeout
             LOGGER.info(
                 "prepare_pipeline_for_bootstrap timeout selected",
                 extra={

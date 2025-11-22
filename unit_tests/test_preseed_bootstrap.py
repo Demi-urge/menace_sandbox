@@ -9,7 +9,7 @@ import pytest
 import sandbox.preseed_bootstrap as preseed
 
 
-def test_prepare_pipeline_timeout_uses_deadline(monkeypatch, caplog):
+def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     placeholder_context = object()
     recorded_timeouts: dict[str, float] = {}
@@ -56,7 +56,7 @@ def test_prepare_pipeline_timeout_uses_deadline(monkeypatch, caplog):
         ),
     )
 
-    bootstrap_deadline = time.monotonic() + 50.0
+    bootstrap_deadline = time.monotonic() + 500.0
     configured_timeout = 5.0
     preseed.initialize_bootstrap_context(
         bot_name="TestBot",
@@ -66,7 +66,7 @@ def test_prepare_pipeline_timeout_uses_deadline(monkeypatch, caplog):
     )
 
     selected_timeout = recorded_timeouts["prepare_pipeline_for_bootstrap"]
-    assert selected_timeout > configured_timeout
+    assert selected_timeout == configured_timeout
     assert "prepare_pipeline_for_bootstrap timeout selected" in caplog.text
 
 
