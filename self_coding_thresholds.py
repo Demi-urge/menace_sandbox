@@ -178,6 +178,23 @@ def _strip_empty_keys(raw: str) -> str:
     return "\n".join(cleaned) + ("\n" if raw.endswith("\n") else "")
 
 
+def _strip_unprintable(raw: str) -> str:
+    """Remove characters rejected by YAML loaders.
+
+    Null bytes (``\x00``) and other non-printable control characters cause
+    ``yaml.reader.ReaderError`` to be raised before indentation fixes or
+    fallback parsing have a chance to run.  To maximise the chance of
+    recovering a partially corrupted file we drop these characters while
+    preserving the rest of the content unchanged.
+    """
+
+    if "\x00" not in raw:
+        return raw
+
+    logger.warning("detected null bytes in YAML configuration; stripping them before parsing")
+    return raw.replace("\x00", "")
+
+
 def _decouple_aliases(value: Any, *, _stack: set[int] | None = None) -> Any:
     """Return ``value`` with recursive YAML aliases removed.
 
@@ -293,6 +310,7 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
         raw = cfg_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
+    raw = _strip_unprintable(raw)
     if not raw.strip():
         return {}
 
