@@ -1643,7 +1643,7 @@ def main(argv: list[str] | None = None) -> None:
                         try:
                             orphan_modules = integrate_orphans(
                                 recursive=recursive_orphans,
-                                create_default_context_builder=True,
+                                bootstrap_context=recursive_orphans,
                             )
                             orphan_specs.extend(
                                 {

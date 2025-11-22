@@ -1600,28 +1600,28 @@ async def self_improvement_cycle(
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
             orphan_workflows: list[str] = []
-            if DISCOVER_ORPHANS:
-                try:
-                    orphan_workflows.extend(
-                        w
-                        for w in integrate_orphans(
-                            recursive=RECURSIVE_ORPHANS,
-                            # Recursive integration relies on bootstrap context
-                            # to refresh module mappings.
-                            create_default_context_builder=True,
-                        )
-                        if isinstance(w, str)
-                    )
+                    if DISCOVER_ORPHANS:
+                        try:
+                            orphan_workflows.extend(
+                                w
+                                for w in integrate_orphans(
+                                    recursive=RECURSIVE_ORPHANS,
+                                    # Recursive integration relies on bootstrap context
+                                    # to refresh module mappings.
+                                    bootstrap_context=RECURSIVE_ORPHANS,
+                                )
+                                if isinstance(w, str)
+                            )
                 except Exception:
                     logger.exception("orphan integration failed")
 
-                if RECURSIVE_ORPHANS:
-                    try:
-                        result = post_round_orphan_scan(
-                            recursive=True,
-                            # Downstream scan needs full bootstrap context.
-                            create_default_context_builder=True,
-                        )
+                        if RECURSIVE_ORPHANS:
+                            try:
+                                result = post_round_orphan_scan(
+                                    recursive=True,
+                                    # Downstream scan needs full bootstrap context.
+                                    bootstrap_context=True,
+                                )
                         integrated = result.get("integrated") if isinstance(result, dict) else None
                         if integrated:
                             orphan_workflows.extend(
@@ -1944,25 +1944,25 @@ def start_self_improvement_cycle(
         workflow_plan.setdefault(
             "integrate_orphans",
             lambda recursive=recursive_orphans: integrate_orphans(
-                recursive=recursive, create_default_context_builder=True
+                recursive=recursive, bootstrap_context=recursive
             ),
         )
         if recursive_orphans:
             workflow_plan.setdefault(
                 "recursive_orphan_scan",
                 lambda: post_round_orphan_scan(
-                    recursive=True, create_default_context_builder=True
+                    recursive=True, bootstrap_context=True
                 ),
             )
 
     if discover_orphans:
         try:
             integrate_orphans(
-                recursive=recursive_orphans, create_default_context_builder=True
+                recursive=recursive_orphans, bootstrap_context=recursive_orphans
             )
             if recursive_orphans:
                 post_round_orphan_scan(
-                    recursive=True, create_default_context_builder=True
+                    recursive=True, bootstrap_context=True
                 )
         except Exception:
             get_logger(__name__).exception(
