@@ -1601,14 +1601,17 @@ async def self_improvement_cycle(
             active: list[list[str]] = []
             orphan_workflows: list[str] = []
             if DISCOVER_ORPHANS:
+                context_builder = (
+                    create_context_builder() if RECURSIVE_ORPHANS else None
+                )
                 try:
                     orphan_workflows.extend(
                         w
                         for w in integrate_orphans(
                             recursive=RECURSIVE_ORPHANS,
-                            # Recursive integration relies on bootstrap context
+                            # Recursive integration requires bootstrap context
                             # to refresh module mappings.
-                            bootstrap_context=RECURSIVE_ORPHANS,
+                            context_builder=context_builder,
                         )
                         if isinstance(w, str)
                     )
@@ -1621,7 +1624,7 @@ async def self_improvement_cycle(
                         result = post_round_orphan_scan(
                             recursive=True,
                             # Downstream scan needs full bootstrap context.
-                            bootstrap_context=True,
+                            context_builder=context_builder,
                         )
                     except Exception:
                         logger.exception("recursive orphan discovery failed")
@@ -1944,29 +1947,37 @@ def start_self_improvement_cycle(
 
     workflow_plan: dict[str, Callable[[], Any]] = dict(workflows)
 
+    context_builder = (
+        create_context_builder() if discover_orphans and recursive_orphans else None
+    )
+
     if discover_orphans:
         workflow_plan.setdefault(
             "integrate_orphans",
-            lambda recursive=recursive_orphans: integrate_orphans(
-                recursive=recursive, bootstrap_context=recursive
+            lambda recursive=recursive_orphans, builder=context_builder: integrate_orphans(
+                recursive=recursive,
+                **({"context_builder": builder} if builder is not None else {}),
             ),
         )
         if recursive_orphans:
             workflow_plan.setdefault(
                 "recursive_orphan_scan",
-                lambda: post_round_orphan_scan(
-                    recursive=True, bootstrap_context=True
+                lambda builder=context_builder: post_round_orphan_scan(
+                    recursive=True,
+                    **({"context_builder": builder} if builder is not None else {}),
                 ),
             )
 
     if discover_orphans:
         try:
             integrate_orphans(
-                recursive=recursive_orphans, bootstrap_context=recursive_orphans
+                recursive=recursive_orphans,
+                **({"context_builder": context_builder} if context_builder else {}),
             )
             if recursive_orphans:
                 post_round_orphan_scan(
-                    recursive=True, bootstrap_context=True
+                    recursive=True,
+                    **({"context_builder": context_builder} if context_builder else {}),
                 )
         except Exception:
             get_logger(__name__).exception(
