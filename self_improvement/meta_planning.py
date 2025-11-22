@@ -1940,20 +1940,26 @@ def start_self_improvement_cycle(
         workflow_plan.setdefault(
             "integrate_orphans",
             lambda recursive=recursive_orphans: integrate_orphans(
-                recursive=recursive
+                recursive=recursive, create_default_context_builder=True
             ),
         )
         if recursive_orphans:
             workflow_plan.setdefault(
                 "recursive_orphan_scan",
-                lambda: post_round_orphan_scan(recursive=True),
+                lambda: post_round_orphan_scan(
+                    recursive=True, create_default_context_builder=True
+                ),
             )
 
     if discover_orphans:
         try:
-            integrate_orphans(recursive=recursive_orphans)
+            integrate_orphans(
+                recursive=recursive_orphans, create_default_context_builder=True
+            )
             if recursive_orphans:
-                post_round_orphan_scan(recursive=True)
+                post_round_orphan_scan(
+                    recursive=True, create_default_context_builder=True
+                )
         except Exception:
             get_logger(__name__).exception(
                 "startup orphan discovery failed",
