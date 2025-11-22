@@ -130,6 +130,33 @@ _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
 _FORCED_FALLBACK_PATHS: set[Path] = set()
 
 
+def _normalise_indentation(raw: str) -> str:
+    """Return ``raw`` with tabs removed and uneven indentation rounded up.
+
+    The fallback YAML parser is strict about indentation.  When manual edits
+    introduce tabs or uneven indent widths, the parser can raise ``Unexpected
+    indentation increase`` errors.  This helper converts tabs to two spaces and
+    rounds odd indentation lengths up to the next even number so parsing stays
+    deterministic.
+    """
+
+    lines: list[str] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            lines.append("")
+            continue
+
+        stripped = line.lstrip(" \t")
+        leading = line[: len(line) - len(stripped)]
+        indent_len = len(leading.replace("\t", "  "))
+        if indent_len % 2:
+            indent_len += 1
+
+        lines.append(" " * indent_len + stripped)
+
+    return "\n".join(lines) + ("\n" if raw.endswith("\n") else "")
+
+
 def _decouple_aliases(value: Any, *, _stack: set[int] | None = None) -> Any:
     """Return ``value`` with recursive YAML aliases removed.
 
@@ -284,6 +311,17 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
             cfg_path,
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
+        normalised = _normalise_indentation(raw)
+        if normalised != raw:
+            try:
+                data = loader.safe_load(normalised) or {}
+                cleaned = _decouple_aliases(data)
+                return cleaned if isinstance(cleaned, dict) else {}
+            except yaml_error as norm_exc:
+                logger.debug(
+                    "parse still failed after normalising indentation for %s", cfg_path,
+                    exc_info=norm_exc if logger.isEnabledFor(logging.DEBUG) else None,
+                )
         if loader is _FALLBACK_YAML:
             return {}
 
