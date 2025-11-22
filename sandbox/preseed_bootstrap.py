@@ -494,7 +494,16 @@ def initialize_bootstrap_context(
             deadline_remaining = (
                 bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
             )
-            base_prepare_timeout = prepare_pipeline_timeout or BOOTSTRAP_STEP_TIMEOUT
+            if prepare_pipeline_timeout is not None:
+                timeout_source = "configured_override"
+                base_prepare_timeout = prepare_pipeline_timeout
+            elif deadline_remaining is not None:
+                timeout_source = "bootstrap_deadline"
+                base_prepare_timeout = max(deadline_remaining, 0.0)
+            else:
+                timeout_source = "default_step_timeout"
+                base_prepare_timeout = BOOTSTRAP_STEP_TIMEOUT
+
             if deadline_remaining is not None:
                 prepare_timeout = max(
                     0.0, min(base_prepare_timeout, deadline_remaining)
@@ -507,6 +516,7 @@ def initialize_bootstrap_context(
                     "timeout": prepare_timeout,
                     "deadline_remaining": deadline_remaining,
                     "configured_timeout": prepare_pipeline_timeout,
+                    "timeout_source": timeout_source,
                 },
             )
             prepare_start = perf_counter()

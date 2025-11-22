@@ -1135,7 +1135,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=(
             "Optional override for prepare_pipeline_for_bootstrap timeout; defaults to "
-            "remaining bootstrap deadline"
+            "the remaining bootstrap deadline"
         ),
     )
     parser.add_argument(
