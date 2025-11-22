@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 
 from sandbox_settings import SandboxSettings
+from context_builder import create_context_builder
 
 from .utils import _call_with_retries
 
@@ -45,11 +46,15 @@ def integrate_orphans(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
+    context_builder: object | None = None,
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
     if not args and "repo" not in kwargs:
         kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+    if context_builder is None:
+        context_builder = create_context_builder()
+    kwargs.setdefault("context_builder", context_builder)
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
@@ -72,11 +77,15 @@ def post_round_orphan_scan(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
+    context_builder: object | None = None,
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
     if not args and "repo" not in kwargs:
         kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+    if context_builder is None:
+        context_builder = create_context_builder()
+    kwargs.setdefault("context_builder", context_builder)
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
