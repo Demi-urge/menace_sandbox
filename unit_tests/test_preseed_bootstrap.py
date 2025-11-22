@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -67,3 +68,27 @@ def test_prepare_pipeline_timeout_uses_deadline(monkeypatch, caplog):
     selected_timeout = recorded_timeouts["prepare_pipeline_for_bootstrap"]
     assert selected_timeout > configured_timeout
     assert "prepare_pipeline_for_bootstrap timeout selected" in caplog.text
+
+
+def test_run_with_timeout_cancels_and_logs_stack(caplog):
+    caplog.set_level(logging.ERROR)
+    stop_event = threading.Event()
+    worker_released = threading.Event()
+
+    def hanging_worker() -> None:
+        while not stop_event.is_set():
+            time.sleep(0.01)
+        worker_released.set()
+
+    with pytest.raises(TimeoutError):
+        preseed._run_with_timeout(
+            hanging_worker,
+            timeout=0.05,
+            description="hanging_worker",
+            cancel=stop_event.set,
+        )
+
+    assert stop_event.is_set()
+    assert worker_released.wait(1.0)
+    assert "stack trace for hanging_worker thread" in caplog.text
+    assert "hanging_worker" in caplog.text
