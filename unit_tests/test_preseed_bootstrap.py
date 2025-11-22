@@ -12,7 +12,7 @@ import sandbox.preseed_bootstrap as preseed
 def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     placeholder_context = object()
-    recorded_timeouts: dict[str, float] = {}
+    recorded_timeouts: dict[str, dict[str, float]] = {}
 
     class DummyManager:
         pass
@@ -21,7 +21,10 @@ def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
         pass
 
     def fake_run_with_timeout(fn, *, timeout, description, progress_timeout=None, **kwargs):
-        recorded_timeouts[description] = progress_timeout or timeout
+        recorded_timeouts[description] = {
+            "timeout": timeout,
+            "progress_timeout": progress_timeout or timeout,
+        }
         return fn(**kwargs)
 
     @contextmanager
@@ -66,7 +69,8 @@ def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
     )
 
     selected_timeout = recorded_timeouts["prepare_pipeline_for_bootstrap"]
-    assert selected_timeout == configured_timeout
+    assert selected_timeout["timeout"] == configured_timeout
+    assert selected_timeout["progress_timeout"] >= configured_timeout + preseed.PREPARE_PIPELINE_PROGRESS_HEARTBEAT
     assert "prepare_pipeline_for_bootstrap timeout selected" in caplog.text
 
     log_record = next(
@@ -80,7 +84,7 @@ def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
 def test_prepare_pipeline_timeout_defaults_to_bootstrap_deadline(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     placeholder_context = object()
-    recorded_timeouts: dict[str, float] = {}
+    recorded_timeouts: dict[str, dict[str, float]] = {}
 
     class DummyManager:
         pass
@@ -89,7 +93,10 @@ def test_prepare_pipeline_timeout_defaults_to_bootstrap_deadline(monkeypatch, ca
         pass
 
     def fake_run_with_timeout(fn, *, timeout, description, progress_timeout=None, **kwargs):
-        recorded_timeouts[description] = progress_timeout or timeout
+        recorded_timeouts[description] = {
+            "timeout": timeout,
+            "progress_timeout": progress_timeout or timeout,
+        }
         return fn(**kwargs)
 
     @contextmanager
@@ -136,14 +143,73 @@ def test_prepare_pipeline_timeout_defaults_to_bootstrap_deadline(monkeypatch, ca
     )
 
     selected_timeout = recorded_timeouts["prepare_pipeline_for_bootstrap"]
-    assert selected_timeout == pytest.approx(42.0)
+    assert selected_timeout["timeout"] == pytest.approx(42.0)
+    assert selected_timeout["progress_timeout"] >= selected_timeout["timeout"] + preseed.PREPARE_PIPELINE_PROGRESS_HEARTBEAT
     log_record = next(
         record
         for record in caplog.records
         if record.getMessage() == "prepare_pipeline_for_bootstrap timeout selected"
     )
     assert getattr(log_record, "timeout_source", None) == "bootstrap_deadline"
-    assert getattr(log_record, "timeout", None) == pytest.approx(selected_timeout)
+    assert getattr(log_record, "timeout", None) == pytest.approx(selected_timeout["timeout"])
+
+
+def test_prepare_pipeline_heartbeat_extends_prepare_timeout(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    placeholder_context = object()
+
+    class DummyManager:
+        pass
+
+    class DummyPipeline:
+        pass
+
+    def slow_prepare_pipeline_for_bootstrap(*, progress_callback, **kwargs):
+        if progress_callback:
+            progress_callback("initializing")
+        time.sleep(0.12)
+        return DummyPipeline(), (lambda **promo_kwargs: None)
+
+    @contextmanager
+    def dummy_fallback_helper_manager(**kwargs):
+        yield DummyManager()
+
+    monkeypatch.setattr(preseed, "PREPARE_PIPELINE_PROGRESS_HEARTBEAT", 0.05)
+    monkeypatch.setattr(preseed, "_bootstrap_embedder", lambda *a, **kw: None)
+    monkeypatch.setattr(preseed, "fallback_helper_manager", dummy_fallback_helper_manager)
+    monkeypatch.setattr(preseed, "create_context_builder", lambda: "builder")
+    monkeypatch.setattr(preseed, "BotRegistry", lambda: "registry")
+    monkeypatch.setattr(preseed, "DataBot", lambda start_server=False: "data_bot")
+    monkeypatch.setattr(preseed, "SelfCodingEngine", lambda *a, **kw: "engine")
+    monkeypatch.setattr(preseed, "ModelAutomationPipeline", DummyPipeline)
+    monkeypatch.setattr(preseed, "MenaceMemoryManager", lambda: "memory")
+    monkeypatch.setattr(preseed, "CodeDB", lambda: "code_db")
+    monkeypatch.setattr(preseed, "ThresholdService", lambda: "threshold_service")
+    monkeypatch.setattr(preseed, "prepare_pipeline_for_bootstrap", slow_prepare_pipeline_for_bootstrap)
+    monkeypatch.setattr(preseed, "internalize_coding_bot", lambda *a, **kw: DummyManager())
+    monkeypatch.setattr(preseed, "_push_bootstrap_context", lambda **kwargs: placeholder_context)
+    monkeypatch.setattr(preseed, "_pop_bootstrap_context", lambda ctx: None)
+    monkeypatch.setattr(preseed, "_seed_research_aggregator_context", lambda **kwargs: None)
+    monkeypatch.setattr(preseed, "persist_sc_thresholds", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        preseed,
+        "get_thresholds",
+        lambda bot_name: SimpleNamespace(
+            roi_drop=1.0, error_increase=1.0, test_failure_increase=1.0
+        ),
+    )
+
+    preseed.initialize_bootstrap_context(
+        bot_name="TestBot",
+        use_cache=False,
+        bootstrap_deadline=None,
+        prepare_pipeline_timeout=0.05,
+    )
+
+    assert any(
+        record.getMessage() == "starting progress heartbeat for prepare_pipeline_for_bootstrap"
+        for record in caplog.records
+    )
 
 
 def test_run_with_timeout_cancels_and_logs_stack(caplog):
@@ -183,7 +249,7 @@ def test_run_with_timeout_extends_on_progress(caplog):
     result = preseed._run_with_timeout(
         worker,
         timeout=0.05,
-        progress_timeout=0.12,
+        progress_timeout=0.2,
         description="progress_worker",
         progress_callback=lambda sub_step: None,
     )

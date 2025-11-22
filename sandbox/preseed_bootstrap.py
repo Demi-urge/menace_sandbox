@@ -44,7 +44,7 @@ SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
 PREPARE_PIPELINE_PROGRESS_HEARTBEAT = float(
-    os.getenv("PREPARE_PIPELINE_PROGRESS_HEARTBEAT", "0.0")
+    os.getenv("PREPARE_PIPELINE_PROGRESS_HEARTBEAT", "5.0")
 )
 BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
@@ -616,6 +616,8 @@ def initialize_bootstrap_context(
                 },
             )
             prepare_start = perf_counter()
+            heartbeat_cushion = max(PREPARE_PIPELINE_PROGRESS_HEARTBEAT, 1.0)
+            prepare_progress_window = prepare_timeout + heartbeat_cushion
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
                     prepare_pipeline_for_bootstrap,
@@ -624,7 +626,7 @@ def initialize_bootstrap_context(
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
                     cancel=cancel,
-                    progress_timeout=prepare_timeout,
+                    progress_timeout=prepare_progress_window,
                     progress_heartbeat=PREPARE_PIPELINE_PROGRESS_HEARTBEAT,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,

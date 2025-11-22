@@ -3492,6 +3492,9 @@ def prepare_pipeline_for_bootstrap(
     """
 
     def _record_sub_step(step: str, **extra: Any) -> None:
+        if step == "heartbeat":
+            logger.debug("prepare_pipeline_for_bootstrap heartbeat ping received")
+            return
         if progress_callback is not None:
             try:
                 progress_callback(step)
