@@ -1617,6 +1617,11 @@ def main(argv: list[str] | None = None) -> None:
                     recursive_orphans = bool(
                         getattr(settings, "recursive_orphan_scan", False)
                     )
+                    context_builder = (
+                        create_context_builder()
+                        if include_orphans and recursive_orphans
+                        else None
+                    )
                     logger.info(
                         "orphan inclusion parameters evaluated",
                         extra=log_record(
@@ -1643,7 +1648,11 @@ def main(argv: list[str] | None = None) -> None:
                         try:
                             orphan_modules = integrate_orphans(
                                 recursive=recursive_orphans,
-                                bootstrap_context=recursive_orphans,
+                                **(
+                                    {"context_builder": context_builder}
+                                    if context_builder
+                                    else {}
+                                ),
                             )
                             orphan_specs.extend(
                                 {
@@ -1682,7 +1691,14 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         if recursive_orphans:
                             try:
-                                result = post_round_orphan_scan(recursive=True)
+                                result = post_round_orphan_scan(
+                                    recursive=True,
+                                    **(
+                                        {"context_builder": context_builder}
+                                        if context_builder
+                                        else {}
+                                    ),
+                                )
                                 integrated = (
                                     result.get("integrated")
                                     if isinstance(result, Mapping)
