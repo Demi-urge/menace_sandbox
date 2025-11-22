@@ -20,8 +20,8 @@ def test_prepare_pipeline_timeout_respects_configured_cap(monkeypatch, caplog):
     class DummyPipeline:
         pass
 
-    def fake_run_with_timeout(fn, *, timeout, description, **kwargs):
-        recorded_timeouts[description] = timeout
+    def fake_run_with_timeout(fn, *, timeout, description, progress_timeout=None, **kwargs):
+        recorded_timeouts[description] = progress_timeout or timeout
         return fn(**kwargs)
 
     @contextmanager
@@ -88,8 +88,8 @@ def test_prepare_pipeline_timeout_defaults_to_bootstrap_deadline(monkeypatch, ca
     class DummyPipeline:
         pass
 
-    def fake_run_with_timeout(fn, *, timeout, description, **kwargs):
-        recorded_timeouts[description] = timeout
+    def fake_run_with_timeout(fn, *, timeout, description, progress_timeout=None, **kwargs):
+        recorded_timeouts[description] = progress_timeout or timeout
         return fn(**kwargs)
 
     @contextmanager
@@ -168,3 +168,51 @@ def test_run_with_timeout_cancels_and_logs_stack(caplog):
     assert worker_released.wait(1.0)
     assert "stack trace for hanging_worker thread" in caplog.text
     assert "hanging_worker" in caplog.text
+
+
+def test_run_with_timeout_extends_on_progress(caplog):
+    caplog.set_level(logging.INFO)
+
+    def worker(progress_callback):
+        progress_callback("start")
+        time.sleep(0.08)
+        progress_callback("midway")
+        time.sleep(0.08)
+        return "complete"
+
+    result = preseed._run_with_timeout(
+        worker,
+        timeout=0.05,
+        progress_timeout=0.12,
+        description="progress_worker",
+        progress_callback=lambda sub_step: None,
+    )
+
+    assert result == "complete"
+    assert any("extending timeout for progress_worker due to progress" in r.message for r in caplog.records)
+    extension_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "extending timeout for progress_worker due to progress"
+    )
+    assert extension_record.sub_step in {"start", "midway"}
+
+
+def test_run_with_timeout_respects_upper_bound(monkeypatch):
+    base_time = time.monotonic()
+    monkeypatch.setattr(preseed, "BOOTSTRAP_DEADLINE_BUFFER", 0.01)
+    bootstrap_deadline = base_time + 0.1
+
+    def worker(progress_callback):
+        progress_callback("starting")
+        time.sleep(0.15)
+
+    with pytest.raises(TimeoutError):
+        preseed._run_with_timeout(
+            worker,
+            timeout=0.05,
+            progress_timeout=0.2,
+            bootstrap_deadline=bootstrap_deadline,
+            description="capped_worker",
+            progress_callback=lambda sub_step: None,
+        )

@@ -62,17 +62,57 @@ def _run_with_timeout(
     description: str,
     abort_on_timeout: bool = True,
     cancel: Callable[[], None] | None = None,
+    progress_timeout: float | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
 
+    start_time = time.monotonic()
+    hard_deadline = (
+        bootstrap_deadline + BOOTSTRAP_DEADLINE_BUFFER if bootstrap_deadline else None
+    )
+
+    effective_timeout = timeout
     if bootstrap_deadline:
-        time_remaining = bootstrap_deadline - time.monotonic()
+        time_remaining = bootstrap_deadline - start_time
         if time_remaining > 0:
             buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
-            timeout = min(timeout, buffered_remaining, time_remaining)
+            effective_timeout = min(timeout, buffered_remaining, time_remaining)
+
+    initial_deadline = start_time + effective_timeout
+    if hard_deadline is not None:
+        initial_deadline = min(initial_deadline, hard_deadline)
+
+    progress_window = progress_timeout or effective_timeout
+    max_deadline = hard_deadline or (start_time + effective_timeout + progress_window)
+    current_deadline = min(initial_deadline, max_deadline)
 
     result: Dict[str, Any] = {}
+
+    def _refresh_deadline(sub_step: str | None = None) -> None:
+        nonlocal current_deadline
+        if progress_window <= 0:
+            return
+        proposed_deadline = min(time.monotonic() + progress_window, max_deadline)
+        if proposed_deadline > current_deadline:
+            LOGGER.info(
+                "extending timeout for %s due to progress",
+                description,
+                extra={
+                    "previous_deadline": current_deadline,
+                    "new_deadline": proposed_deadline,
+                    "sub_step": sub_step,
+                },
+            )
+            current_deadline = min(proposed_deadline, max_deadline)
+
+    progress_callback = kwargs.get("progress_callback")
+    if progress_callback is not None:
+        def _wrapped_progress(sub_step: str) -> None:
+            _refresh_deadline(sub_step)
+            return progress_callback(sub_step)
+
+        kwargs["progress_callback"] = _wrapped_progress
 
     def _target() -> None:
         try:
@@ -82,7 +122,12 @@ def _run_with_timeout(
 
     thread = threading.Thread(target=_target, daemon=True)
     thread.start()
-    thread.join(timeout)
+
+    while thread.is_alive():
+        remaining = current_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        thread.join(min(remaining, 0.1))
 
     if thread.is_alive():
         if thread.ident is not None:
@@ -93,10 +138,11 @@ def _run_with_timeout(
                     description,
                     "".join(traceback.format_stack(frame)),
                 )
+        elapsed = time.monotonic() - start_time
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
-            timeout,
+            elapsed,
             BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
         )
         if cancel is not None:
@@ -107,7 +153,7 @@ def _run_with_timeout(
         thread.join(0.1)
         if abort_on_timeout:
             raise TimeoutError(
-                f"{description} timed out after {timeout:.1f}s "
+                f"{description} timed out after {elapsed:.1f}s "
                 f"(last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})"
             )
 
@@ -540,6 +586,7 @@ def initialize_bootstrap_context(
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
                     cancel=cancel,
+                    progress_timeout=prepare_timeout,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,
                     bot_registry=registry,
