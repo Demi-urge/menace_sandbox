@@ -157,6 +157,27 @@ def _normalise_indentation(raw: str) -> str:
     return "\n".join(lines) + ("\n" if raw.endswith("\n") else "")
 
 
+def _strip_empty_keys(raw: str) -> str:
+    """Remove lines that define an empty YAML key.
+
+    Mis-merges or manual edits can leave stray lines that contain only a colon
+    (optionally followed by whitespace or an inline empty mapping).  PyYAML and
+    the lightweight fallback parser both reject these with ``ParserError``
+    because a mapping key is missing.  To salvage the rest of the file, this
+    helper drops such lines while preserving formatting elsewhere so that the
+    remaining content can still be parsed.
+    """
+
+    cleaned: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped == ":" or stripped.startswith(": {}") or stripped.startswith(": []"):
+            continue
+        cleaned.append(line)
+
+    return "\n".join(cleaned) + ("\n" if raw.endswith("\n") else "")
+
+
 def _decouple_aliases(value: Any, *, _stack: set[int] | None = None) -> Any:
     """Return ``value`` with recursive YAML aliases removed.
 
@@ -312,14 +333,17 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
         normalised = _normalise_indentation(raw)
-        if normalised != raw:
+        sanitised = _strip_empty_keys(normalised)
+        for variant, label in ((normalised, "normalising indentation"), (sanitised, "removing empty keys")):
+            if variant == raw:
+                continue
             try:
-                data = loader.safe_load(normalised) or {}
+                data = loader.safe_load(variant) or {}
                 cleaned = _decouple_aliases(data)
                 return cleaned if isinstance(cleaned, dict) else {}
             except yaml_error as norm_exc:
                 logger.debug(
-                    "parse still failed after normalising indentation for %s", cfg_path,
+                    "parse still failed after %s for %s", label, cfg_path,
                     exc_info=norm_exc if logger.isEnabledFor(logging.DEBUG) else None,
                 )
         if loader is _FALLBACK_YAML:
