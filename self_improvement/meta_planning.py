@@ -1600,35 +1600,39 @@ async def self_improvement_cycle(
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
             orphan_workflows: list[str] = []
-                    if DISCOVER_ORPHANS:
-                        try:
-                            orphan_workflows.extend(
-                                w
-                                for w in integrate_orphans(
-                                    recursive=RECURSIVE_ORPHANS,
-                                    # Recursive integration relies on bootstrap context
-                                    # to refresh module mappings.
-                                    bootstrap_context=RECURSIVE_ORPHANS,
-                                )
-                                if isinstance(w, str)
-                            )
+            if DISCOVER_ORPHANS:
+                try:
+                    orphan_workflows.extend(
+                        w
+                        for w in integrate_orphans(
+                            recursive=RECURSIVE_ORPHANS,
+                            # Recursive integration relies on bootstrap context
+                            # to refresh module mappings.
+                            bootstrap_context=RECURSIVE_ORPHANS,
+                        )
+                        if isinstance(w, str)
+                    )
                 except Exception:
                     logger.exception("orphan integration failed")
 
-                        if RECURSIVE_ORPHANS:
-                            try:
-                                result = post_round_orphan_scan(
-                                    recursive=True,
-                                    # Downstream scan needs full bootstrap context.
-                                    bootstrap_context=True,
-                                )
-                        integrated = result.get("integrated") if isinstance(result, dict) else None
+                if RECURSIVE_ORPHANS:
+                    result: dict[str, Any] | None = None
+                    try:
+                        result = post_round_orphan_scan(
+                            recursive=True,
+                            # Downstream scan needs full bootstrap context.
+                            bootstrap_context=True,
+                        )
+                    except Exception:
+                        logger.exception("recursive orphan discovery failed")
+                    if result:
+                        integrated = (
+                            result.get("integrated") if isinstance(result, dict) else None
+                        )
                         if integrated:
                             orphan_workflows.extend(
                                 w for w in integrated if isinstance(w, str)
                             )
-                    except Exception:
-                        logger.exception("recursive orphan discovery failed")
 
             if orphan_workflows:
                 unique_orphans: list[str] = []
