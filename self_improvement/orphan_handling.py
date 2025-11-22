@@ -44,10 +44,16 @@ def integrate_orphans(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
-    create_default_context_builder: bool = True,
+    create_default_context_builder: bool = False,
     **kwargs: object,
 ) -> list[str]:
-    """Invoke sandbox runner orphan integration with safeguards."""
+    """Invoke sandbox runner orphan integration with safeguards.
+
+    ``context_builder`` creation is skipped by default so lightweight callers do
+    not pay the cost of bootstrapping the full context. Pass
+    ``create_default_context_builder=True`` (or provide a builder explicitly)
+    when downstream sandbox hooks require the richer bootstrap context.
+    """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
@@ -79,10 +85,16 @@ def post_round_orphan_scan(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
-    create_default_context_builder: bool = True,
+    create_default_context_builder: bool = False,
     **kwargs: object,
 ) -> Dict[str, object]:
-    """Trigger the sandbox post-round orphan scan."""
+    """Trigger the sandbox post-round orphan scan.
+
+    The default code path avoids automatically creating a ``context_builder``
+    to minimize overhead. Set ``create_default_context_builder=True`` or supply
+    ``context_builder`` directly if the sandbox scan needs full bootstrap
+    context.
+    """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay

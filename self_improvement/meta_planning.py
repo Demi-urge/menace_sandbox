@@ -1606,6 +1606,8 @@ async def self_improvement_cycle(
                         w
                         for w in integrate_orphans(
                             recursive=RECURSIVE_ORPHANS,
+                            # Recursive integration relies on bootstrap context
+                            # to refresh module mappings.
                             create_default_context_builder=True,
                         )
                         if isinstance(w, str)
@@ -1616,7 +1618,9 @@ async def self_improvement_cycle(
                 if RECURSIVE_ORPHANS:
                     try:
                         result = post_round_orphan_scan(
-                            recursive=True, create_default_context_builder=True
+                            recursive=True,
+                            # Downstream scan needs full bootstrap context.
+                            create_default_context_builder=True,
                         )
                         integrated = result.get("integrated") if isinstance(result, dict) else None
                         if integrated:
