@@ -12,6 +12,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import sys
 import threading
 import time
@@ -72,6 +73,26 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
     WorkflowDB = None  # type: ignore
 
 LOGGER = logging.getLogger(__name__)
+SHUTDOWN_EVENT = threading.Event()
+
+
+def handle_sigint(sig: int, frame: Any) -> None:
+    print("[META] Caught Ctrl+C — requesting safe shutdown")
+    SHUTDOWN_EVENT.set()
+
+
+def cleanup_and_exit(exit_code: int = 0) -> None:
+    try:
+        shutdown_autonomous_sandbox()
+    except Exception:
+        LOGGER.exception(
+            "sandbox shutdown failed during signal handling",
+            extra=log_record(event="shutdown-error"),
+        )
+    sys.exit(exit_code)
+
+
+signal.signal(signal.SIGINT, handle_sigint)
 
 
 def _emit_meta_trace(logger: logging.Logger, message: str, **details: Any) -> None:
@@ -857,6 +878,8 @@ def _coordinate_workflows_until_stagnation(
     )
 
     for cycle in range(budget):
+        if SHUTDOWN_EVENT.is_set():
+            cleanup_and_exit()
         _emit_meta_trace(
             logger,
             "meta planner coordination cycle start",
@@ -1227,6 +1250,8 @@ def main(argv: list[str] | None = None) -> None:
                             finalization_grace_seconds = 5.0
                             finalization_grace_applied = False
                             while bootstrap_thread.is_alive():
+                                if SHUTDOWN_EVENT.is_set():
+                                    cleanup_and_exit()
                                 time_remaining = bootstrap_deadline - time.monotonic()
                                 last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
                                     "last_step", "unknown"
