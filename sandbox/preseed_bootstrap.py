@@ -36,7 +36,7 @@ LOGGER = logging.getLogger(__name__)
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
-BOOTSTRAP_STEP_TIMEOUT = 30.0
+BOOTSTRAP_STEP_TIMEOUT = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT_SECONDS", "30.0"))
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
