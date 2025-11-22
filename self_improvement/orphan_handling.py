@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
+from pathlib import Path
+
 import logging
 
 from sandbox_settings import SandboxSettings
@@ -46,6 +48,8 @@ def integrate_orphans(
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
+    if not args and "repo" not in kwargs:
+        kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
@@ -71,6 +75,8 @@ def post_round_orphan_scan(
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
+    if not args and "repo" not in kwargs:
+        kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
