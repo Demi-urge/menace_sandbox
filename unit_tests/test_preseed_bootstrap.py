@@ -305,3 +305,28 @@ def test_run_with_timeout_respects_upper_bound(monkeypatch):
             description="capped_worker",
             progress_callback=lambda sub_step: None,
         )
+
+
+def test_run_with_timeout_reports_last_progress(caplog):
+    caplog.set_level(logging.ERROR)
+    last_progress: dict[str, str | float | None] = {}
+
+    def worker(progress_callback):
+        progress_callback("first")
+        time.sleep(0.02)
+        progress_callback("second")
+        time.sleep(0.2)
+
+    with pytest.raises(TimeoutError) as excinfo:
+        preseed._run_with_timeout(
+            worker,
+            timeout=0.05,
+            progress_timeout=0.05,
+            description="progress_timeout_worker",
+            progress_callback=lambda sub_step: None,
+            progress_recorder=last_progress,
+        )
+
+    assert last_progress.get("sub_step") == "second"
+    assert "last_progress=second" in str(excinfo.value)
+    assert "last_progress=second" in caplog.text

@@ -67,6 +67,7 @@ def _run_with_timeout(
     cancel: Callable[[], None] | None = None,
     progress_timeout: float | None = None,
     progress_heartbeat: float | None = None,
+    progress_recorder: Callable[[str, float], None] | Dict[str, Any] | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -92,6 +93,26 @@ def _run_with_timeout(
     current_deadline = min(initial_deadline, max_deadline)
 
     result: Dict[str, Any] = {}
+    latest_progress: Dict[str, Any] = {"sub_step": None, "timestamp": None}
+    recorder_callable: Callable[[str, float], None] | None = None
+    recorder_container: Dict[str, Any] | None = None
+
+    if progress_recorder is not None:
+        if callable(progress_recorder):
+            recorder_callable = progress_recorder
+        else:
+            recorder_container = progress_recorder
+            latest_progress = progress_recorder
+
+    def _record_progress(sub_step: str) -> None:
+        timestamp = time.monotonic()
+        latest_progress["sub_step"] = sub_step
+        latest_progress["timestamp"] = timestamp
+        if recorder_container is not None:
+            recorder_container["sub_step"] = sub_step
+            recorder_container["timestamp"] = timestamp
+        if recorder_callable is not None:
+            recorder_callable(sub_step, timestamp)
 
     def _refresh_deadline(sub_step: str | None = None) -> None:
         nonlocal current_deadline
@@ -114,6 +135,7 @@ def _run_with_timeout(
     wrapped_progress_callback = None
     if progress_callback is not None:
         def _wrapped_progress(sub_step: str) -> None:
+            _record_progress(sub_step)
             _refresh_deadline(sub_step)
             return progress_callback(sub_step)
 
@@ -177,10 +199,15 @@ def _run_with_timeout(
                 )
         elapsed = time.monotonic() - start_time
         LOGGER.error(
-            "%s timed out after %.1fs (last_step=%s)",
+            "%s timed out after %.1fs (last_step=%s, last_progress=%s)",
             description,
             elapsed,
             BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+            latest_progress.get("sub_step"),
+            extra={
+                "last_progress": latest_progress.get("sub_step"),
+                "last_progress_timestamp": latest_progress.get("timestamp"),
+            },
         )
         if cancel is not None:
             try:
@@ -191,7 +218,8 @@ def _run_with_timeout(
         if abort_on_timeout:
             raise TimeoutError(
                 f"{description} timed out after {elapsed:.1f}s "
-                f"(last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})"
+                f"(last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')}, "
+                f"last_progress={latest_progress.get('sub_step')})"
             )
 
         LOGGER.warning("skipping %s due to timeout", description)
@@ -597,12 +625,21 @@ def initialize_bootstrap_context(
             else:
                 prepare_timeout = base_prepare_timeout
 
+            prepare_progress_recorder: Dict[str, Any] = {}
+
             def _record_prepare_sub_step(sub_step: str) -> None:
                 step_name = f"prepare_pipeline.{sub_step}"
+                timestamp = time.monotonic()
                 _mark_bootstrap_step(step_name)
+                prepare_progress_recorder["sub_step"] = step_name
+                prepare_progress_recorder["timestamp"] = timestamp
                 LOGGER.info(
                     "prepare_pipeline_for_bootstrap progress",
-                    extra={"bootstrap_step": step_name, "sub_step": sub_step},
+                    extra={
+                        "bootstrap_step": step_name,
+                        "sub_step": sub_step,
+                        "timestamp": timestamp,
+                    },
                 )
 
             LOGGER.info(
@@ -635,6 +672,7 @@ def initialize_bootstrap_context(
                     bootstrap_runtime_manager=bootstrap_manager,
                     manager=bootstrap_manager,
                     progress_callback=_record_prepare_sub_step,
+                    progress_recorder=prepare_progress_recorder,
                 )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
