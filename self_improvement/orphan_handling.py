@@ -44,6 +44,7 @@ def integrate_orphans(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
+    create_default_context_builder: bool = False,
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
@@ -55,7 +56,7 @@ def integrate_orphans(
         repo = Path(settings.sandbox_repo_path)
     if repo is not None:
         kwargs.setdefault("repo", Path(repo))
-    if "context_builder" not in kwargs:
+    if create_default_context_builder and "context_builder" not in kwargs:
         from context_builder_util import create_context_builder
 
         kwargs["context_builder"] = create_context_builder()
@@ -78,6 +79,7 @@ def post_round_orphan_scan(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
+    create_default_context_builder: bool = False,
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
@@ -89,7 +91,7 @@ def post_round_orphan_scan(
         repo = Path(settings.sandbox_repo_path)
     if repo is not None:
         kwargs.setdefault("repo", Path(repo))
-    if "context_builder" not in kwargs:
+    if create_default_context_builder and "context_builder" not in kwargs:
         from context_builder_util import create_context_builder
 
         kwargs["context_builder"] = create_context_builder()
