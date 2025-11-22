@@ -47,6 +47,7 @@ def integrate_orphans(
     bootstrap_context: bool = False,
     auto_context_builder: bool = False,
     create_default_context_builder: bool | None = None,
+    create_context_builder_if_missing: bool = False,
     lightweight_context: bool = True,
     **kwargs: object,
 ) -> list[str]:
@@ -57,20 +58,26 @@ def integrate_orphans(
     ``context_builder`` when downstream sandbox hooks require the richer
     bootstrap context. Set ``lightweight_context=False`` together with
     ``auto_context_builder=True`` (or ``create_default_context_builder=True`` for
-    backwards compatibility) to auto-create one.
+    backwards compatibility) to auto-create one. Use
+    ``create_context_builder_if_missing=True`` to explicitly opt into creating a
+    default builder when none is supplied, keeping lightweight callers on the
+    faster path by default.
     """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     auto_context_builder = bool(
-        not lightweight_context
-        and (
-            auto_context_builder
-            or bootstrap_context
-            or (
-                create_default_context_builder
-                if create_default_context_builder is not None
-                else False
+        create_context_builder_if_missing
+        or (
+            not lightweight_context
+            and (
+                auto_context_builder
+                or bootstrap_context
+                or (
+                    create_default_context_builder
+                    if create_default_context_builder is not None
+                    else False
+                )
             )
         )
     )
@@ -105,6 +112,7 @@ def post_round_orphan_scan(
     bootstrap_context: bool = False,
     auto_context_builder: bool = False,
     create_default_context_builder: bool | None = None,
+    create_context_builder_if_missing: bool = False,
     lightweight_context: bool = True,
     **kwargs: object,
 ) -> Dict[str, object]:
@@ -114,20 +122,25 @@ def post_round_orphan_scan(
     to minimize overhead. Supply ``context_builder`` directly and set
     ``lightweight_context=False`` when the sandbox scan needs the full bootstrap
     context (optionally paired with ``auto_context_builder=True`` or
-    ``create_default_context_builder=True``).
+    ``create_default_context_builder=True``). Set
+    ``create_context_builder_if_missing=True`` to explicitly opt into creating a
+    default builder for callers that do not provide one.
     """
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     auto_context_builder = bool(
-        not lightweight_context
-        and (
-            auto_context_builder
-            or bootstrap_context
-            or (
-                create_default_context_builder
-                if create_default_context_builder is not None
-                else False
+        create_context_builder_if_missing
+        or (
+            not lightweight_context
+            and (
+                auto_context_builder
+                or bootstrap_context
+                or (
+                    create_default_context_builder
+                    if create_default_context_builder is not None
+                    else False
+                )
             )
         )
     )
