@@ -7,6 +7,7 @@ configuration is incomplete.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict
 
 import logging
@@ -49,6 +50,15 @@ def integrate_orphans(
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+    repo = kwargs.get("repo")
+    if repo is None and not args:
+        repo = Path(settings.sandbox_repo_path)
+    if repo is not None:
+        kwargs.setdefault("repo", Path(repo))
+    if "context_builder" not in kwargs:
+        from context_builder_util import create_context_builder
+
+        kwargs["context_builder"] = create_context_builder()
     func = _load_orphan_module("integrate_orphans")
     try:
         modules = _call_with_retries(
@@ -74,6 +84,15 @@ def post_round_orphan_scan(
     settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+    repo = kwargs.get("repo")
+    if repo is None and not args:
+        repo = Path(settings.sandbox_repo_path)
+    if repo is not None:
+        kwargs.setdefault("repo", Path(repo))
+    if "context_builder" not in kwargs:
+        from context_builder_util import create_context_builder
+
+        kwargs["context_builder"] = create_context_builder()
     func = _load_orphan_module("post_round_orphan_scan")
     try:
         result = _call_with_retries(
