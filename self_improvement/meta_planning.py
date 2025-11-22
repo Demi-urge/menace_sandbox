@@ -1604,7 +1604,10 @@ async def self_improvement_cycle(
                 try:
                     orphan_workflows.extend(
                         w
-                        for w in integrate_orphans(recursive=RECURSIVE_ORPHANS)
+                        for w in integrate_orphans(
+                            recursive=RECURSIVE_ORPHANS,
+                            create_default_context_builder=True,
+                        )
                         if isinstance(w, str)
                     )
                 except Exception:
@@ -1612,7 +1615,9 @@ async def self_improvement_cycle(
 
                 if RECURSIVE_ORPHANS:
                     try:
-                        result = post_round_orphan_scan(recursive=True)
+                        result = post_round_orphan_scan(
+                            recursive=True, create_default_context_builder=True
+                        )
                         integrated = result.get("integrated") if isinstance(result, dict) else None
                         if integrated:
                             orphan_workflows.extend(

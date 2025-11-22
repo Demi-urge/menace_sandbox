@@ -1641,7 +1641,10 @@ def main(argv: list[str] | None = None) -> None:
                     )
                     if include_orphans:
                         try:
-                            orphan_modules = integrate_orphans(recursive=recursive_orphans)
+                            orphan_modules = integrate_orphans(
+                                recursive=recursive_orphans,
+                                create_default_context_builder=True,
+                            )
                             orphan_specs.extend(
                                 {
                                     "workflow": [module],
