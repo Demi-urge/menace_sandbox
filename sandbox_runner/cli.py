@@ -58,7 +58,7 @@ try:  # optional dependency
 except Exception as exc:  # pragma: no cover - fallback when Flask is unavailable
     MetricsDashboard = None  # type: ignore[assignment]
     _METRICS_DASHBOARD_ERROR = exc
-from logging_utils import get_logger, setup_logging, set_correlation_id
+from .logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
 try:  # optional dependency

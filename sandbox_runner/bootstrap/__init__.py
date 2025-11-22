@@ -13,7 +13,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterable
 
-from logging_utils import get_logger, set_correlation_id, log_record
+from ..logging_utils import get_logger, set_correlation_id, log_record
 from dependency_health import (
     dependency_registry,
     DependencyCategory,

@@ -12,7 +12,7 @@ from typing import Sequence, TYPE_CHECKING, Mapping, Any
 import json
 import math
 
-from logging_utils import get_logger, log_record
+from .logging_utils import get_logger, log_record
 from dynamic_path_router import path_for_prompt
 from audit_trail import AuditTrail
 

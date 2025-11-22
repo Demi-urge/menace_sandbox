@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from logging_utils import get_logger
+from .logging_utils import get_logger
 
 from .orphan_integration import integrate_and_graph_orphans
 

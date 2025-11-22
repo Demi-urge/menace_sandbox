@@ -13,7 +13,7 @@ from typing import Any, Dict
 import json
 import threading
 
-from logging_utils import get_logger, log_record
+from .logging_utils import get_logger, log_record
 from sandbox_results_logger import record_run as _db_record_run
 
 try:  # pragma: no cover - optional dependency during tests

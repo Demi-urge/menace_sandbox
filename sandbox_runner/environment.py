@@ -31,11 +31,11 @@ from functools import lru_cache
 from vector_service.context_builder import ContextBuilder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
-    from logging_utils import setup_logging
+    from .logging_utils import setup_logging
 
     setup_logging()
 
-from logging_utils import get_logger, log_record
+from .logging_utils import get_logger, log_record
 from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
