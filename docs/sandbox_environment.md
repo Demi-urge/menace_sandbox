@@ -100,6 +100,10 @@ pipeline, promote_manager = prepare_pipeline_for_bootstrap(
     data_bot=data_bot,
 )
 
+# Default progress heartbeats during pipeline bootstrap can be tuned via
+# PREPARE_PIPELINE_PROGRESS_HEARTBEAT to keep long-running steps alive even when
+# the underlying helper is quiet.
+
 # ...run maintenance scripts that expect pipeline.manager to exist...
 
 manager = SelfCodingManager(pipeline=pipeline, bot_registry=registry, data_bot=data_bot)
