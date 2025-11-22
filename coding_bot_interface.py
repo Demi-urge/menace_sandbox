@@ -3453,6 +3453,7 @@ def prepare_pipeline_for_bootstrap(
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
+    progress_callback: Callable[[str], None] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3484,9 +3485,23 @@ def prepare_pipeline_for_bootstrap(
     construction; once the pipeline instance exists the sentinel bookkeeping is
     reapplied so promotion callbacks behave as before.  Callers that need a
     specific temporary manager can supply it via ``bootstrap_runtime_manager``.
-    Additional keyword arguments are forwarded to ``pipeline_cls`` during
-    instantiation.
+    ``progress_callback`` is invoked with the current sub-step label whenever
+    bootstrap advances through a major milestone so callers can expose
+    fine-grained progress externally. Additional keyword arguments are forwarded
+    to ``pipeline_cls`` during instantiation.
     """
+
+    def _record_sub_step(step: str, **extra: Any) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(step)
+            except Exception:  # pragma: no cover - progress reporting must not break bootstrap
+                logger.debug("prepare_pipeline_for_bootstrap progress callback failed", exc_info=True)
+
+        fields = {"bootstrap_sub_step": step}
+        if extra:
+            fields.update(extra)
+        logger.info("prepare_pipeline_for_bootstrap progress", extra=fields)
 
     def _typeerror_rejects_manager(exc: TypeError) -> bool:
         message = str(exc)
@@ -3508,6 +3523,7 @@ def prepare_pipeline_for_bootstrap(
             return None
         return candidate
 
+    _record_sub_step("select_manager_kwargs")
     manager_kwarg_value = pipeline_kwargs.get("manager")
     manager_kwarg_placeholder = manager_kwarg_value
     sentinel_manager = _select_placeholder(
@@ -3521,9 +3537,16 @@ def prepare_pipeline_for_bootstrap(
         if _is_bootstrap_placeholder(candidate):
             sentinel_manager = candidate
     if sentinel_manager is None:
+        _record_sub_step("create_sentinel", source="factory")
         sentinel_manager = _create_bootstrap_manager_sentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
+        )
+    else:
+        _record_sub_step(
+            "reuse_sentinel",
+            source="override",
+            sentinel_type=type(sentinel_manager).__name__,
         )
     manager_placeholder = sentinel_manager
     shim_manager_placeholder = _select_placeholder(
@@ -3533,6 +3556,7 @@ def prepare_pipeline_for_bootstrap(
         manager_placeholder,
     )
     if not _is_bootstrap_placeholder(shim_manager_placeholder):
+        _record_sub_step("spawn_nested_bootstrap_owner")
         owner_candidate = _spawn_nested_bootstrap_owner(
             bot_registry=bot_registry,
             data_bot=data_bot,
@@ -3553,6 +3577,7 @@ def prepare_pipeline_for_bootstrap(
     ):
         extra_candidates.append(shim_manager_placeholder)
     managed_extra_manager_sentinels: tuple[Any, ...] | None = None
+    _record_sub_step("activate_sentinel_state")
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
     (
         owner_guard_attached,
@@ -3587,6 +3612,7 @@ def prepare_pipeline_for_bootstrap(
     pipeline: Any | None = None
     last_error: Exception | None = None
     runtime_manager = bootstrap_runtime_manager
+    _record_sub_step("determine_runtime_manager")
     manager_kwarg_forced = bool(force_manager_kwarg and manager_kwarg_value is not None)
     if manager_kwarg_forced:
         runtime_manager = manager_kwarg_value
@@ -3615,6 +3641,7 @@ def prepare_pipeline_for_bootstrap(
         managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
     try:
+        _record_sub_step("push_bootstrap_context")
         context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
@@ -3704,7 +3731,13 @@ def prepare_pipeline_for_bootstrap(
                 if callable(candidate_release):
                     shim_release_candidate = candidate_release
             with _runtime_context_manager():
+                _record_sub_step(
+                    "instantiate_pipeline",
+                    variant_group="manager",
+                    variants=len(manager_variants),
+                )
                 for keys in manager_variants:
+                    _record_sub_step("instantiate_pipeline.variant", variant=keys)
                     if _attempt_constructor(keys):
                         break
         managerless_placeholder = None
@@ -3749,7 +3782,15 @@ def prepare_pipeline_for_bootstrap(
                     if callable(candidate_release):
                         shim_release_candidate = candidate_release
                 with _runtime_context_manager():
+                    _record_sub_step(
+                        "instantiate_pipeline",
+                        variant_group="managerless",
+                        variants=len(managerless_variants),
+                    )
                     for keys in managerless_variants:
+                        _record_sub_step(
+                            "instantiate_pipeline.variant", variant=keys
+                        )
                         if _attempt_constructor(keys):
                             shim_manager_placeholder = managerless_placeholder
                             break
@@ -3791,12 +3832,15 @@ def prepare_pipeline_for_bootstrap(
                 "pipeline manager sentinel attachment failed for %s", pipeline, exc_info=True
             )
 
+    _record_sub_step("attach_sentinel_to_pipeline", pipeline_type=type(pipeline).__name__)
+
     def _promote(
         manager: Any,
         *,
         extra_sentinels: Iterable[Any] | None = None,
     ) -> None:
         nonlocal shim_release_callback
+        _record_sub_step("promote_pipeline", manager_type=type(manager).__name__)
         try:
             combined: list[Any] = []
             seen: set[int] = set()
