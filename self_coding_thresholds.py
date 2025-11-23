@@ -297,91 +297,72 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
         return {}
 
     loader = _FALLBACK_YAML if cache_key in _FORCED_FALLBACK_PATHS else yaml
-    yaml_error = getattr(loader, "YAMLError", Exception)
+    normalised = _normalise_indentation(raw)
+    sanitised = _strip_empty_keys(normalised)
 
-    try:
-        data = loader.safe_load(raw) or {}
-        cleaned = _decouple_aliases(data)
-        return cleaned if isinstance(cleaned, dict) else {}
-    except RecursionError as exc:
-        logger.error(
-            "detected recursive YAML structure in %s; retrying with fallback parser",  # noqa: E501
-            cfg_path,
-            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
-        )
-        _FORCED_FALLBACK_PATHS.add(cache_key)
-        try:
-            data = _FALLBACK_YAML.safe_load(raw) or {}
-            cleaned = _decouple_aliases(data)
-            return cleaned if isinstance(cleaned, dict) else {}
-        except RecursionError as fb_exc:  # pragma: no cover - defensive guard
-            logger.error(
-                "fallback parser exceeded recursion depth for %s; ignoring corrupt configuration",  # noqa: E501
-                cfg_path,
-                exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
-            )
-            return {}
-        except Exception as fb_exc:  # pragma: no cover - defensive guard
-            logger.warning(
-                "fallback parser also failed to load %s", cfg_path, exc_info=fb_exc
-            )
-            return {}
-    except yaml_error as exc:
-        logger.warning(
-            "failed to parse self-coding thresholds from %s; retrying with fallback parser",  # noqa: E501
-            cfg_path,
-            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
-        )
-        normalised = _normalise_indentation(raw)
-        sanitised = _strip_empty_keys(normalised)
-        for variant, label in ((normalised, "normalising indentation"), (sanitised, "removing empty keys")):
-            if variant == raw:
+    def _try_variants(current_loader: Any) -> dict | None:
+        error_type = getattr(current_loader, "YAMLError", Exception)
+        for variant, label in (
+            (raw, "reading"),
+            (normalised, "normalising indentation"),
+            (sanitised, "removing empty keys"),
+        ):
+            if variant == raw and label != "reading":
                 continue
             try:
-                data = loader.safe_load(variant) or {}
+                data = current_loader.safe_load(variant) or {}
                 cleaned = _decouple_aliases(data)
                 return cleaned if isinstance(cleaned, dict) else {}
-            except yaml_error as norm_exc:
-                logger.debug(
-                    "parse still failed after %s for %s", label, cfg_path,
-                    exc_info=norm_exc if logger.isEnabledFor(logging.DEBUG) else None,
+            except RecursionError as exc:
+                logger.error(
+                    "detected recursive YAML structure in %s while %s; retrying with fallback parser",  # noqa: E501
+                    cfg_path,
+                    label,
+                    exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
                 )
-        if loader is _FALLBACK_YAML:
-            return {}
+                return None
+            except error_type as exc:
+                logger.debug(
+                    "parse failed after %s for %s", label, cfg_path,
+                    exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+                )
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.warning(
+                    "unexpected error while %s %s; retrying with fallback parser",  # noqa: E501
+                    label,
+                    cfg_path,
+                    exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+                )
+                return None
 
-        _FORCED_FALLBACK_PATHS.add(cache_key)
-        fallback_error = getattr(_FALLBACK_YAML, "YAMLError", Exception)
-        try:
-            data = _FALLBACK_YAML.safe_load(raw) or {}
-            cleaned = _decouple_aliases(data)
-            return cleaned if isinstance(cleaned, dict) else {}
-        except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
-            logger.warning(
-                "fallback parser failed to load %s; ignoring corrupt configuration",  # noqa: E501
-                cfg_path,
-                exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
-            )
-            return {}
-    except Exception as exc:
+        return None
+
+    loaded = _try_variants(loader)
+    if loaded is not None:
+        return loaded
+    if loader is _FALLBACK_YAML:
+        return {}
+
+    _FORCED_FALLBACK_PATHS.add(cache_key)
+    fallback_error = getattr(_FALLBACK_YAML, "YAMLError", Exception)
+    try:
+        data = _FALLBACK_YAML.safe_load(sanitised) or {}
+        cleaned = _decouple_aliases(data)
+        return cleaned if isinstance(cleaned, dict) else {}
+    except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
         logger.warning(
-            "failed to load self-coding thresholds from %s using %s backend; retrying with fallback parser",  # noqa: E501
+            "fallback parser failed to load %s; ignoring corrupt configuration",  # noqa: E501
             cfg_path,
-            _YAML_BACKEND,
-            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+            exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
-        _FORCED_FALLBACK_PATHS.add(cache_key)
-        fallback_error = getattr(_FALLBACK_YAML, "YAMLError", Exception)
-        try:
-            data = _FALLBACK_YAML.safe_load(raw) or {}
-            cleaned = _decouple_aliases(data)
-            return cleaned if isinstance(cleaned, dict) else {}
-        except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
-            logger.warning(
-                "fallback parser failed to load %s after unexpected error; ignoring corrupt configuration",  # noqa: E501
-                cfg_path,
-                exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
-            )
-            return {}
+        return {}
+    except Exception as fb_exc:  # pragma: no cover - defensive guard
+        logger.warning(
+            "fallback parser failed to load %s after unexpected error; ignoring corrupt configuration",  # noqa: E501
+            cfg_path,
+            exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        return {}
 
 
 def get_thresholds(
