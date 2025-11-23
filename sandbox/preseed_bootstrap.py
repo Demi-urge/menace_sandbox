@@ -97,6 +97,12 @@ def _run_with_timeout(
     thread.join(timeout)
 
     if thread.is_alive():
+        import sys, threading, traceback
+
+        for t in threading.enumerate():
+            if t is thread:
+                stack = traceback.format_stack(sys._current_frames()[t.ident])
+                LOGGER.error("WORKER THREAD STACK DUMP:\n%s", "".join(stack))
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
