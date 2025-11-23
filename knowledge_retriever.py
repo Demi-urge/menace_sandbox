@@ -11,13 +11,10 @@ from dataclasses import asdict, replace
 from typing import TYPE_CHECKING
 from governed_retrieval import govern_retrieval
 from secret_redactor import redact_secrets, redact_secrets_dict
-try:  # pragma: no cover - allow flat imports
-    from .gpt_knowledge_service import GPTKnowledgeService
-except Exception:  # pragma: no cover - fallback for flat layout
-    from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - used for static analysis only
     from menace_sandbox.gpt_memory import GPTMemoryManager
+    from menace_sandbox.gpt_knowledge_service import GPTKnowledgeService
 
 try:  # pragma: no cover - allow flat imports
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
