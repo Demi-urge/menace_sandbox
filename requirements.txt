@@ -597,7 +597,6 @@ openai
 pinecone-client
 pycodestyle
 pydot
-pylibmc
 pylint
 pyod
 pyroute2
