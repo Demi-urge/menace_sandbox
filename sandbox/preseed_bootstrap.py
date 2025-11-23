@@ -63,9 +63,24 @@ def _run_with_timeout(
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
 
+    LOGGER.info(
+        "RUN_WITH_TIMEOUT: desc=%s timeout=%.1f abort_on_timeout=%s deadline=%s",
+        description,
+        timeout,
+        abort_on_timeout,
+        bootstrap_deadline,
+    )
+
     if bootstrap_deadline:
         time_remaining = bootstrap_deadline - time.monotonic()
-        if time_remaining > 0:
+        if time_remaining <= 0:
+            LOGGER.warning(
+                "%s invoked after bootstrap deadline (deadline=%s)",
+                description,
+                bootstrap_deadline,
+            )
+            timeout = 0.0
+        else:
             buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
             timeout = min(max(timeout, buffered_remaining), time_remaining)
 
