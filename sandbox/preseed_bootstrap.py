@@ -286,13 +286,19 @@ def initialize_bootstrap_context(
 
     global _BOOTSTRAP_CACHE
 
+    bootstrap_start = perf_counter()
+
     def _log_step(step_name: str, start_time: float) -> None:
-        LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
+        elapsed = perf_counter() - start_time
+        LOGGER.info("%s completed (elapsed=%.3fs)", step_name, elapsed)
+        print(f"[bootstrap] {step_name} completed in {elapsed:.3f}s", flush=True)
 
     _ensure_not_stopped(stop_event)
 
     _mark_bootstrap_step("embedder_preload")
+    embedder_start = perf_counter()
     _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT, stop_event=stop_event)
+    _log_step("embedder_preload", embedder_start)
 
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
@@ -358,6 +364,7 @@ def initialize_bootstrap_context(
                 bot_registry=registry, data_bot=data_bot
             ) as bootstrap_manager:
                 _mark_bootstrap_step("push_final_context")
+                push_final_start = perf_counter()
                 _run_with_timeout(
                     _push_bootstrap_context,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
@@ -369,7 +376,10 @@ def initialize_bootstrap_context(
                     manager=bootstrap_manager,
                     pipeline=bootstrap_manager,
                 )
+                _log_step("push_final_context", push_final_start)
+
                 _mark_bootstrap_step("seed_final_context")
+                seed_final_start = perf_counter()
                 _run_with_timeout(
                     _seed_research_aggregator_context,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
@@ -383,6 +393,7 @@ def initialize_bootstrap_context(
                     pipeline=bootstrap_manager,
                     manager=bootstrap_manager,
                 )
+                _log_step("seed_final_context", seed_final_start)
 
             bootstrap_context = {
                 "registry": registry,
@@ -495,6 +506,7 @@ def initialize_bootstrap_context(
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("threshold_persistence")
+        threshold_start = perf_counter()
         thresholds = get_thresholds(bot_name)
         try:
             persist_sc_thresholds(
@@ -506,6 +518,7 @@ def initialize_bootstrap_context(
             LOGGER.info("persist_sc_thresholds completed (step=threshold_persistence)")
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.debug("failed to persist thresholds for %s", bot_name, exc_info=True)
+        _log_step("threshold_persistence", threshold_start)
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("internalize_coding_bot")
@@ -560,6 +573,7 @@ def initialize_bootstrap_context(
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("seed_final_context")
+        push_final_start = perf_counter()
         LOGGER.info(
             "starting _push_bootstrap_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
@@ -580,10 +594,12 @@ def initialize_bootstrap_context(
             BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_push_bootstrap_context completed (step=push_final_context)")
+        _log_step("push_final_context", push_final_start)
         LOGGER.info(
             "starting _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
+        seed_final_context_start = perf_counter()
         _run_with_timeout(
             _seed_research_aggregator_context,
             timeout=BOOTSTRAP_STEP_TIMEOUT,
@@ -602,6 +618,7 @@ def initialize_bootstrap_context(
             BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
+        _log_step("seed_final_context", seed_final_context_start)
 
         bootstrap_context = {
             "registry": registry,
@@ -614,6 +631,7 @@ def initialize_bootstrap_context(
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
         _mark_bootstrap_step("bootstrap_complete")
+        bootstrap_elapsed = perf_counter() - bootstrap_start
         LOGGER.info(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
@@ -625,6 +643,10 @@ def initialize_bootstrap_context(
         LOGGER.info("bootstrap complete; returning to caller")
         LOGGER.info(
             "bootstrap return (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
+        )
+        print(
+            f"[bootstrap] bootstrap_complete for {bot_name} in {bootstrap_elapsed:.3f}s",
+            flush=True,
         )
         return bootstrap_context
 
