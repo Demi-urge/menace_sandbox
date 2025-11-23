@@ -506,8 +506,6 @@ trio==0.30.0
     #   trio-websocket
 trio-websocket==0.12.2
     # via selenium
-triton==3.3.1
-    # via torch
 typing-extensions==4.14.1
     # via
     #   aiosignal
