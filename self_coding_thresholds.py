@@ -364,12 +364,24 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
             return {}
     except Exception as exc:
         logger.warning(
-            "failed to load self-coding thresholds from %s using %s backend; falling back to defaults",  # noqa: E501
+            "failed to load self-coding thresholds from %s using %s backend; retrying with fallback parser",  # noqa: E501
             cfg_path,
             _YAML_BACKEND,
             exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
         )
-        return {}
+        _FORCED_FALLBACK_PATHS.add(cache_key)
+        fallback_error = getattr(_FALLBACK_YAML, "YAMLError", Exception)
+        try:
+            data = _FALLBACK_YAML.safe_load(raw) or {}
+            cleaned = _decouple_aliases(data)
+            return cleaned if isinstance(cleaned, dict) else {}
+        except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "fallback parser failed to load %s after unexpected error; ignoring corrupt configuration",  # noqa: E501
+                cfg_path,
+                exc_info=fb_exc if logger.isEnabledFor(logging.DEBUG) else None,
+            )
+            return {}
 
 
 def get_thresholds(
