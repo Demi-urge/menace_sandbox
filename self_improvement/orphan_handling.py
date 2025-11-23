@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 
 from sandbox_settings import SandboxSettings
+from context_builder_util import create_context_builder
 from context_builder import create_context_builder
 
 from .utils import _call_with_retries
@@ -52,6 +53,8 @@ def integrate_orphans(
     """Invoke sandbox runner orphan integration with safeguards."""
     if not args and "repo" not in kwargs:
         kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+    if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
+        kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
         context_builder = create_context_builder()
     kwargs.setdefault("context_builder", context_builder)
@@ -83,6 +86,8 @@ def post_round_orphan_scan(
     """Trigger the sandbox post-round orphan scan."""
     if not args and "repo" not in kwargs:
         kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+    if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
+        kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
         context_builder = create_context_builder()
     kwargs.setdefault("context_builder", context_builder)
