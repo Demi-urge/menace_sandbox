@@ -135,6 +135,11 @@ except Exception:  # pragma: no cover - flat layout fallback
 logger = logging.getLogger(__name__)
 _COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 
+_PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
+    "stages": deque(maxlen=32),
+    "timeouts": 0,
+}
+
 
 def _get_bootstrap_wait_timeout() -> float | None:
     """Return the maximum time (in seconds) to wait for helper bootstrap.
@@ -164,6 +169,61 @@ def _get_bootstrap_wait_timeout() -> float | None:
 
 
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
+
+
+def _record_prepare_pipeline_stage(
+    label: str,
+    *,
+    elapsed: float,
+    timeout: bool = False,
+    extra: Mapping[str, Any] | None = None,
+) -> None:
+    """Capture duration metadata for ``prepare_pipeline_for_bootstrap`` stages."""
+
+    record = {
+        "label": label,
+        "elapsed": round(elapsed, 6),
+        "timestamp": time.time(),
+    }
+    if extra:
+        record.update(dict(extra))
+    if timeout:
+        record["timeout"] = True
+    _PREPARE_PIPELINE_WATCHDOG["stages"].append(record)
+    if timeout:
+        _PREPARE_PIPELINE_WATCHDOG["timeouts"] = (
+            _PREPARE_PIPELINE_WATCHDOG.get("timeouts", 0) + 1
+        )
+        if _PREPARE_PIPELINE_WATCHDOG["timeouts"] > 1:
+            logger.warning(
+                "prepare_pipeline timeouts recurring; last_stage=%s, timeouts=%s",
+                label,
+                _PREPARE_PIPELINE_WATCHDOG["timeouts"],
+            )
+
+
+def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
+    """Return a bootstrap wait timeout tuned for the current workload."""
+
+    if not vector_heavy:
+        return _BOOTSTRAP_WAIT_TIMEOUT
+
+    raw_timeout = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+    default_timeout = 900.0
+    if raw_timeout:
+        if raw_timeout.strip().lower() == "none":
+            return None
+        try:
+            return max(1.0, float(raw_timeout))
+        except ValueError:
+            logger.warning(
+                "Invalid MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r; using default %ss",
+                raw_timeout,
+                default_timeout,
+            )
+    if _BOOTSTRAP_WAIT_TIMEOUT is None:
+        return default_timeout
+    return max(_BOOTSTRAP_WAIT_TIMEOUT, default_timeout)
 
 
 @dataclass(eq=False)
@@ -3571,8 +3631,38 @@ def _prepare_pipeline_for_bootstrap_impl(
         lowered = message.lower()
         return "manager" in lowered and "unexpected" in lowered
 
+    def _vector_service_heavy(candidate: Any) -> bool:
+        module_name = getattr(candidate, "__module__", "") or ""
+        qualname = getattr(candidate, "__qualname__", "") or ""
+        text = f"{module_name}:{qualname}".lower()
+        return "vector_service" in text or "vectorservice" in text
+
+    def _lazy_vector_bootstrap_guard(active: bool) -> contextlib.AbstractContextManager[None]:
+        if not active:
+            return contextlib.nullcontext()
+
+        @contextlib.contextmanager
+        def _guard():
+            previous = os.getenv("VECTOR_SERVICE_LAZY_BOOTSTRAP")
+            os.environ["VECTOR_SERVICE_LAZY_BOOTSTRAP"] = "1"
+            try:
+                yield
+            finally:
+                if previous is None:
+                    os.environ.pop("VECTOR_SERVICE_LAZY_BOOTSTRAP", None)
+                else:
+                    os.environ["VECTOR_SERVICE_LAZY_BOOTSTRAP"] = previous
+
+        return _guard()
+
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
+    vector_bootstrap_heavy = _vector_service_heavy(context_builder) or _vector_service_heavy(
+        pipeline_cls
+    )
+    previous_vector_flag = getattr(_BOOTSTRAP_STATE, "vector_heavy", False)
+    if vector_bootstrap_heavy:
+        _BOOTSTRAP_STATE.vector_heavy = True
 
     if bootstrap_safe:
         os.environ.setdefault("VECTOR_METRICS_BOOTSTRAP_SAFE", "1")
@@ -3651,6 +3741,14 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_override=bool(manager_override),
         sentinel_factory=bool(sentinel_factory),
     )
+    _record_prepare_pipeline_stage(
+        "sentinel selection",
+        elapsed=time.perf_counter() - sentinel_selection_start,
+        extra={
+            "manager_kwarg_supplied": manager_kwarg_value is not None,
+            "manager_override": bool(manager_override),
+        },
+    )
     manager_placeholder = sentinel_manager
     shim_manager_placeholder = _select_placeholder(
         manager_override,
@@ -3686,6 +3784,11 @@ def _prepare_pipeline_for_bootstrap_impl(
         sentinel_activation_start,
         placeholder_attached=_is_bootstrap_placeholder(sentinel_manager),
     )
+    _record_prepare_pipeline_stage(
+        "activate bootstrap sentinel",
+        elapsed=time.perf_counter() - sentinel_activation_start,
+        extra={"placeholder": _is_bootstrap_placeholder(sentinel_manager)},
+    )
     owner_guard_start = time.perf_counter()
     (
         owner_guard_attached,
@@ -3695,6 +3798,11 @@ def _prepare_pipeline_for_bootstrap_impl(
         "claim bootstrap owner guard",
         owner_guard_start,
         owner_guard_attached=owner_guard_attached,
+    )
+    _record_prepare_pipeline_stage(
+        "claim bootstrap owner guard",
+        elapsed=time.perf_counter() - owner_guard_start,
+        extra={"attached": owner_guard_attached},
     )
     manual_restore_pending = not owner_guard_attached
     sentinel_state_released = False
@@ -3772,6 +3880,14 @@ def _prepare_pipeline_for_bootstrap_impl(
             registry_present=bool(bot_registry),
             data_bot_present=bool(data_bot),
         )
+        _record_prepare_pipeline_stage(
+            "context push",
+            elapsed=time.perf_counter() - context_start,
+            extra={
+                "registry_present": bool(bot_registry),
+                "data_bot_present": bool(data_bot),
+            },
+        )
         if context is not None and sentinel_manager is not None:
             context.sentinel = sentinel_manager
         init_kwargs = dict(pipeline_kwargs)
@@ -3816,13 +3932,23 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_rejected = False
         constructor_loop_start = time.perf_counter()
 
+        vector_lazy_enabled = False
+
+        def _vector_excursion_triggered(exc: BaseException) -> bool:
+            message = f"{type(exc).__name__}:{exc}"
+            lowered = message.lower()
+            return "vector_service" in lowered or isinstance(exc, TimeoutError)
+
         def _attempt_constructor(keys: tuple[str, ...]) -> bool:
-            nonlocal pipeline, last_error, manager_rejected
+            nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
             call_kwargs = {key: init_kwargs[key] for key in keys}
             call_kwargs.update(static_items)
             start_time = time.perf_counter()
             try:
-                pipeline = pipeline_cls(**call_kwargs)
+                with _lazy_vector_bootstrap_guard(
+                    vector_lazy_enabled or vector_bootstrap_heavy
+                ):
+                    pipeline = pipeline_cls(**call_kwargs)
             except TypeError as exc:
                 last_error = exc
                 if (
@@ -3843,9 +3969,46 @@ def _prepare_pipeline_for_bootstrap_impl(
                     keys=keys,
                     manager_rejected=manager_rejected,
                 )
+                _record_prepare_pipeline_stage(
+                    "pipeline constructor failure",
+                    elapsed=time.perf_counter() - start_time,
+                    extra={"keys": keys, "manager_rejected": manager_rejected},
+                )
                 return False
+            except Exception as exc:  # pragma: no cover - defensive diagnostics
+                last_error = exc
+                if vector_bootstrap_heavy and not vector_lazy_enabled and _vector_excursion_triggered(exc):
+                    vector_lazy_enabled = True
+                    logger.warning(
+                        "pipeline constructor triggered lazy vector bootstrap retry",
+                        exc_info=exc,
+                    )
+                    _record_prepare_pipeline_stage(
+                        "pipeline constructor lazy vector retry",
+                        elapsed=time.perf_counter() - start_time,
+                        extra={"keys": keys},
+                    )
+                    return False
+                _log_timing(
+                    "pipeline constructor failure",
+                    start_time,
+                    keys=keys,
+                    manager_rejected=manager_rejected,
+                )
+                _record_prepare_pipeline_stage(
+                    "pipeline constructor failure",
+                    elapsed=time.perf_counter() - start_time,
+                    extra={"keys": keys, "error": type(exc).__name__},
+                )
+                raise
+            elapsed = time.perf_counter() - start_time
             _log_slow_hook("pipeline construction", start_time, keys=keys)
             _log_timing("pipeline construction", start_time, keys=keys)
+            _record_prepare_pipeline_stage(
+                "pipeline construction",
+                elapsed=elapsed,
+                extra={"keys": keys},
+            )
             return True
 
         shim_context: contextlib.AbstractContextManager[Any]
@@ -3935,6 +4098,14 @@ def _prepare_pipeline_for_bootstrap_impl(
                 attempts=len(managerless_variants),
                 managerless_placeholder=bool(managerless_placeholder),
             )
+            _record_prepare_pipeline_stage(
+                "managerless constructor loop",
+                elapsed=time.perf_counter() - managerless_loop_start,
+                extra={
+                    "attempts": len(managerless_variants),
+                    "managerless_placeholder": bool(managerless_placeholder),
+                },
+            )
         if pipeline is None:
             if callable(shim_release_candidate):
                 try:
@@ -3966,6 +4137,11 @@ def _prepare_pipeline_for_bootstrap_impl(
             _pop_bootstrap_context(context)
         if pipeline is None:
             _finalize_bootstrap_state(due_to_failure=True)
+        if vector_bootstrap_heavy:
+            if previous_vector_flag:
+                _BOOTSTRAP_STATE.vector_heavy = previous_vector_flag
+            elif hasattr(_BOOTSTRAP_STATE, "vector_heavy"):
+                delattr(_BOOTSTRAP_STATE, "vector_heavy")
 
     try:
         current_manager = getattr(pipeline, "manager", None)
@@ -5086,7 +5262,11 @@ def self_coding_managed(
                         getattr(active_context, "data_bot", None),
                         None,
                     )
-                if not bootstrap_event.wait(timeout=_BOOTSTRAP_WAIT_TIMEOUT):
+                timeout = _resolve_bootstrap_wait_timeout(
+                    bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+                )
+                wait_start = time.perf_counter()
+                if not bootstrap_event.wait(timeout=timeout):
                     timeout_error = TimeoutError(
                         "Bot helper bootstrap timed out waiting for prior initialisation"
                     )
@@ -5098,6 +5278,12 @@ def self_coding_managed(
                     logger.error(
                         "Bootstrap coordination stalled; falling back to fail-fast behaviour",
                         exc_info=timeout_error,
+                    )
+                    _record_prepare_pipeline_stage(
+                        "wait for bootstrap helpers",
+                        elapsed=time.perf_counter() - wait_start,
+                        timeout=True,
+                        extra={"timeout": timeout},
                     )
                     raise timeout_error
                 if bootstrap_error is not None:
