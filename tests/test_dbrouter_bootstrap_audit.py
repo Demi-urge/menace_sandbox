@@ -54,7 +54,37 @@ def test_bootstrap_safe_short_circuits_audit_state(monkeypatch, tmp_path) -> Non
 
     dr._log_db_access("write", "normal", 1, "m-normal", log_path=log_path, bootstrap_safe=False)
 
-    assert Path(f"{log_path}.state") in seen
+    assert log_path in seen
+
+
+def test_bootstrap_context_forces_bootstrap_safe(monkeypatch, tmp_path) -> None:
+    seen: list[tuple[Path, bool]] = []
+
+    def _tracking_open(path: Path, *, bootstrap_safe: bool):  # pragma: no cover - guarded path
+        seen.append((path, bootstrap_safe))
+        return None
+
+    monkeypatch.setattr(dr, "_log_db_access_fn", None)
+    monkeypatch.setattr(audit, "_open_state_file", _tracking_open)
+
+    from coding_bot_interface import _pop_bootstrap_context, _push_bootstrap_context
+
+    context = _push_bootstrap_context(
+        registry=object(), data_bot=object(), manager=object(), bootstrap_safe=False
+    )
+    try:
+        dr._log_db_access(
+            "write",
+            "bootstrap_ctx",
+            1,
+            "m-bootstrap",
+            log_path=tmp_path / "audit.log",
+            bootstrap_safe=False,
+        )
+    finally:
+        _pop_bootstrap_context(context)
+
+    assert seen == []
 
 
 def test_infodb_bootstrap_ignores_locked_audit_log(tmp_path, monkeypatch) -> None:
