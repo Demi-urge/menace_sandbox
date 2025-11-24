@@ -529,8 +529,8 @@ class ROITracker:
                 not in {"0", "false"}
             )
         self.calibrate = calibrate
-        self.truth_adapter = TruthAdapter() if self.calibrate else None
-        if self.truth_adapter is None and _TA_LOW_CONF_GAUGE is not None:
+        self.truth_adapter: TruthAdapter | None = None
+        if _TA_LOW_CONF_GAUGE is not None:
             _TA_LOW_CONF_GAUGE.set(0)
         if self.resource_db:
             try:
@@ -556,6 +556,19 @@ class ROITracker:
                 self.load_prediction_history()
             except Exception:
                 logger.exception("failed to load prediction history")
+
+    # ------------------------------------------------------------------
+    def _ensure_truth_adapter(self) -> None:
+        """Initialise the :class:`TruthAdapter` lazily when calibration is enabled."""
+
+        if self.truth_adapter is not None or not self.calibrate:
+            return
+
+        try:
+            self.truth_adapter = TruthAdapter(calibration_active=self.calibrate)
+        except Exception:
+            self.truth_adapter = None
+            logger.exception("failed to initialise truth adapter")
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -775,6 +788,8 @@ class ROITracker:
             else [float(actual)]
         )
         low_conf = False
+        if self.calibrate:
+            self._ensure_truth_adapter()
         if self.truth_adapter is not None:
             try:
                 arr = np.array(pred_seq, dtype=float).reshape(-1, 1)

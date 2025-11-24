@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 import sys
 import types
 from pathlib import Path
@@ -98,6 +99,30 @@ def test_thresholds_from_config(monkeypatch, tmp_path: Path) -> None:
     assert adapter.drift_threshold == 0.1
     assert adapter.ks_threshold == 0.05
     assert adapter.metadata["thresholds"] == {"psi": 0.1, "ks": 0.05}
+
+
+def test_metadata_thresholds_skip_settings(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    class SandboxSettings:
+        def __init__(self):
+            calls.append("called")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sandbox_settings",
+        types.SimpleNamespace(SandboxSettings=SandboxSettings),
+    )
+
+    model_path = tmp_path / "truth.pkl"
+    state = {"model": "stub", "metadata": {"thresholds": {"psi": 0.15, "ks": 0.05}}}
+    with model_path.open("wb") as fh:
+        pickle.dump(state, fh)
+
+    adapter = TruthAdapter(model_path)
+    assert adapter.drift_threshold == 0.15
+    assert adapter.ks_threshold == 0.05
+    assert calls == []
 
 
 def test_drift_logging(tmp_path: Path, caplog) -> None:
