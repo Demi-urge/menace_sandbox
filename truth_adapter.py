@@ -48,6 +48,8 @@ class TruthAdapter:
         xgb_params: dict[str, Any] | None = None,
         psi_threshold: float | None = None,
         ks_threshold: float | None = None,
+        *,
+        calibration_active: bool = True,
     ) -> None:
         """Create adapter.
 
@@ -67,6 +69,8 @@ class TruthAdapter:
         ks_threshold:
             Override the Kolmogorov–Smirnov statistic threshold for drift detection.
         """
+
+        self.calibration_active = calibration_active
 
         if model_path is None:
             try:
@@ -89,15 +93,20 @@ class TruthAdapter:
             psi_threshold = thresholds.get("psi")
         if ks_threshold is None:
             ks_threshold = thresholds.get("ks")
-        if psi_threshold is None or ks_threshold is None:
+
+        needs_settings = (
+            psi_threshold is None
+            and ks_threshold is None
+            and self.calibration_active
+        )
+
+        if needs_settings:
             try:  # pragma: no cover - optional dependency
                 from sandbox_settings import SandboxSettings
 
                 cfg = SandboxSettings()
-                if psi_threshold is None:
-                    psi_threshold = getattr(cfg, "psi_threshold", None)
-                if ks_threshold is None:
-                    ks_threshold = getattr(cfg, "ks_threshold", None)
+                psi_threshold = getattr(cfg, "psi_threshold", psi_threshold)
+                ks_threshold = getattr(cfg, "ks_threshold", ks_threshold)
             except Exception:
                 pass
         self.drift_threshold = float(psi_threshold) if psi_threshold is not None else 0.25
