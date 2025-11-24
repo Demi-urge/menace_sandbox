@@ -9,6 +9,7 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ import signal
 import sys
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -1359,6 +1361,56 @@ def main(argv: list[str] | None = None) -> None:
                                 flush=True,
                             )
                             bootstrap_stop_event.set()
+                            dump_path = Path("maintenance-logs") / (
+                                f"bootstrap_timeout_traceback_{int(time.time())}.log"
+                            )
+                            dump_path.parent.mkdir(exist_ok=True)
+                            try:
+                                with dump_path.open("w", encoding="utf-8") as dump_file:
+                                    dump_file.write(
+                                        "Bootstrap timeout thread dump\n"
+                                        f"thread={bootstrap_thread.name} "
+                                        f"ident={bootstrap_thread.ident}\n"
+                                    )
+                                    if bootstrap_thread.ident is not None:
+                                        frame = sys._current_frames().get(
+                                            bootstrap_thread.ident
+                                        )
+                                        if frame is not None:
+                                            dump_file.write(
+                                                "\n--- bootstrap thread stack ---\n"
+                                            )
+                                            traceback.print_stack(
+                                                frame, file=dump_file
+                                            )
+                                        else:
+                                            dump_file.write(
+                                                "\n[bootstrap thread frame unavailable]\n"
+                                            )
+                                    dump_file.write(
+                                        "\n--- all thread tracebacks ---\n"
+                                    )
+                                    faulthandler.dump_traceback(
+                                        file=dump_file, all_threads=True
+                                    )
+                                logger.warning(
+                                    "captured bootstrap timeout thread dump",
+                                    extra=log_record(
+                                        event="bootstrap-timeout-thread-dump",
+                                        dump_path=str(dump_path),
+                                        last_step=last_bootstrap_step,
+                                        elapsed=elapsed,
+                                    ),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "failed to write bootstrap thread dump after timeout",
+                                    extra=log_record(
+                                        event="bootstrap-timeout-thread-dump-error",
+                                        last_step=last_bootstrap_step,
+                                        elapsed=elapsed,
+                                    ),
+                                )
                             logger.error(
                                 "initialize_bootstrap_context exceeded timeout",
                                 extra=log_record(
