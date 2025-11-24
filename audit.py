@@ -30,6 +30,13 @@ def _audit_file_mode_enabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _file_logging_disabled() -> bool:
+    value = os.getenv("DB_AUDIT_DISABLE_FILE")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -194,45 +201,46 @@ def log_db_access(
         "menace_id": menace_id,
     }
 
-    # Determine log path and ensure directory exists
-    if log_path is not None:
-        path = Path(log_path).resolve()
-    else:
-        path = _default_log_path()
-    state_path = Path(f"{path}.state")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+    if not _file_logging_disabled():
+        # Determine log path and ensure directory exists
+        if log_path is not None:
+            path = Path(log_path).resolve()
+        else:
+            path = _default_log_path()
+        state_path = Path(f"{path}.state")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
 
-        lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
-        with state_path.open("a+b") as sf:
-            fd = sf.fileno()
-            if not _acquire_lock(fd, timeout=lock_timeout):
-                _module_logger.warning(
-                    "skipping audit log write for %s: lock held elsewhere", path
-                )
-                return
-            try:
-                sf.seek(0)
-                prev_hash_bytes = sf.read()
-                prev_hash = prev_hash_bytes.decode().strip() if prev_hash_bytes else "0" * 64
-                data = json.dumps(record, sort_keys=True)
-                new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
-                record["hash"] = new_hash
-                logger = _get_logger(path, bootstrap_safe=bootstrap_safe)
-                logger.info(json.dumps(record, sort_keys=True))
-                sf.seek(0)
-                sf.truncate()
-                sf.write(new_hash.encode())
-                sf.flush()
-                if not bootstrap_safe:
-                    os.fsync(fd)
-            finally:
-                flock(fd, LOCK_UN)
-    except OSError:
-        # Logging failures are non-fatal
-        _module_logger.warning(
-            "audit file write failed; continuing without audit entry", exc_info=True
-        )
+            lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
+            with state_path.open("a+b") as sf:
+                fd = sf.fileno()
+                if not _acquire_lock(fd, timeout=lock_timeout):
+                    _module_logger.warning(
+                        "skipping audit log write for %s: lock held elsewhere", path
+                    )
+                    return
+                try:
+                    sf.seek(0)
+                    prev_hash_bytes = sf.read()
+                    prev_hash = prev_hash_bytes.decode().strip() if prev_hash_bytes else "0" * 64
+                    data = json.dumps(record, sort_keys=True)
+                    new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
+                    record["hash"] = new_hash
+                    logger = _get_logger(path, bootstrap_safe=bootstrap_safe)
+                    logger.info(json.dumps(record, sort_keys=True))
+                    sf.seek(0)
+                    sf.truncate()
+                    sf.write(new_hash.encode())
+                    sf.flush()
+                    if not bootstrap_safe:
+                        os.fsync(fd)
+                finally:
+                    flock(fd, LOCK_UN)
+        except OSError:
+            # Logging failures are non-fatal
+            _module_logger.warning(
+                "audit file write failed; continuing without audit entry", exc_info=True
+            )
 
     if _audit_file_mode_enabled():
         return
