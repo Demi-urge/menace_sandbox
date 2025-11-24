@@ -3287,6 +3287,11 @@ def _promote_pipeline_manager(
         nonlocal finalized_targets
         if target is None:
             return
+        logger.debug(
+            "_swap_manager examining %s (id=%s)",
+            getattr(target, "__class__", type(target)).__name__,
+            id(target),
+        )
         finalizer_targets: list[Any] = []
         manager_rewired = _rewire_helper_attributes(target)
         try:

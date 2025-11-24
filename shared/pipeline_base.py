@@ -579,8 +579,27 @@ class _LazyHelperProxy:
                 return None
             if manager is None or pipeline._is_placeholder_manager(manager):
                 return None
-        with pipeline_context_scope(pipeline):
-            return builder(manager=manager)
+        helper = pipeline._helper_build_cache.get(self.attr_name)
+        if helper is None:
+            with pipeline_context_scope(pipeline):
+                _LOGGER.debug(
+                    "building helper %s via lazy proxy (attempt %s)",
+                    self.attr_name,
+                    pipeline._helper_build_counts.get(self.attr_name, 0) + 1,
+                )
+                helper = builder(manager=manager)
+            pipeline._helper_build_counts[self.attr_name] = (
+                pipeline._helper_build_counts.get(self.attr_name, 0) + 1
+            )
+            if helper is not None:
+                pipeline._helper_build_cache[self.attr_name] = helper
+        else:
+            _LOGGER.debug(
+                "reusing cached helper for %s via lazy proxy (id=%s)",
+                self.attr_name,
+                id(helper),
+            )
+        return helper
 
     def __getattr__(self, item: str) -> Any:
         helper = self.resolve()
@@ -856,6 +875,8 @@ class ModelAutomationPipeline:
             except Exception:  # pragma: no cover - placeholder seeding best effort
                 self._placeholder_context_token = None
         self._pending_manager_helpers: dict[str, Callable[..., Any]] = {}
+        self._helper_build_cache: dict[str, Any] = {}
+        self._helper_build_counts: dict[str, int] = {}
         self._lazy_helper_attrs: set[str] = set()
         self._bot_attribute_order: tuple[str, ...] = self._BOT_ATTRIBUTE_ORDER
         self._registered_bot_attrs: set[str] = set()
@@ -1176,6 +1197,7 @@ class ModelAutomationPipeline:
         if existing is not None:
             helper = self._bind_manager(existing)
             setattr(self, attr_name, helper)
+            self._helper_build_cache[attr_name] = helper
             return helper
         manager = self._effective_manager()
         defer = self._should_defer_manager_helpers or manager is None
@@ -1186,7 +1208,25 @@ class ModelAutomationPipeline:
             setattr(self, attr_name, None)
             return None
         with pipeline_context_scope(self):
-            helper = builder(manager=manager)
+            helper = self._helper_build_cache.get(attr_name)
+            if helper is None:
+                _LOGGER.debug(
+                    "building helper %s immediately (attempt %s)",
+                    attr_name,
+                    self._helper_build_counts.get(attr_name, 0) + 1,
+                )
+                helper = builder(manager=manager)
+                self._helper_build_counts[attr_name] = (
+                    self._helper_build_counts.get(attr_name, 0) + 1
+                )
+            else:
+                _LOGGER.debug(
+                    "reusing cached helper for %s during immediate build (id=%s)",
+                    attr_name,
+                    id(helper),
+                )
+        if helper is not None:
+            self._helper_build_cache[attr_name] = helper
         helper = self._bind_manager(helper)
         setattr(self, attr_name, helper)
         return helper
@@ -1201,6 +1241,7 @@ class ModelAutomationPipeline:
         if existing is not None:
             helper = self._bind_manager(existing)
             setattr(self, attr_name, helper)
+            self._helper_build_cache[attr_name] = helper
             return helper
         manager = self._effective_manager()
         defer = self._should_defer_manager_helpers or manager is None
@@ -1213,7 +1254,25 @@ class ModelAutomationPipeline:
             setattr(self, attr_name, proxy)
             return proxy
         with pipeline_context_scope(self):
-            helper = builder(manager=manager)
+            helper = self._helper_build_cache.get(attr_name)
+            if helper is None:
+                _LOGGER.debug(
+                    "building helper %s lazily (attempt %s)",
+                    attr_name,
+                    self._helper_build_counts.get(attr_name, 0) + 1,
+                )
+                helper = builder(manager=manager)
+                self._helper_build_counts[attr_name] = (
+                    self._helper_build_counts.get(attr_name, 0) + 1
+                )
+            else:
+                _LOGGER.debug(
+                    "reusing cached helper for %s during lazy build (id=%s)",
+                    attr_name,
+                    id(helper),
+                )
+        if helper is not None:
+            self._helper_build_cache[attr_name] = helper
         helper = self._bind_manager(helper)
         setattr(self, attr_name, helper)
         return helper
@@ -1335,11 +1394,38 @@ class ModelAutomationPipeline:
             or self._is_placeholder_manager(manager)
         ):
             return
+        _LOGGER.debug(
+            "activating deferred helpers with manager=%s; pending=%s",
+            manager,
+            sorted(self._pending_manager_helpers),
+        )
         pending = list(self._pending_manager_helpers.items())
         self._pending_manager_helpers.clear()
         for attr_name, builder in pending:
+            if attr_name in self._helper_build_cache:
+                helper = self._helper_build_cache[attr_name]
+                _LOGGER.debug(
+                    "reusing cached helper for %s during activation (id=%s)",
+                    attr_name,
+                    id(helper),
+                )
+                if helper is None:
+                    continue
+                helper = self._bind_manager(helper)
+                self._attach_helper(attr_name, helper, register=True)
+                continue
+            _LOGGER.debug(
+                "building helper %s during deferred activation (attempt %s)",
+                attr_name,
+                self._helper_build_counts.get(attr_name, 0) + 1,
+            )
             with pipeline_context_scope(self):
                 helper = builder(manager=manager)
+            self._helper_build_counts[attr_name] = (
+                self._helper_build_counts.get(attr_name, 0) + 1
+            )
+            if helper is not None:
+                self._helper_build_cache[attr_name] = helper
             helper = self._bind_manager(helper)
             self._attach_helper(attr_name, helper, register=True)
 
