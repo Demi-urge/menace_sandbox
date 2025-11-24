@@ -366,8 +366,7 @@ class VectorMetricsDB:
 
         start = time.perf_counter()
         try:
-            with self.router.schema_connection(table) as conn:
-                rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
         except Exception:
             logger.exception(
                 "vector_metrics_db.schema.inspect_failed",
