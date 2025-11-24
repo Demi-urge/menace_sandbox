@@ -1,9 +1,3 @@
-import os
-import sys
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 """Entry point for launching the autonomous sandbox.
 
 This wrapper bootstraps the environment and model paths automatically before
@@ -13,6 +7,12 @@ without requiring any manual post-launch edits.
 """
 
 from __future__ import annotations
+
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import faulthandler
