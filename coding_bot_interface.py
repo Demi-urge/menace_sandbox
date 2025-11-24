@@ -1209,8 +1209,9 @@ def _resolve_repository_context(
                 rel_path_posix,
             ],
             stderr=subprocess.STDOUT,
+            timeout=5,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         logger.debug(
             "failed to derive git commit for %s from %s (repo=%s): %s",
             name,
