@@ -224,6 +224,7 @@ _SQLITE_RETRY_MESSAGES = (
 _SQLITE_MAX_RETRIES = 5
 _SQLITE_BASE_DELAY = 0.1
 _SQLITE_TIMEOUT_SECONDS = 30.0
+_SQLITE_WATCHDOG_SECONDS = 5.0
 
 
 @dataclass(slots=True)
@@ -382,6 +383,7 @@ def _write_event(db_path: str, payload: _AuditPayload) -> None:
         _persist,
         timeout=_SQLITE_TIMEOUT_SECONDS,
         logger=logger,
+        watchdog_seconds=_SQLITE_WATCHDOG_SECONDS,
     )
 
 

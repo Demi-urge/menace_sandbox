@@ -9,6 +9,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 from typing import Callable
+import threading
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ def safe_write_audit(
     *,
     timeout: float | None = None,
     logger: logging.Logger | None = None,
+    watchdog_seconds: float | None = None,
 ) -> None:
     """Persist audit data retrying transient SQLite locks with backoff."""
 
@@ -59,11 +61,42 @@ def safe_write_audit(
     if timeout is not None:
         connect_kwargs["timeout"] = timeout
 
+    def _perform_write() -> None:
+        with sqlite3.connect(connect_path, **connect_kwargs) as conn:
+            configure_audit_sqlite_connection(conn)
+            write_fn(conn)
+
+    def _run_with_watchdog() -> None:
+        if watchdog_seconds is None:
+            _perform_write()
+            return
+
+        exc_info: list[BaseException] = []
+
+        def _worker() -> None:
+            try:
+                _perform_write()
+            except BaseException as exc:  # pragma: no cover - propagated below
+                exc_info.append(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join(watchdog_seconds)
+        if thread.is_alive():
+            log.error(
+                "audit write watchdog expired (timeout=%.1fs, db=%s)",
+                watchdog_seconds,
+                connect_path,
+            )
+            raise TimeoutError(
+                f"audit write to {connect_path} exceeded {watchdog_seconds:.1f}s watchdog"
+            )
+        if exc_info:
+            raise exc_info[0]
+
     for attempt in range(3):
         try:
-            with sqlite3.connect(connect_path, **connect_kwargs) as conn:
-                configure_audit_sqlite_connection(conn)
-                write_fn(conn)
+            _run_with_watchdog()
             return
         except sqlite3.OperationalError as exc:
             if "database is locked" in str(exc):
