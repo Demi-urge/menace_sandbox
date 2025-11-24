@@ -25,6 +25,7 @@ from menace_sandbox.coding_bot_interface import (
     fallback_helper_manager,
     prepare_pipeline_for_bootstrap,
 )
+from menace_sandbox.db_router import set_audit_bootstrap_safe_default
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
 from menace_sandbox.menace_memory_manager import MenaceMemoryManager
 from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
@@ -336,6 +337,7 @@ def initialize_bootstrap_context(
         finally:
             LOGGER.debug("%s completed (elapsed=%.3fs)", label, perf_counter() - start)
 
+    set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
 
     _mark_bootstrap_step("embedder_preload")

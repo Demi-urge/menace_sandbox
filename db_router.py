@@ -43,6 +43,7 @@ __all__ = [
     "LOCAL_TABLES",
     "DENY_TABLES",
     "init_db_router",
+    "set_audit_bootstrap_safe_default",
     "GLOBAL_ROUTER",
     "queue_insert",
     "configure_db_router_audit_logging",
@@ -544,6 +545,17 @@ def get_bootstrap_audit_metrics() -> dict[str, float]:
 GLOBAL_ROUTER: "DBRouter" | None = None
 
 
+def set_audit_bootstrap_safe_default(enabled: bool = True) -> None:
+    """Force the audit bootstrap-safe flag applied to new and existing routers."""
+
+    global _audit_bootstrap_safe_default
+
+    _audit_bootstrap_safe_default = bool(enabled)
+    if GLOBAL_ROUTER is not None:
+        GLOBAL_ROUTER.local_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
+        GLOBAL_ROUTER.shared_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
+
+
 def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
     """Queue an ``INSERT`` operation for *table*.
 
@@ -863,7 +875,14 @@ class LoggedConnection(sqlite3.Connection):
 class DBRouter:
     """Route table operations to local or shared SQLite databases."""
 
-    def __init__(self, menace_id: str, local_db_path: str, shared_db_path: str) -> None:
+    def __init__(
+        self,
+        menace_id: str,
+        local_db_path: str,
+        shared_db_path: str,
+        *,
+        audit_bootstrap_safe: bool | None = None,
+    ) -> None:
         """Create a new :class:`DBRouter`.
 
         Parameters
@@ -892,11 +911,17 @@ class DBRouter:
         self.local_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             local_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
+        audit_bootstrap_safe_default = (
+            _audit_bootstrap_safe_default
+            if audit_bootstrap_safe is None
+            else bool(audit_bootstrap_safe)
+        )
+
         self.local_conn.menace_id = menace_id
-        _configure_sqlite_connection(self.local_conn)
         self.local_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.local_conn.audit_log_reads = _audit_db_mirror_enabled_default
-        self.local_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
+        self.local_conn.audit_bootstrap_safe = audit_bootstrap_safe_default
+        _configure_sqlite_connection(self.local_conn)
 
         if shared_db_path != ":memory:":
             os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
@@ -904,11 +929,12 @@ class DBRouter:
             shared_db_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
         self.shared_conn.menace_id = menace_id
-        _configure_sqlite_connection(self.shared_conn)
         self.shared_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.shared_conn.audit_log_reads = _audit_db_mirror_enabled_default
-        self.shared_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
-        _ensure_log_db_access()
+        self.shared_conn.audit_bootstrap_safe = audit_bootstrap_safe_default
+        _configure_sqlite_connection(self.shared_conn)
+        if not audit_bootstrap_safe_default:
+            _ensure_log_db_access()
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
@@ -1187,6 +1213,8 @@ def init_db_router(
     menace_id: str,
     local_db_path: str | None = None,
     shared_db_path: str | None = None,
+    *,
+    bootstrap_safe: bool | None = None,
 ) -> DBRouter:
     """Initialise a global :class:`DBRouter` instance.
 
@@ -1235,5 +1263,10 @@ def init_db_router(
     print("Local:", local_path_str)
     print("Shared:", shared_path_str)
 
-    GLOBAL_ROUTER = DBRouter(menace_id, local_path_str, shared_path_str)
+    GLOBAL_ROUTER = DBRouter(
+        menace_id,
+        local_path_str,
+        shared_path_str,
+        audit_bootstrap_safe=bootstrap_safe,
+    )
     return GLOBAL_ROUTER

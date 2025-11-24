@@ -84,6 +84,15 @@ except Exception:  # pragma: no cover - fallback when executed from flat layout
                 is_enabled=lambda _name: True,
             )
 
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox.db_router import set_audit_bootstrap_safe_default
+except Exception:  # pragma: no cover - support flat execution
+    try:
+        from db_router import set_audit_bootstrap_safe_default  # type: ignore
+    except Exception:  # pragma: no cover - audit safety best effort
+        def set_audit_bootstrap_safe_default(enabled: bool = True) -> None:  # type: ignore[override]
+            pass
+
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 
@@ -3564,6 +3573,12 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
+
+    if bootstrap_safe:
+        try:
+            set_audit_bootstrap_safe_default(True)
+        except Exception:  # pragma: no cover - defensive logging only
+            logger.debug("failed to enable bootstrap-safe DB auditing", exc_info=True)
 
     setter = getattr(bot_registry, "set_bootstrap_mode", None)
     if callable(setter):
