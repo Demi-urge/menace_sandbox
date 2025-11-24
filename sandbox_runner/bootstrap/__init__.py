@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterable
+import time
 
 from logging_utils import get_logger, set_correlation_id, log_record
 from dependency_health import (
@@ -290,11 +291,30 @@ def _import_optional_module(name: str, *, missing_optional: set[str] | None = No
     raise ModuleNotFoundError(name)
 
 
+_DB_INIT_TIMEOUT_SECONDS = 5.0
+
+
 def _ensure_sqlite_db(path: Path) -> None:
-    """Ensure an SQLite database exists at ``path``."""
+    """Ensure an SQLite database exists at ``path`` and is responsive."""
+
+    start = time.perf_counter()
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+
+    try:
+        with sqlite3.connect(path, timeout=_DB_INIT_TIMEOUT_SECONDS) as conn:
+            with conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA schema_version")
+    except Exception as exc:  # pragma: no cover - fail fast on hung DBs
+        elapsed = time.perf_counter() - start
+        message = (
+            f"database initialisation for {path_for_prompt(path)} "
+            f"failed after {elapsed:.2f}s: {exc}"
+        )
+        logger.error(message, exc_info=True)
+        raise RuntimeError(message) from exc
 
 
 def _start_optional_services(
