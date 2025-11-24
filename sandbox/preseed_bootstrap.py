@@ -479,6 +479,14 @@ def initialize_bootstrap_context(
                 "starting prepare_pipeline_for_bootstrap (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            print(
+                (
+                    "starting prepare_pipeline_for_bootstrap "
+                    "(last_step=%s, timeout=%.1fs, elapsed=0.0s)"
+                )
+                % (BOOTSTRAP_PROGRESS["last_step"], BOOTSTRAP_STEP_TIMEOUT),
+                flush=True,
+            )
             prepare_start = perf_counter()
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
@@ -498,12 +506,36 @@ def initialize_bootstrap_context(
                 )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
+                print(
+                    (
+                        "prepare_pipeline_for_bootstrap failed "
+                        "(last_step=%s, timeout=%.1fs, elapsed=%.2fs)"
+                    )
+                    % (
+                        BOOTSTRAP_PROGRESS["last_step"],
+                        BOOTSTRAP_STEP_TIMEOUT,
+                        perf_counter() - prepare_start,
+                    ),
+                    flush=True,
+                )
                 raise
             finally:
                 _pop_bootstrap_context(placeholder_context)
             LOGGER.info(
                 "prepare_pipeline_for_bootstrap finished (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
+            )
+            print(
+                (
+                    "prepare_pipeline_for_bootstrap finished "
+                    "(last_step=%s, timeout=%.1fs, elapsed=%.2fs)"
+                )
+                % (
+                    BOOTSTRAP_PROGRESS["last_step"],
+                    BOOTSTRAP_STEP_TIMEOUT,
+                    perf_counter() - prepare_start,
+                ),
+                flush=True,
             )
             _log_step("prepare_pipeline_for_bootstrap", prepare_start)
 
