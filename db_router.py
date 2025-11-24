@@ -10,6 +10,7 @@ read or written via :func:`audit.log_db_access`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
     Identifier = IdentifierList = Parenthesis = _SQLParseStub  # type: ignore
     Keyword = object()
 import threading
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +46,8 @@ __all__ = [
     "GLOBAL_ROUTER",
     "queue_insert",
     "configure_db_router_audit_logging",
+    "bootstrap_audit_buffering",
+    "get_bootstrap_audit_metrics",
 ]
 
 
@@ -331,6 +335,81 @@ _LogDBAccess = Callable[..., None]
 _log_db_access_fn: _LogDBAccess | None = None
 
 
+class _BootstrapAuditController:
+    """Buffer audit activity while critical bootstrap helpers initialise."""
+
+    def __init__(self) -> None:
+        self._enabled = False
+        self._depth = 0
+        self._lock = threading.RLock()
+        self._log_buffer: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self._record_buffer: list[dict[str, str]] = []
+        self._metrics: dict[str, float] = defaultdict(float)
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def enable(self) -> None:
+        with self._lock:
+            self._depth += 1
+            self._enabled = True
+            self._metrics["activations"] += 1
+
+    def disable(self) -> None:
+        with self._lock:
+            if self._depth == 0:
+                return
+            self._depth -= 1
+            if self._depth > 0:
+                return
+            self._enabled = False
+            log_buffer = list(self._log_buffer)
+            record_buffer = list(self._record_buffer)
+            self._log_buffer.clear()
+            self._record_buffer.clear()
+
+        # Replay outside the lock to avoid deadlocks during callbacks.
+        for entry in record_buffer:
+            _record_audit_impl(entry)
+            with self._lock:
+                self._metrics["bootstrap_record_flushes"] += 1
+
+        for args, kwargs in log_buffer:
+            start = time.perf_counter()
+            _ensure_log_db_access()(*args, **kwargs)
+            duration = time.perf_counter() - start
+            with self._lock:
+                self._metrics["bootstrap_calls"] += 1
+                self._metrics["bootstrap_duration"] += duration
+                self._metrics["bootstrap_replayed_calls"] += 1
+
+    def buffer_log_call(self, args: tuple[object, ...], kwargs: dict[str, object]) -> None:
+        with self._lock:
+            self._log_buffer.append((args, kwargs))
+            self._metrics["bootstrap_buffered_calls"] += 1
+
+    def buffer_record_entry(self, entry: dict[str, str]) -> None:
+        with self._lock:
+            self._record_buffer.append(entry)
+            self._metrics["bootstrap_buffered_records"] += 1
+
+    def note_call(self, *, duration: float, bootstrap: bool, skipped: bool = False) -> None:
+        key_prefix = "bootstrap_" if bootstrap else "normal_"
+        with self._lock:
+            self._metrics[f"{key_prefix}calls"] += 1
+            self._metrics[f"{key_prefix}duration"] += duration
+            if skipped:
+                self._metrics[f"{key_prefix}skipped"] += 1
+
+    def snapshot(self) -> dict[str, float]:
+        with self._lock:
+            return dict(self._metrics)
+
+
+_bootstrap_audit_controller = _BootstrapAuditController()
+
+
 def _ensure_log_db_access() -> _LogDBAccess:
     """Return :func:`audit.log_db_access`, importing it on first use."""
 
@@ -346,10 +425,29 @@ def _ensure_log_db_access() -> _LogDBAccess:
 def _log_db_access(*args: object, **kwargs: object) -> None:
     """Invoke :func:`audit.log_db_access` using a lazily imported handle."""
 
+    bootstrap_safe = bool(kwargs.get("bootstrap_safe", False))
+    start = time.perf_counter()
+
+    if bootstrap_safe:
+        _bootstrap_audit_controller.note_call(
+            duration=time.perf_counter() - start, bootstrap=True, skipped=True
+        )
+        return
+
+    if _bootstrap_audit_controller.enabled:
+        _bootstrap_audit_controller.buffer_log_call(args, kwargs)
+        _bootstrap_audit_controller.note_call(
+            duration=time.perf_counter() - start, bootstrap=True
+        )
+        return
+
     _ensure_log_db_access()(*args, **kwargs)
+    _bootstrap_audit_controller.note_call(
+        duration=time.perf_counter() - start, bootstrap=False
+    )
 
 
-def _record_audit(entry: dict[str, str]) -> None:
+def _record_audit_impl(entry: dict[str, str]) -> None:
     """Persist *entry* to the audit log when configured."""
 
     if not _audit_logging_enabled or not _audit_log_path:
@@ -362,6 +460,16 @@ def _record_audit(entry: dict[str, str]) -> None:
             fh.write(json.dumps(entry) + "\n")
     except Exception:  # pragma: no cover - best effort
         pass
+
+
+def _record_audit(entry: dict[str, str]) -> None:
+    """Persist *entry* to the audit log when configured."""
+
+    if _bootstrap_audit_controller.enabled:
+        _bootstrap_audit_controller.buffer_record_entry(entry)
+        return
+
+    _record_audit_impl(entry)
 
 
 def configure_db_router_audit_logging(*, audit_log_path: str | None = None) -> None:
@@ -380,6 +488,42 @@ def configure_db_router_audit_logging(*, audit_log_path: str | None = None) -> N
 
     _audit_log_path = audit_log_path
     _audit_logging_enabled = bool(_audit_log_path)
+
+
+@contextlib.contextmanager
+def bootstrap_audit_buffering(router: "DBRouter" | None = None):
+    """Delay audit writes during bootstrap-sensitive sections.
+
+    The controller buffers both file-based audit entries and ``log_db_access``
+    calls, replaying them after the context exits.  Connections on ``router``
+    inherit ``audit_bootstrap_safe=True`` while the guard is active and have
+    their previous flag restored afterwards.
+    """
+
+    previous_default = _audit_bootstrap_safe_default
+    connection_flags: list[tuple[sqlite3.Connection, bool]] = []
+
+    if router is not None:
+        for conn in (router.local_conn, router.shared_conn):
+            previous = getattr(conn, "audit_bootstrap_safe", False)
+            connection_flags.append((conn, previous))
+            conn.audit_bootstrap_safe = True
+
+    _bootstrap_audit_controller.enable()
+    try:
+        globals()["_audit_bootstrap_safe_default"] = True
+        yield
+    finally:
+        globals()["_audit_bootstrap_safe_default"] = previous_default
+        for conn, previous in connection_flags:
+            conn.audit_bootstrap_safe = previous
+        _bootstrap_audit_controller.disable()
+
+
+def get_bootstrap_audit_metrics() -> dict[str, float]:
+    """Return a snapshot of buffered audit metrics for diagnostics."""
+
+    return _bootstrap_audit_controller.snapshot()
 
 
 # Global router instance used by modules that rely on a single router without
@@ -595,8 +739,6 @@ class LoggedCursor(sqlite3.Cursor):
         if should_log_db:
             kwargs["db_conn"] = self.connection
             kwargs["log_to_db"] = True
-        if bootstrap_safe:
-            return
 
         kwargs["bootstrap_safe"] = bootstrap_safe
         _log_db_access(action, table, row_count, self.menace_id, **kwargs)
