@@ -5875,7 +5875,11 @@ def self_coding_managed(
                     )
                     _EO = _eo_module.EvolutionOrchestrator
 
-                    capital = CapitalManagementBot(data_bot=d_bot)
+                    # Avoid recursive construction when the decorated bot is
+                    # itself the capital manager; reuse the current instance
+                    # rather than spawning a fresh one that would re-enter the
+                    # cooperative init wrapper.
+                    capital = self if isinstance(self, CapitalManagementBot) else CapitalManagementBot(data_bot=d_bot)
                     builder, builder_is_stub = getattr(
                         _EO, "resolve_context_builder", lambda _=None: (create_context_builder(), False)
                     )(logger)
