@@ -51,17 +51,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 MAX_BYTES = _env_int("DB_AUDIT_LOG_MAX_BYTES", 10 * 1024 * 1024)
 BACKUP_COUNT = _env_int("DB_AUDIT_LOG_BACKUPS", 5)
 LOCK_TIMEOUT = _env_float("DB_AUDIT_LOCK_TIMEOUT", 1.0)
 BOOTSTRAP_LOCK_TIMEOUT = _env_float("DB_AUDIT_BOOTSTRAP_LOCK_TIMEOUT", 0.2)
 LOCK_RETRY_DELAY = _env_float("DB_AUDIT_LOCK_RETRY_DELAY", 0.05)
+TIMING_ENABLED = _env_flag("DB_AUDIT_TIMING", False)
 
 
 _write_lock = Lock()
 _logger_lock = Lock()
 _loggers: dict[tuple[Path, bool], logging.Logger] = {}
 _module_logger = logging.getLogger(__name__)
+_timing_first_call_logged = False
 
 
 def _acquire_lock(fd: int, *, timeout: float | None) -> bool:
@@ -117,6 +126,62 @@ def _default_log_path() -> Path:
         DEFAULT_LOG_PATH = (resolve_dir("logs") / "shared_db_access.log").resolve()
 
     return Path(DEFAULT_LOG_PATH)
+
+
+def _emit_timing(
+    stage: str,
+    *,
+    start: float | None,
+    bootstrap_safe: bool,
+    log_path: Path | None,
+    first_call: bool,
+    **details: object,
+) -> None:
+    if not TIMING_ENABLED or start is None:
+        return
+
+    payload: dict[str, object] = {
+        "stage": stage,
+        "elapsed_ms": round((time.perf_counter() - start) * 1000, 3),
+        "bootstrap_safe": bootstrap_safe,
+        "first_call": first_call,
+    }
+    if log_path is not None:
+        payload["log_path"] = str(log_path)
+    if details:
+        payload.update(details)
+    try:
+        _module_logger.info("audit timing %s", json.dumps(payload, sort_keys=True))
+    except Exception:  # pragma: no cover - diagnostic helper
+        _module_logger.info("audit timing %s", payload)
+
+
+def _open_state_file(path: Path, *, bootstrap_safe: bool) -> io.BufferedRandom | None:
+    """Return a handle to the audit state file or ``None`` when unavailable."""
+
+    state_path = Path(f"{path}.state")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _module_logger.warning(
+            "audit log directory unavailable for %s: %s", path.parent, exc
+        )
+        return None
+
+    if os.name == "nt" and not os.access(path.parent, os.W_OK):
+        _module_logger.warning(
+            "audit log directory is not writable on Windows: %s", path.parent
+        )
+        return None
+
+    try:
+        return state_path.open("a+b")
+    except OSError:
+        _module_logger.warning(
+            "audit state file unavailable for %s; skipping audit write", state_path,
+            exc_info=not bootstrap_safe,
+        )
+        return None
 
 
 def _get_logger(path: Path, *, bootstrap_safe: bool = False) -> logging.Logger:
@@ -201,54 +266,116 @@ def log_db_access(
         "menace_id": menace_id,
     }
 
+    timing_start = time.perf_counter() if TIMING_ENABLED else None
+    global _timing_first_call_logged
+    timing_first_call = False
+    if TIMING_ENABLED and not _timing_first_call_logged:
+        timing_first_call = True
+        _timing_first_call_logged = True
+
+    resolved_path: Path | None = None
+
     if not _file_logging_disabled():
         # Determine log path and ensure directory exists
-        if log_path is not None:
-            path = Path(log_path).resolve()
-        else:
-            path = _default_log_path()
-        state_path = Path(f"{path}.state")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_path = Path(log_path).resolve() if log_path is not None else _default_log_path()
+        _emit_timing(
+            "path_resolved",
+            start=timing_start,
+            bootstrap_safe=bootstrap_safe,
+            log_path=resolved_path,
+            first_call=timing_first_call,
+        )
 
-            lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
-            with state_path.open("a+b") as sf:
-                fd = sf.fileno()
-                if not _acquire_lock(fd, timeout=lock_timeout):
-                    _module_logger.warning(
-                        "skipping audit log write for %s: lock held elsewhere", path
-                    )
-                    return
-                try:
-                    sf.seek(0)
-                    prev_hash_bytes = sf.read()
-                    prev_hash = prev_hash_bytes.decode().strip() if prev_hash_bytes else "0" * 64
-                    data = json.dumps(record, sort_keys=True)
-                    new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
-                    record["hash"] = new_hash
-                    logger = _get_logger(path, bootstrap_safe=bootstrap_safe)
-                    logger.info(json.dumps(record, sort_keys=True))
-                    sf.seek(0)
-                    sf.truncate()
-                    sf.write(new_hash.encode())
-                    sf.flush()
-                    if not bootstrap_safe:
-                        os.fsync(fd)
-                finally:
-                    flock(fd, LOCK_UN)
-        except OSError:
-            # Logging failures are non-fatal
-            _module_logger.warning(
-                "audit file write failed; continuing without audit entry", exc_info=True
+        lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
+        state_file = _open_state_file(resolved_path, bootstrap_safe=bootstrap_safe)
+        if state_file is None:
+            _emit_timing(
+                "state_file_unavailable",
+                start=timing_start,
+                bootstrap_safe=bootstrap_safe,
+                log_path=resolved_path,
+                first_call=timing_first_call,
             )
+        else:
+            try:
+                with state_file as sf:
+                    fd = sf.fileno()
+                    if not _acquire_lock(fd, timeout=lock_timeout):
+                        _module_logger.warning(
+                            "skipping audit log write for %s: lock held elsewhere", resolved_path
+                        )
+                        _emit_timing(
+                            "state_lock_contended",
+                            start=timing_start,
+                            bootstrap_safe=bootstrap_safe,
+                            log_path=resolved_path,
+                            first_call=timing_first_call,
+                            timeout=lock_timeout,
+                        )
+                        return
+                    _emit_timing(
+                        "state_lock_acquired",
+                        start=timing_start,
+                        bootstrap_safe=bootstrap_safe,
+                        log_path=resolved_path,
+                        first_call=timing_first_call,
+                        timeout=lock_timeout,
+                    )
+                    try:
+                        sf.seek(0)
+                        prev_hash_bytes = sf.read()
+                        prev_hash = (
+                            prev_hash_bytes.decode().strip() if prev_hash_bytes else "0" * 64
+                        )
+                        data = json.dumps(record, sort_keys=True)
+                        new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
+                        record["hash"] = new_hash
+                        logger = _get_logger(resolved_path, bootstrap_safe=bootstrap_safe)
+                        logger.info(json.dumps(record, sort_keys=True))
+                        sf.seek(0)
+                        sf.truncate()
+                        sf.write(new_hash.encode())
+                        sf.flush()
+                        if not bootstrap_safe:
+                            os.fsync(fd)
+                    finally:
+                        flock(fd, LOCK_UN)
+            except OSError:
+                # Logging failures are non-fatal
+                _module_logger.warning(
+                    "audit file write failed; continuing without audit entry", exc_info=True
+                )
 
     if _audit_file_mode_enabled():
+        _emit_timing(
+            "file_mode_enabled",
+            start=timing_start,
+            bootstrap_safe=bootstrap_safe,
+            log_path=resolved_path,
+            first_call=timing_first_call,
+        )
         return
 
     if not log_to_db or db_conn is None:
+        _emit_timing(
+            "complete",
+            start=timing_start,
+            bootstrap_safe=bootstrap_safe,
+            log_path=resolved_path,
+            first_call=timing_first_call,
+            db_logging=False,
+        )
         return
 
     if getattr(db_conn, "_closed", False):
+        _emit_timing(
+            "complete",
+            start=timing_start,
+            bootstrap_safe=bootstrap_safe,
+            log_path=resolved_path,
+            first_call=timing_first_call,
+            db_logging=False,
+        )
         return
 
     initial_tx = db_conn.in_transaction
@@ -277,6 +404,15 @@ def log_db_access(
             db_conn.commit()
     except sqlite3.Error as exc:
         _module_logger.debug("failed to persist shared_db_audit entry: %s", exc)
+    finally:
+        _emit_timing(
+            "complete",
+            start=timing_start,
+            bootstrap_safe=bootstrap_safe,
+            log_path=resolved_path,
+            first_call=timing_first_call,
+            db_logging=True,
+        )
 
 
 __all__ = ["log_db_access"]
