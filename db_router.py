@@ -336,6 +336,21 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+_init_deadline_default_s = 25.0
+_init_deadline_s = _env_float("DB_ROUTER_INIT_DEADLINE_S", _init_deadline_default_s)
+_project_root_timeout_s = _env_float(
+    "DB_ROUTER_DISCOVERY_TIMEOUT_S", _env_float("PATH_DISCOVERY_TIMEOUT_S", 5.0)
+)
+_bootstrap_mode_env_default = _env_flag("DB_ROUTER_BOOTSTRAP_MODE", False)
+
+
 _audit_db_mirror_enabled_default = _env_flag("DB_ROUTER_AUDIT_TO_DB")
 # When True, audit events from this router are treated as bootstrap-safe,
 # allowing callers to bypass or soften audit logging for operations that run
@@ -1235,6 +1250,8 @@ def init_db_router(
     shared_db_path: str | None = None,
     *,
     bootstrap_safe: bool | None = None,
+    bootstrap_mode: bool | None = None,
+    init_deadline_s: float | None = None,
 ) -> DBRouter:
     """Initialise a global :class:`DBRouter` instance.
 
@@ -1249,6 +1266,12 @@ def init_db_router(
     global GLOBAL_ROUTER
 
     start = time.perf_counter()
+    deadline_limit = _init_deadline_s if init_deadline_s is None else init_deadline_s
+    deadline = start + deadline_limit if deadline_limit and deadline_limit > 0 else None
+    bootstrap_mode_flag = (
+        _bootstrap_mode_env_default if bootstrap_mode is None else bool(bootstrap_mode)
+    )
+
     logger.debug(
         "db_router.init.start",
         extra={
@@ -1256,69 +1279,162 @@ def init_db_router(
             "local_db_path": local_db_path,
             "shared_db_path": shared_db_path,
             "bootstrap_safe": bootstrap_safe,
+            "bootstrap_mode": bootstrap_mode_flag,
+            "deadline_s": deadline_limit,
         },
     )
-    project_root = get_project_root()
 
+    def _deadline_exceeded() -> bool:
+        return deadline is not None and time.perf_counter() >= deadline
+
+    def _init_fallback(reason: str, *, local_path: str | None = None) -> DBRouter:
+        fallback_local = local_path or (":memory:" if local_db_path is None else local_db_path)
+        if fallback_local is None:
+            fallback_local = ":memory:"
+        else:
+            fallback_local = str(fallback_local)
+        logger.warning(
+            "db_router.init.fallback",
+            extra={
+                "reason": reason,
+                "deadline_s": deadline_limit,
+                "bootstrap_mode": bootstrap_mode_flag,
+                "local_path": fallback_local,
+            },
+        )
+        router = DBRouter(
+            menace_id,
+            fallback_local,
+            ":memory:",
+            audit_bootstrap_safe=bootstrap_safe,
+        )
+        router.init_fallback = True  # type: ignore[attr-defined]
+        GLOBAL_ROUTER = router
+        return router
+
+    project_root_start = time.perf_counter()
+    try:
+        project_root = get_project_root()
+    except Exception:
+        project_root = Path(__file__).resolve().parent
+    project_root_duration = time.perf_counter() - project_root_start
+
+    if _deadline_exceeded():
+        return _init_fallback("deadline-before-path-resolution")
+
+    local_used_resolve = False
     if local_db_path == ":memory:":
         local_path_str = ":memory:"
     elif local_db_path is None:
-        local_resolve_start = time.perf_counter()
-        try:
-            local_path = resolve_path(f"menace_{menace_id}_local.db")
-        except FileNotFoundError:
-            local_path = (project_root / f"menace_{menace_id}_local.db").resolve()
+        default_local = (project_root / f"menace_{menace_id}_local.db").resolve()
+        local_path = default_local
+        if not bootstrap_mode_flag:
+            local_resolve_start = time.perf_counter()
+            try:
+                local_path = resolve_path(f"menace_{menace_id}_local.db")
+                local_used_resolve = True
+            except FileNotFoundError:
+                local_path = default_local
+            else:
+                local_path = local_path.resolve()
+            logger.info(
+                "db_router.path.local path=%s duration=%.6fs",
+                local_path,
+                time.perf_counter() - local_resolve_start,
+                extra={
+                    "path": str(local_path),
+                    "duration_s": round(time.perf_counter() - local_resolve_start, 6),
+                },
+            )
         else:
-            local_path = local_path.resolve()
-        logger.info(
-            "db_router.path.local path=%s duration=%.6fs",
-            local_path,
-            time.perf_counter() - local_resolve_start,
-            extra={
-                "path": str(local_path),
-                "duration_s": round(time.perf_counter() - local_resolve_start, 6),
-            },
-        )
+            logger.debug(
+                "db_router.path.local.bootstrap-short-circuit",
+                extra={"path": str(default_local)},
+            )
         local_path_str = str(local_path)
     else:
         local_path = Path(local_db_path).expanduser().resolve()
         local_path_str = str(local_path)
 
+    if _deadline_exceeded():
+        return _init_fallback("deadline-after-local-path", local_path=local_path_str)
+
+    shared_used_resolve = False
     if shared_db_path == ":memory:":
         shared_path_str = ":memory:"
     elif shared_db_path is None:
-        shared_resolve_start = time.perf_counter()
-        try:
-            shared_path = resolve_path("shared/global.db")
-        except FileNotFoundError:
-            shared_path = (project_root / "shared" / "global.db").resolve()
+        default_shared = (project_root / "shared" / "global.db").resolve()
+        shared_path = default_shared
+        if not bootstrap_mode_flag:
+            shared_resolve_start = time.perf_counter()
+            try:
+                shared_path = resolve_path("shared/global.db")
+                shared_used_resolve = True
+            except FileNotFoundError:
+                shared_path = default_shared
+            else:
+                shared_path = shared_path.resolve()
+            logger.info(
+                "db_router.path.shared path=%s duration=%.6fs",
+                shared_path,
+                time.perf_counter() - shared_resolve_start,
+                extra={
+                    "path": str(shared_path),
+                    "duration_s": round(time.perf_counter() - shared_resolve_start, 6),
+                },
+            )
         else:
-            shared_path = shared_path.resolve()
-        logger.info(
-            "db_router.path.shared path=%s duration=%.6fs",
-            shared_path,
-            time.perf_counter() - shared_resolve_start,
-            extra={
-                "path": str(shared_path),
-                "duration_s": round(time.perf_counter() - shared_resolve_start, 6),
-            },
-        )
+            logger.debug(
+                "db_router.path.shared.bootstrap-short-circuit",
+                extra={"path": str(default_shared)},
+            )
         shared_path_str = str(shared_path)
     else:
         shared_path = Path(shared_db_path).expanduser().resolve()
         shared_path_str = str(shared_path)
 
+    if _deadline_exceeded():
+        return _init_fallback("deadline-after-shared-path", local_path=local_path_str)
+
     configure_db_router_audit_logging()
 
-    print("Local:", local_path_str)
-    print("Shared:", shared_path_str)
+    io_profile = {
+        "project_root": {
+            "operation": "get_project_root",
+            "timeout_s": _project_root_timeout_s,
+            "duration_s": round(project_root_duration, 6),
+            "bootstrap_mode": bootstrap_mode_flag,
+        },
+        "local_db": {
+            "path": local_path_str,
+            "used_resolve_path": local_used_resolve,
+            "io": "filesystem",
+        },
+        "shared_db": {
+            "path": shared_path_str,
+            "used_resolve_path": shared_used_resolve,
+            "io": "filesystem",
+        },
+        "sqlite": {
+            "busy_timeout_ms": 5000,
+            "schema_timeout_ms": _SCHEMA_TIMEOUT_MS,
+        },
+        "deadline_s": deadline_limit,
+    }
+    logger.debug("db_router.init.io_profile", extra={"io_profile": io_profile})
 
-    GLOBAL_ROUTER = DBRouter(
+    router = DBRouter(
         menace_id,
         local_path_str,
         shared_path_str,
         audit_bootstrap_safe=bootstrap_safe,
     )
+    router.init_fallback = False  # type: ignore[attr-defined]
+    if _deadline_exceeded():
+        router.close()
+        return _init_fallback("deadline-after-connect", local_path=local_path_str)
+
+    GLOBAL_ROUTER = router
     logger.info(
         "db_router.init.complete duration=%.6fs local=%s shared=%s",
         time.perf_counter() - start,
@@ -1328,6 +1444,8 @@ def init_db_router(
             "duration_s": round(time.perf_counter() - start, 6),
             "local_path": local_path_str,
             "shared_path": shared_path_str,
+            "bootstrap_mode": bootstrap_mode_flag,
+            "deadline_s": deadline_limit,
         },
     )
-    return GLOBAL_ROUTER
+    return router

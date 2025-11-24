@@ -12,10 +12,10 @@ lock to avoid repeated filesystem walks.
 
 from __future__ import annotations
 
-from pathlib import Path
 import os
 import subprocess
 import threading
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # Cache of discovered paths keyed by "root:path" identifiers
@@ -23,6 +23,10 @@ _PATH_CACHE: Dict[str, Path] = {}
 _PROJECT_ROOT: Optional[Path] = None
 _PROJECT_ROOTS: Optional[List[Path]] = None
 _CACHE_LOCK = threading.Lock()
+try:
+    _DISCOVERY_TIMEOUT_S = float(os.getenv("PATH_DISCOVERY_TIMEOUT_S", "5"))
+except Exception:
+    _DISCOVERY_TIMEOUT_S = 5.0
 
 
 def _normalize(name: str | Path) -> str:
@@ -62,6 +66,7 @@ def _discover_roots(start: Optional[Path] = None) -> List[Path]:
             stderr=subprocess.DEVNULL,
             text=True,
             cwd=str(current),
+            timeout=_DISCOVERY_TIMEOUT_S,
         ).strip()
         if top_level:
             root = Path(top_level).resolve()
