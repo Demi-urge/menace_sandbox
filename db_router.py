@@ -170,6 +170,8 @@ if globals().get("LOCAL_TABLES") is not None:
             "roi_history",
             "test_history",
             "workflows",
+            "patch_ancestry",
+            "patch_metrics",
         }
     )
 else:
@@ -246,6 +248,8 @@ else:
         "roi_history",
         "test_history",
         "workflows",
+        "patch_ancestry",
+        "patch_metrics",
     }
 
 # Ensure evaluation results are stored locally
