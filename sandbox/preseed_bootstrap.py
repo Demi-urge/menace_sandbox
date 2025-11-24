@@ -289,6 +289,14 @@ def initialize_bootstrap_context(
     def _log_step(step_name: str, start_time: float) -> None:
         LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
 
+    def _timed_callable(func: Any, *, label: str, **func_kwargs: Any) -> Any:
+        start = perf_counter()
+        LOGGER.debug("starting %s", label)
+        try:
+            return func(**func_kwargs)
+        finally:
+            LOGGER.debug("%s completed (elapsed=%.3fs)", label, perf_counter() - start)
+
     _ensure_not_stopped(stop_event)
 
     _mark_bootstrap_step("embedder_preload")
@@ -427,11 +435,13 @@ def initialize_bootstrap_context(
                 BOOTSTRAP_PROGRESS["last_step"],
             )
             placeholder_context = _run_with_timeout(
-                _push_bootstrap_context,
+                _timed_callable,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
                 bootstrap_deadline=bootstrap_deadline,
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
+                func=_push_bootstrap_context,
+                label="_push_bootstrap_context placeholder",
                 registry=registry,
                 data_bot=data_bot,
                 manager=bootstrap_manager,
@@ -447,11 +457,13 @@ def initialize_bootstrap_context(
                 BOOTSTRAP_PROGRESS["last_step"],
             )
             _run_with_timeout(
-                _seed_research_aggregator_context,
+                _timed_callable,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
                 bootstrap_deadline=bootstrap_deadline,
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
+                func=_seed_research_aggregator_context,
+                label="_seed_research_aggregator_context placeholder",
                 registry=registry,
                 data_bot=data_bot,
                 context_builder=context_builder,
@@ -470,11 +482,13 @@ def initialize_bootstrap_context(
             prepare_start = perf_counter()
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
-                    prepare_pipeline_for_bootstrap,
+                    _timed_callable,
                     timeout=BOOTSTRAP_STEP_TIMEOUT,
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
+                    func=prepare_pipeline_for_bootstrap,
+                    label="prepare_pipeline_for_bootstrap",
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=context_builder,
                     bot_registry=registry,
@@ -542,11 +556,13 @@ def initialize_bootstrap_context(
                 BOOTSTRAP_PROGRESS["last_step"],
             )
             _run_with_timeout(
-                promote_pipeline,
+                _timed_callable,
                 timeout=BOOTSTRAP_STEP_TIMEOUT,
                 bootstrap_deadline=bootstrap_deadline,
                 description="promote_pipeline",
                 abort_on_timeout=True,
+                func=promote_pipeline,
+                label="promote_pipeline",
                 manager=manager,
             )
         except Exception:
