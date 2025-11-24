@@ -3565,6 +3565,13 @@ def _prepare_pipeline_for_bootstrap_impl(
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
 
+    setter = getattr(bot_registry, "set_bootstrap_mode", None)
+    if callable(setter):
+        try:
+            setter(bootstrap_safe)
+        except Exception:  # pragma: no cover - best effort logging only
+            logger.debug("failed to set bot registry bootstrap flag", exc_info=True)
+
     def _log_timing(label: str, start_time: float, **payload: Any) -> None:
         if not debug_enabled:
             return

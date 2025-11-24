@@ -1258,6 +1258,7 @@ class PatchHistoryDB:
         *,
         code_db: CodeDB | None = None,
         router: DBRouter | None = None,
+        bootstrap: bool = False,
     ) -> None:
         """Initialise the patch history database."""
         self.path = Path(
@@ -1267,7 +1268,10 @@ class PatchHistoryDB:
         self._lock = threading.Lock()
         self.keyword_counts: Counter[str] = Counter()
         self.keyword_recent: Dict[str, float] = {}
-        self._vec_db = VectorMetricsDB() if VectorMetricsDB is not None else None
+        self._vec_db: VectorMetricsDB | None = None
+        self._vec_db_enabled = not bootstrap
+        if self._vec_db_enabled:
+            self._vec_db = self._init_vec_db()
         # Always initialise a router for the provided path unless an explicit
         # router instance is supplied.  This ensures tests using temporary
         # databases do not share state via ``GLOBAL_ROUTER``.
@@ -1514,6 +1518,31 @@ class PatchHistoryDB:
         # expose connection for diagnostics and tests
         self.conn = self.router.get_connection("patch_history")
         self.conn.execute("PRAGMA foreign_keys = ON")
+
+    def _init_vec_db(self) -> VectorMetricsDB | None:
+        if VectorMetricsDB is None:
+            return None
+        try:
+            return VectorMetricsDB()
+        except Exception:  # pragma: no cover - defensive best effort
+            logger.exception("failed to initialise VectorMetricsDB")
+            return None
+
+    def enable_vector_metrics(self) -> None:
+        """Allow VectorMetricsDB initialisation after bootstrap."""
+
+        if self._vec_db_enabled:
+            return
+        self._vec_db_enabled = True
+        if self._vec_db is None:
+            self._vec_db = self._init_vec_db()
+
+    def _vector_metrics_db(self) -> VectorMetricsDB | None:
+        if not self._vec_db_enabled:
+            return None
+        if self._vec_db is None:
+            self._vec_db = self._init_vec_db()
+        return self._vec_db
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1811,10 +1840,11 @@ class PatchHistoryDB:
     ) -> None:
         """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
 
-        if self._vec_db is None:
+        vec_db = self._vector_metrics_db()
+        if vec_db is None:
             return
         try:
-            self._vec_db.update_outcome(
+            vec_db.update_outcome(
                 session_id,
                 vectors,
                 contribution=contribution,
@@ -1868,9 +1898,10 @@ class PatchHistoryDB:
         except Exception:
             logger.exception("failed to update patch history with metrics")
 
-        if self._vec_db is not None:
+        vec_db = self._vector_metrics_db()
+        if vec_db is not None:
             try:
-                self._vec_db.record_patch_summary(
+                vec_db.record_patch_summary(
                     str(patch_id),
                     errors=errors,
                     tests_passed=tests_passed,

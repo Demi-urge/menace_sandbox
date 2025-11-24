@@ -26,6 +26,7 @@ class _LazyBotRegistry:
         self._pending: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.graph = SimpleNamespace(nodes={})
         self.modules: dict[str, Any] = {}
+        self._bootstrap = False
 
     def register_bot(
         self,
@@ -111,7 +112,7 @@ class _LazyBotRegistry:
 
     def _hydrate(self) -> BotRegistry:
         if self._real is None:
-            real = BotRegistry()
+            real = BotRegistry(bootstrap=self._bootstrap)
             for method, args, kwargs in self._pending:
                 getattr(real, method)(*args, **kwargs)
             self._pending.clear()
@@ -119,6 +120,17 @@ class _LazyBotRegistry:
             self.modules = real.modules
             self._real = real
         return self._real
+
+    def set_bootstrap_mode(self, bootstrap: bool) -> None:
+        self._bootstrap = bootstrap
+        if self._real is not None:
+            try:
+                self._real.set_bootstrap_mode(bootstrap)  # type: ignore[attr-defined]
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "failed to propagate bootstrap flag to real registry",
+                    exc_info=True,
+                )
 
     def __getattr__(self, name: str) -> Any:
         if name in {"register_bot", "update_bot", "hot_swap_active"}:
@@ -181,9 +193,10 @@ def _get_data_bot_proxy() -> _LazyDataBot:
 
 
 @lru_cache(maxsize=1)
-def _get_registry() -> BotRegistry:
+def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
     """Instantiate and return the shared :class:`BotRegistry`."""
 
+    _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
     return _REGISTRY_PROXY._hydrate()
 
 
