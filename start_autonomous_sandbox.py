@@ -1239,8 +1239,22 @@ def main(argv: list[str] | None = None) -> None:
                             daemon=True,
                         )
                         bootstrap_thread.start()
+                        print(
+                            "[BOOTSTRAP-TRACE] bootstrap thread started "
+                            f"(elapsed={time.monotonic() - bootstrap_start:.3f}s, "
+                            f"last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})",
+                            flush=True,
+                        )
                         initial_wait = max(args.bootstrap_timeout - 5.0, 0.0)
                         bootstrap_thread.join(initial_wait)
+
+                        if bootstrap_thread.is_alive():
+                            print(
+                                "[BOOTSTRAP-TRACE] bootstrap thread active after "
+                                f"initial wait (elapsed={time.monotonic() - bootstrap_start:.3f}s, "
+                                f"last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})",
+                                flush=True,
+                            )
 
                         last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
                             "last_step", "unknown"
