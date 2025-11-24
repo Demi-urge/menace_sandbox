@@ -16,6 +16,7 @@ __version__ = "1.0.0"
 
 import atexit
 import json
+import weakref
 import sqlite3
 import time
 from collections import defaultdict
@@ -23,6 +24,7 @@ from pathlib import Path
 import os
 from typing import Dict, Iterable, List, Callable, Any
 import builtins
+import contextvars
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
@@ -374,12 +376,44 @@ def call_graph_complexity() -> float:
 # Ensure counters are persisted when the interpreter exits.
 atexit.register(_save_usage_counts)
 
+_IMPORT_HOOK_GUARD = contextvars.ContextVar("relevancy_radar_import_hook_guard", default=0)
+_PENDING_IMPORT_HOOKS: "weakref.WeakSet[RelevancyRadar]" = weakref.WeakSet()
+
+
+@contextlib.contextmanager
+def relevancy_import_hook_guard() -> Iterable[None]:
+    """Defer installing the import hook while bootstrap is running."""
+
+    token = _IMPORT_HOOK_GUARD.set(_IMPORT_HOOK_GUARD.get() + 1)
+    try:
+        yield
+    finally:
+        _IMPORT_HOOK_GUARD.reset(token)
+        if not _IMPORT_HOOK_GUARD.get():
+            _flush_pending_import_hooks()
+
+
+def _flush_pending_import_hooks() -> None:
+    if getattr(builtins, "_relevancy_radar_original_import", None):
+        _PENDING_IMPORT_HOOKS.clear()
+        return
+
+    pending = list(_PENDING_IMPORT_HOOKS)
+    _PENDING_IMPORT_HOOKS.clear()
+    for radar in pending:
+        try:
+            radar._install_import_hook(force=True)
+        except Exception:  # pragma: no cover - best effort flush
+            continue
+
+
 __all__ = [
     "track_module_usage",
     "load_usage_stats",
     "evaluate_relevancy",
     "flagged_modules",
     "RelevancyRadar",
+    "relevancy_import_hook_guard",
     "track_usage",
     "track",
     "record_output_impact",
@@ -451,8 +485,12 @@ class RelevancyRadar:
         with _RELEVANCY_CALL_GRAPH_FILE.open("w", encoding="utf-8") as fh:
             json.dump(call_graph_serialized, fh, indent=2, sort_keys=True)
 
-    def _install_import_hook(self) -> None:
+    def _install_import_hook(self, *, force: bool = False) -> None:
         if getattr(builtins, "_relevancy_radar_original_import", None):
+            return
+
+        if not force and _IMPORT_HOOK_GUARD.get():
+            _PENDING_IMPORT_HOOKS.add(self)
             return
 
         original_import = builtins.__import__

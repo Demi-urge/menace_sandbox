@@ -3457,6 +3457,53 @@ def prepare_pipeline_for_bootstrap(
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
 
+    See ``_prepare_pipeline_for_bootstrap_impl`` for full parameter details.
+    """
+
+    try:
+        from menace_sandbox.relevancy_radar import relevancy_import_hook_guard
+    except Exception:  # pragma: no cover - flat layout fallback
+        try:
+            from relevancy_radar import relevancy_import_hook_guard  # type: ignore
+        except Exception:  # pragma: no cover - relevancy radar unavailable
+            @contextlib.contextmanager
+            def relevancy_import_hook_guard():
+                yield
+
+    with relevancy_import_hook_guard():
+        return _prepare_pipeline_for_bootstrap_impl(
+            pipeline_cls=pipeline_cls,
+            context_builder=context_builder,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            bootstrap_manager=bootstrap_manager,
+            bootstrap_runtime_manager=bootstrap_runtime_manager,
+            force_manager_kwarg=force_manager_kwarg,
+            manager_override=manager_override,
+            manager_sentinel=manager_sentinel,
+            sentinel_factory=sentinel_factory,
+            extra_manager_sentinels=extra_manager_sentinels,
+            **pipeline_kwargs,
+        )
+
+
+def _prepare_pipeline_for_bootstrap_impl(
+    *,
+    pipeline_cls: type[Any],
+    context_builder: Any,
+    bot_registry: Any,
+    data_bot: Any,
+    bootstrap_manager: Any | None = None,
+    bootstrap_runtime_manager: Any | None = None,
+    force_manager_kwarg: bool = False,
+    manager_override: Any | None = None,
+    manager_sentinel: Any | None = None,
+    sentinel_factory: Callable[[], Any] | None = None,
+    extra_manager_sentinels: Iterable[Any] | None = None,
+    **pipeline_kwargs: Any,
+) -> tuple[Any, Callable[[Any], None]]:
+    """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
+
     The returned ``ModelAutomationPipeline`` instance uses a temporary sentinel
     manager so callers can safely construct nested bots while the real
     ``SelfCodingManager`` is still initialising.  The accompanying callback must
