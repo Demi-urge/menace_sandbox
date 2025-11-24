@@ -2870,6 +2870,7 @@ class BotRegistry:
         *,
         patch_id: int | None = None,
         commit: str | None = None,
+        bootstrap_safe: bool = False,
     ) -> None:
         """Update stored module path for ``name`` and emit ``bot:updated``.
 
@@ -2883,6 +2884,15 @@ class BotRegistry:
         is_unsigned = isinstance(commit, str) and commit.startswith(
             _UNSIGNED_COMMIT_PREFIX
         )
+
+        if bootstrap_safe:
+            router = db_router.GLOBAL_ROUTER
+            if router is not None:
+                for conn in (router.local_conn, router.shared_conn):
+                    try:
+                        conn.audit_bootstrap_safe = True
+                    except Exception:  # pragma: no cover - best effort
+                        pass
 
         if patch_id is None or commit is None:
             logger.warning(

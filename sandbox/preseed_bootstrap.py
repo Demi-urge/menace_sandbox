@@ -485,6 +485,7 @@ def initialize_bootstrap_context(
                 data_bot=data_bot,
                 manager=bootstrap_manager,
                 pipeline=bootstrap_manager,
+                bootstrap_safe=True,
             )
             LOGGER.info(
                 "after _push_bootstrap_context (last_step=%s)",
@@ -536,13 +537,14 @@ def initialize_bootstrap_context(
                     abort_on_timeout=True,
                     func=prepare_pipeline_for_bootstrap,
                     label="prepare_pipeline_for_bootstrap",
-                    pipeline_cls=ModelAutomationPipeline,
-                    context_builder=context_builder,
-                    bot_registry=registry,
-                    data_bot=data_bot,
-                    bootstrap_runtime_manager=bootstrap_manager,
-                    manager=bootstrap_manager,
-                )
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+                bootstrap_runtime_manager=bootstrap_manager,
+                manager=bootstrap_manager,
+                bootstrap_safe=True,
+            )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
@@ -661,6 +663,7 @@ def initialize_bootstrap_context(
             data_bot=data_bot,
             manager=manager,
             pipeline=pipeline,
+            bootstrap_safe=True,
         )
         LOGGER.info(
             "_push_bootstrap_context finished (last_step=%s)",

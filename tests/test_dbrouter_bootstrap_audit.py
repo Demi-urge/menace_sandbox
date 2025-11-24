@@ -34,6 +34,29 @@ def test_logged_cursor_skips_audit_when_bootstrap_safe(monkeypatch) -> None:
     assert calls == []
 
 
+def test_bootstrap_safe_short_circuits_audit_state(monkeypatch, tmp_path) -> None:
+    seen: list[Path] = []
+
+    real_open_state = audit._open_state_file
+
+    def _tracking_open(path: Path, *, bootstrap_safe: bool):
+        seen.append(path)
+        return real_open_state(path, bootstrap_safe=bootstrap_safe)
+
+    monkeypatch.setattr(dr, "_log_db_access_fn", None)
+    monkeypatch.setattr(audit, "_open_state_file", _tracking_open)
+
+    log_path = tmp_path / "audit.log"
+
+    dr._log_db_access("write", "bootstrap", 1, "m-bootstrap", log_path=log_path, bootstrap_safe=True)
+
+    assert seen == []
+
+    dr._log_db_access("write", "normal", 1, "m-normal", log_path=log_path, bootstrap_safe=False)
+
+    assert Path(f"{log_path}.state") in seen
+
+
 def test_infodb_bootstrap_ignores_locked_audit_log(tmp_path, monkeypatch) -> None:
     log_path = tmp_path / "bootstrap_audit.log"
     state_path = Path(f"{log_path}.state")

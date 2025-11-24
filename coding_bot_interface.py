@@ -166,6 +166,7 @@ class _BootstrapContext:
     manager: Any = None
     sentinel: Any = None
     pipeline: Any = None
+    bootstrap_safe: bool = False
 
 
 @dataclass(eq=False)
@@ -188,7 +189,12 @@ _SENTINEL_UNSET = object()
 
 
 def _push_bootstrap_context(
-    *, registry: Any, data_bot: Any, manager: Any, pipeline: Any | None = None
+    *,
+    registry: Any,
+    data_bot: Any,
+    manager: Any,
+    pipeline: Any | None = None,
+    bootstrap_safe: bool | None = None,
 ) -> _BootstrapContext:
     """Push a helper context onto the current thread's stack."""
 
@@ -205,12 +211,17 @@ def _push_bootstrap_context(
             pipeline = stack[-1].pipeline
         except Exception:
             pipeline = None
+    bootstrap_flag = bootstrap_safe
+    if bootstrap_flag is None:
+        bootstrap_flag = bool(getattr(_current_bootstrap_context(), "bootstrap_safe", False))
+
     context = _BootstrapContext(
         registry=registry,
         data_bot=data_bot,
         manager=manager,
         sentinel=manager,
         pipeline=pipeline,
+        bootstrap_safe=bool(bootstrap_flag),
     )
     stack.append(context)
     return context
@@ -3459,6 +3470,7 @@ def prepare_pipeline_for_bootstrap(
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
+    bootstrap_safe: bool = False,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3489,6 +3501,7 @@ def prepare_pipeline_for_bootstrap(
             manager_sentinel=manager_sentinel,
             sentinel_factory=sentinel_factory,
             extra_manager_sentinels=extra_manager_sentinels,
+            bootstrap_safe=bootstrap_safe,
             **pipeline_kwargs,
         )
 
@@ -3506,6 +3519,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     manager_sentinel: Any | None = None,
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
+    bootstrap_safe: bool = False,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3721,6 +3735,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             registry=bot_registry,
             data_bot=data_bot,
             manager=runtime_manager,
+            bootstrap_safe=bootstrap_safe,
         )
         _log_slow_hook(
             "context push",
@@ -4358,6 +4373,7 @@ def _bootstrap_manager(
                 data_bot=data_bot,
                 manager=sentinel_manager,
                 pipeline=pipeline,
+                bootstrap_safe=bootstrap_safe,
             )
             manager = manager_cls(  # type: ignore[call-arg]
                 bot_registry=bot_registry,
@@ -4427,6 +4443,7 @@ def _bootstrap_manager(
                 data_bot=data_bot,
                 manager=placeholder_manager,
                 pipeline=pipeline,
+                bootstrap_safe=bootstrap_safe,
             )
             if owner_context is not None:
                 owner_context.sentinel = placeholder_manager
@@ -4999,6 +5016,7 @@ def self_coding_managed(
             *,
             pipeline: Any | None = None,
             override_manager: Any | None = None,
+            bootstrap_safe: bool | None = None,
         ) -> tuple[BotRegistry, DataBot, _BootstrapContextGuard | None]:
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
@@ -5009,6 +5027,7 @@ def self_coding_managed(
                 return resolved_registry, resolved_data_bot, None
 
             wait_for_completion = False
+            active_context = _current_bootstrap_context()
             with bootstrap_lock:
                 if bootstrap_done and resolved_registry is not None and resolved_data_bot is not None:
                     return resolved_registry, resolved_data_bot, None
@@ -5111,6 +5130,13 @@ def self_coding_managed(
             else:
                 audit_guard = bootstrap_audit_buffering(GLOBAL_ROUTER)
 
+            bootstrap_safe_local = bootstrap_safe
+            if bootstrap_safe_local is None and active_context is not None:
+                bootstrap_safe_local = getattr(active_context, "bootstrap_safe", False)
+            bootstrap_safe_local = bool(bootstrap_safe_local)
+            if bootstrap_safe_local:
+                update_kwargs.setdefault("bootstrap_safe", True)
+
             try:
                 with audit_guard:
                     registry_obj = _resolve_candidate(bot_registry)
@@ -5136,6 +5162,7 @@ def self_coding_managed(
                         data_bot=data_bot_obj,
                         manager=manager_for_context,
                         pipeline=pipeline_for_context,
+                        bootstrap_safe=bootstrap_safe_local,
                     )
                     if (
                         context is not None
