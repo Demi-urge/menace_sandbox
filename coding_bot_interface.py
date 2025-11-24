@@ -3498,6 +3498,20 @@ def prepare_pipeline_for_bootstrap(
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
 
+    def _log_timing(label: str, start_time: float, **payload: Any) -> None:
+        if not debug_enabled:
+            return
+        elapsed = time.perf_counter() - start_time
+        details = ", ".join(
+            f"{key}={value}" for key, value in payload.items() if value is not None
+        )
+        logger.debug(
+            "bootstrap %s elapsed=%.3fs%s",
+            label,
+            elapsed,
+            f" ({details})" if details else "",
+        )
+
     def _log_slow_hook(label: str, start_time: float, **payload: Any) -> None:
         if not debug_enabled:
             return
@@ -3524,6 +3538,7 @@ def prepare_pipeline_for_bootstrap(
 
     manager_kwarg_value = pipeline_kwargs.get("manager")
     manager_kwarg_placeholder = manager_kwarg_value
+    sentinel_selection_start = time.perf_counter()
     sentinel_manager = _select_placeholder(
         manager_override,
         manager_sentinel,
@@ -3539,6 +3554,13 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
         )
+    _log_timing(
+        "sentinel selection",
+        sentinel_selection_start,
+        manager_kwarg_supplied=manager_kwarg_value is not None,
+        manager_override=bool(manager_override),
+        sentinel_factory=bool(sentinel_factory),
+    )
     manager_placeholder = sentinel_manager
     shim_manager_placeholder = _select_placeholder(
         manager_override,
@@ -3567,11 +3589,23 @@ def prepare_pipeline_for_bootstrap(
     ):
         extra_candidates.append(shim_manager_placeholder)
     managed_extra_manager_sentinels: tuple[Any, ...] | None = None
+    sentinel_activation_start = time.perf_counter()
     restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
+    _log_timing(
+        "activate bootstrap sentinel",
+        sentinel_activation_start,
+        placeholder_attached=_is_bootstrap_placeholder(sentinel_manager),
+    )
+    owner_guard_start = time.perf_counter()
     (
         owner_guard_attached,
         release_owner_guard,
     ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
+    _log_timing(
+        "claim bootstrap owner guard",
+        owner_guard_start,
+        owner_guard_attached=owner_guard_attached,
+    )
     manual_restore_pending = not owner_guard_attached
     sentinel_state_released = False
     shim_release_callback: Callable[[], None] | None = None
@@ -3641,6 +3675,12 @@ def prepare_pipeline_for_bootstrap(
             registry_present=bool(bot_registry),
             data_bot_present=bool(data_bot),
         )
+        _log_timing(
+            "context push",
+            context_start,
+            registry_present=bool(bot_registry),
+            data_bot_present=bool(data_bot),
+        )
         if context is not None and sentinel_manager is not None:
             context.sentinel = sentinel_manager
         init_kwargs = dict(pipeline_kwargs)
@@ -3683,6 +3723,7 @@ def prepare_pipeline_for_bootstrap(
         )
 
         manager_rejected = False
+        constructor_loop_start = time.perf_counter()
 
         def _attempt_constructor(keys: tuple[str, ...]) -> bool:
             nonlocal pipeline, last_error, manager_rejected
@@ -3705,8 +3746,15 @@ def prepare_pipeline_for_bootstrap(
                     keys=keys,
                     manager_rejected=manager_rejected,
                 )
+                _log_timing(
+                    "pipeline constructor failure",
+                    start_time,
+                    keys=keys,
+                    manager_rejected=manager_rejected,
+                )
                 return False
             _log_slow_hook("pipeline construction", start_time, keys=keys)
+            _log_timing("pipeline construction", start_time, keys=keys)
             return True
 
         shim_context: contextlib.AbstractContextManager[Any]
@@ -3736,6 +3784,13 @@ def prepare_pipeline_for_bootstrap(
                 for keys in manager_variants:
                     if _attempt_constructor(keys):
                         break
+        _log_timing(
+            "constructor attempt loop",
+            constructor_loop_start,
+            attempts=len(manager_variants),
+            manager_rejected=manager_rejected,
+            shim_placeholder=bool(shim_manager_placeholder),
+        )
         managerless_placeholder = None
         if pipeline is None:
             if callable(shim_release_candidate):
@@ -3770,6 +3825,7 @@ def prepare_pipeline_for_bootstrap(
             managerless_context = _pipeline_manager_placeholder_shim(
                 pipeline_cls, managerless_placeholder
             )
+            managerless_loop_start = time.perf_counter()
             with managerless_context as shim_handle:
                 if isinstance(shim_handle, _PipelineShimHandle):
                     shim_release_candidate = shim_handle.release
@@ -3782,6 +3838,12 @@ def prepare_pipeline_for_bootstrap(
                         if _attempt_constructor(keys):
                             shim_manager_placeholder = managerless_placeholder
                             break
+            _log_timing(
+                "managerless constructor loop",
+                managerless_loop_start,
+                attempts=len(managerless_variants),
+                managerless_placeholder=bool(managerless_placeholder),
+            )
         if pipeline is None:
             if callable(shim_release_candidate):
                 try:
@@ -3799,6 +3861,12 @@ def prepare_pipeline_for_bootstrap(
             pipeline,
             manager_placeholder,
             propagate_nested=True,
+        )
+        _log_timing(
+            "assign bootstrap manager placeholder",
+            constructor_loop_start,
+            propagate_nested=True,
+            has_context=bool(context),
         )
         if context is not None and context.pipeline is None:
             context.pipeline = pipeline
@@ -3828,6 +3896,7 @@ def prepare_pipeline_for_bootstrap(
         nonlocal shim_release_callback
         promote_start = time.perf_counter()
         extra_sentinel_candidates = tuple(extra_sentinels or ())
+        aggregation_start = time.perf_counter()
         try:
             combined: list[Any] = []
             seen: set[int] = set()
@@ -3854,11 +3923,23 @@ def prepare_pipeline_for_bootstrap(
                 placeholder_extras.append(shim_manager_placeholder)
             if combined:
                 placeholder_extras.extend(combined)
+            _log_timing(
+                "promotion aggregation",
+                aggregation_start,
+                managed_extra=len(managed_extra_manager_sentinels or ()),
+                runtime_extra=len(extra_sentinel_candidates),
+            )
+            promotion_apply_start = time.perf_counter()
             _promote_pipeline_manager(
                 pipeline,
                 manager,
                 manager_placeholder,
                 extra_sentinels=placeholder_extras or None,
+            )
+            _log_timing(
+                "pipeline promotion application",
+                promotion_apply_start,
+                placeholder_extras=len(placeholder_extras),
             )
         finally:
             if callable(shim_release_callback):
