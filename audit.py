@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import time
+import io
 from contextlib import closing
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -79,6 +80,10 @@ class _LockedRotatingFileHandler(RotatingFileHandler):
     def __init__(self, *args: object, lock_timeout: float = LOCK_TIMEOUT, **kwargs: object):
         super().__init__(*args, **kwargs)
         self.lock_timeout = lock_timeout
+
+    def _open(self):  # type: ignore[override]
+        raw = open(self.baseFilename, "a+b")
+        return io.TextIOWrapper(raw, encoding=self.encoding or "utf-8", newline="")
 
     def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
         with _write_lock:
@@ -199,7 +204,7 @@ def log_db_access(
         path.parent.mkdir(parents=True, exist_ok=True)
 
         lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
-        with state_path.open("a+") as sf:
+        with state_path.open("a+b") as sf:
             fd = sf.fileno()
             if not _acquire_lock(fd, timeout=lock_timeout):
                 _module_logger.warning(
@@ -208,7 +213,8 @@ def log_db_access(
                 return
             try:
                 sf.seek(0)
-                prev_hash = sf.read().strip() or "0" * 64
+                prev_hash_bytes = sf.read()
+                prev_hash = prev_hash_bytes.decode().strip() if prev_hash_bytes else "0" * 64
                 data = json.dumps(record, sort_keys=True)
                 new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
                 record["hash"] = new_hash
@@ -216,7 +222,7 @@ def log_db_access(
                 logger.info(json.dumps(record, sort_keys=True))
                 sf.seek(0)
                 sf.truncate()
-                sf.write(new_hash)
+                sf.write(new_hash.encode())
                 sf.flush()
                 os.fsync(fd)
             finally:
