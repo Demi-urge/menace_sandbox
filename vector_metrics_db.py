@@ -142,6 +142,22 @@ class VectorMetricsDB:
         else:
             self.router = init_db_router("vector_metrics_db", str(p), str(p))
             using_global_router = False
+        wal = p.with_suffix(p.suffix + "-wal")
+        shm = p.with_suffix(p.suffix + "-shm")
+        for sidecar in (wal, shm):
+            try:
+                if sidecar.exists():
+                    logger.warning(
+                        "vector_metrics_db.sidecar.present",
+                        extra=_timestamp_payload(
+                            init_start,
+                            sidecar=str(sidecar),
+                            size=sidecar.stat().st_size,
+                        ),
+                    )
+            except Exception:  # pragma: no cover - best effort diagnostics
+                logger.exception("vector_metrics_db.sidecar.inspect_failed")
+
         self.conn = self.router.get_connection("vector_metrics")
         logger.info(
             "vector_metrics_db.connection.ready",
@@ -246,7 +262,7 @@ class VectorMetricsDB:
             """
         )
         self.conn.commit()
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(vector_metrics)").fetchall()]
+        cols = self._table_columns("vector_metrics")
         migrations = {
             "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
             "vector_id": "ALTER TABLE vector_metrics ADD COLUMN vector_id TEXT",
@@ -268,7 +284,7 @@ class VectorMetricsDB:
             ),
         )
         self.conn.commit()
-        pcols = [r[1] for r in self.conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()]
+        pcols = self._table_columns("patch_ancestry")
         if "license" not in pcols:
             self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
         if "semantic_alerts" not in pcols:
@@ -282,7 +298,7 @@ class VectorMetricsDB:
                 "ALTER TABLE patch_ancestry ADD COLUMN risk_score REAL"
             )
         self.conn.commit()
-        mcols = [r[1] for r in self.conn.execute("PRAGMA table_info(patch_metrics)").fetchall()]
+        mcols = self._table_columns("patch_metrics")
         if "context_tokens" not in mcols:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
         if "patch_difficulty" not in mcols:
@@ -344,6 +360,25 @@ class VectorMetricsDB:
                 using_global_router=using_global_router,
             ),
         )
+
+    def _table_columns(self, table: str) -> list[str]:
+        """Return column names for ``table`` using non-blocking pragmas."""
+
+        start = time.perf_counter()
+        try:
+            with self.router.schema_connection(table) as conn:
+                rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        except Exception:
+            logger.exception(
+                "vector_metrics_db.schema.inspect_failed",
+                extra=_timestamp_payload(start, table=table),
+            )
+            return []
+        logger.info(
+            "vector_metrics_db.schema.inspected",
+            extra=_timestamp_payload(start, table=table, column_count=len(rows)),
+        )
+        return [r[1] for r in rows]
 
     # ------------------------------------------------------------------
     def get_db_weights(self) -> dict[str, float]:
