@@ -347,6 +347,7 @@ _load_table_overrides()
 
 _LogDBAccess = Callable[..., None]
 _log_db_access_fn: _LogDBAccess | None = None
+_bootstrap_context_detector: Callable[[], bool] | None = None
 
 
 class _BootstrapAuditController:
@@ -436,10 +437,29 @@ def _ensure_log_db_access() -> _LogDBAccess:
     return _log_db_access_fn
 
 
+def _bootstrap_context_active() -> bool:
+    """Return ``True`` when a coding bootstrap context is active on this thread."""
+
+    global _bootstrap_context_detector
+
+    if _bootstrap_context_detector is None:
+        from coding_bot_interface import _current_bootstrap_context as _detector
+
+        _bootstrap_context_detector = lambda: _detector() is not None
+
+    try:
+        return bool(_bootstrap_context_detector())
+    except Exception:  # pragma: no cover - defensive guard
+        return False
+
+
 def _log_db_access(*args: object, **kwargs: object) -> None:
     """Invoke :func:`audit.log_db_access` using a lazily imported handle."""
 
     bootstrap_safe = bool(kwargs.get("bootstrap_safe", False))
+    if not bootstrap_safe and _bootstrap_context_active():
+        bootstrap_safe = True
+        kwargs["bootstrap_safe"] = True
     start = time.perf_counter()
 
     if bootstrap_safe:
