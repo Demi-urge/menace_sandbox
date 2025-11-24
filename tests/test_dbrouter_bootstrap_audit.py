@@ -6,17 +6,21 @@ from fcntl_compat import LOCK_EX, LOCK_NB, flock
 
 import audit
 import db_router as dr
-import research_aggregator_bot as rab
+try:
+    import menace_sandbox.research_aggregator_bot as rab
+except ImportError:  # pragma: no cover - flat import fallback
+    import research_aggregator_bot as rab
 
 
 def test_logged_cursor_skips_audit_when_bootstrap_safe(monkeypatch) -> None:
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    def _capture(*args, **kwargs):
+    def _capture(*args, **kwargs):  # pragma: no cover - guarded by bootstrap flag
         calls.append((args, kwargs))
         raise AssertionError("audit logging should be skipped when bootstrap_safe")
 
-    monkeypatch.setattr(dr, "_log_db_access", _capture)
+    monkeypatch.setattr(dr, "_log_db_access_fn", _capture)
+    monkeypatch.setattr(dr, "_ensure_log_db_access", lambda: _capture)
 
     conn: dr.LoggedConnection = sqlite3.connect(  # type: ignore[assignment]  # noqa: SQL001
         ":memory:", factory=dr.LoggedConnection
@@ -48,3 +52,31 @@ def test_infodb_bootstrap_ignores_locked_audit_log(tmp_path, monkeypatch) -> Non
         duration = time.perf_counter() - start
 
     assert duration < 1
+
+
+def test_bootstrap_buffering_defers_audit_and_flushes(monkeypatch) -> None:
+    flushed_logs: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    flushed_records: list[dict[str, str]] = []
+
+    def _capture_log(*args, **kwargs):
+        flushed_logs.append((args, kwargs))
+
+    def _capture_record(entry: dict[str, str]):
+        flushed_records.append(entry)
+
+    monkeypatch.setattr(dr, "_log_db_access_fn", _capture_log)
+    monkeypatch.setattr(dr, "_ensure_log_db_access", lambda: _capture_log)
+    monkeypatch.setattr(dr, "_record_audit_impl", _capture_record)
+
+    baseline = dr.get_bootstrap_audit_metrics().get("bootstrap_replayed_calls", 0)
+
+    with dr.bootstrap_audit_buffering():
+        dr._log_db_access("write", "buffered", 1, "m-buf")
+        dr._record_audit({"table_name": "buffered"})
+        assert flushed_logs == []
+        assert flushed_records == []
+
+    assert len(flushed_logs) == 1
+    assert len(flushed_records) == 1
+    metrics = dr.get_bootstrap_audit_metrics()
+    assert metrics.get("bootstrap_replayed_calls", 0) >= baseline + 1
