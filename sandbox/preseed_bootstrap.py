@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
+import traceback
 from time import perf_counter
 from typing import Any, Dict
 
@@ -84,6 +86,29 @@ def _run_with_timeout(
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
 
     if thread.is_alive():
+        if thread.ident:
+            frame = sys._current_frames().get(thread.ident)
+            if frame:
+                stack_trace = "".join(traceback.format_stack(frame))
+                LOGGER.debug(
+                    "Hanging thread %s (id=%s) stack trace:\n%s",
+                    thread.name,
+                    thread.ident,
+                    stack_trace,
+                )
+                print(
+                    "[bootstrap-timeout] hanging thread stack trace:\n" + stack_trace,
+                    flush=True,
+                )
+            else:
+                LOGGER.debug(
+                    "Unable to capture stack trace for hanging thread %s (id=%s)",
+                    thread.name,
+                    thread.ident,
+                )
+        else:
+            LOGGER.debug("Timeout waiting for thread %s without ident", thread.name)
+
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
