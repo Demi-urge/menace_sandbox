@@ -308,6 +308,7 @@ _audit_log_candidate: str | None = os.getenv("DB_ROUTER_AUDIT_LOG")
 _audit_log_path: str | None = None
 _audit_logging_enabled = False
 _audit_db_mirror_enabled_default = False
+_audit_bootstrap_safe_default = False
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -318,6 +319,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 _audit_db_mirror_enabled_default = _env_flag("DB_ROUTER_AUDIT_TO_DB")
+_audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", False)
 _load_table_overrides()
 
 
@@ -578,6 +580,9 @@ class LoggedCursor(sqlite3.Cursor):
         self, action: str, table: str, row_count: int, *, db_logging: bool = True
     ) -> None:
         kwargs: dict[str, object] = {}
+        bootstrap_safe = getattr(self.connection, "audit_bootstrap_safe", False)
+        if bootstrap_safe and action == "read":
+            return
         should_log_db = getattr(self.connection, "audit_log_to_db", False)
         if action == "read" and not getattr(
             self.connection, "audit_log_reads", False
@@ -588,6 +593,7 @@ class LoggedCursor(sqlite3.Cursor):
         if should_log_db:
             kwargs["db_conn"] = self.connection
             kwargs["log_to_db"] = True
+        kwargs["bootstrap_safe"] = bootstrap_safe
         _log_db_access(action, table, row_count, self.menace_id, **kwargs)
 
     def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
@@ -730,6 +736,7 @@ class DBRouter:
         _configure_sqlite_connection(self.local_conn)
         self.local_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.local_conn.audit_log_reads = _audit_db_mirror_enabled_default
+        self.local_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
 
         if shared_db_path != ":memory:":
             os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
@@ -740,6 +747,7 @@ class DBRouter:
         _configure_sqlite_connection(self.shared_conn)
         self.shared_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.shared_conn.audit_log_reads = _audit_db_mirror_enabled_default
+        self.shared_conn.audit_bootstrap_safe = _audit_bootstrap_safe_default
         _ensure_log_db_access()
 
         # ``threading.Lock`` protects against concurrent access when deciding
