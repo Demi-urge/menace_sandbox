@@ -224,7 +224,8 @@ def log_db_access(
                 sf.truncate()
                 sf.write(new_hash.encode())
                 sf.flush()
-                os.fsync(fd)
+                if not bootstrap_safe:
+                    os.fsync(fd)
             finally:
                 flock(fd, LOCK_UN)
     except OSError:
