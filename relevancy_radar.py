@@ -382,12 +382,19 @@ _PENDING_IMPORT_HOOKS: "weakref.WeakSet[RelevancyRadar]" = weakref.WeakSet()
 
 @contextlib.contextmanager
 def relevancy_import_hook_guard() -> Iterable[None]:
-    """Defer installing the import hook while bootstrap is running."""
+    """Temporarily disable the import hook while bootstrap is running."""
 
     token = _IMPORT_HOOK_GUARD.set(_IMPORT_HOOK_GUARD.get() + 1)
+    prior_import = builtins.__import__
+    tracked_original = getattr(builtins, "_relevancy_radar_original_import", None)
+
     try:
+        if tracked_original and prior_import is not tracked_original:
+            builtins.__import__ = tracked_original
         yield
     finally:
+        if tracked_original and builtins.__import__ is not prior_import:
+            builtins.__import__ = prior_import
         _IMPORT_HOOK_GUARD.reset(token)
         if not _IMPORT_HOOK_GUARD.get():
             _flush_pending_import_hooks()
