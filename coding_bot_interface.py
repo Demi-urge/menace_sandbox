@@ -4053,12 +4053,17 @@ def _bootstrap_manager(
     bot_registry: BotRegistry,
     data_bot: DataBot,
     *,
+    bootstrap_safe: bool | None = None,
     pipeline: Any | None = None,
     pipeline_manager: Any | None = None,
     pipeline_promoter: Callable[[Any], None] | None = None,
     disabled_manager_callback: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
+
+    if bootstrap_safe is None:
+        active_context = _current_bootstrap_context()
+        bootstrap_safe = bool(getattr(active_context, "bootstrap_safe", False))
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None
@@ -4875,6 +4880,9 @@ def _resolve_helpers(
                     "name",
                     getattr(obj, "bot_name", obj.__class__.__name__),
                 )
+                bootstrap_safe_local = bool(
+                    getattr(context, "bootstrap_safe", False)
+                )
                 pipeline_hint = None
                 if _looks_like_pipeline_candidate(obj):
                     pipeline_hint = obj
@@ -4890,6 +4898,7 @@ def _resolve_helpers(
                     name_local,
                     registry,
                     data_bot,
+                    bootstrap_safe=bootstrap_safe_local,
                     pipeline=pipeline_hint,
                 )
             except Exception as exc:
