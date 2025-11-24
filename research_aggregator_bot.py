@@ -417,6 +417,9 @@ class InfoDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "information_embeddings.index",
         embedding_version: int = 1,
         router: DBRouter | None = None,
+        run_migrations: bool = True,
+        apply_nonessential_migrations: bool = True,
+        batch_migrations: bool = False,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
@@ -431,69 +434,14 @@ class InfoDB(EmbeddableDBMixin):
         )
         self.conn = self.router.get_connection("information")
         self.conn.row_factory = sqlite3.Row
-        conn = self.conn
-        previous_bootstrap_safe = getattr(conn, "audit_bootstrap_safe", False)
-        conn.audit_bootstrap_safe = True
-        try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS info(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    model_id INTEGER,
-                    contrarian_id INTEGER,
-                    title TEXT,
-                    summary TEXT,
-                    tags TEXT,
-                    category TEXT,
-                    type TEXT,
-                    content TEXT,
-                    data_depth REAL,
-                    source_url TEXT,
-                    notes TEXT,
-                    associated_bots TEXT,
-                    associated_errors TEXT,
-                    performance_data TEXT,
-                    timestamp REAL,
-                    energy INTEGER,
-                    corroboration_count INTEGER
-                )
-                """
+        self._schema_initialised = False
+        self._apply_nonessential_migrations = apply_nonessential_migrations
+        self._batch_migrations = batch_migrations
+        if run_migrations:
+            self.apply_migrations(
+                apply_nonessential=apply_nonessential_migrations,
+                batch=batch_migrations,
             )
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(info)").fetchall()]
-            for name, stmt in {
-                "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
-                "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
-                "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
-                "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
-                "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
-                "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
-                "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
-                "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
-            }.items():
-                if name not in cols:
-                    conn.execute(stmt)
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
-            )
-            try:
-                conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
-                )
-                conn.execute(
-                    "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
-                )
-                self.has_fts = True
-            except sqlite3.OperationalError:
-                self.has_fts = False
-            conn.commit()
-        finally:
-            conn.audit_bootstrap_safe = previous_bootstrap_safe
         meta_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
             self,
@@ -502,6 +450,113 @@ class InfoDB(EmbeddableDBMixin):
             embedding_version=embedding_version,
             backend=vector_backend,
         )
+
+    def apply_migrations(
+        self,
+        *,
+        apply_nonessential: bool | None = None,
+        batch: bool | None = None,
+    ) -> None:
+        """Ensure the database schema exists using a single transaction."""
+
+        if self._schema_initialised:
+            return
+
+        apply_nonessential = (
+            self._apply_nonessential_migrations
+            if apply_nonessential is None
+            else apply_nonessential
+        )
+        batch = self._batch_migrations if batch is None else batch
+
+        conn = self.conn
+        previous_bootstrap_safe = getattr(conn, "audit_bootstrap_safe", False)
+        conn.audit_bootstrap_safe = True
+        start = time.perf_counter()
+        migration_success = False
+        self.has_fts = False
+        try:
+            if batch:
+                conn.execute("BEGIN")
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS info(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        model_id INTEGER,
+                        contrarian_id INTEGER,
+                        title TEXT,
+                        summary TEXT,
+                        tags TEXT,
+                        category TEXT,
+                        type TEXT,
+                        content TEXT,
+                        data_depth REAL,
+                        source_url TEXT,
+                        notes TEXT,
+                        associated_bots TEXT,
+                        associated_errors TEXT,
+                        performance_data TEXT,
+                        timestamp REAL,
+                        energy INTEGER,
+                        corroboration_count INTEGER
+                    )
+                    """
+                )
+                cols = {
+                    r[1]
+                    for r in conn.execute("PRAGMA table_info(info)").fetchall()
+                }
+                for name, stmt in {
+                    "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
+                    "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
+                    "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
+                    "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
+                    "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
+                    "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
+                    "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
+                    "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
+                }.items():
+                    if name not in cols:
+                        conn.execute(stmt)
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
+                )
+                if apply_nonessential:
+                    try:
+                        conn.execute(
+                            "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
+                        )
+                        conn.execute(
+                            "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
+                        )
+                        self.has_fts = True
+                    except sqlite3.OperationalError:
+                        self.has_fts = False
+                conn.commit()
+                migration_success = True
+            except Exception:
+                if batch:
+                    conn.rollback()
+                raise
+        finally:
+            conn.audit_bootstrap_safe = previous_bootstrap_safe
+            if migration_success:
+                self._schema_initialised = True
+                elapsed = time.perf_counter() - start
+                if elapsed > 0.05:
+                    logger.debug(
+                        "InfoDB migrations completed in %.3fs (batch=%s, nonessential=%s)",
+                        elapsed,
+                        batch,
+                        apply_nonessential,
+                    )
 
     def set_current_model(self, model_id: int) -> None:
         """Persist the current model id for future inserts."""
@@ -1064,7 +1119,10 @@ class ResearchAggregatorBot:
         *,
         manager: SelfCodingManager | None = None,
         context_builder: ContextBuilder | None = None,
+        bootstrap: bool = False,
+        defer_migrations_until_ready: bool = False,
     ) -> None:
+        init_start = time.perf_counter()
         deps = _ensure_runtime_dependencies()
         _ensure_self_coding_decorated(deps)
         builder = context_builder or deps.context_builder
@@ -1076,7 +1134,13 @@ class ResearchAggregatorBot:
         self.data_bot = deps.data_bot
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
-        self.info_db = info_db or InfoDB()
+        migration_skipped = bootstrap
+        migration_deferred = defer_migrations_until_ready
+        self.info_db = info_db or InfoDB(
+            run_migrations=not migration_deferred,
+            apply_nonessential_migrations=not migration_skipped,
+            batch_migrations=True,
+        )
         self.db_router = db_router or DBRouter(info_db=self.info_db)
         self.enh_db = enhancements_db or EnhancementDB()
         self.enhancement_bot = enhancement_bot
@@ -1100,6 +1164,33 @@ class ResearchAggregatorBot:
         except Exception:
             logger.exception("Failed to initialise ContextBuilder")
             raise
+        if migration_deferred:
+            migration_start = time.perf_counter()
+            try:
+                self.info_db.apply_migrations(
+                    apply_nonessential=not migration_skipped,
+                    batch=True,
+                )
+            except Exception:
+                logger.exception("Deferred migration pass failed during bootstrap")
+                raise
+            else:
+                logger.info(
+                    "ResearchAggregatorBot migrations applied after pipeline ready: %.3fs",
+                    time.perf_counter() - migration_start,
+                )
+        elapsed = time.perf_counter() - init_start
+        if bootstrap:
+            logger.info(
+                "ResearchAggregatorBot bootstrap initialisation elapsed=%.3fs (deferred_migrations=%s)",
+                elapsed,
+                migration_deferred,
+            )
+            if elapsed > 30:
+                logger.warning(
+                    "ResearchAggregatorBot bootstrap path exceeded 30s deadline: %.3fs",
+                    elapsed,
+                )
         self.context_builder = builder
 
     # ------------------------------------------------------------------
