@@ -1,4 +1,9 @@
-"""ROI calibration helper with lightweight drift detection."""
+"""ROI calibration helper with lightweight drift detection.
+
+The adapter now reads drift thresholds through the lightweight
+``SandboxThresholds`` view to avoid parsing the full sandbox configuration
+during bootstrap, reducing startup latency when only thresholds are needed.
+"""
 
 from __future__ import annotations
 
@@ -101,14 +106,21 @@ class TruthAdapter:
         )
 
         if needs_settings:
+            thresholds = None
             try:  # pragma: no cover - optional dependency
-                from sandbox_settings import SandboxSettings
+                from sandbox_settings import get_threshold_settings
 
-                cfg = SandboxSettings()
-                psi_threshold = getattr(cfg, "psi_threshold", psi_threshold)
-                ks_threshold = getattr(cfg, "ks_threshold", ks_threshold)
+                thresholds = get_threshold_settings()
             except Exception:
-                pass
+                try:
+                    from sandbox_settings import SandboxSettings
+
+                    thresholds = SandboxSettings(build_groups=False)
+                except Exception:
+                    thresholds = None
+            if thresholds is not None:
+                psi_threshold = getattr(thresholds, "psi_threshold", psi_threshold)
+                ks_threshold = getattr(thresholds, "ks_threshold", ks_threshold)
         self.drift_threshold = float(psi_threshold) if psi_threshold is not None else 0.25
         self.ks_threshold = float(ks_threshold) if ks_threshold is not None else 0.2
         self.metadata.setdefault("thresholds", {})

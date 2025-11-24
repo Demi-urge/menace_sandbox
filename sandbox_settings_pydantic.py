@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
+from functools import lru_cache
 from typing import Any, Iterable, Mapping, Collection
 
 from dependency_health import (
@@ -3473,23 +3475,25 @@ class SandboxSettings(BaseSettings):
         return path.as_posix()
 
     # Grouped settings
-    roi: ROISettings = Field(default_factory=ROISettings, exclude=True)
-    synergy: SynergySettings = Field(default_factory=SynergySettings, exclude=True)
-    alignment: AlignmentSettings = Field(
-        default_factory=AlignmentSettings, exclude=True
+    roi: ROISettings | None = Field(default=None, exclude=True)
+    synergy: SynergySettings | None = Field(default=None, exclude=True)
+    alignment: AlignmentSettings | None = Field(
+        default=None, exclude=True
     )
-    auto_merge: AutoMergeSettings = Field(
-        default_factory=AutoMergeSettings, exclude=True
+    auto_merge: AutoMergeSettings | None = Field(
+        default=None, exclude=True
     )
-    actor_critic: ActorCriticSettings = Field(
-        default_factory=ActorCriticSettings, exclude=True
+    actor_critic: ActorCriticSettings | None = Field(
+        default=None, exclude=True
     )
-    policy: PolicySettings = Field(
-        default_factory=PolicySettings, exclude=True
+    policy: PolicySettings | None = Field(
+        default=None, exclude=True
     )
 
-    def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
+    def __init__(self, *, build_groups: bool = True, **data: Any) -> None:  # pragma: no cover - simple wiring
+        init_start = time.perf_counter()
         super().__init__(**data)
+        parse_ms = (time.perf_counter() - init_start) * 1000
         self._suppressed_dependencies: dict[str, list[str]] = {
             "python": [],
             "optional_python": [],
@@ -3510,6 +3514,23 @@ class SandboxSettings(BaseSettings):
                 "; ".join(parts),
             )
         self._apply_dependency_mode()
+        groups_ms = 0.0
+        if build_groups:
+            group_start = time.perf_counter()
+            self._build_grouped_settings()
+            groups_ms = (time.perf_counter() - group_start) * 1000
+        else:
+            logger.debug("SandboxSettings build_groups disabled; skipping grouped settings")
+        total_ms = (time.perf_counter() - init_start) * 1000
+        logger.info(
+            "SandboxSettings parsed %d base fields in %.1f ms (groups: %.1f ms, total: %.1f ms)",
+            len(self.model_fields),
+            parse_ms,
+            groups_ms,
+            total_ms,
+        )
+
+    def _build_grouped_settings(self) -> None:
         self.roi = ROISettings(
             threshold=self.roi_threshold,
             confidence=self.roi_confidence,
@@ -3672,6 +3693,50 @@ class SandboxSettings(BaseSettings):
             extra = "ignore"
 
 
+class SandboxThresholds(BaseSettings):
+    """Lightweight view over drift threshold settings."""
+
+    psi_threshold: float | None = Field(
+        None,
+        env="PSI_THRESHOLD",
+        description="Population Stability Index threshold for feature drift.",
+    )
+    ks_threshold: float | None = Field(
+        None,
+        env="KS_THRESHOLD",
+        description="Kolmogorov–Smirnov statistic threshold for feature drift.",
+    )
+    enable_truth_calibration: bool = Field(
+        True,
+        env="ENABLE_TRUTH_CALIBRATION",
+        description="Enable TruthAdapter calibration of ROI metrics.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_file=os.getenv("MENACE_ENV_FILE", ".env"),
+        extra="ignore",
+    )
+
+    if not PYDANTIC_V2:  # pragma: no cover - legacy pydantic config
+
+        class Config:  # pragma: no cover - fallback for pydantic<2
+            env_file = os.getenv("MENACE_ENV_FILE", ".env")
+            extra = "ignore"
+
+
+@lru_cache(maxsize=1)
+def get_threshold_settings() -> SandboxThresholds:
+    """Return cached drift threshold settings to avoid repeated parsing."""
+
+    start = time.perf_counter()
+    settings = SandboxThresholds()
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "Loaded SandboxThresholds in %.1f ms (cached for reuse)", duration_ms
+    )
+    return settings
+
+
 def load_sandbox_settings(path: str | None = None) -> SandboxSettings:
     """Load :class:`SandboxSettings` from optional YAML/JSON file."""
 
@@ -3698,11 +3763,13 @@ USING_SANDBOX_SETTINGS_FALLBACK = False
 
 __all__ = [
     "SandboxSettings",
+    "SandboxThresholds",
     "AlignmentRules",
     "ROISettings",
     "SynergySettings",
     "BotThresholds",
     "AlignmentSettings",
+    "get_threshold_settings",
     "load_sandbox_settings",
     "normalize_workflow_tests",
     "DEFAULT_SEVERITY_SCORE_MAP",

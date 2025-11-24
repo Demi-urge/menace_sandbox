@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Runtime loader for sandbox settings with optional dependency fallbacks."""
+"""Runtime loader for sandbox settings with optional dependency fallbacks.
+
+The loader now records lightweight timings during :class:`SandboxSettings`
+initialisation and exposes ``SandboxThresholds`` for drift-only consumers to
+avoid parsing the full settings surface during bootstrap.
+"""
 
 from importlib import import_module
 import logging
