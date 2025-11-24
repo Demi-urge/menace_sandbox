@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
+import logging
+import time
 
 try:
     from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
@@ -11,6 +13,9 @@ except ModuleNotFoundError:  # pragma: no cover - legacy flat import support
     from embeddable_db_mixin import EmbeddableDBMixin
 from code_database import PatchHistoryDB
 from dynamic_path_router import resolve_path
+
+
+logger = logging.getLogger(__name__)
 
 
 class PatchVectorizer(EmbeddableDBMixin):
@@ -29,17 +34,52 @@ class PatchVectorizer(EmbeddableDBMixin):
         backend: str = "annoy",
         embedding_version: int = 1,
     ) -> None:
+        init_start = time.perf_counter()
+        logger.debug(
+            "patch_vectorizer.init.start",
+            extra={
+                "path": str(path) if path is not None else None,
+                "index_path": str(index_path) if index_path is not None else None,
+                "backend": backend,
+                "embedding_version": embedding_version,
+            },
+        )
         db_path: Path | str | None
         if path is not None:
+            path_resolve_start = time.perf_counter()
             try:
                 db_path = Path(resolve_path(str(path)))
             except FileNotFoundError:
                 db_path = Path(path).resolve()
+            logger.info(
+                "patch_vectorizer.db_path.resolved path=%s duration=%.6fs",
+                db_path,
+                time.perf_counter() - path_resolve_start,
+                extra={
+                    "path": str(db_path),
+                    "duration_s": round(time.perf_counter() - path_resolve_start, 6),
+                },
+            )
         else:
             db_path = None
 
+        db_init_start = time.perf_counter()
         self.db = PatchHistoryDB(db_path)
+        logger.info(
+            "patch_vectorizer.db.init path=%s duration=%.6fs",
+            self.db.path,
+            time.perf_counter() - db_init_start,
+            extra={
+                "db_path": str(self.db.path),
+                "duration_s": round(time.perf_counter() - db_init_start, 6),
+            },
+        )
+        conn_start = time.perf_counter()
         self.conn = self.db.router.get_connection("patch_history")
+        logger.debug(
+            "patch_vectorizer.db.connection",
+            extra={"duration_s": round(time.perf_counter() - conn_start, 6)},
+        )
 
         try:
             base = Path(resolve_path(str(self.db.path)))
@@ -50,22 +90,51 @@ class PatchVectorizer(EmbeddableDBMixin):
             index_candidate = base.with_suffix(".patch.index")
         else:
             index_candidate = Path(index_path)
+        index_resolve_start = time.perf_counter()
         try:
             index_path = Path(resolve_path(str(index_candidate)))
         except FileNotFoundError:
             index_path = index_candidate
+        logger.info(
+            "patch_vectorizer.index.resolved path=%s duration=%.6fs",
+            index_path,
+            time.perf_counter() - index_resolve_start,
+            extra={
+                "index_path": str(index_path),
+                "duration_s": round(time.perf_counter() - index_resolve_start, 6),
+            },
+        )
 
         metadata_candidate = Path(index_path).with_suffix(".json")
+        metadata_resolve_start = time.perf_counter()
         try:
             metadata_path = Path(resolve_path(str(metadata_candidate)))
         except FileNotFoundError:
             metadata_path = metadata_candidate
+        logger.debug(
+            "patch_vectorizer.metadata.resolved path=%s duration=%.6fs",
+            metadata_path,
+            time.perf_counter() - metadata_resolve_start,
+            extra={
+                "metadata_path": str(metadata_path),
+                "duration_s": round(time.perf_counter() - metadata_resolve_start, 6),
+            },
+        )
         EmbeddableDBMixin.__init__(
             self,
             index_path=index_path,
             metadata_path=metadata_path,
             backend=backend,
             embedding_version=embedding_version,
+        )
+        logger.info(
+            "patch_vectorizer.init.complete duration=%.6fs index=%s",
+            time.perf_counter() - init_start,
+            index_path,
+            extra={
+                "duration_s": round(time.perf_counter() - init_start, 6),
+                "index_path": str(index_path),
+            },
         )
 
     # ------------------------------------------------------------------
