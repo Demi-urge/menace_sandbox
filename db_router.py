@@ -319,13 +319,11 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 _audit_db_mirror_enabled_default = _env_flag("DB_ROUTER_AUDIT_TO_DB")
-# When True, audit events from this router use the bootstrap-safe path in
-# :func:`audit.log_db_access` so reads favour the shortened timeout and skip
-# file writes when the audit log is contended.
-# Default to the bootstrap-safe audit path so startup never blocks on log locks.
-# Users can still opt-out by explicitly setting ``DB_ROUTER_BOOTSTRAP_AUDIT_SAFE``
-# to a falsey value when they want stricter logging semantics.
-_audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", True)
+# When True, audit events from this router are treated as bootstrap-safe,
+# allowing callers to bypass or soften audit logging for operations that run
+# during startup.  Enable explicitly via ``DB_ROUTER_BOOTSTRAP_AUDIT_SAFE``
+# when you need the lighter-touch behaviour.
+_audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", False)
 _load_table_overrides()
 
 
@@ -597,6 +595,9 @@ class LoggedCursor(sqlite3.Cursor):
         if should_log_db:
             kwargs["db_conn"] = self.connection
             kwargs["log_to_db"] = True
+        if bootstrap_safe:
+            return
+
         kwargs["bootstrap_safe"] = bootstrap_safe
         _log_db_access(action, table, row_count, self.menace_id, **kwargs)
 

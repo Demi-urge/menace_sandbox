@@ -432,63 +432,68 @@ class InfoDB(EmbeddableDBMixin):
         self.conn = self.router.get_connection("information")
         self.conn.row_factory = sqlite3.Row
         conn = self.conn
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS info(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model_id INTEGER,
-                contrarian_id INTEGER,
-                title TEXT,
-                summary TEXT,
-                tags TEXT,
-                category TEXT,
-                type TEXT,
-                content TEXT,
-                data_depth REAL,
-                source_url TEXT,
-                notes TEXT,
-                associated_bots TEXT,
-                associated_errors TEXT,
-                performance_data TEXT,
-                timestamp REAL,
-                energy INTEGER,
-                corroboration_count INTEGER
-            )
-            """
-        )
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(info)").fetchall()]
-        for name, stmt in {
-            "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
-            "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
-            "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
-            "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
-            "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
-            "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
-            "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
-            "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
-        }.items():
-            if name not in cols:
-                conn.execute(stmt)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
-        )
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
-        )
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
-        )
+        previous_bootstrap_safe = getattr(conn, "audit_bootstrap_safe", False)
+        conn.audit_bootstrap_safe = True
         try:
             conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
+                """
+                CREATE TABLE IF NOT EXISTS info(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_id INTEGER,
+                    contrarian_id INTEGER,
+                    title TEXT,
+                    summary TEXT,
+                    tags TEXT,
+                    category TEXT,
+                    type TEXT,
+                    content TEXT,
+                    data_depth REAL,
+                    source_url TEXT,
+                    notes TEXT,
+                    associated_bots TEXT,
+                    associated_errors TEXT,
+                    performance_data TEXT,
+                    timestamp REAL,
+                    energy INTEGER,
+                    corroboration_count INTEGER
+                )
+                """
+            )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(info)").fetchall()]
+            for name, stmt in {
+                "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
+                "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
+                "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
+                "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
+                "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
+                "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
+                "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
+                "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
+            }.items():
+                if name not in cols:
+                    conn.execute(stmt)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
             )
             conn.execute(
-                "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
+                "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
             )
-            self.has_fts = True
-        except sqlite3.OperationalError:
-            self.has_fts = False
-        conn.commit()
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
+            )
+            try:
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
+                )
+                self.has_fts = True
+            except sqlite3.OperationalError:
+                self.has_fts = False
+            conn.commit()
+        finally:
+            conn.audit_bootstrap_safe = previous_bootstrap_safe
         meta_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
             self,
