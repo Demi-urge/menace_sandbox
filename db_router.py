@@ -319,6 +319,9 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 _audit_db_mirror_enabled_default = _env_flag("DB_ROUTER_AUDIT_TO_DB")
+# When True, audit events from this router use the bootstrap-safe path in
+# :func:`audit.log_db_access` so reads favour the shortened timeout and skip
+# file writes when the audit log is contended.
 _audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", False)
 _load_table_overrides()
 
@@ -581,8 +584,6 @@ class LoggedCursor(sqlite3.Cursor):
     ) -> None:
         kwargs: dict[str, object] = {}
         bootstrap_safe = getattr(self.connection, "audit_bootstrap_safe", False)
-        if bootstrap_safe and action == "read":
-            return
         should_log_db = getattr(self.connection, "audit_log_to_db", False)
         if action == "read" and not getattr(
             self.connection, "audit_log_reads", False
