@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 import logging
+import os
 from types import ModuleType
 
 from dependency_health import (
@@ -14,14 +15,25 @@ from dependency_health import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_MODULE_CANDIDATES: tuple[tuple[str, str | None], ...] = (
-    ("menace_sandbox.sandbox_settings_pydantic", None),
-    ("sandbox_settings_pydantic", None),
-)
-
 _FALLBACK_MODULE_CANDIDATES: tuple[str, ...] = (
     "menace_sandbox.sandbox_settings_fallback",
     "sandbox_settings_fallback",
+)
+
+_light_imports_enabled = os.getenv("MENACE_LIGHT_IMPORTS") not in {
+    "",
+    "0",
+    "false",
+    "False",
+    None,
+}
+_MODULE_CANDIDATES: tuple[tuple[str, str | None], ...] = (
+    tuple((candidate, None) for candidate in _FALLBACK_MODULE_CANDIDATES)
+    if _light_imports_enabled
+    else (
+        ("menace_sandbox.sandbox_settings_pydantic", None),
+        ("sandbox_settings_pydantic", None),
+    )
 )
 
 _loaded: ModuleType | None = None
