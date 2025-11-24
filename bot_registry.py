@@ -1573,6 +1573,7 @@ class BotRegistry:
         *,
         persist: Optional[Path | str] = None,
         event_bus: Optional["UnifiedEventBus"] = None,
+        bootstrap: bool = False,
     ) -> None:
         self.graph = nx.DiGraph()
         self.modules: Dict[str, str] = {}
@@ -1580,6 +1581,7 @@ class BotRegistry:
         # Default to the shared event bus so all registries participate in the
         # same publish/subscribe channel unless explicitly overridden.
         self.event_bus = event_bus or _SHARED_EVENT_BUS
+        self.bootstrap = bootstrap
         self.heartbeats: Dict[str, float] = {}
         self.interactions_meta: List[Dict[str, object]] = []
         self._lock = threading.RLock()
@@ -1618,6 +1620,11 @@ class BotRegistry:
                 logger.debug(
                     "failed to log self-coding coverage", exc_info=True
                 )
+
+    def set_bootstrap_mode(self, bootstrap: bool) -> None:
+        """Control whether bootstrap-safe code paths should run."""
+
+        self.bootstrap = bootstrap
 
     def hot_swap_active(self) -> bool:
         """Return ``True`` when this registry is performing a hot swap import."""
@@ -2906,7 +2913,13 @@ class BotRegistry:
                     service_cls = _get_patch_provenance_service_cls()
                     if service_cls is None:
                         raise ImportError("patch_provenance unavailable")
-                    service = service_cls()
+                    service_kwargs = {}
+                    if hasattr(self, "bootstrap"):
+                        service_kwargs["bootstrap"] = bool(self.bootstrap)
+                    try:
+                        service = service_cls(**service_kwargs)
+                    except TypeError:
+                        service = service_cls()
                     rec = service.db.get(patch_id)
                     if rec and getattr(rec, "summary", None):
                         try:
@@ -3304,7 +3317,13 @@ class BotRegistry:
             service_cls = _get_patch_provenance_service_cls()
             if service_cls is None:
                 raise ImportError("patch_provenance unavailable")
-            service = service_cls()
+            service_kwargs = {}
+            if hasattr(self, "bootstrap"):
+                service_kwargs["bootstrap"] = bool(self.bootstrap)
+            try:
+                service = service_cls(**service_kwargs)
+            except TypeError:
+                service = service_cls()
             rec = service.db.get(patch_id)
             if rec and getattr(rec, "summary", None):
                 try:

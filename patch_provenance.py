@@ -18,8 +18,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
 class PatchProvenanceService:
     """High level interface for patch provenance and search helpers."""
 
-    def __init__(self, patch_db: PatchHistoryDB | None = None) -> None:
-        self.db = patch_db or PatchHistoryDB()
+    def __init__(
+        self, patch_db: PatchHistoryDB | None = None, *, bootstrap: bool = False
+    ) -> None:
+        self.db = patch_db or PatchHistoryDB(bootstrap=bootstrap)
         self.logger = logging.getLogger(__name__)
 
     # ------------------------------------------------------------------
