@@ -1636,6 +1636,7 @@ try:
     _self_coding_thresholds = load_internal("self_coding_thresholds")
 except ModuleNotFoundError as exc:
     fallback = _ThresholdModuleFallback(f"module not found: {exc}")
+    _self_coding_thresholds = fallback
     update_thresholds = fallback.update_thresholds
 
     def _load_config(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -1643,6 +1644,7 @@ except ModuleNotFoundError as exc:
 
 except Exception as exc:  # pragma: no cover - defensive degradation
     fallback = _ThresholdModuleFallback(f"import failure: {exc}")
+    _self_coding_thresholds = fallback
     update_thresholds = fallback.update_thresholds
 
     def _load_config(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -1651,6 +1653,14 @@ except Exception as exc:  # pragma: no cover - defensive degradation
 else:
     update_thresholds = _self_coding_thresholds.update_thresholds
     _load_config = _self_coding_thresholds._load_config
+
+_THRESHOLD_LOAD_LOCK = getattr(
+    sys.modules.get("menace_sandbox.self_coding_thresholds")
+    or sys.modules.get("self_coding_thresholds")
+    or _self_coding_thresholds,
+    "THRESHOLD_CONFIG_LOCK",
+    threading.RLock(),
+)
 
 _SELF_CODING_MANAGER_SENTINEL = object()
 _SELF_CODING_MANAGER_CLS: type[Any] | None | object = _SELF_CODING_MANAGER_SENTINEL
@@ -5127,42 +5137,54 @@ def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
             return True
         return _using_bootstrap_sentinel()
 
-    bootstrap_mode = _bootstrap_thresholds_active()
-    cached_bots: dict[str, Any] | None = None
-    if bootstrap_mode:
-        cached_loader = getattr(_self_coding_thresholds, "get_cached_config", None)
-        if callable(cached_loader):
-            try:
-                cached_data = cached_loader()
-                cached_bots = cached_data.get("bots", {}) if isinstance(cached_data, dict) else {}
-            except Exception:  # pragma: no cover - best effort
-                logger.debug(
-                    "failed to read cached threshold config during bootstrap", exc_info=True
-                )
+    with _THRESHOLD_LOAD_LOCK:
+        bootstrap_mode = _bootstrap_thresholds_active()
+        cached_bots: dict[str, Any] | None = None
+        if bootstrap_mode:
+            cached_loader = getattr(_self_coding_thresholds, "get_cached_config", None)
+            if callable(cached_loader):
+                try:
+                    cached_data = cached_loader()
+                    cached_bots = (
+                        cached_data.get("bots", {}) if isinstance(cached_data, dict) else {}
+                    )
+                    if cached_bots:
+                        telemetry = getattr(
+                            _self_coding_thresholds, "_CONFIG_CACHE_TELEMETRY", {}
+                        )
+                        logger.info(
+                            "using cached threshold bots during bootstrap for %s (hits=%s)",
+                            name,
+                            telemetry.get("hits"),
+                        )
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug(
+                        "failed to read cached threshold config during bootstrap", exc_info=True
+                    )
 
-    try:
-        if cached_bots is not None:
-            bots = cached_bots
-        elif bootstrap_mode:
-            logger.debug(
-                "bootstrap mode active; deferring threshold load for %s", name
-            )
+        try:
+            if cached_bots is not None:
+                bots = cached_bots
+            elif bootstrap_mode:
+                logger.debug(
+                    "bootstrap mode active; deferring threshold load for %s", name
+                )
+                bots = {}
+            else:
+                bots = (_load_config(None, bootstrap_safe=False) or {}).get("bots", {})
+        except Exception:  # pragma: no cover - best effort
             bots = {}
-        else:
-            bots = (_load_config(None, bootstrap_safe=False) or {}).get("bots", {})
-    except Exception:  # pragma: no cover - best effort
-        bots = {}
-    if name in bots:
-        return
-    try:  # pragma: no cover - best effort
-        update_thresholds(
-            name,
-            roi_drop=getattr(thresholds, "roi_drop", None),
-            error_increase=getattr(thresholds, "error_threshold", None),
-            test_failure_increase=getattr(thresholds, "test_failure_threshold", None),
-        )
-    except Exception:
-        logger.exception("failed to persist thresholds for %s", name)
+        if name in bots:
+            return
+        try:  # pragma: no cover - best effort
+            update_thresholds(
+                name,
+                roi_drop=getattr(thresholds, "roi_drop", None),
+                error_increase=getattr(thresholds, "error_threshold", None),
+                test_failure_increase=getattr(thresholds, "test_failure_threshold", None),
+            )
+        except Exception:
+            logger.exception("failed to persist thresholds for %s", name)
 
 
 def self_coding_managed(
