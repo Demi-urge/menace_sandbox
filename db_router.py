@@ -33,7 +33,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Set, Iterable, Mapping, Any, Callable
+from typing import Set, Iterable, Mapping, Any, Callable, Iterator
 from dynamic_path_router import get_project_root, resolve_path
 
 
@@ -49,6 +49,15 @@ __all__ = [
     "bootstrap_audit_buffering",
     "get_bootstrap_audit_metrics",
 ]
+
+# Short schema inspection timeout used during bootstrap to avoid long waits.
+_SCHEMA_TIMEOUT_MS = None
+try:
+    _schema_timeout_env = os.getenv("DB_ROUTER_SCHEMA_TIMEOUT_MS")
+    if _schema_timeout_env:
+        _SCHEMA_TIMEOUT_MS = max(0, int(float(_schema_timeout_env)))
+except Exception:  # pragma: no cover - defensive
+    _SCHEMA_TIMEOUT_MS = None
 
 
 # Tables stored in the shared database.  These tables are visible to every
@@ -987,6 +996,42 @@ class DBRouter:
             _record_audit(entry)
 
             return conn
+
+    # ------------------------------------------------------------------
+    @contextlib.contextmanager
+    def schema_connection(self, table_name: str) -> Iterator[sqlite3.Connection]:
+        """Return a connection tuned for schema inspection.
+
+        ``PRAGMA read_uncommitted`` is enabled to avoid blocking writers and the
+        busy timeout is temporarily reduced (configurable via
+        ``DB_ROUTER_SCHEMA_TIMEOUT_MS``) to prevent long waits during bootstrap.
+        The original timeout is restored once the caller exits the context.
+        """
+
+        conn = self.get_connection(table_name, operation="schema")
+        previous_timeout: int | None = None
+        try:
+            if _SCHEMA_TIMEOUT_MS is not None:
+                try:
+                    previous_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                    conn.execute(f"PRAGMA busy_timeout={_SCHEMA_TIMEOUT_MS}")
+                except Exception:  # pragma: no cover - safety during bootstrap
+                    previous_timeout = None
+            read_uncommitted = False
+            try:
+                conn.execute("PRAGMA read_uncommitted=1")
+                read_uncommitted = True
+            except Exception:  # pragma: no cover - optional optimisation
+                read_uncommitted = False
+            yield conn
+        finally:
+            try:
+                if read_uncommitted:
+                    conn.execute("PRAGMA read_uncommitted=0")
+                if previous_timeout is not None:
+                    conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
 
     # ------------------------------------------------------------------
     def execute_and_log(
