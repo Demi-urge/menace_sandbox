@@ -5,6 +5,8 @@ import threading
 import time
 from pathlib import Path
 
+import audit
+
 from fcntl_compat import LOCK_EX, LOCK_NB, LOCK_UN, flock
 
 from audit import log_db_access
@@ -92,5 +94,37 @@ def test_log_db_access_can_disable_file_logging(tmp_path: Path, monkeypatch) -> 
 
     log_db_access("read", "disabled", 0, "alpha", log_path=log_file)
 
+    assert not log_file.exists()
+    assert not Path(f"{log_file}.state").exists()
+
+
+def test_log_db_access_bootstrap_avoids_state_file_on_windows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    log_file = tmp_path / "unwritable" / "slow.jsonl"
+
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def slow_open(*args: object, **kwargs: object) -> int:
+        calls.append((args, kwargs))
+        time.sleep(0.2)
+        raise AssertionError("os.open should not be called during bootstrap-safe logging")
+
+    monkeypatch.setattr(audit.os, "open", slow_open)
+    monkeypatch.setattr(audit.os, "name", "nt")
+
+    start = time.perf_counter()
+    log_db_access(
+        "read",
+        "windows_bootstrap",
+        0,
+        "omega",
+        log_path=log_file,
+        bootstrap_safe=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert calls == []
+    assert elapsed < 0.1
     assert not log_file.exists()
     assert not Path(f"{log_file}.state").exists()

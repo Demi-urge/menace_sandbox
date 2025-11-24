@@ -162,11 +162,11 @@ def _open_state_file(path: Path, *, bootstrap_safe: bool) -> io.BufferedRandom |
     state_path = Path(f"{path}.state")
 
     if bootstrap_safe:
-        # Avoid creating new directories/files during bootstrap, which can block on
-        # networked filesystems or restricted environments.  If the audit artefacts
-        # are not already present, skip file logging instead of risking stalls.
-        if not path.parent.exists() or not state_path.exists():
-            return None
+        # Avoid touching the filesystem during bootstrap, which can block on
+        # networked paths or restricted environments. When bootstrap_safe is set
+        # we short-circuit to a no-op to ensure the caller can proceed without
+        # waiting on state-file creation or access.
+        return None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
