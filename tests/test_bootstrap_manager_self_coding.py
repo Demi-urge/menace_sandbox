@@ -4,6 +4,7 @@ import contextvars
 import importlib
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from types import ModuleType, SimpleNamespace
@@ -237,6 +238,48 @@ def prebuilt_pipeline_env(
         promoter=promoter,
         helper_names=("PrebuiltComms", "PrebuiltNestedHelper"),
     )
+
+
+def test_prepare_pipeline_bootstrap_skips_threshold_load(
+    stub_bootstrap_env: dict[str, ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    builder = SimpleNamespace(label="bootstrap-thresholds")
+
+    def _fail_load(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise AssertionError("threshold config should be skipped during bootstrap")
+
+    monkeypatch.setattr(cbi, "_load_config", _fail_load)
+
+    class StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    start = time.perf_counter()
+    pipeline, _promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=StubPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_safe=True,
+    )
+    duration = time.perf_counter() - start
+
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert duration < 1.0
 
 
 @pytest.fixture

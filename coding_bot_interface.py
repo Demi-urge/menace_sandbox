@@ -5121,8 +5121,35 @@ def _resolve_helpers(
 def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
     """Persist default threshold config for *name* when missing."""
 
+    def _bootstrap_thresholds_active() -> bool:
+        context = _current_bootstrap_context()
+        if context is not None and getattr(context, "bootstrap_safe", False):
+            return True
+        return _using_bootstrap_sentinel()
+
+    bootstrap_mode = _bootstrap_thresholds_active()
+    cached_bots: dict[str, Any] | None = None
+    if bootstrap_mode:
+        cached_loader = getattr(_self_coding_thresholds, "get_cached_config", None)
+        if callable(cached_loader):
+            try:
+                cached_data = cached_loader()
+                cached_bots = cached_data.get("bots", {}) if isinstance(cached_data, dict) else {}
+            except Exception:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to read cached threshold config during bootstrap", exc_info=True
+                )
+
     try:
-        bots = (_load_config(None) or {}).get("bots", {})
+        if cached_bots is not None:
+            bots = cached_bots
+        elif bootstrap_mode:
+            logger.debug(
+                "bootstrap mode active; deferring threshold load for %s", name
+            )
+            bots = {}
+        else:
+            bots = (_load_config(None, bootstrap_safe=False) or {}).get("bots", {})
     except Exception:  # pragma: no cover - best effort
         bots = {}
     if name in bots:

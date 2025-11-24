@@ -56,9 +56,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, cast
 
+import copy
 import logging
 import os
 import shlex
+import threading
+import time
 
 from .yaml_fallback import get_yaml
 from .safe_repr import basic_repr
@@ -126,8 +129,101 @@ class SelfCodingThresholds:
 
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
 
+try:
+    _CONFIG_IO_TIMEOUT_S = float(os.getenv("SELF_CODING_CONFIG_IO_TIMEOUT_S", "0.5"))
+except Exception:
+    _CONFIG_IO_TIMEOUT_S = 0.5
+
+_CONFIG_CACHE: dict[Path, Dict[str, dict]] = {}
+_CONFIG_CACHE_LOCK = threading.Lock()
+_LAST_CACHE_KEY: Path | None = None
+
 
 _FORCED_FALLBACK_PATHS: set[Path] = set()
+
+
+def _cache_config(cache_key: Path, data: Dict[str, dict]) -> None:
+    snapshot = copy.deepcopy(data)
+    global _LAST_CACHE_KEY
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE[cache_key] = snapshot
+        _LAST_CACHE_KEY = cache_key
+
+
+def _get_cached_config(cache_key: Path | None = None) -> Dict[str, dict] | None:
+    key = cache_key
+    if key is None:
+        with _CONFIG_CACHE_LOCK:
+            key = _LAST_CACHE_KEY
+    if key is None:
+        return None
+    with _CONFIG_CACHE_LOCK:
+        cached = _CONFIG_CACHE.get(key)
+    return copy.deepcopy(cached) if cached is not None else None
+
+
+def get_cached_config(path: Path | None = None) -> Dict[str, dict]:
+    """Return the most recent cached configuration if available."""
+
+    cache_key = path or _LAST_CACHE_KEY
+    if isinstance(cache_key, Path):
+        cache_key = _safe_resolve_with_timeout(cache_key, _CONFIG_IO_TIMEOUT_S)
+    cached = _get_cached_config(cache_key if isinstance(cache_key, Path) else None)
+    return cached or {}
+
+
+def _safe_resolve_with_timeout(cfg_path: Path, timeout: float) -> Path:
+    result: list[Path] = []
+    error: list[BaseException] = []
+
+    def _do_resolve() -> None:
+        try:
+            result.append(cfg_path.resolve(strict=False))
+        except BaseException as exc:  # pragma: no cover - defensive guard
+            error.append(exc)
+
+    thread = threading.Thread(target=_do_resolve, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if result:
+        return result[0]
+    if error:
+        logger.debug(
+            "Path.resolve failed for %s; using unresolved path", cfg_path,
+            exc_info=error[0] if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        return cfg_path
+
+    logger.warning(
+        "Path.resolve for %s exceeded %.2fs; using unresolved path", cfg_path, timeout
+    )
+    return cfg_path
+
+
+def _read_text_with_timeout(cfg_path: Path, timeout: float) -> str:
+    result: list[str] = []
+    error: list[BaseException] = []
+
+    def _do_read() -> None:
+        try:
+            result.append(cfg_path.read_text(encoding="utf-8"))
+        except BaseException as exc:  # pragma: no cover - defensive guard
+            error.append(exc)
+
+    start = time.perf_counter()
+    thread = threading.Thread(target=_do_read, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if result:
+        return result[0]
+    if error:
+        raise error[0]
+
+    duration = time.perf_counter() - start
+    logger.warning(
+        "read_text for %s exceeded %.2fs (elapsed %.2fs)", cfg_path, timeout, duration
+    )
+    raise TimeoutError(f"read_text timeout for {cfg_path} after {timeout}s")
 
 
 def _normalise_indentation(raw: str) -> str:
@@ -283,16 +379,34 @@ def _render_threshold_yaml(data: Dict[str, Any], *, path: Path, bot: str) -> str
     return None
 
 
-def _load_config(path: Path | None = None) -> Dict[str, dict]:
+def _load_config(
+    path: Path | None = None, *, bootstrap_safe: bool = False, timeout_s: float | None = None
+) -> Dict[str, dict]:
     cfg_path = path or _CONFIG_PATH
+    timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
+    cache_key = _safe_resolve_with_timeout(cfg_path, timeout)
+
+    cached = _get_cached_config(cache_key)
+    if bootstrap_safe and cached is not None:
+        return cached
+
     try:
-        cache_key = cfg_path.resolve(strict=False)
-    except Exception:  # pragma: no cover - resolution best effort only
-        cache_key = cfg_path
-    try:
-        raw = cfg_path.read_text(encoding="utf-8")
+        raw = _read_text_with_timeout(cfg_path, timeout)
+    except TimeoutError:
+        logger.warning(
+            "timed out reading %s after %.2fs; using cached thresholds when available",  # noqa: E501
+            cfg_path,
+            timeout,
+        )
+        return cached or {}
     except FileNotFoundError:
-        return {}
+        return cached or {}
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.debug(
+            "read failed for %s; falling back to cached thresholds", cfg_path,
+            exc_info=exc if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+        return cached or {}
     if not raw.strip():
         return {}
 
@@ -312,7 +426,9 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
             try:
                 data = current_loader.safe_load(variant) or {}
                 cleaned = _decouple_aliases(data)
-                return cleaned if isinstance(cleaned, dict) else {}
+                cleaned_map = cleaned if isinstance(cleaned, dict) else {}
+                _cache_config(cache_key, cleaned_map)
+                return cleaned_map
             except RecursionError as exc:
                 logger.error(
                     "detected recursive YAML structure in %s while %s; retrying with fallback parser",  # noqa: E501
@@ -348,7 +464,9 @@ def _load_config(path: Path | None = None) -> Dict[str, dict]:
     try:
         data = _FALLBACK_YAML.safe_load(sanitised) or {}
         cleaned = _decouple_aliases(data)
-        return cleaned if isinstance(cleaned, dict) else {}
+        cleaned_map = cleaned if isinstance(cleaned, dict) else {}
+        _cache_config(cache_key, cleaned_map)
+        return cleaned_map
     except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
         logger.warning(
             "fallback parser failed to load %s; ignoring corrupt configuration",  # noqa: E501
