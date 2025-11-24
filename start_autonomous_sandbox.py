@@ -76,6 +76,16 @@ LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
 
 
+def _normalize_log_level(value: str | int | None) -> int:
+    """Return a numeric logging level from user-provided *value*."""
+
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return getattr(logging, value.upper(), logging.INFO)
+    return logging.INFO
+
+
 def handle_sigint(sig: int, frame: Any) -> None:
     print("[META] Caught Ctrl+C — requesting safe shutdown")
     SHUTDOWN_EVENT.set()
@@ -1159,11 +1169,17 @@ def main(argv: list[str] | None = None) -> None:
         )
         settings.recursive_orphan_scan = bool(args.recursive_orphan_scan)
 
+    log_level = _normalize_log_level(args.log_level)
     root_logger = logging.getLogger()
     if not root_logger.handlers:
-        setup_logging(level=args.log_level)
+        setup_logging(level=log_level)
     else:
-        root_logger.setLevel(getattr(logging, str(args.log_level).upper(), logging.INFO))
+        root_logger.setLevel(log_level)
+        for handler in list(root_logger.handlers):
+            handler.setLevel(log_level)
+
+    bootstrap_logger = logging.getLogger("sandbox.preseed_bootstrap")
+    bootstrap_logger.setLevel(log_level)
     cid = f"sas-{uuid.uuid4()}"
     set_correlation_id(cid)
     logger = get_logger(__name__)
