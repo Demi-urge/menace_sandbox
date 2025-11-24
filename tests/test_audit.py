@@ -84,3 +84,13 @@ def test_log_db_access_bootstrap_skips_on_contention(tmp_path: Path, caplog) -> 
     if log_file.exists():
         assert log_file.read_text() == ""
     assert any("skipping audit log write" in message for message in caplog.messages)
+
+
+def test_log_db_access_can_disable_file_logging(tmp_path: Path, monkeypatch) -> None:
+    log_file = tmp_path / "disabled.jsonl"
+    monkeypatch.setenv("DB_AUDIT_DISABLE_FILE", "1")
+
+    log_db_access("read", "disabled", 0, "alpha", log_path=log_file)
+
+    assert not log_file.exists()
+    assert not Path(f"{log_file}.state").exists()

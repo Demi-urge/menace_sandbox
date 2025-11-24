@@ -18,6 +18,10 @@ insert the entry into the local SQLite `db_access_audit` table via `DBRouter`.
 The `log_to_db` flag effectively switches between file-only and combined
 file/database logging.
 
+Set `DB_AUDIT_DISABLE_FILE=1` to skip writing the JSONL log entirely. This is
+useful in environments where the default log location is read-only or slow to
+access; database logging remains available when `log_to_db=True`.
+
 ## Analysis
 
 Collected logs can be aggregated for metrics or anomaly detection. The
