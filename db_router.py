@@ -322,7 +322,10 @@ _audit_db_mirror_enabled_default = _env_flag("DB_ROUTER_AUDIT_TO_DB")
 # When True, audit events from this router use the bootstrap-safe path in
 # :func:`audit.log_db_access` so reads favour the shortened timeout and skip
 # file writes when the audit log is contended.
-_audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", False)
+# Default to the bootstrap-safe audit path so startup never blocks on log locks.
+# Users can still opt-out by explicitly setting ``DB_ROUTER_BOOTSTRAP_AUDIT_SAFE``
+# to a falsey value when they want stricter logging semantics.
+_audit_bootstrap_safe_default = _env_flag("DB_ROUTER_BOOTSTRAP_AUDIT_SAFE", True)
 _load_table_overrides()
 
 
