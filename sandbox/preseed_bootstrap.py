@@ -81,12 +81,18 @@ def _run_with_timeout(
     thread.start()
     thread.join(timeout)
 
+    last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
+
     if thread.is_alive():
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s)",
             description,
             timeout,
-            BOOTSTRAP_PROGRESS.get("last_step", "unknown"),
+            last_step,
+        )
+        print(
+            f"[bootstrap-timeout] {description} timed out after {timeout:.1f}s (last_step={last_step})",
+            flush=True,
         )
         if abort_on_timeout:
             raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
@@ -96,6 +102,10 @@ def _run_with_timeout(
 
     if "exc" in result:
         LOGGER.exception("%s failed", description, exc_info=result["exc"])
+        print(
+            f"[bootstrap-error] {description} failed after {timeout:.1f}s (last_step={last_step})",
+            flush=True,
+        )
         raise result["exc"]
 
     return result.get("value")
