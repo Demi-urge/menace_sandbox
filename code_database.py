@@ -1261,8 +1261,22 @@ class PatchHistoryDB:
         bootstrap: bool = False,
     ) -> None:
         """Initialise the patch history database."""
+        init_start = time.perf_counter()
+        logger.debug(
+            "patch_history_db.init.start",
+            extra={
+                "path_param": str(path) if path is not None else None,
+                "bootstrap": bootstrap,
+                "router_supplied": router is not None,
+            },
+        )
         self.path = Path(
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
+        )
+        logger.info(
+            "patch_history_db.path.resolved path=%s",
+            self.path,
+            extra={"path": str(self.path)},
         )
         self.code_db = code_db
         self._lock = threading.Lock()
@@ -1271,12 +1285,24 @@ class PatchHistoryDB:
         self._vec_db: VectorMetricsDB | None = None
         self._vec_db_enabled = not bootstrap
         if self._vec_db_enabled:
+            vec_db_start = time.perf_counter()
             self._vec_db = self._init_vec_db()
+            logger.debug(
+                "patch_history_db.vec_db.init duration=%.6fs",
+                time.perf_counter() - vec_db_start,
+                extra={"duration_s": round(time.perf_counter() - vec_db_start, 6)},
+            )
         # Always initialise a router for the provided path unless an explicit
         # router instance is supplied.  This ensures tests using temporary
         # databases do not share state via ``GLOBAL_ROUTER``.
+        router_start = time.perf_counter()
         self.router = router or init_db_router(
             "patch_history", str(self.path), str(self.path)
+        )
+        logger.info(
+            "patch_history_db.router.ready duration=%.6fs",
+            time.perf_counter() - router_start,
+            extra={"duration_s": round(time.perf_counter() - router_start, 6)},
         )
         conn = self.router.get_connection("patch_history")
         conn.execute(
@@ -1518,6 +1544,11 @@ class PatchHistoryDB:
         # expose connection for diagnostics and tests
         self.conn = self.router.get_connection("patch_history")
         self.conn.execute("PRAGMA foreign_keys = ON")
+        logger.debug(
+            "patch_history_db.init.complete duration=%.6fs",
+            time.perf_counter() - init_start,
+            extra={"duration_s": round(time.perf_counter() - init_start, 6)},
+        )
 
     def _init_vec_db(self) -> VectorMetricsDB | None:
         if VectorMetricsDB is None:

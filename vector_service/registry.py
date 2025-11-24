@@ -13,6 +13,11 @@ from typing import Callable, Dict, Tuple, Optional
 import importlib
 import pkgutil
 import inspect
+import logging
+import time
+
+
+logger = logging.getLogger(__name__)
 
 # Registry mapping kind -> (vectoriser module, vectoriser class,
 #                           db module, db class)
@@ -36,14 +41,51 @@ def load_handlers() -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
     handlers: Dict[str, Callable[[Dict[str, any]], list[float]]] = {}
+    start = time.perf_counter()
+    logger.debug(
+        "vector_registry.load_handlers.start",
+        extra={"registered": len(_VECTOR_REGISTRY)},
+    )
     for kind, (mod_name, cls_name, _, _) in _VECTOR_REGISTRY.items():
+        handler_start = time.perf_counter()
+        logger.debug(
+            "vector_registry.handler.init",
+            extra={"kind": kind, "module": mod_name, "class": cls_name},
+        )
         try:
             mod = importlib.import_module(mod_name)
             cls = getattr(mod, cls_name)
             inst = cls()
             handlers[kind] = inst.transform
+            logger.info(
+                "vector_registry.handler.loaded kind=%s duration=%.6fs",
+                kind,
+                time.perf_counter() - handler_start,
+                extra={
+                    "kind": kind,
+                    "duration_s": round(time.perf_counter() - handler_start, 6),
+                },
+            )
         except Exception:  # pragma: no cover - best effort to skip bad entries
+            logger.exception(
+                "vector_registry.handler.error kind=%s duration=%.6fs",
+                kind,
+                time.perf_counter() - handler_start,
+                extra={
+                    "kind": kind,
+                    "duration_s": round(time.perf_counter() - handler_start, 6),
+                },
+            )
             continue
+    logger.info(
+        "vector_registry.load_handlers.complete count=%s duration=%.6fs",
+        len(handlers),
+        time.perf_counter() - start,
+        extra={
+            "handler_count": len(handlers),
+            "duration_s": round(time.perf_counter() - start, 6),
+        },
+    )
     return handlers
 
 

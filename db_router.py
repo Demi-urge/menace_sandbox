@@ -1248,17 +1248,37 @@ def init_db_router(
 
     global GLOBAL_ROUTER
 
+    start = time.perf_counter()
+    logger.debug(
+        "db_router.init.start",
+        extra={
+            "menace_id": menace_id,
+            "local_db_path": local_db_path,
+            "shared_db_path": shared_db_path,
+            "bootstrap_safe": bootstrap_safe,
+        },
+    )
     project_root = get_project_root()
 
     if local_db_path == ":memory:":
         local_path_str = ":memory:"
     elif local_db_path is None:
+        local_resolve_start = time.perf_counter()
         try:
             local_path = resolve_path(f"menace_{menace_id}_local.db")
         except FileNotFoundError:
             local_path = (project_root / f"menace_{menace_id}_local.db").resolve()
         else:
             local_path = local_path.resolve()
+        logger.info(
+            "db_router.path.local path=%s duration=%.6fs",
+            local_path,
+            time.perf_counter() - local_resolve_start,
+            extra={
+                "path": str(local_path),
+                "duration_s": round(time.perf_counter() - local_resolve_start, 6),
+            },
+        )
         local_path_str = str(local_path)
     else:
         local_path = Path(local_db_path).expanduser().resolve()
@@ -1267,12 +1287,22 @@ def init_db_router(
     if shared_db_path == ":memory:":
         shared_path_str = ":memory:"
     elif shared_db_path is None:
+        shared_resolve_start = time.perf_counter()
         try:
             shared_path = resolve_path("shared/global.db")
         except FileNotFoundError:
             shared_path = (project_root / "shared" / "global.db").resolve()
         else:
             shared_path = shared_path.resolve()
+        logger.info(
+            "db_router.path.shared path=%s duration=%.6fs",
+            shared_path,
+            time.perf_counter() - shared_resolve_start,
+            extra={
+                "path": str(shared_path),
+                "duration_s": round(time.perf_counter() - shared_resolve_start, 6),
+            },
+        )
         shared_path_str = str(shared_path)
     else:
         shared_path = Path(shared_db_path).expanduser().resolve()
@@ -1288,5 +1318,16 @@ def init_db_router(
         local_path_str,
         shared_path_str,
         audit_bootstrap_safe=bootstrap_safe,
+    )
+    logger.info(
+        "db_router.init.complete duration=%.6fs local=%s shared=%s",
+        time.perf_counter() - start,
+        local_path_str,
+        shared_path_str,
+        extra={
+            "duration_s": round(time.perf_counter() - start, 6),
+            "local_path": local_path_str,
+            "shared_path": shared_path_str,
+        },
     )
     return GLOBAL_ROUTER
