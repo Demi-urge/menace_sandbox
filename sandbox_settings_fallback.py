@@ -7,6 +7,7 @@ from functools import lru_cache
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Mapping, Union, Collection, get_args, get_origin
 
@@ -226,6 +227,29 @@ def _coerce_value(value: Any, target_type: Any) -> Any:
     return value
 
 
+def _load_threshold_env_overrides() -> dict[str, Any]:
+    """Parse environment overrides for drift threshold specific fields."""
+
+    overrides: dict[str, Any] = {}
+    for key in ("psi_threshold", "ks_threshold", "enable_truth_calibration"):
+        env_names = _SANDBOX_ENV_MAP.get(key, [])
+        candidates = env_names if isinstance(env_names, list) else [env_names]
+        for env_name in candidates:
+            if not env_name:
+                continue
+            raw = os.getenv(env_name)
+            if raw is None:
+                continue
+            default = _SANDBOX_DEFAULTS.get(key)
+            try:
+                coerced = _coerce_value(raw, type(default) if default is not None else Any)
+            except Exception:
+                continue
+            overrides[key] = coerced
+            break
+    return overrides
+
+
 class _BaseModel:
     """Dataclass-compatible base providing ``model_dump`` helpers."""
 
@@ -266,10 +290,12 @@ class SandboxSettings:
 
     __slots__ = ("_data", "_dependency_adjustments", "dependency_mode")
 
-    def __init__(self, **overrides: Any) -> None:
+    def __init__(self, *, build_groups: bool = True, **overrides: Any) -> None:
+        init_start = time.perf_counter()
         data = _deep_copy(_SANDBOX_DEFAULTS)
         data.update(self._load_env_overrides())
         data.update(overrides)
+        parse_ms = (time.perf_counter() - init_start) * 1000
         if "stack_languages" in data:
             try:
                 languages = normalise_stack_languages(data["stack_languages"])
@@ -296,7 +322,20 @@ class SandboxSettings:
             )
         self.dependency_mode = "strict"
         self._apply_dependency_mode()
-        self._initialise_grouped_models()
+        groups_ms = 0.0
+        if build_groups:
+            group_start = time.perf_counter()
+            self._initialise_grouped_models()
+            groups_ms = (time.perf_counter() - group_start) * 1000
+        else:
+            logger.debug("SandboxSettings build_groups disabled; skipping grouped settings")
+        total_ms = (time.perf_counter() - init_start) * 1000
+        logger.info(
+            "SandboxSettings fallback parsed base settings in %.1f ms (groups: %.1f ms, total: %.1f ms)",
+            parse_ms,
+            groups_ms,
+            total_ms,
+        )
 
     def _apply_dependency_mode(self) -> None:
         mode = resolve_dependency_mode(self._data.get("dependency_mode"))
@@ -517,13 +556,44 @@ def load_sandbox_settings(path: str | None = None) -> SandboxSettings:
     return SandboxSettings(**data)
 
 
+class SandboxThresholds:
+    """Lightweight holder for drift threshold configuration."""
+
+    __slots__ = ("psi_threshold", "ks_threshold", "enable_truth_calibration")
+
+    def __init__(self, **overrides: Any) -> None:
+        start = time.perf_counter()
+        data = _deep_copy(_SANDBOX_DEFAULTS)
+        data.update(_load_threshold_env_overrides())
+        data.update(overrides)
+        self.psi_threshold = data.get("psi_threshold")
+        self.ks_threshold = data.get("ks_threshold")
+        self.enable_truth_calibration = bool(
+            data.get("enable_truth_calibration", True)
+        )
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "Loaded SandboxThresholds fallback in %.1f ms (cached for reuse)",
+            duration_ms,
+        )
+
+
+@lru_cache(maxsize=1)
+def get_threshold_settings() -> SandboxThresholds:
+    """Return cached drift thresholds without constructing grouped models."""
+
+    return SandboxThresholds()
+
+
 __all__ = [
     "SandboxSettings",
+    "SandboxThresholds",
     "AlignmentRules",
     "ROISettings",
     "SynergySettings",
     "BotThresholds",
     "AlignmentSettings",
+    "get_threshold_settings",
     "load_sandbox_settings",
     "normalize_workflow_tests",
     "DEFAULT_SEVERITY_SCORE_MAP",
