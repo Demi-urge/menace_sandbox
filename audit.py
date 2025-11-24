@@ -160,6 +160,13 @@ def _open_state_file(path: Path, *, bootstrap_safe: bool) -> io.BufferedRandom |
     """Return a handle to the audit state file or ``None`` when unavailable."""
 
     state_path = Path(f"{path}.state")
+
+    if bootstrap_safe:
+        # Avoid creating new directories/files during bootstrap, which can block on
+        # networked filesystems or restricted environments.  If the audit artefacts
+        # are not already present, skip file logging instead of risking stalls.
+        if not path.parent.exists() or not state_path.exists():
+            return None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -174,8 +181,18 @@ def _open_state_file(path: Path, *, bootstrap_safe: bool) -> io.BufferedRandom |
         )
         return None
 
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     try:
-        return state_path.open("a+b")
+        fd = os.open(state_path, flags, 0o600)
+        try:
+            return io.BufferedRandom(os.fdopen(fd, "r+b", buffering=0))
+        except Exception:
+            os.close(fd)
+            raise
     except OSError:
         _module_logger.warning(
             "audit state file unavailable for %s; skipping audit write", state_path,
@@ -194,6 +211,14 @@ def _get_logger(path: Path, *, bootstrap_safe: bool = False) -> logging.Logger:
             lock_timeout = (
                 BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
             )
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                _module_logger.warning(
+                    "audit log directory unavailable for %s: %s", path.parent, exc
+                )
+                _loggers[key] = _module_logger
+                return _module_logger
             handler = _LockedRotatingFileHandler(
                 path,
                 maxBytes=MAX_BYTES,
