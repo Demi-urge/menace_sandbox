@@ -402,6 +402,17 @@ else:
         def safe_super_init(
             cls: type, instance: object, *args: object, **kwargs: object
         ) -> None:
+            if not isinstance(instance, cls):
+                if args or kwargs:
+                    _fallback_logger.debug(
+                        "[vector-service] Skipping super() for %s because %s is not a subtype; dropping args=%s kwargs=%s",
+                        cls.__name__,
+                        type(instance).__name__,
+                        args,
+                        kwargs,
+                    )
+                return
+
             try:
                 mro = type(instance).__mro__
                 next_cls = mro[mro.index(cls) + 1]
