@@ -11,7 +11,39 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, List
 
-from menace_sandbox.gpt_memory import GPTMemoryManager, INSIGHT, _summarise_text
+import importlib.util
+import sys
+from pathlib import Path
+
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
+
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+
+_gpt_memory = load_internal("gpt_memory")
+GPTMemoryManager = _gpt_memory.GPTMemoryManager
+INSIGHT = _gpt_memory.INSIGHT
+_summarise_text = _gpt_memory._summarise_text
+
 from governed_retrieval import govern_retrieval, redact
 
 
