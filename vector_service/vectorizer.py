@@ -12,6 +12,7 @@ using a configurable :class:`~vector_service.vector_store.VectorStore`.
 # ruff: noqa: T201 - module level debug prints are routed via logging
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Dict, List
 
 from pathlib import Path
@@ -21,6 +22,7 @@ import os
 import socket
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -77,6 +79,13 @@ def _trace(event: str, **extra: Any) -> None:
     if flag and flag.lower() not in {"0", "false", "no", "off"}:
         payload = {"event": event, **extra}
         logger.log(logging.INFO, "vector-service: %s", event, extra=payload)
+
+
+def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, Any]:
+    payload = {"ts": datetime.utcnow().isoformat(), **extra}
+    if start is not None:
+        payload["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 3)
+    return payload
 
 
 def _remote_timeout() -> float | None:
@@ -149,8 +158,20 @@ class SharedVectorService:
     def __post_init__(self) -> None:
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
-        _trace("shared_vector_service.init.start")
+        init_start = time.perf_counter()
+        logger.info(
+            "shared_vector_service.init.start",
+            extra=_timestamp_payload(init_start),
+        )
+        handler_start = time.perf_counter()
         self._handlers = load_handlers()
+        logger.info(
+            "shared_vector_service.handlers.loaded",
+            extra=_timestamp_payload(
+                handler_start,
+                handler_count=len(self._handlers),
+            ),
+        )
         _trace(
             "shared_vector_service.handlers.loaded",
             handler_count=len(self._handlers),
@@ -158,14 +179,30 @@ class SharedVectorService:
         )
         if self.vector_store is None:
             _trace("shared_vector_service.vector_store.fetch")
+            store_start = time.perf_counter()
             try:
                 self.vector_store = get_default_vector_store()
             except Exception as exc:  # pragma: no cover - defensive logging
                 _trace("shared_vector_service.vector_store.error", error=str(exc))
                 raise
+            logger.info(
+                "shared_vector_service.vector_store.resolved",
+                extra=_timestamp_payload(
+                    store_start,
+                    resolved=bool(self.vector_store),
+                ),
+            )
         _trace(
             "shared_vector_service.init.complete",
             has_vector_store=self.vector_store is not None,
+        )
+        logger.info(
+            "shared_vector_service.init.complete",
+            extra=_timestamp_payload(
+                init_start,
+                has_vector_store=self.vector_store is not None,
+                handler_count=len(self._handlers),
+            ),
         )
 
     def _ensure_text_embedder(self) -> SentenceTransformer | None:
