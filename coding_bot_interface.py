@@ -3495,6 +3495,20 @@ def prepare_pipeline_for_bootstrap(
         lowered = message.lower()
         return "manager" in lowered and "unexpected" in lowered
 
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    slow_hook_threshold = 0.05
+
+    def _log_slow_hook(label: str, start_time: float, **payload: Any) -> None:
+        if not debug_enabled:
+            return
+        elapsed = time.perf_counter() - start_time
+        if elapsed < slow_hook_threshold:
+            return
+        details = ", ".join(
+            f"{key}={value}" for key, value in payload.items() if value is not None
+        )
+        logger.debug("bootstrap %s took %.3fs%s", label, elapsed, f" ({details})" if details else "")
+
     def _select_placeholder(*candidates: Any) -> Any | None:
         for candidate in candidates:
             if _is_bootstrap_placeholder(candidate):
@@ -3615,10 +3629,17 @@ def prepare_pipeline_for_bootstrap(
         managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
     try:
+        context_start = time.perf_counter()
         context = _push_bootstrap_context(
             registry=bot_registry,
             data_bot=data_bot,
             manager=runtime_manager,
+        )
+        _log_slow_hook(
+            "context push",
+            context_start,
+            registry_present=bool(bot_registry),
+            data_bot_present=bool(data_bot),
         )
         if context is not None and sentinel_manager is not None:
             context.sentinel = sentinel_manager
@@ -3667,6 +3688,7 @@ def prepare_pipeline_for_bootstrap(
             nonlocal pipeline, last_error, manager_rejected
             call_kwargs = {key: init_kwargs[key] for key in keys}
             call_kwargs.update(static_items)
+            start_time = time.perf_counter()
             try:
                 pipeline = pipeline_cls(**call_kwargs)
             except TypeError as exc:
@@ -3677,7 +3699,14 @@ def prepare_pipeline_for_bootstrap(
                     and _typeerror_rejects_manager(exc)
                 ):
                     manager_rejected = True
+                _log_slow_hook(
+                    "pipeline constructor failure",
+                    start_time,
+                    keys=keys,
+                    manager_rejected=manager_rejected,
+                )
                 return False
+            _log_slow_hook("pipeline construction", start_time, keys=keys)
             return True
 
         shim_context: contextlib.AbstractContextManager[Any]
@@ -3797,12 +3826,14 @@ def prepare_pipeline_for_bootstrap(
         extra_sentinels: Iterable[Any] | None = None,
     ) -> None:
         nonlocal shim_release_callback
+        promote_start = time.perf_counter()
+        extra_sentinel_candidates = tuple(extra_sentinels or ())
         try:
             combined: list[Any] = []
             seen: set[int] = set()
             sentinel_groups: tuple[Iterable[Any] | None, ...] = (
                 managed_extra_manager_sentinels,
-                extra_sentinels,
+                extra_sentinel_candidates,
             )
             for group in sentinel_groups:
                 if not group:
@@ -3838,6 +3869,11 @@ def prepare_pipeline_for_bootstrap(
                 shim_release_callback = None
             _deregister_bootstrap_helper_callback(_promote)
             _finalize_bootstrap_state()
+            _log_slow_hook(
+                "sentinel promotion",
+                promote_start,
+                extra_sentinels=len(extra_sentinel_candidates),
+            )
 
     register_callback = any(
         _is_bootstrap_placeholder(candidate)
