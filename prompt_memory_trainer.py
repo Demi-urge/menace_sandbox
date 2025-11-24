@@ -2,7 +2,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Tuple
 import sqlite3
 import time
 
@@ -13,9 +13,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - allow running without dependency
     SentimentIntensityAnalyzer = None  # type: ignore
 
-from menace_sandbox.gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
 from db_router import init_db_router
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from menace_sandbox.gpt_memory import GPTMemoryManager
 
 ROOT_DIR = resolve_path(".")
 
@@ -35,12 +37,16 @@ class PromptMemoryTrainer:
     def __init__(
         self,
         *,
-        memory: GPTMemoryManager | None = None,
+        memory: "GPTMemoryManager | None" = None,
         patch_db: PatchHistoryDB | None = None,
         state_path: str | Path | None = ROOT_DIR / "prompt_style_weights.json",
         db_path: str | Path | None = ROOT_DIR / "prompt_styles.db",
     ) -> None:
-        self.memory = memory or GPTMemoryManager(db_path=":memory:")
+        if memory is None:
+            from menace_sandbox import gpt_memory
+
+            memory = gpt_memory.GPTMemoryManager(db_path=":memory:")
+        self.memory = memory
         self.patch_db = patch_db or PatchHistoryDB(":memory:")
         self.state_path = None
         if state_path:
