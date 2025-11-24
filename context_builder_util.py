@@ -97,8 +97,17 @@ def _expected_db_paths(module: ModuleType) -> dict[str, Path]:
     return paths
 
 
-def create_context_builder(*args, **kwargs):  # type: ignore[override]
+def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # type: ignore[override]
     """Proxy to :func:`config.create_context_builder.create_context_builder`."""
+
+    if bootstrap_safe:
+        os.environ.setdefault("VECTOR_METRICS_BOOTSTRAP_SAFE", "1")
+        try:
+            from db_router import set_audit_bootstrap_safe_default
+
+            set_audit_bootstrap_safe_default(True)
+        except Exception:  # pragma: no cover - defensive
+            _LOGGER.debug("failed to enable bootstrap-safe DB auditing", exc_info=True)
 
     module = _load_builder_module()
     ensure_readable = getattr(module, "_ensure_readable", None)

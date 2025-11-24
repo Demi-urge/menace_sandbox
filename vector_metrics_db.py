@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Mapping, Sequence
 import json
 import logging
+import os
 import time
 
 from db_router import (
@@ -52,6 +53,13 @@ def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, An
     if start is not None:
         payload["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 3)
     return payload
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -116,6 +124,9 @@ class VectorMetricsDB:
     def __init__(
         self, path: Path | str = "vector_metrics.db", *, bootstrap_safe: bool = False
     ) -> None:
+        bootstrap_safe = bootstrap_safe or _env_flag(
+            "VECTOR_METRICS_BOOTSTRAP_SAFE", False
+        )
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",

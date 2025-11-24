@@ -3575,6 +3575,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     slow_hook_threshold = 0.05
 
     if bootstrap_safe:
+        os.environ.setdefault("VECTOR_METRICS_BOOTSTRAP_SAFE", "1")
         try:
             set_audit_bootstrap_safe_default(True)
         except Exception:  # pragma: no cover - defensive logging only

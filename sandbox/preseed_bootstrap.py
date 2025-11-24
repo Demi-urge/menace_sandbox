@@ -367,7 +367,7 @@ def initialize_bootstrap_context(
         _mark_bootstrap_step("context_builder")
         ctx_builder_start = perf_counter()
         try:
-            context_builder = create_context_builder()
+            context_builder = create_context_builder(bootstrap_safe=True)
         except Exception:
             LOGGER.exception("context_builder creation failed (step=context_builder)")
             raise
