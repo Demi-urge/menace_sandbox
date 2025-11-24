@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import sqlite3
-import logging
+import time
 from contextlib import closing
-from logging.handlers import RotatingFileHandler
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
 
-from fcntl_compat import LOCK_EX, LOCK_UN, flock
-from dynamic_path_router import resolve_dir
-import hashlib
 from audit_utils import configure_audit_sqlite_connection
+from dynamic_path_router import resolve_dir
+from fcntl_compat import LOCK_EX, LOCK_NB, LOCK_UN, flock
 
 
 # Default log file within the repository.  Resolved lazily to avoid running
@@ -35,14 +36,41 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 MAX_BYTES = _env_int("DB_AUDIT_LOG_MAX_BYTES", 10 * 1024 * 1024)
 BACKUP_COUNT = _env_int("DB_AUDIT_LOG_BACKUPS", 5)
+LOCK_TIMEOUT = _env_float("DB_AUDIT_LOCK_TIMEOUT", 1.0)
+BOOTSTRAP_LOCK_TIMEOUT = _env_float("DB_AUDIT_BOOTSTRAP_LOCK_TIMEOUT", 0.2)
+LOCK_RETRY_DELAY = _env_float("DB_AUDIT_LOCK_RETRY_DELAY", 0.05)
 
 
 _write_lock = Lock()
 _logger_lock = Lock()
 _loggers: dict[Path, logging.Logger] = {}
 _module_logger = logging.getLogger(__name__)
+
+
+def _acquire_lock(fd: int, *, timeout: float | None) -> bool:
+    """Attempt to acquire an exclusive lock on *fd* within *timeout* seconds."""
+
+    deadline = None if timeout is None or timeout <= 0 else time.monotonic() + timeout
+    delay = LOCK_RETRY_DELAY if LOCK_RETRY_DELAY > 0 else 0.01
+    while True:
+        try:
+            flock(fd, LOCK_EX | LOCK_NB)
+            return True
+        except BlockingIOError:
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(delay)
+        except OSError:
+            return False
 
 
 class _LockedRotatingFileHandler(RotatingFileHandler):
@@ -53,7 +81,9 @@ class _LockedRotatingFileHandler(RotatingFileHandler):
             if self.stream is None:
                 self.stream = self._open()
             fd = self.stream.fileno()
-            flock(fd, LOCK_EX)
+            if not _acquire_lock(fd, timeout=LOCK_TIMEOUT):
+                _module_logger.warning("audit log file locked; skipping emit")
+                return
             try:
                 if self.shouldRollover(record):
                     self.doRollover()
@@ -111,6 +141,7 @@ def log_db_access(
     log_path: Path | None = None,
     db_conn: sqlite3.Connection | None = None,
     log_to_db: bool = False,
+    bootstrap_safe: bool = False,
 ) -> None:
     """Record a database access event to a JSONL file and optional SQLite table.
 
@@ -134,6 +165,10 @@ def log_db_access(
         When ``True`` the entry is also written to the SQLite audit mirror
         referenced by ``db_conn``.  Defaults to ``False`` to avoid blocking
         active writers when the audit database is locked.
+    bootstrap_safe:
+        Use a shortened lock timeout and skip logging when the audit file is
+        contended.  This is intended for bootstrap or read-only flows where
+        the pipeline must not block on audit writes.
     """
 
     record = {
@@ -153,25 +188,34 @@ def log_db_access(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        lock_timeout = BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
         with state_path.open("a+") as sf:
             fd = sf.fileno()
-            flock(fd, LOCK_EX)
-            sf.seek(0)
-            prev_hash = sf.read().strip() or "0" * 64
-            data = json.dumps(record, sort_keys=True)
-            new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
-            record["hash"] = new_hash
-            logger = _get_logger(path)
-            logger.info(json.dumps(record, sort_keys=True))
-            sf.seek(0)
-            sf.truncate()
-            sf.write(new_hash)
-            sf.flush()
-            os.fsync(fd)
-            flock(fd, LOCK_UN)
+            if not _acquire_lock(fd, timeout=lock_timeout):
+                _module_logger.warning(
+                    "skipping audit log write for %s: lock held elsewhere", path
+                )
+                return
+            try:
+                sf.seek(0)
+                prev_hash = sf.read().strip() or "0" * 64
+                data = json.dumps(record, sort_keys=True)
+                new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
+                record["hash"] = new_hash
+                logger = _get_logger(path)
+                logger.info(json.dumps(record, sort_keys=True))
+                sf.seek(0)
+                sf.truncate()
+                sf.write(new_hash)
+                sf.flush()
+                os.fsync(fd)
+            finally:
+                flock(fd, LOCK_UN)
     except OSError:
         # Logging failures are non-fatal
-        pass
+        _module_logger.warning(
+            "audit file write failed; continuing without audit entry", exc_info=True
+        )
 
     if _audit_file_mode_enabled():
         return
