@@ -10,7 +10,12 @@ import json
 import logging
 import time
 
-from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from db_router import (
+    GLOBAL_ROUTER,
+    LOCAL_TABLES,
+    init_db_router,
+    set_audit_bootstrap_safe_default,
+)
 from dynamic_path_router import resolve_path, get_project_root
 
 try:  # pragma: no cover - optional dependency
@@ -108,7 +113,9 @@ def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
 class VectorMetricsDB:
     """SQLite-backed store for :class:`VectorMetric` records."""
 
-    def __init__(self, path: Path | str = "vector_metrics.db") -> None:
+    def __init__(
+        self, path: Path | str = "vector_metrics.db", *, bootstrap_safe: bool = False
+    ) -> None:
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",
@@ -116,6 +123,9 @@ class VectorMetricsDB:
         )
 
         LOCAL_TABLES.add("vector_metrics")
+
+        if bootstrap_safe:
+            set_audit_bootstrap_safe_default(True)
 
         default_path = default_vector_metrics_path()
         requested = Path(path).expanduser()
@@ -139,8 +149,16 @@ class VectorMetricsDB:
         if GLOBAL_ROUTER is not None and p == default_path:
             self.router = GLOBAL_ROUTER
             using_global_router = True
+            if bootstrap_safe:
+                self.router.local_conn.audit_bootstrap_safe = True
+                self.router.shared_conn.audit_bootstrap_safe = True
         else:
-            self.router = init_db_router("vector_metrics_db", str(p), str(p))
+            self.router = init_db_router(
+                "vector_metrics_db",
+                str(p),
+                str(p),
+                bootstrap_safe=bootstrap_safe,
+            )
             using_global_router = False
         wal = p.with_suffix(p.suffix + "-wal")
         shm = p.with_suffix(p.suffix + "-shm")

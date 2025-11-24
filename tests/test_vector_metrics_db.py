@@ -1,3 +1,4 @@
+import db_router
 import menace.vector_metrics_db as vdb
 
 
@@ -67,3 +68,14 @@ def test_retriever_rates_by_db(tmp_path):
     )
     assert db.retriever_win_rate_by_db() == {"db1": 1.0, "db2": 0.0}
     assert db.retriever_regret_rate_by_db() == {"db1": 0.0, "db2": 1.0}
+
+
+def test_vector_metrics_bootstrap_safe(monkeypatch, tmp_path):
+    monkeypatch.setattr(db_router, "_audit_bootstrap_safe_default", False)
+    monkeypatch.setattr(db_router, "GLOBAL_ROUTER", None)
+
+    vm = vdb.VectorMetricsDB(tmp_path / "vm.db", bootstrap_safe=True)
+    vm.conn.execute("CREATE TABLE IF NOT EXISTS demo(x INTEGER)")
+
+    assert vm.router.local_conn.audit_bootstrap_safe is True
+    assert vm.router.shared_conn.audit_bootstrap_safe is True
