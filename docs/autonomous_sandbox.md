@@ -533,6 +533,18 @@ After the system tools are in place install the Python requirements via
    If any dependency fails to install, run the command again or consult the
    troubleshooting section below.
 
+### Bootstrap expectations
+
+The bootstrap checks are expected to finish promptly and without leaving
+background workers behind when they are run as one-off audits. Set
+`MENACE_BOOTSTRAP_TIMEOUT` to the maximum number of seconds the run should take;
+the bootstrapper will raise if the limit is exceeded. When the goal is to
+inspect logs or database initialization in isolation, set
+`MENACE_BOOTSTRAP_HALT_THREADS=1` so the discovery and auto-provision threads
+stop cleanly before the process exits. Database migrations can be skipped during
+auditing runs with `MENACE_BOOTSTRAP_SKIP_DB_INIT=1` when the schema is managed
+externally.
+
 ## Recommended environment variables
 
 `auto_env_setup.ensure_env()` generates a `.env` file with sensible defaults. The following variables are particularly relevant for the autonomous workflow:

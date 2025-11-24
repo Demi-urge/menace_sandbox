@@ -49,6 +49,8 @@ class ConfigDiscovery:
         }
         self._token_missing_logged = False
         self._suppress_token_warning = _env_flag("MENACE_ALLOW_MISSING_HF_TOKEN")
+        self._stop: threading.Event | None = None
+        self._thread: threading.Thread | None = None
 
     TERRAFORM_PATHS = [
         "terraform",
@@ -344,6 +346,12 @@ class ConfigDiscovery:
         self._thread = threading.Thread(target=_loop, daemon=True)
         self._thread.start()
         return self._thread
+
+    def stop(self, *, timeout: float | None = None) -> None:
+        if self._stop:
+            self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout)
 
 
 _DEFAULT_VARS = [

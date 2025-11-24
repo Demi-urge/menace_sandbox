@@ -1,5 +1,8 @@
+import itertools
+from dataclasses import replace
 import os
 import sys
+import threading
 import types
 import subprocess
 from pathlib import Path
@@ -70,6 +73,7 @@ def test_environment_bootstrapper(monkeypatch, tmp_path):
     tf_dir.mkdir()
     (tmp_path / "alembic.ini").write_text("[alembic]\n")
     monkeypatch.setenv("MENACE_BOOTSTRAP_DEPS", "dep1, dep2")
+    monkeypatch.setenv("MENACE_AUTO_INSTALL", "1")
     monkeypatch.setenv("MODELS", "demo")
 
     calls: list[tuple[list[str], str | None]] = []
@@ -88,7 +92,9 @@ def test_environment_bootstrapper(monkeypatch, tmp_path):
 
     monkeypatch.setattr(eb, "ensure_config", ensure_wrapper)
 
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     boot = eb.EnvironmentBootstrapper(tf_dir=str(tf_dir))
     boot.bootstrap()
 
@@ -97,9 +103,10 @@ def test_environment_bootstrapper(monkeypatch, tmp_path):
     for var in SandboxSettings().required_env_vars:
         assert os.getenv(var), f"{var} not set"
 
+    python_cmd = [sys.executable, "-m", "pip", "install"]
     expected = [
-        ["pip", "install", "dep1"],
-        ["pip", "install", "dep2"],
+        python_cmd + ["dep1"],
+        python_cmd + ["dep2"],
         ["alembic", "upgrade", "head"],
         ["terraform", "init"],
         ["terraform", "apply", "-auto-approve"],
@@ -246,7 +253,9 @@ def test_bootstrap_installs_missing_packages(monkeypatch):
 
     monkeypatch.setattr(eb.SystemProvisioner, "ensure_packages", fake_install)
 
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     boot = eb.EnvironmentBootstrapper(tf_dir=".")
     boot.bootstrap()
 
@@ -278,7 +287,9 @@ def test_bootstrap_install_failure(monkeypatch):
 
     monkeypatch.setattr(eb.SystemProvisioner, "ensure_packages", fake_install)
 
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     boot = eb.EnvironmentBootstrapper(tf_dir=".")
     with pytest.raises(RuntimeError):
         boot.bootstrap()
@@ -295,7 +306,9 @@ def test_bootstrap_installs_apscheduler(monkeypatch):
     monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda self: None)
     monkeypatch.setattr(eb, "ensure_config", lambda: None)
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     monkeypatch.setattr(eb.importlib.util, "find_spec", lambda name: None if name == "apscheduler" else object())
     installs = []
     def fake_install(self, reqs):
@@ -331,7 +344,9 @@ def test_bootstrap_logs_info_when_systemd_unavailable(monkeypatch, caplog):
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "install_dependencies", lambda s, r: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda s: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_nvidia_driver", lambda s: None)
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
     monkeypatch.setattr(eb.SystemProvisioner, "ensure_packages", lambda self: None)
     monkeypatch.setattr(eb.ensure_config, lambda: None)
@@ -377,7 +392,9 @@ def test_security_audit_removed(monkeypatch, tmp_path, caplog):
 
     # fix_until_safe no longer used
 
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     boot = eb.EnvironmentBootstrapper(tf_dir=str(tmp_path))
     boot.bootstrap()
     assert os.environ.get("MENACE_SAFE") is None
@@ -405,7 +422,9 @@ def test_security_audit_not_invoked(monkeypatch, tmp_path):
         return False
 
     # fix_until_safe no longer used
-    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(
+        eb.startup_checks, "verify_project_dependencies", lambda policy=None: []
+    )
     boot = eb.EnvironmentBootstrapper(tf_dir=str(tmp_path))
     boot.bootstrap()
     # The auditor and fixer should never be called
@@ -491,4 +510,43 @@ def test_bootstrap_verifies_pyproject_dependencies(monkeypatch, tmp_path):
 
     assert checked == ["missing_pkg"]
     assert installs == ["missing_pkg", "apscheduler"]
+
+
+def test_bootstrap_timeout_shutdown(monkeypatch):
+    counter = itertools.count(0, 0.6)
+    boot = eb.EnvironmentBootstrapper(tf_dir=".")
+    boot._clock = counter.__next__
+    boot.required_os_packages = []
+    boot.remote_endpoints = []
+    boot.policy = replace(
+        boot.policy,
+        enforce_remote_checks=False,
+        run_database_migrations=False,
+    )
+
+    monkeypatch.setattr(eb, "ensure_config", lambda: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda self: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_commands", lambda self, cmds: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_nvidia_driver", lambda self: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "install_dependencies", lambda self, reqs: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_os_packages", lambda self, pkgs: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_remote_dependencies", lambda self, urls: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "run_migrations", lambda self: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "deploy_across_hosts", lambda self, hosts: None)
+    monkeypatch.setattr(eb.EnvironmentBootstrapper, "bootstrap_vector_assets", lambda self: None)
+    monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
+    monkeypatch.setattr(eb, "start_scheduler_from_env", lambda: None)
+    monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda policy=None: [])
+
+    stop_event = threading.Event()
+    sleeper = threading.Thread(target=stop_event.wait)
+    sleeper.start()
+    boot._stop_events.append(stop_event)
+    boot._background_threads.append(sleeper)
+
+    with pytest.raises(TimeoutError):
+        boot.bootstrap(timeout=1.5, halt_background=True)
+
+    sleeper.join(0)
+    assert not sleeper.is_alive()
 
