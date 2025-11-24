@@ -53,8 +53,11 @@ class EnvironmentBootstrapper:
         cluster_supervisor: "ClusterServiceSupervisor" | None = None,
         policy: DependencyPolicy | None = None,
     ) -> None:
-        disc = ConfigDiscovery()
-        disc.discover()
+        self._clock = time.monotonic
+        self.config_discovery = ConfigDiscovery()
+        self.config_discovery.discover()
+        self._background_threads: list[threading.Thread] = []
+        self._stop_events: list[threading.Event] = []
         interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
         if interval:
             try:
@@ -62,11 +65,15 @@ class EnvironmentBootstrapper:
             except ValueError:
                 sec = 0.0
             if sec > 0:
-                disc.run_continuous(interval=sec)
+                stop_event = threading.Event()
+                t = self.config_discovery.run_continuous(
+                    interval=sec, stop_event=stop_event
+                )
+                self._stop_events.append(stop_event)
+                self._background_threads.append(t)
         self.tf_dir = tf_dir or os.getenv("TERRAFORM_DIR")
         self.logger = logging.getLogger(self.__class__.__name__)
         self.bootstrapper = InfrastructureBootstrapper(self.tf_dir)
-        self._threads: list[threading.Thread] = []
         self.policy = policy or PolicyLoader().resolve()
         self.required_commands = list(self.policy.required_commands)
         self.remote_endpoints = os.getenv("MENACE_REMOTE_ENDPOINTS", "").split(",")
@@ -95,19 +102,37 @@ class EnvironmentBootstrapper:
         def _execute() -> subprocess.CompletedProcess:
             return subprocess.run(cmd, check=True, **kwargs)
 
-        start = time.monotonic()
+        start = self._clock()
         self.logger.info("executing command: %s", display)
         try:
             _execute()
         except Exception as exc:
-            duration = time.monotonic() - start
+            duration = self._clock() - start
             self.logger.error(
                 "command failed after %.1fs (retried): %s", duration, display
             )
             raise
-        duration = time.monotonic() - start
+        duration = self._clock() - start
         level = logging.WARNING if duration >= 60 else logging.INFO
         self.logger.log(level, "command finished in %.1fs: %s", duration, display)
+
+    def _check_timeout(self, start: float, timeout: float | None) -> None:
+        if timeout is None:
+            return
+        elapsed = self._clock() - start
+        if elapsed > timeout:
+            raise TimeoutError(
+                f"environment bootstrap exceeded timeout ({timeout:.1f}s > {elapsed:.1f}s)"
+            )
+
+    def shutdown(self, *, timeout: float | None = 5.0) -> None:
+        """Stop background bootstrap threads started by the instance."""
+
+        for event in self._stop_events:
+            event.set()
+        for thread in self._background_threads:
+            if thread.is_alive():
+                thread.join(timeout)
 
     # ------------------------------------------------------------------
     def check_commands(self, cmds: Iterable[str]) -> None:
@@ -414,110 +439,147 @@ class EnvironmentBootstrapper:
             self.logger.error("migrations failed: %s", exc)
 
     # ------------------------------------------------------------------
-    def bootstrap(self) -> None:
-        ensure_config()
-        self.export_secrets()
-        self.check_commands(self.required_commands)
-        self.check_nvidia_driver()
-        pkgs = [p.strip() for p in self.required_os_packages if p.strip()]
-        if pkgs:
-            try:
-                self.check_os_packages(pkgs)
-            except RuntimeError as exc:
-                msg = str(exc)
-                if "missing OS packages:" in msg:
-                    missing = [p.strip() for p in msg.split(":", 1)[1].split(",")]
-                    SystemProvisioner(packages=missing).ensure_packages()
-                    self.check_os_packages(pkgs)
-                else:
-                    raise
-        if self.policy.enforce_remote_checks:
-            self.check_remote_dependencies(self.remote_endpoints)
-        self.logger.info(
-            "verifying project dependencies declared in pyproject.toml"
+    def bootstrap(
+        self,
+        *,
+        timeout: float | None = None,
+        halt_background: bool | None = None,
+        skip_db_init: bool | None = None,
+    ) -> None:
+        timeout = (
+            timeout
+            if timeout is not None
+            else float(os.getenv("MENACE_BOOTSTRAP_TIMEOUT", "0") or 0) or None
         )
-        missing = startup_checks.verify_project_dependencies(policy=self.policy)
-        if missing:
-            self.logger.warning(
-                "%d python packages are missing: %s",
-                len(missing),
-                ", ".join(sorted(missing)),
-            )
-        else:
-            self.logger.info("all declared project dependencies import successfully")
-        if missing:
-            self.install_dependencies(missing)
-        if self.policy.ensure_apscheduler and importlib.util.find_spec("apscheduler") is None:
-            self.install_dependencies(["apscheduler"])
-        if self.policy.enforce_systemd and shutil.which("systemctl"):
-            result = subprocess.run(
-                ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or "").strip()
-                stdout = (result.stdout or "").strip()
-                details = stderr or stdout or f"exit code {result.returncode}"
-                known_systemd_issue = any(
-                    marker in details.lower()
-                    for marker in (
-                        "system has not been booted with systemd",
-                        "failed to connect to bus",
-                        "sandbox_autopurge.timer does not exist",
-                    )
-                )
-                if known_systemd_issue:
-                    self.logger.info(
-                        "systemd unavailable; skipping sandbox_autopurge timer activation (%s)",
-                        details,
-                    )
-                else:
-                    self.logger.warning(
-                        "failed enabling sandbox_autopurge.timer: %s", details
-                    )
-        elif self.policy.enforce_systemd:
+        halt_background = (
+            halt_background
+            if halt_background is not None
+            else os.getenv("MENACE_BOOTSTRAP_HALT_THREADS") == "1"
+        )
+        skip_db_init = (
+            skip_db_init
+            if skip_db_init is not None
+            else os.getenv("MENACE_BOOTSTRAP_SKIP_DB_INIT") == "1"
+        )
+        start = self._clock()
+        try:
+            ensure_config()
+            self._check_timeout(start, timeout)
+            self.export_secrets()
+            self.check_commands(self.required_commands)
+            self._check_timeout(start, timeout)
+            self.check_nvidia_driver()
+            pkgs = [p.strip() for p in self.required_os_packages if p.strip()]
+            if pkgs:
+                try:
+                    self.check_os_packages(pkgs)
+                except RuntimeError as exc:
+                    msg = str(exc)
+                    if "missing OS packages:" in msg:
+                        missing = [p.strip() for p in msg.split(":", 1)[1].split(",")]
+                        SystemProvisioner(packages=missing).ensure_packages()
+                        self.check_os_packages(pkgs)
+                    else:
+                        raise
+            self._check_timeout(start, timeout)
+            if self.policy.enforce_remote_checks:
+                self.check_remote_dependencies(self.remote_endpoints)
             self.logger.info(
-                "systemctl not available; skipping sandbox_autopurge timer activation"
+                "verifying project dependencies declared in pyproject.toml"
             )
-        deps = os.getenv("MENACE_BOOTSTRAP_DEPS", "").split(",")
-        deps = [d.strip() for d in deps if d.strip()]
-        if deps:
-            self.install_dependencies(deps)
-        if self.policy.additional_python_dependencies:
-            self.install_dependencies(self.policy.additional_python_dependencies)
-        if self.policy.run_database_migrations:
-            self.run_migrations()
-        else:
-            self.logger.debug(
-                "policy '%s' disabled database migrations", self.policy.name
-            )
-        self.bootstrapper.bootstrap()
-        # The security auditor previously enforced Bandit and Safety checks
-        # and enabled safe mode when they failed. These checks have been
-        # removed, so the bootstrapper no longer toggles ``MENACE_SAFE``.
-        interval = os.getenv("AUTO_PROVISION_INTERVAL")
-        if interval:
-            try:
-                sec = float(interval)
-            except ValueError:
-                sec = 0.0
-            if sec > 0:
-                t = threading.Thread(
-                    target=self.bootstrapper.run_continuous,
-                    kwargs={"interval": sec},
-                    daemon=True,
+            missing = startup_checks.verify_project_dependencies(policy=self.policy)
+            if missing:
+                self.logger.warning(
+                    "%d python packages are missing: %s",
+                    len(missing),
+                    ", ".join(sorted(missing)),
                 )
-                t.start()
-                self._threads.append(t)
-        hosts = os.getenv("REMOTE_HOSTS", "").split(",")
-        hosts = [h.strip() for h in hosts if h.strip()]
-        if hosts:
-            self.deploy_across_hosts(hosts)
-        start_scheduler_from_env()
-        if self.policy.provision_vector_assets:
-            self.bootstrap_vector_assets()
+            else:
+                self.logger.info("all declared project dependencies import successfully")
+            if missing:
+                self.install_dependencies(missing)
+            if self.policy.ensure_apscheduler and importlib.util.find_spec("apscheduler") is None:
+                self.install_dependencies(["apscheduler"])
+            self._check_timeout(start, timeout)
+            if self.policy.enforce_systemd and shutil.which("systemctl"):
+                result = subprocess.run(
+                    ["systemctl", "enable", "--now", "sandbox_autopurge.timer"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    stderr = (result.stderr or "").strip()
+                    stdout = (result.stdout or "").strip()
+                    details = stderr or stdout or f"exit code {result.returncode}"
+                    known_systemd_issue = any(
+                        marker in details.lower()
+                        for marker in (
+                            "system has not been booted with systemd",
+                            "failed to connect to bus",
+                            "sandbox_autopurge.timer does not exist",
+                        )
+                    )
+                    if known_systemd_issue:
+                        self.logger.info(
+                            "systemd unavailable; skipping sandbox_autopurge timer activation (%s)",
+                            details,
+                        )
+                    else:
+                        self.logger.warning(
+                            "failed enabling sandbox_autopurge.timer: %s", details
+                        )
+            elif self.policy.enforce_systemd:
+                self.logger.info(
+                    "systemctl not available; skipping sandbox_autopurge timer activation"
+                )
+            deps = os.getenv("MENACE_BOOTSTRAP_DEPS", "").split(",")
+            deps = [d.strip() for d in deps if d.strip()]
+            if deps:
+                self.install_dependencies(deps)
+            if self.policy.additional_python_dependencies:
+                self.install_dependencies(self.policy.additional_python_dependencies)
+            if skip_db_init:
+                self.logger.info(
+                    "database migrations skipped via MENACE_BOOTSTRAP_SKIP_DB_INIT"
+                )
+            elif self.policy.run_database_migrations:
+                self.run_migrations()
+            else:
+                self.logger.debug(
+                    "policy '%s' disabled database migrations", self.policy.name
+                )
+            self._check_timeout(start, timeout)
+            self.bootstrapper.bootstrap()
+            # The security auditor previously enforced Bandit and Safety checks
+            # and enabled safe mode when they failed. These checks have been
+            # removed, so the bootstrapper no longer toggles ``MENACE_SAFE``.
+            interval = os.getenv("AUTO_PROVISION_INTERVAL")
+            if interval:
+                try:
+                    sec = float(interval)
+                except ValueError:
+                    sec = 0.0
+                if sec > 0:
+                    stop_event = threading.Event()
+                    t = self.bootstrapper.run_continuous(
+                        interval=sec, stop_event=stop_event
+                    )
+                    self._stop_events.append(stop_event)
+                    self._background_threads.append(t)
+            self._check_timeout(start, timeout)
+            hosts = os.getenv("REMOTE_HOSTS", "").split(",")
+            hosts = [h.strip() for h in hosts if h.strip()]
+            if hosts:
+                self.deploy_across_hosts(hosts)
+            self._check_timeout(start, timeout)
+            start_scheduler_from_env()
+            if self.policy.provision_vector_assets:
+                self.bootstrap_vector_assets()
+            self._check_timeout(start, timeout)
+        finally:
+            if halt_background:
+                self.shutdown()
 
 
 __all__ = ["EnvironmentBootstrapper"]
