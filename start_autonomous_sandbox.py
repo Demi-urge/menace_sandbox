@@ -1,3 +1,9 @@
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 """Entry point for launching the autonomous sandbox.
 
 This wrapper bootstraps the environment and model paths automatically before
@@ -12,9 +18,7 @@ import argparse
 import faulthandler
 import json
 import logging
-import os
 import signal
-import sys
 import threading
 import time
 import traceback
