@@ -52,7 +52,7 @@ LOCK_RETRY_DELAY = _env_float("DB_AUDIT_LOCK_RETRY_DELAY", 0.05)
 
 _write_lock = Lock()
 _logger_lock = Lock()
-_loggers: dict[Path, logging.Logger] = {}
+_loggers: dict[tuple[Path, bool], logging.Logger] = {}
 _module_logger = logging.getLogger(__name__)
 
 
@@ -76,12 +76,16 @@ def _acquire_lock(fd: int, *, timeout: float | None) -> bool:
 class _LockedRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler that locks the file during writes."""
 
+    def __init__(self, *args: object, lock_timeout: float = LOCK_TIMEOUT, **kwargs: object):
+        super().__init__(*args, **kwargs)
+        self.lock_timeout = lock_timeout
+
     def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
         with _write_lock:
             if self.stream is None:
                 self.stream = self._open()
             fd = self.stream.fileno()
-            if not _acquire_lock(fd, timeout=LOCK_TIMEOUT):
+            if not _acquire_lock(fd, timeout=self.lock_timeout):
                 _module_logger.warning("audit log file locked; skipping emit")
                 return
             try:
@@ -103,22 +107,27 @@ def _default_log_path() -> Path:
     return Path(DEFAULT_LOG_PATH)
 
 
-def _get_logger(path: Path) -> logging.Logger:
+def _get_logger(path: Path, *, bootstrap_safe: bool = False) -> logging.Logger:
     with _logger_lock:
-        logger = _loggers.get(path)
+        key = (path, bootstrap_safe)
+        logger = _loggers.get(key)
         if logger is None:
             logger = logging.getLogger(f"db_audit_{path}")
             logger.setLevel(logging.INFO)
+            lock_timeout = (
+                BOOTSTRAP_LOCK_TIMEOUT if bootstrap_safe else LOCK_TIMEOUT
+            )
             handler = _LockedRotatingFileHandler(
                 path,
                 maxBytes=MAX_BYTES,
                 backupCount=BACKUP_COUNT,
                 encoding="utf-8",
+                lock_timeout=lock_timeout,
             )
             handler.setFormatter(logging.Formatter("%(message)s"))
             logger.addHandler(handler)
             logger.propagate = False
-            _loggers[path] = logger
+            _loggers[key] = logger
         return logger
 
 
@@ -167,8 +176,9 @@ def log_db_access(
         active writers when the audit database is locked.
     bootstrap_safe:
         Use a shortened lock timeout and skip logging when the audit file is
-        contended.  This is intended for bootstrap or read-only flows where
-        the pipeline must not block on audit writes.
+        contended. This applies to both the state and JSONL files so bootstrap
+        or read-only flows never block on audit writes, emitting a warning when
+        contention is detected.
     """
 
     record = {
@@ -202,7 +212,7 @@ def log_db_access(
                 data = json.dumps(record, sort_keys=True)
                 new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
                 record["hash"] = new_hash
-                logger = _get_logger(path)
+                logger = _get_logger(path, bootstrap_safe=bootstrap_safe)
                 logger.info(json.dumps(record, sort_keys=True))
                 sf.seek(0)
                 sf.truncate()
