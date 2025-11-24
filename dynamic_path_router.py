@@ -12,9 +12,11 @@ lock to avoid repeated filesystem walks.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -28,6 +30,15 @@ try:
 except Exception:
     _DISCOVERY_TIMEOUT_S = 5.0
 
+logger = logging.getLogger(__name__)
+
+
+def _bootstrap_resolution_enabled() -> bool:
+    try:
+        return os.getenv("PATH_RESOLUTION_BOOTSTRAP", "") == "1"
+    except Exception:
+        return False
+
 
 def _normalize(name: str | Path) -> str:
     """Return *name* as a normalised POSIX style string."""
@@ -35,7 +46,7 @@ def _normalize(name: str | Path) -> str:
     return Path(str(name).replace("\\", "/")).as_posix().lstrip("./")
 
 
-def _discover_roots(start: Optional[Path] = None) -> List[Path]:
+def _discover_roots(start: Optional[Path] = None, *, fast: bool = False) -> List[Path]:
     """Return a list of candidate repository roots."""
 
     for env_var in (
@@ -60,18 +71,19 @@ def _discover_roots(start: Optional[Path] = None) -> List[Path]:
     if current.is_file():
         current = current.parent
 
-    try:
-        top_level = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-            cwd=str(current),
-            timeout=_DISCOVERY_TIMEOUT_S,
-        ).strip()
-        if top_level:
-            root = Path(top_level).resolve()
-    except Exception:
-        pass
+    if not fast:
+        try:
+            top_level = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                cwd=str(current),
+                timeout=_DISCOVERY_TIMEOUT_S,
+            ).strip()
+            if top_level:
+                root = Path(top_level).resolve()
+        except Exception:
+            pass
 
     if root is None:
         for parent in [current] + list(current.parents):
@@ -85,7 +97,10 @@ def _discover_roots(start: Optional[Path] = None) -> List[Path]:
 
 
 def get_project_root(
-    start: Optional[Path | str] = None, repo_hint: Optional[Path | str] = None
+    start: Optional[Path | str] = None,
+    repo_hint: Optional[Path | str] = None,
+    *,
+    fast: bool = False,
 ) -> Path:
     """Return a repository root directory.
 
@@ -104,7 +119,7 @@ def get_project_root(
     global _PROJECT_ROOT, _PROJECT_ROOTS
     with _CACHE_LOCK:
         if _PROJECT_ROOTS is None:
-            _PROJECT_ROOTS = _discover_roots(Path(start) if start else None)
+            _PROJECT_ROOTS = _discover_roots(Path(start) if start else None, fast=fast)
             _PROJECT_ROOT = _PROJECT_ROOTS[0]
 
     roots = _PROJECT_ROOTS
@@ -143,21 +158,25 @@ def _cache_key(root: Path, name: str) -> str:
     return f"{root.as_posix()}:{name}"
 
 
-def get_project_roots() -> List[Path]:
+def get_project_roots(*, fast: bool = False) -> List[Path]:
     """Return the list of configured repository roots."""
 
     global _PROJECT_ROOT, _PROJECT_ROOTS
     with _CACHE_LOCK:
         if _PROJECT_ROOTS is None:
-            _PROJECT_ROOTS = _discover_roots()
+            _PROJECT_ROOTS = _discover_roots(fast=fast)
             _PROJECT_ROOT = _PROJECT_ROOTS[0]
         return list(_PROJECT_ROOTS)
 
 
-def resolve_path(name: str | Path, root: Optional[Path | str] = None) -> Path:
+def resolve_path(
+    name: str | Path, root: Optional[Path | str] = None, *, trace: bool = False
+) -> Path:
     """Resolve *name* to an absolute :class:`Path` within configured roots."""
 
+    start = time.perf_counter()
     name_str = str(name)
+    bootstrap_fast = _bootstrap_resolution_enabled()
 
     # Automatically map Windows development paths to the Paperspace runtime layout.
     if "C:/cyberlolos_project" in name_str:
@@ -180,21 +199,27 @@ def resolve_path(name: str | Path, root: Optional[Path | str] = None) -> Path:
             _PATH_CACHE[path.as_posix()] = resolved
         return resolved
 
-    roots = [get_project_root(repo_hint=root, start=root)] if root else get_project_roots()
+    roots = (
+        [get_project_root(repo_hint=root, start=root, fast=bootstrap_fast)]
+        if root
+        else get_project_roots(fast=bootstrap_fast)
+    )
 
+    resolved: Path | None = None
     for base in roots:
         key = _cache_key(base, norm_name)
         with _CACHE_LOCK:
             cached = _PATH_CACHE.get(key)
         if cached is not None:
-            return cached
+            resolved = cached
+            break
 
         candidate = base / path
         if candidate.exists():
             resolved = candidate.resolve()
             with _CACHE_LOCK:
                 _PATH_CACHE[key] = resolved
-            return resolved
+            break
 
         # When the candidate's parent directory already exists we assume the
         # caller intends to create a new file at that location.  Returning the
@@ -205,21 +230,39 @@ def resolve_path(name: str | Path, root: Optional[Path | str] = None) -> Path:
             resolved = candidate.resolve()
             with _CACHE_LOCK:
                 _PATH_CACHE[key] = resolved
-            return resolved
+            break
 
-    target = Path(norm_name)
-    for base in roots:
-        for dirpath, dirs, files in os.walk(base):
-            if ".git" in dirs:
-                dirs.remove(".git")
-            if target.name in files or target.name in dirs:
-                match = Path(dirpath) / target.name
-                rel = match.relative_to(base).as_posix()
-                if rel.endswith(norm_name):
-                    resolved = match.resolve()
-                    with _CACHE_LOCK:
-                        _PATH_CACHE[_cache_key(base, norm_name)] = resolved
-                    return resolved
+        resolved = None
+
+    if resolved is None and not bootstrap_fast:
+        target = Path(norm_name)
+        for base in roots:
+            for dirpath, dirs, files in os.walk(base):
+                if ".git" in dirs:
+                    dirs.remove(".git")
+                if target.name in files or target.name in dirs:
+                    match = Path(dirpath) / target.name
+                    rel = match.relative_to(base).as_posix()
+                    if rel.endswith(norm_name):
+                        resolved = match.resolve()
+                        with _CACHE_LOCK:
+                            _PATH_CACHE[_cache_key(base, norm_name)] = resolved
+                        break
+            if resolved is not None:
+                break
+
+    duration = time.perf_counter() - start
+    if trace or logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "resolve_path(%s) -> %s in %.3fs (bootstrap_fast=%s)",
+            name,
+            resolved if resolved is not None else "<missing>",
+            duration,
+            bootstrap_fast,
+        )
+
+    if resolved is not None:
+        return resolved
 
     roots_str = ", ".join(r.as_posix() for r in roots)
     raise FileNotFoundError(f"{name!r} not found under {roots_str}")
