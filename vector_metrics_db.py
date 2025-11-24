@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Mapping, Sequence
 import json
 import logging
+import time
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from dynamic_path_router import resolve_path, get_project_root
@@ -36,6 +37,16 @@ _RETRIEVER_REGRET_RATE = getattr(_me, "retriever_regret_rate", _me.Gauge(
     "Regret rate of retrieval operations by database",
     ["db"],
 ))
+
+
+logger = logging.getLogger(__name__)
+
+
+def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, Any]:
+    payload = {"ts": datetime.utcnow().isoformat(), **extra}
+    if start is not None:
+        payload["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 3)
+    return payload
 
 
 @dataclass
@@ -98,6 +109,12 @@ class VectorMetricsDB:
     """SQLite-backed store for :class:`VectorMetric` records."""
 
     def __init__(self, path: Path | str = "vector_metrics.db") -> None:
+        init_start = time.perf_counter()
+        logger.info(
+            "vector_metrics_db.init.start",
+            extra=_timestamp_payload(init_start, configured_path=str(path)),
+        )
+
         LOCAL_TABLES.add("vector_metrics")
 
         default_path = default_vector_metrics_path()
@@ -112,11 +129,27 @@ class VectorMetricsDB:
             requested.parent.mkdir(parents=True, exist_ok=True)
             p = requested
 
+        logger.info(
+            "vector_metrics_db.path.resolved",
+            extra=_timestamp_payload(
+                init_start, resolved_path=str(p), default_path=str(default_path)
+            ),
+        )
+
         if GLOBAL_ROUTER is not None and p == default_path:
             self.router = GLOBAL_ROUTER
+            using_global_router = True
         else:
             self.router = init_db_router("vector_metrics_db", str(p), str(p))
+            using_global_router = False
         self.conn = self.router.get_connection("vector_metrics")
+        logger.info(
+            "vector_metrics_db.connection.ready",
+            extra=_timestamp_payload(
+                init_start, using_global_router=using_global_router
+            ),
+        )
+        schema_start = time.perf_counter()
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vector_metrics(
@@ -141,6 +174,11 @@ class VectorMetricsDB:
             )
             """
         )
+        logger.info(
+            "vector_metrics_db.schema.ensured",
+            extra=_timestamp_payload(schema_start),
+        )
+        migration_start = time.perf_counter()
         self.conn.execute(
             """
             CREATE INDEX IF NOT EXISTS vector_metrics_event_db_ts
@@ -218,9 +256,17 @@ class VectorMetricsDB:
             "win": "ALTER TABLE vector_metrics ADD COLUMN win INTEGER",
             "regret": "ALTER TABLE vector_metrics ADD COLUMN regret INTEGER",
         }
+        applied_columns = []
         for name, stmt in migrations.items():
             if name not in cols:
                 self.conn.execute(stmt)
+                applied_columns.append(name)
+        logger.info(
+            "vector_metrics_db.migrations.vector_metrics",
+            extra=_timestamp_payload(
+                migration_start, applied_columns=applied_columns
+            ),
+        )
         self.conn.commit()
         pcols = [r[1] for r in self.conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()]
         if "license" not in pcols:
@@ -260,6 +306,44 @@ class VectorMetricsDB:
                 "ALTER TABLE patch_metrics ADD COLUMN enhancement_score REAL"
             )
         self.conn.commit()
+        logger.info(
+            "vector_metrics_db.migrations.patch_tables",
+            extra=_timestamp_payload(
+                migration_start,
+                patch_ancestry_missing=[
+                    c
+                    for c in (
+                        "license",
+                        "semantic_alerts",
+                        "alignment_severity",
+                        "risk_score",
+                    )
+                    if c not in pcols
+                ],
+                patch_metrics_missing=[
+                    c
+                    for c in (
+                        "context_tokens",
+                        "patch_difficulty",
+                        "start_time",
+                        "time_to_completion",
+                        "error_trace_count",
+                        "roi_tag",
+                        "effort_estimate",
+                        "enhancement_score",
+                    )
+                    if c not in mcols
+                ],
+            ),
+        )
+        logger.info(
+            "vector_metrics_db.init.complete",
+            extra=_timestamp_payload(
+                init_start,
+                resolved_path=str(p),
+                using_global_router=using_global_router,
+            ),
+        )
 
     # ------------------------------------------------------------------
     def get_db_weights(self) -> dict[str, float]:
