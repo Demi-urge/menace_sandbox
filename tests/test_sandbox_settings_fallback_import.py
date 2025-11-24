@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -40,5 +41,24 @@ def test_fallback_supports_flat_import(monkeypatch):
 
     assert hasattr(settings, "severity_score_map")
     assert settings.severity_score_map
+    assert module.USING_SANDBOX_SETTINGS_FALLBACK is True
+
+
+def test_light_imports_prefers_fallback(monkeypatch):
+    """MENACE_LIGHT_IMPORTS should force the fallback settings loader."""
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    for mod in [
+        "sandbox_settings",
+        "menace_sandbox.sandbox_settings",
+        "sandbox_settings_pydantic",
+        "menace_sandbox.sandbox_settings_pydantic",
+        "menace_sandbox",
+        "menace_sandbox.sandbox_settings_fallback",
+    ]:
+        sys.modules.pop(mod, None)
+
+    module = importlib.import_module("sandbox_settings")
+
     assert module.USING_SANDBOX_SETTINGS_FALLBACK is True
 
