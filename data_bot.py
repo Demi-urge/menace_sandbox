@@ -102,6 +102,7 @@ logger = logging.getLogger(__name__)
 
 
 _RELOAD_STATE = threading.local()
+_THRESHOLD_LOAD_LOCK = threading.RLock()
 
 
 def _is_reloading_thresholds() -> bool:
@@ -285,6 +286,11 @@ SelfCodingThresholds = _self_coding_thresholds_module.SelfCodingThresholds
 _save_sc_thresholds = _self_coding_thresholds_module.update_thresholds
 _load_sc_thresholds = _self_coding_thresholds_module.get_thresholds
 _load_sc_config = _self_coding_thresholds_module._load_config
+_THRESHOLD_LOAD_LOCK = getattr(
+    _self_coding_thresholds_module,
+    "THRESHOLD_CONFIG_LOCK",
+    _THRESHOLD_LOAD_LOCK,
+)
 
 try:  # pragma: no cover - optional dependency
     sys.modules.pop("watchdog", None)
@@ -2726,148 +2732,152 @@ class DataBot:
         the local cache so long running processes can pick up runtime edits to
         ``config/self_coding_thresholds.yaml``.
         """
-
-        key = bot or ""
-        if _is_reloading_thresholds():
-            cached = self._thresholds.get(key)
-            if cached is None:
-                service_cache = getattr(self.threshold_service, "_thresholds", None)
-                if isinstance(service_cache, dict):
-                    cached = service_cache.get(key)
-            if cached is not None:
-                return cached
-            raise RuntimeError(
-                f"reload_thresholds re-entry detected for {bot or 'default'} without cached value"
-            )
-
-        with _reload_threshold_guard():
-            try:
-                raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
-            except TypeError:
-                raw = load_sc_thresholds(bot, self.settings)
-            if not isinstance(raw, SelfCodingThresholds):
-                raw = _load_sc_thresholds(bot, self.settings)
-            tracker = None
-            if bot:
-                tracker = self._baseline.setdefault(
-                    bot, _create_baseline_tracker(window=self.baseline_window)
-                )
-            roi_drop = (
-                self.roi_drop_threshold
-                if self.roi_drop_threshold is not None
-                else raw.roi_drop
-            )
-            error_thresh = (
-                self.error_threshold
-                if self.error_threshold is not None
-                else raw.error_increase
-            )
-            fail_thresh = (
-                self.test_failure_threshold
-                if self.test_failure_threshold is not None
-                else raw.test_failure_increase
-            )
-            patch_thresh = raw.patch_success_drop
-            base_rt = ROIThresholds(
-                roi_drop=roi_drop,
-                error_threshold=error_thresh,
-                test_failure_threshold=fail_thresh,
-                patch_success_drop=patch_thresh,
-            )
-            recalibrated = False
-            if bot and tracker and getattr(raw, "auto_recalibrate", True):
-                base_rt = self._recompute_thresholds_from_baseline(tracker, base_rt)
-                recalibrated = True
-            rt = base_rt
-            roi_drop = rt.roi_drop
-            error_thresh = rt.error_threshold
-            fail_thresh = rt.test_failure_threshold
-            patch_thresh = rt.patch_success_drop
-            self._thresholds[key] = rt
-
-            # Prepare forecast models for this bot based on configuration
-            params = raw.model_params or {}
-            models = {
-                m: create_model(raw.model, raw.confidence, **params)
-                for m in ("roi", "errors", "tests_failed")
-            }
-            self._forecast_models[key] = models
-            self._forecast_meta[key] = {
-                "model": raw.model,
-                "confidence": raw.confidence,
-                "params": params,
-            }
-
-            if bot:
-                try:  # pragma: no cover - best effort persistence
-                    persist_sc_thresholds(
-                        bot,
-                        roi_drop=roi_drop,
-                        error_increase=error_thresh,
-                        test_failure_increase=fail_thresh,
-                        patch_success_drop=patch_thresh,
-                        forecast_model=raw.model,
-                        confidence=raw.confidence,
-                        model_params=params,
-                        event_bus=self.event_bus,
+        with _THRESHOLD_LOAD_LOCK:
+            key = bot or ""
+            if _is_reloading_thresholds():
+                cached = self._thresholds.get(key)
+                if cached is None:
+                    service_cache = getattr(self.threshold_service, "_thresholds", None)
+                    if isinstance(service_cache, dict):
+                        cached = service_cache.get(key)
+                if cached is not None:
+                    self.logger.info(
+                        "reload_thresholds skipped for %s; using cached value while reload in progress",
+                        bot or "default",
                     )
-                except Exception:
-                    self.logger.exception("failed to persist thresholds for %s", bot)
+                    return cached
+                raise RuntimeError(
+                    f"reload_thresholds re-entry detected for {bot or 'default'} without cached value"
+                )
 
-                if recalibrated and self.event_bus:
-                    try:  # pragma: no cover - best effort
-                        self.event_bus.publish(
-                            "data:thresholds_recalibrated",
-                            {
-                                "bot": bot,
-                                "roi_threshold": roi_drop,
-                                "error_threshold": error_thresh,
-                                "test_failure_threshold": fail_thresh,
-                                "patch_success_threshold": patch_thresh,
-                            },
+            with _reload_threshold_guard():
+                try:
+                    raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
+                except TypeError:
+                    raw = load_sc_thresholds(bot, self.settings)
+                if not isinstance(raw, SelfCodingThresholds):
+                    raw = _load_sc_thresholds(bot, self.settings)
+                tracker = None
+                if bot:
+                    tracker = self._baseline.setdefault(
+                        bot, _create_baseline_tracker(window=self.baseline_window)
+                    )
+                roi_drop = (
+                    self.roi_drop_threshold
+                    if self.roi_drop_threshold is not None
+                    else raw.roi_drop
+                )
+                error_thresh = (
+                    self.error_threshold
+                    if self.error_threshold is not None
+                    else raw.error_increase
+                )
+                fail_thresh = (
+                    self.test_failure_threshold
+                    if self.test_failure_threshold is not None
+                    else raw.test_failure_increase
+                )
+                patch_thresh = raw.patch_success_drop
+                base_rt = ROIThresholds(
+                    roi_drop=roi_drop,
+                    error_threshold=error_thresh,
+                    test_failure_threshold=fail_thresh,
+                    patch_success_drop=patch_thresh,
+                )
+                recalibrated = False
+                if bot and tracker and getattr(raw, "auto_recalibrate", True):
+                    base_rt = self._recompute_thresholds_from_baseline(tracker, base_rt)
+                    recalibrated = True
+                rt = base_rt
+                roi_drop = rt.roi_drop
+                error_thresh = rt.error_threshold
+                fail_thresh = rt.test_failure_threshold
+                patch_thresh = rt.patch_success_drop
+                self._thresholds[key] = rt
+
+                # Prepare forecast models for this bot based on configuration
+                params = raw.model_params or {}
+                models = {
+                    m: create_model(raw.model, raw.confidence, **params)
+                    for m in ("roi", "errors", "tests_failed")
+                }
+                self._forecast_models[key] = models
+                self._forecast_meta[key] = {
+                    "model": raw.model,
+                    "confidence": raw.confidence,
+                    "params": params,
+                }
+
+                if bot:
+                    try:  # pragma: no cover - best effort persistence
+                        persist_sc_thresholds(
+                            bot,
+                            roi_drop=roi_drop,
+                            error_increase=error_thresh,
+                            test_failure_increase=fail_thresh,
+                            patch_success_drop=patch_thresh,
+                            forecast_model=raw.model,
+                            confidence=raw.confidence,
+                            model_params=params,
+                            event_bus=self.event_bus,
                         )
                     except Exception:
-                        self.logger.exception(
-                            "failed to publish thresholds recalibrated event"
-                        )
+                        self.logger.exception("failed to persist thresholds for %s", bot)
 
-                try:  # pragma: no cover - sync service cache & broadcast
-                    prev = self.threshold_service._thresholds.get(key)
-                    self.threshold_service._thresholds[key] = rt
-                    if prev != rt:
-                        self.threshold_service._publish(bot, rt)
-                except Exception as exc:
-                    self.logger.exception("failed to sync thresholds for %s", bot)
-                    if self.event_bus:
-                        try:
+                    if recalibrated and self.event_bus:
+                        try:  # pragma: no cover - best effort
                             self.event_bus.publish(
-                                "data:threshold_sync_failed",
-                                {"bot": bot, "error": str(exc)},
+                                "data:thresholds_recalibrated",
+                                {
+                                    "bot": bot,
+                                    "roi_threshold": roi_drop,
+                                    "error_threshold": error_thresh,
+                                    "test_failure_threshold": fail_thresh,
+                                    "patch_success_threshold": patch_thresh,
+                                },
                             )
                         except Exception:
                             self.logger.exception(
-                                "failed to publish threshold sync failure for %s",
-                                bot,
+                                "failed to publish thresholds recalibrated event"
                             )
-                    raise
-            else:
-                try:
-                    self.threshold_service._thresholds[key] = rt
-                except Exception as exc:
-                    self.logger.exception("failed to sync thresholds for %s", bot)
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish(
-                                "data:threshold_sync_failed",
-                                {"bot": bot, "error": str(exc)},
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "failed to publish threshold sync failure for %s",
-                                bot,
-                            )
-                    raise
-            return rt
+
+                    try:  # pragma: no cover - sync service cache & broadcast
+                        prev = self.threshold_service._thresholds.get(key)
+                        self.threshold_service._thresholds[key] = rt
+                        if prev != rt:
+                            self.threshold_service._publish(bot, rt)
+                    except Exception as exc:
+                        self.logger.exception("failed to sync thresholds for %s", bot)
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "data:threshold_sync_failed",
+                                    {"bot": bot, "error": str(exc)},
+                                )
+                            except Exception:
+                                self.logger.exception(
+                                    "failed to publish threshold sync failure for %s",
+                                    bot,
+                                )
+                        raise
+                else:
+                    try:
+                        self.threshold_service._thresholds[key] = rt
+                    except Exception as exc:
+                        self.logger.exception("failed to sync thresholds for %s", bot)
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "data:threshold_sync_failed",
+                                    {"bot": bot, "error": str(exc)},
+                                )
+                            except Exception:
+                                self.logger.exception(
+                                    "failed to publish threshold sync failure for %s",
+                                    bot,
+                                )
+                        raise
+                return rt
 
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:

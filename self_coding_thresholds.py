@@ -134,23 +134,46 @@ try:
 except Exception:
     _CONFIG_IO_TIMEOUT_S = 0.5
 
-_CONFIG_CACHE: dict[Path, Dict[str, dict]] = {}
+@dataclass
+class _ConfigCacheEntry:
+    data: Dict[str, dict]
+    mtime: float | None
+    loaded_at: float
+    last_hit: float
+    hits: int = 0
+
+
+_CONFIG_CACHE: dict[Path, _ConfigCacheEntry] = {}
 _CONFIG_CACHE_LOCK = threading.Lock()
 _LAST_CACHE_KEY: Path | None = None
+_CONFIG_CACHE_TELEMETRY: dict[str, float | int | None] = {
+    "hits": 0,
+    "last_hit": None,
+    "last_load": None,
+}
+THRESHOLD_CONFIG_LOCK = threading.RLock()
 
 
 _FORCED_FALLBACK_PATHS: set[Path] = set()
 
 
-def _cache_config(cache_key: Path, data: Dict[str, dict]) -> None:
+def _cache_config(cache_key: Path, data: Dict[str, dict], *, mtime: float | None) -> None:
     snapshot = copy.deepcopy(data)
+    now = time.time()
     global _LAST_CACHE_KEY
     with _CONFIG_CACHE_LOCK:
-        _CONFIG_CACHE[cache_key] = snapshot
+        entry = _ConfigCacheEntry(
+            data=snapshot,
+            mtime=mtime,
+            loaded_at=now,
+            last_hit=now,
+        )
+        _CONFIG_CACHE[cache_key] = entry
         _LAST_CACHE_KEY = cache_key
+        _CONFIG_CACHE_TELEMETRY["last_load"] = now
 
 
-def _get_cached_config(cache_key: Path | None = None) -> Dict[str, dict] | None:
+def _get_cache_entry(cache_key: Path | None = None) -> _ConfigCacheEntry | None:
     key = cache_key
     if key is None:
         with _CONFIG_CACHE_LOCK:
@@ -162,6 +185,22 @@ def _get_cached_config(cache_key: Path | None = None) -> Dict[str, dict] | None:
     return copy.deepcopy(cached) if cached is not None else None
 
 
+def _get_cached_config(
+    cache_key: Path | None = None, *, mtime: float | None = None
+) -> Dict[str, dict] | None:
+    entry = _get_cache_entry(cache_key)
+    if entry is None:
+        return None
+    if entry.mtime is not None and mtime is not None and entry.mtime != mtime:
+        return None
+    with _CONFIG_CACHE_LOCK:
+        entry.hits += 1
+        entry.last_hit = time.time()
+        _CONFIG_CACHE_TELEMETRY["hits"] = int(_CONFIG_CACHE_TELEMETRY.get("hits", 0)) + 1
+        _CONFIG_CACHE_TELEMETRY["last_hit"] = entry.last_hit
+    return copy.deepcopy(entry.data)
+
+
 def get_cached_config(path: Path | None = None) -> Dict[str, dict]:
     """Return the most recent cached configuration if available."""
 
@@ -170,6 +209,29 @@ def get_cached_config(path: Path | None = None) -> Dict[str, dict]:
         cache_key = _safe_resolve_with_timeout(cache_key, _CONFIG_IO_TIMEOUT_S)
     cached = _get_cached_config(cache_key if isinstance(cache_key, Path) else None)
     return cached or {}
+
+
+def _safe_stat_mtime(cfg_path: Path, timeout: float) -> float | None:
+    result: list[float] = []
+    error: list[BaseException] = []
+
+    def _do_stat() -> None:
+        try:
+            result.append(cfg_path.stat().st_mtime)
+        except BaseException as exc:  # pragma: no cover - defensive guard
+            error.append(exc)
+
+    thread = threading.Thread(target=_do_stat, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if result:
+        return result[0]
+    if error:
+        logger.debug(
+            "stat failed for %s; treating mtime as unknown", cfg_path,
+            exc_info=error[0] if logger.isEnabledFor(logging.DEBUG) else None,
+        )
+    return None
 
 
 def _safe_resolve_with_timeout(cfg_path: Path, timeout: float) -> Path:
@@ -386,8 +448,16 @@ def _load_config(
     timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
     cache_key = _safe_resolve_with_timeout(cfg_path, timeout)
 
-    cached = _get_cached_config(cache_key)
+    current_mtime = _safe_stat_mtime(cache_key, timeout)
+    cached = _get_cached_config(cache_key, mtime=current_mtime)
+    cache_mtime = current_mtime
     if bootstrap_safe and cached is not None:
+        logger.debug(
+            "using cached thresholds for %s (bootstrap_safe; hits=%s, mtime=%s)",
+            cache_key,
+            _CONFIG_CACHE_TELEMETRY.get("hits"),
+            current_mtime,
+        )
         return cached
 
     try:
@@ -427,7 +497,8 @@ def _load_config(
                 data = current_loader.safe_load(variant) or {}
                 cleaned = _decouple_aliases(data)
                 cleaned_map = cleaned if isinstance(cleaned, dict) else {}
-                _cache_config(cache_key, cleaned_map)
+                cache_mtime = _safe_stat_mtime(cache_key, timeout) or cache_mtime
+                _cache_config(cache_key, cleaned_map, mtime=cache_mtime)
                 return cleaned_map
             except RecursionError as exc:
                 logger.error(
@@ -465,7 +536,8 @@ def _load_config(
         data = _FALLBACK_YAML.safe_load(sanitised) or {}
         cleaned = _decouple_aliases(data)
         cleaned_map = cleaned if isinstance(cleaned, dict) else {}
-        _cache_config(cache_key, cleaned_map)
+        cache_mtime = _safe_stat_mtime(cache_key, timeout) or cache_mtime
+        _cache_config(cache_key, cleaned_map, mtime=cache_mtime)
         return cleaned_map
     except (RecursionError, fallback_error) as fb_exc:  # pragma: no cover - defensive guard
         logger.warning(
