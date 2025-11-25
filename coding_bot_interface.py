@@ -5139,39 +5139,20 @@ def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
 
     with _THRESHOLD_LOAD_LOCK:
         bootstrap_mode = _bootstrap_thresholds_active()
-        cached_bots: dict[str, Any] | None = None
-        if bootstrap_mode:
-            cached_loader = getattr(_self_coding_thresholds, "get_cached_config", None)
-            if callable(cached_loader):
-                try:
-                    cached_data = cached_loader()
-                    cached_bots = (
-                        cached_data.get("bots", {}) if isinstance(cached_data, dict) else {}
-                    )
-                    if cached_bots:
-                        telemetry = getattr(
-                            _self_coding_thresholds, "_CONFIG_CACHE_TELEMETRY", {}
-                        )
-                        logger.info(
-                            "using cached threshold bots during bootstrap for %s (hits=%s)",
-                            name,
-                            telemetry.get("hits"),
-                        )
-                except Exception:  # pragma: no cover - best effort
-                    logger.debug(
-                        "failed to read cached threshold config during bootstrap", exc_info=True
-                    )
 
         try:
-            if cached_bots is not None:
-                bots = cached_bots
-            elif bootstrap_mode:
-                logger.debug(
-                    "bootstrap mode active; deferring threshold load for %s", name
+            load_kwargs = {"bootstrap_safe": bootstrap_mode}
+            start = time.perf_counter() if bootstrap_mode else None
+            bots = (_load_config(None, **load_kwargs) or {}).get("bots", {})
+            if bootstrap_mode and start is not None:
+                telemetry = getattr(_self_coding_thresholds, "_CONFIG_CACHE_TELEMETRY", {})
+                logger.info(
+                    "bootstrap threshold lookup for %s returned %s bots via cache (hits=%s, elapsed=%.4fs)",
+                    name,
+                    len(bots),
+                    telemetry.get("hits"),
+                    time.perf_counter() - start,
                 )
-                bots = {}
-            else:
-                bots = (_load_config(None, bootstrap_safe=False) or {}).get("bots", {})
         except Exception:  # pragma: no cover - best effort
             bots = {}
         if name in bots:
@@ -5182,6 +5163,7 @@ def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
                 roi_drop=getattr(thresholds, "roi_drop", None),
                 error_increase=getattr(thresholds, "error_threshold", None),
                 test_failure_increase=getattr(thresholds, "test_failure_threshold", None),
+                bootstrap_safe=bootstrap_mode,
             )
         except Exception:
             logger.exception("failed to persist thresholds for %s", name)

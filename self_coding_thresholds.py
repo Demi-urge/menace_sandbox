@@ -446,19 +446,39 @@ def _load_config(
 ) -> Dict[str, dict]:
     cfg_path = path or _CONFIG_PATH
     timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
+    start = time.perf_counter() if bootstrap_safe else None
+
+    if bootstrap_safe:
+        cached = _get_cached_config(cfg_path if isinstance(cfg_path, Path) else None)
+        if cached is not None:
+            logger.info(
+                "bootstrap-safe threshold load served from cache (hits=%s, last_load=%s, elapsed=%.4fs)",
+                _CONFIG_CACHE_TELEMETRY.get("hits"),
+                _CONFIG_CACHE_TELEMETRY.get("last_load"),
+                time.perf_counter() - start if start is not None else -1.0,
+            )
+            return cached
+
+        cached = _get_cached_config()
+        if cached is not None:
+            logger.info(
+                "bootstrap-safe threshold load fell back to last cache entry (hits=%s, elapsed=%.4fs)",
+                _CONFIG_CACHE_TELEMETRY.get("hits"),
+                time.perf_counter() - start if start is not None else -1.0,
+            )
+            return cached
+
+        logger.info(
+            "bootstrap-safe threshold load returned empty cache after %.4fs; skipping filesystem access",
+            time.perf_counter() - start if start is not None else -1.0,
+        )
+        return {}
+
     cache_key = _safe_resolve_with_timeout(cfg_path, timeout)
 
     current_mtime = _safe_stat_mtime(cache_key, timeout)
     cached = _get_cached_config(cache_key, mtime=current_mtime)
     cache_mtime = current_mtime
-    if bootstrap_safe and cached is not None:
-        logger.debug(
-            "using cached thresholds for %s (bootstrap_safe; hits=%s, mtime=%s)",
-            cache_key,
-            _CONFIG_CACHE_TELEMETRY.get("hits"),
-            current_mtime,
-        )
-        return cached
 
     try:
         raw = _read_text_with_timeout(cfg_path, timeout)
@@ -560,6 +580,7 @@ def get_thresholds(
     settings: SandboxSettings | None = None,
     *,
     path: Path | None = None,
+    bootstrap_safe: bool = False,
 ) -> SelfCodingThresholds:
     """Return thresholds for ``bot``.
 
@@ -621,7 +642,7 @@ def get_thresholds(
         if bot:
             _override_from_bt(thresholds_cfg.get(bot))
 
-    data = _load_config(path)
+    data = _load_config(path, bootstrap_safe=bootstrap_safe)
     default = data.get("default", {})
     bots = data.get("bots", {})
     roi_drop = float(default.get("roi_drop", roi_drop))
@@ -736,11 +757,13 @@ def update_thresholds(
     confidence: float | None = None,
     forecast_params: dict | None = None,
     path: Path | None = None,
+    bootstrap_safe: bool | None = None,
 ) -> None:
     """Persist new thresholds for ``bot`` to the configuration file."""
 
     cfg_path = path or _CONFIG_PATH
-    data = _load_config(cfg_path)
+    bootstrap_mode = bool(bootstrap_safe)
+    data = _load_config(cfg_path, bootstrap_safe=bootstrap_mode)
     bots = data.setdefault("bots", {})
     cfg = bots.setdefault(bot, {})
     if roi_drop is not None:
@@ -773,6 +796,14 @@ def update_thresholds(
         cfg["model_params"] = dict(forecast_params)
     rendered = _render_threshold_yaml(data, path=cfg_path, bot=bot)
     if rendered is None:
+        return
+
+    if bootstrap_mode:
+        _cache_config(cfg_path, data, mtime=None)
+        logger.info(
+            "bootstrap-safe threshold update cached for %s; deferring write until after startup",
+            bot,
+        )
         return
 
     try:
