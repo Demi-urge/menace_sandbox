@@ -288,14 +288,21 @@ PolicySettings = _make_model("PolicySettings")
 class SandboxSettings:
     """Fallback configuration loader relying on pre-generated defaults."""
 
-    __slots__ = ("_data", "_dependency_adjustments", "dependency_mode")
+    __slots__ = ("_data", "_dependency_adjustments", "dependency_mode", "bootstrap_fast")
 
-    def __init__(self, *, build_groups: bool = True, **overrides: Any) -> None:
+    def __init__(
+        self, *, build_groups: bool = True, bootstrap_fast: bool = False, **overrides: Any
+    ) -> None:
         init_start = time.perf_counter()
         data = _deep_copy(_SANDBOX_DEFAULTS)
         data.update(self._load_env_overrides())
         data.update(overrides)
         parse_ms = (time.perf_counter() - init_start) * 1000
+        self.bootstrap_fast = bool(bootstrap_fast)
+        if self.bootstrap_fast:
+            logger.info(
+                "SandboxSettings fallback bootstrap_fast enabled; using lightweight validation"
+            )
         if "stack_languages" in data:
             try:
                 languages = normalise_stack_languages(data["stack_languages"])
@@ -327,6 +334,8 @@ class SandboxSettings:
             group_start = time.perf_counter()
             self._initialise_grouped_models()
             groups_ms = (time.perf_counter() - group_start) * 1000
+        elif bootstrap_fast:
+            logger.debug("SandboxSettings bootstrap_fast enabled; skipping grouped settings")
         else:
             logger.debug("SandboxSettings build_groups disabled; skipping grouped settings")
         total_ms = (time.perf_counter() - init_start) * 1000

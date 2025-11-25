@@ -128,6 +128,7 @@ class SelfCodingThresholds:
 
 
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
+_BOOTSTRAP_SETTINGS_CACHE: SandboxSettings | None = None
 
 try:
     _CONFIG_IO_TIMEOUT_S = float(os.getenv("SELF_CODING_CONFIG_IO_TIMEOUT_S", "0.5"))
@@ -157,6 +158,20 @@ _DEFERRED_CONFIG_WRITES: dict[Path, tuple[Dict[str, dict], str]] = {}
 
 
 _FORCED_FALLBACK_PATHS: set[Path] = set()
+
+
+def _get_bootstrap_settings() -> SandboxSettings:
+    global _BOOTSTRAP_SETTINGS_CACHE
+    if _BOOTSTRAP_SETTINGS_CACHE is not None:
+        return _BOOTSTRAP_SETTINGS_CACHE
+    try:
+        _BOOTSTRAP_SETTINGS_CACHE = SandboxSettings(
+            bootstrap_fast=True, build_groups=False
+        )
+    except Exception as exc:  # pragma: no cover - defensive bootstrap fallback
+        logger.debug("failed to build bootstrap SandboxSettings; falling back", exc_info=exc)
+        _BOOTSTRAP_SETTINGS_CACHE = SandboxSettings()
+    return _BOOTSTRAP_SETTINGS_CACHE
 
 
 def _cache_config(cache_key: Path, data: Dict[str, dict], *, mtime: float | None) -> None:
@@ -582,6 +597,7 @@ def get_thresholds(
     settings: SandboxSettings | None = None,
     *,
     path: Path | None = None,
+    bootstrap_fast: bool = False,
     bootstrap_safe: bool = False,
 ) -> SelfCodingThresholds:
     """Return thresholds for ``bot``.
@@ -598,7 +614,12 @@ def get_thresholds(
         Optional override for the configuration path.
     """
 
-    s = settings or SandboxSettings()
+    if settings is not None:
+        s = settings
+    elif bootstrap_fast:
+        s = _get_bootstrap_settings()
+    else:
+        s = SandboxSettings()
     roi_drop = getattr(s, "self_coding_roi_drop", -0.1)
     err_inc = getattr(s, "self_coding_error_increase", 1.0)
     fail_inc = getattr(s, "self_coding_test_failure_increase", 0.0)

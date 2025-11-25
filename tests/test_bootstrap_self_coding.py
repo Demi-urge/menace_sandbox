@@ -67,6 +67,47 @@ def test_prepare_pipeline_promotes_eager_helper_stub(
     assert "re-entrant initialisation depth" not in caplog.text
 
 
+def test_prepare_pipeline_bootstrap_skips_path_resolution(monkeypatch):
+    monkeypatch.setenv("PATH_RESOLUTION_BOOTSTRAP", "1")
+
+    import menace_sandbox.dynamic_path_router as dpr
+
+    class _StubPipeline:
+        def __init__(self, *, context_builder=None, bot_registry=None, data_bot=None, manager=None, **_kwargs):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    class _StubRegistry:
+        def __init__(self) -> None:
+            self.flags: list[bool] = []
+
+        def set_bootstrap_mode(self, flag: bool) -> None:
+            self.flags.append(flag)
+
+    class _StubBuilder:
+        pass
+
+    class _StubDataBot:
+        pass
+
+    def _fail_resolve(self):  # pragma: no cover - should be bypassed
+        raise AssertionError("bootstrap fast path should bypass Path.resolve")
+
+    monkeypatch.setattr(dpr.Path, "resolve", _fail_resolve)
+
+    pipeline, _ = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_StubPipeline,
+        context_builder=_StubBuilder(),
+        bot_registry=_StubRegistry(),
+        data_bot=_StubDataBot(),
+        bootstrap_safe=True,
+    )
+
+    assert isinstance(pipeline, _StubPipeline)
+
+
 def test_bootstrap_manager_promotes_eager_helper_stub(
     eager_helper_stub_env, monkeypatch, caplog
 ):
