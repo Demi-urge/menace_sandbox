@@ -1277,7 +1277,7 @@ class PatchHistoryDB:
         self.path = Path(
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
         )
-        self._bootstrap = bool(bootstrap)
+        self._bootstrap = bool(bootstrap or bootstrap_fast)
         self._bootstrap_fast = (
             self._bootstrap if bootstrap_fast is None else bool(bootstrap_fast)
         )
@@ -1334,7 +1334,12 @@ class PatchHistoryDB:
                 extra={"duration_s": round(time.perf_counter() - router_start, 6)},
             )
         conn = self.router.get_connection("patch_history")
-        if self._bootstrap:
+        if self._bootstrap_fast:
+            logger.info(
+                "patch_history_db.bootstrap.fast_skip",
+                extra={"path": str(self.path)},
+            )
+        elif self._bootstrap:
             self._init_bootstrap_schema(conn)
         else:
             conn.execute(
@@ -1591,10 +1596,13 @@ class PatchHistoryDB:
             logger.info(
                 "patch_history_db.bootstrap.fast_path", extra={"path": str(self.path)}
             )
-        conn.commit()
-        # expose connection for diagnostics and tests
-        self.conn = self.router.get_connection("patch_history")
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        if not self._bootstrap_fast:
+            conn.commit()
+            # expose connection for diagnostics and tests
+            self.conn = self.router.get_connection("patch_history")
+            self.conn.execute("PRAGMA foreign_keys = ON")
+        else:
+            self.conn = conn
         logger.debug(
             "patch_history_db.init.complete duration=%.6fs",
             time.perf_counter() - init_start,
@@ -1676,7 +1684,8 @@ class PatchHistoryDB:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
             conn = self.router.get_connection("patch_history")
-            conn.execute("PRAGMA foreign_keys = ON")
+            if not self._bootstrap_fast:
+                conn.execute("PRAGMA foreign_keys = ON")
             try:
                 yield conn
                 conn.commit()
