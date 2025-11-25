@@ -695,7 +695,9 @@ class SelfCodingManager:
             self._settings = None
         return self._settings
 
-    def _refresh_thresholds(self, *, bootstrap_fast: bool | None = None) -> None:
+    def _refresh_thresholds(
+        self, *, bootstrap_fast: bool | None = None, bootstrap_mode: bool | None = None
+    ) -> None:
         """Fetch ROI, error and test-failure thresholds via ``ThresholdService``.
 
         When adaptive thresholding is enabled via :class:`SandboxSettings`,
@@ -708,12 +710,21 @@ class SelfCodingManager:
             return
         try:
             getattr(self, "_last_thresholds", None)
+            bootstrap_active = (
+                bool(bootstrap_mode)
+                if bootstrap_mode is not None
+                else bool(getattr(self, "bootstrap_mode", False))
+            )
             t = self.threshold_service.reload(
                 self.bot_name,
                 bootstrap_mode=(
-                    bootstrap_fast
-                    if bootstrap_fast is not None
-                    else self.bootstrap_mode
+                    True
+                    if bootstrap_active
+                    else (
+                        bootstrap_fast
+                        if bootstrap_fast is not None
+                        else self.bootstrap_mode
+                    )
                 ),
             )
 

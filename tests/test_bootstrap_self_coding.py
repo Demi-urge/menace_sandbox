@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Callable
+import time
 
 import pytest
 
@@ -106,6 +107,72 @@ def test_prepare_pipeline_bootstrap_skips_path_resolution(monkeypatch):
     )
 
     assert isinstance(pipeline, _StubPipeline)
+
+
+def test_prepare_pipeline_bootstrap_skips_threshold_stat(monkeypatch):
+    import menace_sandbox.self_coding_thresholds as thresholds
+    import menace_sandbox.threshold_service as ts
+
+    calls = {"stat": 0, "resolve": 0}
+
+    def _slow_stat(*_args, **_kwargs):  # pragma: no cover - should be bypassed
+        calls["stat"] += 1
+        time.sleep(0.5)
+        raise AssertionError("bootstrap threshold load should avoid stat")
+
+    def _slow_resolve(*_args, **_kwargs):  # pragma: no cover - should be bypassed
+        calls["resolve"] += 1
+        time.sleep(0.5)
+        raise AssertionError("bootstrap threshold load should avoid resolve")
+
+    monkeypatch.setattr(thresholds, "_safe_stat_mtime", _slow_stat)
+    monkeypatch.setattr(thresholds, "_safe_resolve_with_timeout", _slow_resolve)
+
+    class _StubRegistry:
+        def __init__(self) -> None:
+            self.flags: list[bool] = []
+            self.bootstrap = True
+
+        def set_bootstrap_mode(self, flag: bool) -> None:
+            self.flags.append(flag)
+            self.bootstrap = flag
+
+    class _StubBuilder:
+        pass
+
+    class _StubDataBot:
+        pass
+
+    class _ThresholdPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_kwargs,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            ts.threshold_service.reload("BootstrapSmoke")
+
+    start = time.perf_counter()
+    pipeline, _ = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_ThresholdPipeline,
+        context_builder=_StubBuilder(),
+        bot_registry=_StubRegistry(),
+        data_bot=_StubDataBot(),
+        bootstrap_safe=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert isinstance(pipeline, _ThresholdPipeline)
+    assert calls["stat"] == 0
+    assert calls["resolve"] == 0
+    assert elapsed < 0.4
 
 
 def test_prepare_pipeline_bootstrap_handles_locked_config(monkeypatch, tmp_path, stub_bootstrap_env):
