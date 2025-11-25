@@ -109,6 +109,133 @@ def test_prepare_pipeline_bootstrap_skips_path_resolution(monkeypatch):
     assert isinstance(pipeline, _StubPipeline)
 
 
+def test_prepare_pipeline_bootstrap_handles_slow_data_dir(monkeypatch, caplog):
+    import menace_sandbox.self_coding_engine as engine_mod
+
+    caplog.set_level(logging.DEBUG, logger=engine_mod.logger.name)
+
+    resolve_calls = {"count": 0}
+
+    def _fail_resolve(_path):  # pragma: no cover - bootstrap fast path should skip
+        resolve_calls["count"] += 1
+        raise TimeoutError("resolve_path should not run during bootstrap_fast")
+
+    monkeypatch.setattr(engine_mod, "resolve_path", _fail_resolve)
+    monkeypatch.setattr(engine_mod, "_ensure_code_database", lambda: None)
+
+    stub_settings = types.SimpleNamespace(
+        prompt_chunk_token_threshold=0,
+        chunk_summary_cache_dir=".",
+        prompt_chunk_cache_dir=".",
+        baseline_window=1,
+        sandbox_data_dir="/slow/data/dir",
+        audit_log_path="audit.log",
+        audit_privkey=None,
+        audit_privkey_path=None,
+        prompt_success_log_path="success.log",
+        prompt_failure_log_path="failure.log",
+        stack_enabled=None,
+        stack_top_k=None,
+        stack_prompt_limit=None,
+        stack_snippet_char_limit=None,
+        stack_total_char_limit=None,
+        stack_languages=None,
+        stack_max_lines=None,
+        simplify_prompt_drop_system=True,
+        simplify_prompt_example_limit=0,
+    )
+
+    monkeypatch.setattr(engine_mod, "_settings", stub_settings)
+
+    class _StubAuditTrail:
+        def __init__(self, path, priv):
+            self.path = path
+            self.priv = priv
+
+    class _StubTracker:
+        pass
+
+    monkeypatch.setattr(engine_mod, "AuditTrail", _StubAuditTrail)
+    monkeypatch.setattr(engine_mod, "ROITracker", lambda *_, **__: _StubTracker())
+    monkeypatch.setattr(engine_mod, "BaselineTracker", lambda *_, **__: _StubTracker())
+    monkeypatch.setattr(engine_mod, "load_private_key_material", lambda *_a, **_k: None)
+
+    class _StubPromptEngine:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(engine_mod, "PromptEngine", _StubPromptEngine)
+
+    class _StubRegistry:
+        def __init__(self) -> None:
+            self.flags: list[bool] = []
+
+        def set_bootstrap_mode(self, flag: bool) -> None:
+            self.flags.append(flag)
+
+    class _StubBuilder:
+        stack_config = None
+
+        def refresh_db_weights(self) -> None:
+            return None
+
+    class _StubDataBot:
+        pass
+
+    class _StubCodeDB:
+        pass
+
+    class _StubMemory:
+        pass
+
+    class _BootstrapSmokePipeline:
+        engine_factory = engine_mod.SelfCodingEngine
+
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast: bool = False,
+            **_kwargs,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.engine = self.engine_factory(
+                _StubCodeDB(),
+                _StubMemory(),
+                context_builder=context_builder,
+                prompt_memory=SimpleNamespace(),
+                prompt_optimizer=SimpleNamespace(),
+                cognition_layer=SimpleNamespace(
+                    roi_tracker=engine_mod.ROITracker(),
+                    context_builder=context_builder,
+                ),
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    pipeline, _ = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_BootstrapSmokePipeline,
+        context_builder=_StubBuilder(),
+        bot_registry=_StubRegistry(),
+        data_bot=_StubDataBot(),
+        bootstrap_fast=True,
+    )
+
+    assert isinstance(pipeline.engine, engine_mod.SelfCodingEngine)
+    assert resolve_calls["count"] == 0
+    assert any(
+        "sandbox data dir" in record.getMessage()
+        for record in caplog.records
+        if record.levelno <= logging.DEBUG
+    ), "expected bootstrap_fast path resolution log"
+
+
 def test_prepare_pipeline_bootstrap_skips_threshold_stat(monkeypatch):
     import menace_sandbox.self_coding_thresholds as thresholds
     import menace_sandbox.threshold_service as ts
