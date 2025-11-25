@@ -157,6 +157,7 @@ class SharedVectorService:
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
+        self.bootstrap_fast = bool(self.bootstrap_fast)
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
         init_start = time.perf_counter()
