@@ -236,6 +236,7 @@ class _BootstrapContext:
     sentinel: Any = None
     pipeline: Any = None
     bootstrap_safe: bool = False
+    bootstrap_fast: bool = False
 
 
 @dataclass(eq=False)
@@ -264,6 +265,7 @@ def _push_bootstrap_context(
     manager: Any,
     pipeline: Any | None = None,
     bootstrap_safe: bool | None = None,
+    bootstrap_fast: bool | None = None,
 ) -> _BootstrapContext:
     """Push a helper context onto the current thread's stack."""
 
@@ -283,6 +285,9 @@ def _push_bootstrap_context(
     bootstrap_flag = bootstrap_safe
     if bootstrap_flag is None:
         bootstrap_flag = bool(getattr(_current_bootstrap_context(), "bootstrap_safe", False))
+    fast_flag = bootstrap_fast
+    if fast_flag is None:
+        fast_flag = bool(getattr(_current_bootstrap_context(), "bootstrap_fast", False))
 
     context = _BootstrapContext(
         registry=registry,
@@ -291,6 +296,7 @@ def _push_bootstrap_context(
         sentinel=manager,
         pipeline=pipeline,
         bootstrap_safe=bool(bootstrap_flag),
+        bootstrap_fast=bool(fast_flag),
     )
     stack.append(context)
     return context
@@ -3571,6 +3577,7 @@ def prepare_pipeline_for_bootstrap(
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
+    bootstrap_fast: bool = False,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3602,6 +3609,7 @@ def prepare_pipeline_for_bootstrap(
             sentinel_factory=sentinel_factory,
             extra_manager_sentinels=extra_manager_sentinels,
             bootstrap_safe=bootstrap_safe,
+            bootstrap_fast=bootstrap_fast,
             **pipeline_kwargs,
         )
 
@@ -3620,6 +3628,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
+    bootstrap_fast: bool = False,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3701,6 +3710,9 @@ def _prepare_pipeline_for_bootstrap_impl(
             set_audit_bootstrap_safe_default(True)
         except Exception:  # pragma: no cover - defensive logging only
             logger.debug("failed to enable bootstrap-safe DB auditing", exc_info=True)
+
+    if bootstrap_fast and "bootstrap_fast" not in pipeline_kwargs:
+        pipeline_kwargs["bootstrap_fast"] = True
 
     setter = getattr(bot_registry, "set_bootstrap_mode", None)
     if callable(setter):
@@ -4277,6 +4289,7 @@ def _bootstrap_manager(
     data_bot: DataBot,
     *,
     bootstrap_safe: bool | None = None,
+    bootstrap_fast: bool | None = None,
     pipeline: Any | None = None,
     pipeline_manager: Any | None = None,
     pipeline_promoter: Callable[[Any], None] | None = None,
@@ -4284,9 +4297,14 @@ def _bootstrap_manager(
 ) -> Any:
     """Instantiate a ``SelfCodingManager`` with progressive fallbacks."""
 
-    if bootstrap_safe is None:
+    if bootstrap_safe is None or bootstrap_fast is None:
         active_context = _current_bootstrap_context()
-        bootstrap_safe = bool(getattr(active_context, "bootstrap_safe", False))
+        if bootstrap_safe is None:
+            bootstrap_safe = bool(getattr(active_context, "bootstrap_safe", False))
+        if bootstrap_fast is None:
+            bootstrap_fast = bool(getattr(active_context, "bootstrap_fast", False))
+    if bootstrap_fast is None:
+        bootstrap_fast = bool(bootstrap_safe)
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None
@@ -4609,6 +4627,7 @@ def _bootstrap_manager(
                 manager=sentinel_manager,
                 pipeline=pipeline,
                 bootstrap_safe=bootstrap_safe,
+                bootstrap_fast=bootstrap_fast,
             )
             manager = manager_cls(  # type: ignore[call-arg]
                 bot_registry=bot_registry,
@@ -4679,6 +4698,7 @@ def _bootstrap_manager(
                 manager=placeholder_manager,
                 pipeline=pipeline,
                 bootstrap_safe=bootstrap_safe,
+                bootstrap_fast=bootstrap_fast,
             )
             if owner_context is not None:
                 owner_context.sentinel = placeholder_manager
@@ -4690,6 +4710,7 @@ def _bootstrap_manager(
                 engine_mod = _load_optional_module(
                     "self_coding_engine", fallback="menace.self_coding_engine"
                 )
+                patch_db_cls = _load_optional_module("code_database").PatchHistoryDB
                 pipeline_mod = _load_optional_module(
                     "model_automation_pipeline", fallback="menace.model_automation_pipeline"
                 )
@@ -4703,6 +4724,8 @@ def _bootstrap_manager(
                     code_db_cls(),
                     memory_cls(),
                     context_builder=ctx_builder,
+                    bootstrap_fast=bool(bootstrap_fast),
+                    patch_db=patch_db_cls(bootstrap=bool(bootstrap_fast)),
                 )
                 pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
                 if pipeline_cls is None:

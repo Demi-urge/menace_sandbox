@@ -835,6 +835,7 @@ class SelfCodingEngine:
         delta_tracker: BaselineTracker | None = None,
         prompt_simplifier: Callable[[Prompt], Prompt] | None = None,
         stack_assist: Mapping[str, Any] | bool | None = None,
+        bootstrap_fast: bool = False,
         **kwargs: Any,
     ) -> None:
         _ensure_code_database()
@@ -849,6 +850,7 @@ class SelfCodingEngine:
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.pipeline = pipeline
         self.data_bot = data_bot
+        self.bootstrap_fast = bootstrap_fast
         self.patch_db = patch_db
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
@@ -856,7 +858,10 @@ class SelfCodingEngine:
             self.prompt_memory = prompt_memory
         else:
             try:
-                self.prompt_memory = PromptMemoryTrainer()
+                self.prompt_memory = PromptMemoryTrainer(
+                    patch_db=self.patch_db,
+                    bootstrap_fast=bootstrap_fast,
+                )
             except Exception:
                 self.prompt_memory = None
         self.prompt_tone = prompt_tone

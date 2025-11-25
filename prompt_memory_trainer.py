@@ -41,13 +41,16 @@ class PromptMemoryTrainer:
         patch_db: PatchHistoryDB | None = None,
         state_path: str | Path | None = ROOT_DIR / "prompt_style_weights.json",
         db_path: str | Path | None = ROOT_DIR / "prompt_styles.db",
+        bootstrap_fast: bool = False,
     ) -> None:
         if memory is None:
             from menace_sandbox import gpt_memory
 
             memory = gpt_memory.GPTMemoryManager(db_path=":memory:")
         self.memory = memory
-        self.patch_db = patch_db or PatchHistoryDB(":memory:")
+        self.patch_db = patch_db or PatchHistoryDB(
+            ":memory:", bootstrap=bootstrap_fast
+        )
         self.state_path = None
         if state_path:
             p = Path(state_path)

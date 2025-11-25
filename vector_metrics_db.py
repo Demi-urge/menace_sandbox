@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+import sqlite3
 
 from db_router import (
     GLOBAL_ROUTER,
@@ -122,10 +123,17 @@ class VectorMetricsDB:
     """SQLite-backed store for :class:`VectorMetric` records."""
 
     def __init__(
-        self, path: Path | str = "vector_metrics.db", *, bootstrap_safe: bool = False
+        self,
+        path: Path | str = "vector_metrics.db",
+        *,
+        bootstrap_safe: bool = False,
+        bootstrap_fast: bool = False,
     ) -> None:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
+        )
+        self.bootstrap_fast = bootstrap_fast or _env_flag(
+            "VECTOR_METRICS_BOOTSTRAP_FAST", False
         )
         init_start = time.perf_counter()
         logger.info(
@@ -194,6 +202,60 @@ class VectorMetricsDB:
                 init_start, using_global_router=using_global_router
             ),
         )
+        self._schema_cache: dict[str, list[str]] = {}
+        self._default_columns: dict[str, list[str]] = {
+            "vector_metrics": [
+                "event_type",
+                "db",
+                "tokens",
+                "wall_time_ms",
+                "store_time_ms",
+                "hit",
+                "rank",
+                "contribution",
+                "prompt_tokens",
+                "patch_id",
+                "session_id",
+                "vector_id",
+                "similarity",
+                "context_score",
+                "age",
+                "win",
+                "regret",
+                "ts",
+            ],
+            "patch_ancestry": [
+                "patch_id",
+                "vector_id",
+                "rank",
+                "contribution",
+                "license",
+                "semantic_alerts",
+                "alignment_severity",
+                "risk_score",
+            ],
+            "patch_metrics": [
+                "patch_id",
+                "errors",
+                "tests_passed",
+                "lines_changed",
+                "context_tokens",
+                "patch_difficulty",
+                "start_time",
+                "time_to_completion",
+                "error_trace_count",
+                "roi_tag",
+                "effort_estimate",
+                "enhancement_score",
+            ],
+        }
+        if self.bootstrap_fast:
+            logger.info(
+                "vector_metrics_db.bootstrap.skip_schema",
+                extra=_timestamp_payload(init_start, fast_path=True),
+            )
+            self._schema_cache.update(self._default_columns)
+            return
         schema_start = time.perf_counter()
         self.conn.execute(
             """
@@ -224,163 +286,169 @@ class VectorMetricsDB:
             extra=_timestamp_payload(schema_start),
         )
         migration_start = time.perf_counter()
-        self.conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS vector_metrics_event_db_ts
-                ON vector_metrics(event_type, db, ts)
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_ancestry(
-                patch_id TEXT,
-                vector_id TEXT,
-                rank INTEGER,
-                contribution REAL,
-                license TEXT,
-                semantic_alerts TEXT,
-                alignment_severity REAL,
-                risk_score REAL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_metrics(
-                patch_id TEXT PRIMARY KEY,
-                errors TEXT,
-                tests_passed INTEGER,
-                lines_changed INTEGER,
-                context_tokens INTEGER,
-                patch_difficulty INTEGER,
-                start_time REAL,
-                time_to_completion REAL,
-                error_trace_count INTEGER,
-                roi_tag TEXT,
-                effort_estimate REAL,
-                enhancement_score REAL
-            )
-            """
-        )
-        # Store adaptive ranking weights so the ranker can learn over time.
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ranking_weights(
-                db TEXT PRIMARY KEY,
-                weight REAL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS vector_weights(
-                vector_id TEXT PRIMARY KEY,
-                weight REAL
-            )
-            """
-        )
-        # Persist session vector data so retrievals can be reconciled after
-        # restarts.  Stored as JSON blobs keyed by ``session_id``.
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS pending_sessions(
-                session_id TEXT PRIMARY KEY,
-                vectors TEXT,
-                metadata TEXT
-            )
-            """
-        )
-        self.conn.commit()
-        cols = self._table_columns("vector_metrics")
-        migrations = {
-            "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
-            "vector_id": "ALTER TABLE vector_metrics ADD COLUMN vector_id TEXT",
-            "similarity": "ALTER TABLE vector_metrics ADD COLUMN similarity REAL",
-            "context_score": "ALTER TABLE vector_metrics ADD COLUMN context_score REAL",
-            "age": "ALTER TABLE vector_metrics ADD COLUMN age REAL",
-            "win": "ALTER TABLE vector_metrics ADD COLUMN win INTEGER",
-            "regret": "ALTER TABLE vector_metrics ADD COLUMN regret INTEGER",
-        }
-        applied_columns = []
-        for name, stmt in migrations.items():
-            if name not in cols:
-                self.conn.execute(stmt)
-                applied_columns.append(name)
-        logger.info(
-            "vector_metrics_db.migrations.vector_metrics",
-            extra=_timestamp_payload(
-                migration_start, applied_columns=applied_columns
-            ),
-        )
-        self.conn.commit()
-        pcols = self._table_columns("patch_ancestry")
-        if "license" not in pcols:
-            self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
-        if "semantic_alerts" not in pcols:
-            self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT")
-        if "alignment_severity" not in pcols:
+        if not self.bootstrap_fast:
             self.conn.execute(
-                "ALTER TABLE patch_ancestry ADD COLUMN alignment_severity REAL"
+                """
+                CREATE INDEX IF NOT EXISTS vector_metrics_event_db_ts
+                    ON vector_metrics(event_type, db, ts)
+                """
             )
-        if "risk_score" not in pcols:
             self.conn.execute(
-                "ALTER TABLE patch_ancestry ADD COLUMN risk_score REAL"
+                """
+                CREATE TABLE IF NOT EXISTS patch_ancestry(
+                    patch_id TEXT,
+                    vector_id TEXT,
+                    rank INTEGER,
+                    contribution REAL,
+                    license TEXT,
+                    semantic_alerts TEXT,
+                    alignment_severity REAL,
+                    risk_score REAL
+                )
+                """
             )
-        self.conn.commit()
-        mcols = self._table_columns("patch_metrics")
-        if "context_tokens" not in mcols:
-            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
-        if "patch_difficulty" not in mcols:
-            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER")
-        if "start_time" not in mcols:
-            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN start_time REAL")
-        if "time_to_completion" not in mcols:
             self.conn.execute(
-                "ALTER TABLE patch_metrics ADD COLUMN time_to_completion REAL"
+                """
+                CREATE TABLE IF NOT EXISTS patch_metrics(
+                    patch_id TEXT PRIMARY KEY,
+                    errors TEXT,
+                    tests_passed INTEGER,
+                    lines_changed INTEGER,
+                    context_tokens INTEGER,
+                    patch_difficulty INTEGER,
+                    start_time REAL,
+                    time_to_completion REAL,
+                    error_trace_count INTEGER,
+                    roi_tag TEXT,
+                    effort_estimate REAL,
+                    enhancement_score REAL
+                )
+                """
             )
-        if "error_trace_count" not in mcols:
+            # Store adaptive ranking weights so the ranker can learn over time.
             self.conn.execute(
-                "ALTER TABLE patch_metrics ADD COLUMN error_trace_count INTEGER"
+                """
+                CREATE TABLE IF NOT EXISTS ranking_weights(
+                    db TEXT PRIMARY KEY,
+                    weight REAL
+                )
+                """
             )
-        if "roi_tag" not in mcols:
-            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
-        if "effort_estimate" not in mcols:
-            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL")
-        if "enhancement_score" not in mcols:
             self.conn.execute(
-                "ALTER TABLE patch_metrics ADD COLUMN enhancement_score REAL"
+                """
+                CREATE TABLE IF NOT EXISTS vector_weights(
+                    vector_id TEXT PRIMARY KEY,
+                    weight REAL
+                )
+                """
             )
-        self.conn.commit()
-        logger.info(
-            "vector_metrics_db.migrations.patch_tables",
-            extra=_timestamp_payload(
-                migration_start,
-                patch_ancestry_missing=[
-                    c
-                    for c in (
-                        "license",
-                        "semantic_alerts",
-                        "alignment_severity",
-                        "risk_score",
-                    )
-                    if c not in pcols
-                ],
-                patch_metrics_missing=[
-                    c
-                    for c in (
-                        "context_tokens",
-                        "patch_difficulty",
-                        "start_time",
-                        "time_to_completion",
-                        "error_trace_count",
-                        "roi_tag",
-                        "effort_estimate",
-                        "enhancement_score",
-                    )
-                    if c not in mcols
-                ],
-            ),
-        )
+            # Persist session vector data so retrievals can be reconciled after
+            # restarts.  Stored as JSON blobs keyed by ``session_id``.
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pending_sessions(
+                    session_id TEXT PRIMARY KEY,
+                    vectors TEXT,
+                    metadata TEXT
+                )
+                """
+            )
+            self.conn.commit()
+            cols = self._table_columns("vector_metrics")
+            migrations = {
+                "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
+                "vector_id": "ALTER TABLE vector_metrics ADD COLUMN vector_id TEXT",
+                "similarity": "ALTER TABLE vector_metrics ADD COLUMN similarity REAL",
+                "context_score": "ALTER TABLE vector_metrics ADD COLUMN context_score REAL",
+                "age": "ALTER TABLE vector_metrics ADD COLUMN age REAL",
+                "win": "ALTER TABLE vector_metrics ADD COLUMN win INTEGER",
+                "regret": "ALTER TABLE vector_metrics ADD COLUMN regret INTEGER",
+            }
+            applied_columns = []
+            for name, stmt in migrations.items():
+                if name not in cols:
+                    self.conn.execute(stmt)
+                    applied_columns.append(name)
+            logger.info(
+                "vector_metrics_db.migrations.vector_metrics",
+                extra=_timestamp_payload(
+                    migration_start, applied_columns=applied_columns
+                ),
+            )
+            self.conn.commit()
+            pcols = self._table_columns("patch_ancestry")
+            if "license" not in pcols:
+                self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+            if "semantic_alerts" not in pcols:
+                self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT")
+            if "alignment_severity" not in pcols:
+                self.conn.execute(
+                    "ALTER TABLE patch_ancestry ADD COLUMN alignment_severity REAL"
+                )
+            if "risk_score" not in pcols:
+                self.conn.execute(
+                    "ALTER TABLE patch_ancestry ADD COLUMN risk_score REAL"
+                )
+            self.conn.commit()
+            mcols = self._table_columns("patch_metrics")
+            if "context_tokens" not in mcols:
+                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
+            if "patch_difficulty" not in mcols:
+                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER")
+            if "start_time" not in mcols:
+                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN start_time REAL")
+            if "time_to_completion" not in mcols:
+                self.conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN time_to_completion REAL"
+                )
+            if "error_trace_count" not in mcols:
+                self.conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN error_trace_count INTEGER"
+                )
+            if "roi_tag" not in mcols:
+                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
+            if "effort_estimate" not in mcols:
+                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL")
+            if "enhancement_score" not in mcols:
+                self.conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN enhancement_score REAL"
+                )
+            self.conn.commit()
+            logger.info(
+                "vector_metrics_db.migrations.patch_tables",
+                extra=_timestamp_payload(
+                    migration_start,
+                    patch_ancestry_missing=[
+                        c
+                        for c in (
+                            "license",
+                            "semantic_alerts",
+                            "alignment_severity",
+                            "risk_score",
+                        )
+                        if c not in pcols
+                    ],
+                    patch_metrics_missing=[
+                        c
+                        for c in (
+                            "context_tokens",
+                            "patch_difficulty",
+                            "start_time",
+                            "time_to_completion",
+                            "error_trace_count",
+                            "roi_tag",
+                            "effort_estimate",
+                            "enhancement_score",
+                        )
+                        if c not in mcols
+                    ],
+                ),
+            )
+        else:
+            logger.info(
+                "vector_metrics_db.bootstrap.fast_path_enabled",
+                extra=_timestamp_payload(migration_start),
+            )
         logger.info(
             "vector_metrics_db.init.complete",
             extra=_timestamp_payload(
@@ -394,19 +462,48 @@ class VectorMetricsDB:
         """Return column names for ``table`` using non-blocking pragmas."""
 
         start = time.perf_counter()
+        timeout_ms: int | None = None
         try:
+            if self.bootstrap_fast:
+                try:
+                    timeout_ms = int(
+                        self.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                    )
+                    self.conn.execute("PRAGMA busy_timeout = 0")
+                except Exception:
+                    logger.debug(
+                        "vector_metrics_db.schema.fast_timeout_unset",
+                        exc_info=True,
+                    )
             rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
-        except Exception:
-            logger.exception(
-                "vector_metrics_db.schema.inspect_failed",
-                extra=_timestamp_payload(start, table=table),
+        except Exception as exc:
+            cache = self._schema_cache.get(table) or self._default_columns.get(table, [])
+            logger.warning(
+                "vector_metrics_db.schema.fast_path",
+                extra=_timestamp_payload(
+                    start,
+                    table=table,
+                    cached=len(cache),
+                    reason=str(exc),
+                ),
             )
-            return []
+            return list(cache)
+        finally:
+            if timeout_ms is not None:
+                try:
+                    self.conn.execute(f"PRAGMA busy_timeout = {timeout_ms}")
+                except Exception:
+                    logger.debug(
+                        "vector_metrics_db.schema.restore_timeout_failed",
+                        exc_info=True,
+                    )
         logger.info(
             "vector_metrics_db.schema.inspected",
             extra=_timestamp_payload(start, table=table, column_count=len(rows)),
         )
-        return [r[1] for r in rows]
+        columns = [r[1] for r in rows]
+        self._schema_cache[table] = columns
+        return columns
 
     # ------------------------------------------------------------------
     def get_db_weights(self) -> dict[str, float]:
