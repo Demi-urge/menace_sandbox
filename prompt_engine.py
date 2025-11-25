@@ -244,9 +244,9 @@ class PromptEngine:
         else 3500
     )
     chunk_summary_cache_dir: Path = field(
-        default_factory=lambda: Path(
-            _SETTINGS.chunk_summary_cache_dir if _SETTINGS else "chunk_summary_cache"
-        ).expanduser()
+        default_factory=lambda: resolve_path(_SETTINGS.chunk_summary_cache_dir)
+        if _SETTINGS
+        else resolve_path("chunk_summary_cache")
     )
     llm: LLMClient | None = None
     bootstrap_fast: bool = False
@@ -262,13 +262,11 @@ class PromptEngine:
             getattr(RoiTag.BLOCKED, "value", RoiTag.BLOCKED): -1.0,
         }
     )
-    template_path: Path = field(
-        default_factory=lambda: Path(
-            os.getenv(
-                "PROMPT_TEMPLATES_PATH",
-                "config/prompt_templates.v2.json",
-            )
-        ).expanduser()
+    template_path: Path = resolve_path(
+        os.getenv(
+            "PROMPT_TEMPLATES_PATH",
+            "config/prompt_templates.v2.json",
+        )
     )
     template_sections: List[str] = field(
         default_factory=lambda: os.getenv(
@@ -322,22 +320,13 @@ class PromptEngine:
         except Exception:
             return candidate
 
-    def _prepare_path(self, path: Path) -> Path:
-        """Resolve *path* while respecting the lightweight bootstrap mode."""
-
-        candidate = Path(path).expanduser()
-        if self.bootstrap_fast:
-            return candidate if candidate.is_absolute() else (Path.cwd() / candidate)
-        try:
-            return resolve_path(candidate)
-        except Exception:
-            return candidate
-
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.context_builder is None:
             raise ValueError("PromptEngine requires a ContextBuilder instance")
-        self.chunk_summary_cache_dir = self._prepare_path(self.chunk_summary_cache_dir)
-        self.template_path = self._prepare_path(self.template_path)
+        try:
+            self.template_path = resolve_path(self.template_path)
+        except Exception:
+            pass
         self.weights_path = self._prepare_weights_path()
         if self.retriever is None:
             try:
