@@ -2372,6 +2372,7 @@ class DataBot:
                     error_threshold=err_thresh,
                     test_failure_threshold=fail_thresh,
                     patch_success_drop=patch_thresh,
+                    bootstrap_mode=_bootstrap_active(self),
                 )
                 persist_sc_thresholds(
                     bot,
@@ -2955,6 +2956,7 @@ class DataBot:
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
             patch_success_drop=patch_success_drop,
+            bootstrap_mode=_bootstrap_active(self),
         )
         # mirror updates in the self-coding configuration so future
         # processes see the new limits without relying solely on the

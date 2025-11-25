@@ -293,6 +293,14 @@ def _read_text_with_timeout(
     bootstrap_mode: bool = False,
     fallback_text: str | None = None,
 ) -> str:
+    if bootstrap_mode and fallback_text is not None:
+        logger.info(
+            "bootstrap read for %s returning cached configuration without waiting (timeout=%.2fs)",
+            cfg_path,
+            timeout,
+        )
+        return fallback_text
+
     result: list[str] = []
     error: list[BaseException] = []
 

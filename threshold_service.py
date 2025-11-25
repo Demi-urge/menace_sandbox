@@ -2,9 +2,11 @@ from __future__ import annotations
 
 """Service encapsulating threshold management and notifications."""
 
+import logging
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
-import logging
 
 try:  # pragma: no cover - optional type import
     from .unified_event_bus import UnifiedEventBus
@@ -28,6 +30,31 @@ except Exception:  # pragma: no cover - flat layout fallback
 
 
 logger = logging.getLogger(__name__)
+
+
+def _bootstrap_context_active() -> bool:
+    """Return ``True`` when running inside a bootstrap-aware context."""
+
+    env_flag = os.getenv("SELF_CODING_BOOTSTRAP", "").lower() in {"1", "true", "yes"}
+    if env_flag:
+        return True
+
+    for mod_name in ("coding_bot_interface", "menace_sandbox.coding_bot_interface"):
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        ctx_getter = getattr(mod, "_current_bootstrap_context", None)
+        if callable(ctx_getter):
+            try:
+                if ctx_getter():
+                    return True
+            except Exception:
+                logger.debug("bootstrap context probe failed for %s", mod_name)
+        state = getattr(mod, "_BOOTSTRAP_STATE", None)
+        if state is not None and getattr(state, "depth", 0) > 0:
+            return True
+
+    return False
 
 
 class ThresholdService:
@@ -124,7 +151,9 @@ class ThresholdService:
         bootstrap_mode: bool | None = None,
     ) -> None:
         """Persist new thresholds for *bot* and broadcast changes."""
-        bootstrap_mode = bool(bootstrap_mode)
+        bootstrap_mode = (
+            _bootstrap_context_active() if bootstrap_mode is None else bool(bootstrap_mode)
+        )
         update_thresholds(
             bot,
             roi_drop=roi_drop,
@@ -140,7 +169,7 @@ class ThresholdService:
             )
         current = self._thresholds.get(bot)
         if current is None:
-            current = self.reload(bot)
+            current = self.reload(bot, bootstrap_mode=bootstrap_mode)
         new_rt = ROIThresholds(
             roi_drop=roi_drop if roi_drop is not None else current.roi_drop,
             error_threshold=(
