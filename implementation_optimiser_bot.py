@@ -270,7 +270,10 @@ class ImplementationOptimiserBot:
                     "manager.engine must provide a context_builder"
                 ) from exc
             if existing_cb is None:
-                raise ValueError("manager.engine.context_builder cannot be None")
+                logger.info(
+                    "initialising placeholder manager context_builder",
+                    extra={"manager_placeholder": getattr(manager, "_self_coding_bootstrap_placeholder", False)},
+                )
             eng.context_builder = context_builder  # type: ignore[attr-defined]
             cb = eng.context_builder  # type: ignore[attr-defined]
             if hasattr(cb, "refresh_db_weights"):
