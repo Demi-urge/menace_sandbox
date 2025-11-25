@@ -3711,7 +3711,22 @@ def _prepare_pipeline_for_bootstrap_impl(
         except Exception:  # pragma: no cover - defensive logging only
             logger.debug("failed to enable bootstrap-safe DB auditing", exc_info=True)
 
-    if bootstrap_fast and "bootstrap_fast" not in pipeline_kwargs:
+    def _accepts_bootstrap_fast(target: type[Any]) -> bool:
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            return False
+
+        return "bootstrap_fast" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    if (
+        bootstrap_fast
+        and "bootstrap_fast" not in pipeline_kwargs
+        and _accepts_bootstrap_fast(pipeline_cls)
+    ):
         pipeline_kwargs["bootstrap_fast"] = True
         logger.info(
             "prepare_pipeline.bootstrap_fast.enabled",
