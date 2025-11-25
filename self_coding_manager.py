@@ -398,6 +398,7 @@ class SelfCodingManager:
         error_rate_threshold: float | None = None,
         bootstrap_mode: bool | None = None,
         bootstrap_register_timeout: float | None = None,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         if data_bot is None or bot_registry is None:
             raise ValueError("data_bot and bot_registry are required")
@@ -413,6 +414,13 @@ class SelfCodingManager:
         self.bootstrap = bool(resolved_bootstrap)
         self.bootstrap_mode = self.bootstrap
         self.bootstrap_register_timeout = bootstrap_register_timeout
+        self.bootstrap_fast = (
+            bool(bootstrap_fast)
+            if bootstrap_fast is not None
+            else bool(self.bootstrap_mode)
+        )
+        self._settings: SandboxSettings | None = None
+        self._get_settings()
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
@@ -448,7 +456,8 @@ class SelfCodingManager:
         self.error_db = error_db
         if baseline_window is None:
             try:
-                baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
+                settings = self._get_settings()
+                baseline_window = getattr(settings, "baseline_window", 5)
             except Exception:
                 baseline_window = 5
         baseline_tracker_cls = _get_baseline_tracker_cls()
@@ -456,14 +465,14 @@ class SelfCodingManager:
             window=int(baseline_window), metrics=["confidence"]
         )
         try:
-            settings = SandboxSettings()
+            settings = self._get_settings()
             configured_retries = getattr(
                 settings, "self_test_repair_retries", None
             )
             if configured_retries is None:
                 configured_retries = getattr(
                     settings, "post_patch_repair_attempts", None
-                )
+            )
         except Exception:
             configured_retries = None
         env_retries = os.getenv("SELF_TEST_REPAIR_RETRIES")
@@ -671,6 +680,21 @@ class SelfCodingManager:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to register bot in registry")
 
+    def _get_settings(self) -> SandboxSettings | None:
+        """Return cached ``SandboxSettings`` initialised for the bootstrap mode."""
+
+        if self._settings is not None:
+            return self._settings
+
+        try:
+            self._settings = SandboxSettings(
+                bootstrap_fast=self.bootstrap_fast,
+                build_groups=False,
+            )
+        except Exception:  # pragma: no cover - best effort cache
+            self._settings = None
+        return self._settings
+
     def _refresh_thresholds(self, *, bootstrap_fast: bool | None = None) -> None:
         """Fetch ROI, error and test-failure thresholds via ``ThresholdService``.
 
@@ -695,7 +719,7 @@ class SelfCodingManager:
 
             adaptive = False
             try:
-                adaptive = getattr(SandboxSettings(), "adaptive_thresholds", False)
+                adaptive = getattr(self._get_settings(), "adaptive_thresholds", False)
             except Exception:
                 adaptive = False
             if adaptive and hasattr(self, "baseline_tracker"):

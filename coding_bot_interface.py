@@ -4890,6 +4890,7 @@ def _bootstrap_manager(
                 data_bot=data_bot,
                 bot_registry=bot_registry,
                 bootstrap_mode=bootstrap_safe,
+                bootstrap_fast=bootstrap_fast,
                 bootstrap_register_timeout=0.0 if bootstrap_safe else None,
             )
             helper_callbacks = _consume_bootstrap_helper_callbacks()
