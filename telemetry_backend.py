@@ -8,16 +8,32 @@ entries from other menaces and ``"all"`` disables filtering entirely.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
+import threading
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from .db_router import (
+    DBRouter,
+    GLOBAL_ROUTER,
+    LOCAL_TABLES,
+    init_db_router,
+    _configure_sqlite_connection,
+)
 from .metrics_exporter import Gauge
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 ROI_EVENTS_DB = "roi_events.db"
+
+_BOOTSTRAP_WATCHDOG_ENV = "BOOTSTRAP_WATCHDOG_ACTIVE"
+_DEFAULT_BOOTSTRAP_TIMEOUT_S = 1.0
+
+
+logger = logging.getLogger(__name__)
 
 
 _TABLE_ACCESS = Gauge(
@@ -48,7 +64,12 @@ def _connection_path(conn: sqlite3.Connection) -> Path | None:
     return None
 
 
-def _select_router(db_path: str) -> DBRouter:
+def _select_router(
+    db_path: str,
+    *,
+    bootstrap_safe: bool = False,
+    init_timeout_s: float | None = None,
+) -> DBRouter:
     """Return a router bound to ``db_path`` creating one when required."""
 
     desired = Path(db_path).expanduser().resolve()
@@ -62,7 +83,13 @@ def _select_router(db_path: str) -> DBRouter:
             if local_path != desired or shared_path != desired:
                 existing = None
     if existing is None:
-        return init_db_router("telemetry", str(desired), str(desired))
+        return init_db_router(
+            "telemetry",
+            str(desired),
+            str(desired),
+            bootstrap_mode=bootstrap_safe,
+            init_deadline_s=init_timeout_s,
+        )
     return existing
 
 
@@ -124,17 +151,147 @@ class TelemetryBackend:
     """Persist ROI prediction telemetry using :class:`DBRouter`."""
 
     def __init__(
-        self, db_path: str = "telemetry.db", *, router: DBRouter | None = None
+        self,
+        db_path: str = "telemetry.db",
+        *,
+        router: DBRouter | None = None,
+        bootstrap_safe: bool | None = None,
+        init_timeout_s: float | None = None,
     ) -> None:
         self.db_path = db_path
+        env_bootstrap = os.getenv(_BOOTSTRAP_WATCHDOG_ENV)
+        env_flag = env_bootstrap is not None and env_bootstrap.strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        self.bootstrap_safe = env_flag if bootstrap_safe is None else bool(bootstrap_safe)
+        self.init_timeout_s = (
+            _DEFAULT_BOOTSTRAP_TIMEOUT_S
+            if self.bootstrap_safe and init_timeout_s is None
+            else init_timeout_s
+        )
+        self._noop_enabled = False
+        self._noop_events: list[dict[str, Any]] = []
+
         if router is not None:
             chosen = router
         else:
-            chosen = _select_router(db_path)
+            chosen = _select_router(
+                db_path,
+                bootstrap_safe=self.bootstrap_safe,
+                init_timeout_s=self.init_timeout_s,
+            )
         self.router = chosen
         LOCAL_TABLES.add("roi_telemetry")
         LOCAL_TABLES.add("roi_prediction_events")
-        self._init_db()
+        try:
+            if self.bootstrap_safe and not self._configure_with_deadline(chosen):
+                raise TimeoutError("telemetry bootstrap configuration deadline exceeded")
+            self._init_db()
+        except sqlite3.OperationalError as exc:
+            if self.bootstrap_safe:
+                self._enable_noop(f"operational-error: {exc}")
+            else:
+                raise
+        except TimeoutError as exc:
+            self._enable_noop(str(exc))
+
+    # ------------------------------------------------------------------
+    def _configure_with_deadline(self, router: DBRouter) -> bool:
+        timeout = self.init_timeout_s
+        if timeout is None or timeout <= 0:
+            _configure_sqlite_connection(router.local_conn)
+            _configure_sqlite_connection(router.shared_conn)
+            return True
+
+        def _run_config(conn: sqlite3.Connection) -> tuple[bool, Exception | None]:
+            result: dict[str, Exception | None] = {"exc": None}
+
+            def _target() -> None:
+                try:
+                    _configure_sqlite_connection(conn)
+                except Exception as exc:  # pragma: no cover - defensive capture
+                    result["exc"] = exc
+
+            thread = threading.Thread(target=_target, daemon=True)
+            thread.start()
+            thread.join(timeout)
+            if thread.is_alive():
+                return False, None
+            return True, result["exc"]
+
+        for name, conn in (("local", router.local_conn), ("shared", router.shared_conn)):
+            ok, exc = _run_config(conn)
+            if not ok:
+                logger.warning(
+                    "telemetry.bootstrap.configure-timeout", extra={"connection": name, "timeout_s": timeout}
+                )
+                return False
+            if exc is not None:
+                raise exc
+        return True
+
+    # ------------------------------------------------------------------
+    def _enable_noop(self, reason: str) -> None:
+        self._noop_enabled = True
+        self.router = None  # type: ignore[assignment]
+        logger.warning(
+            "telemetry.bootstrap.fallback",
+            extra={"reason": reason, "db_path": self.db_path, "bootstrap_safe": self.bootstrap_safe},
+        )
+
+    # ------------------------------------------------------------------
+    def _record_noop_prediction(
+        self,
+        workflow_id: str | None,
+        predicted: float | None,
+        actual: float | None,
+        confidence: float | None,
+        scenario_deltas: Optional[Dict[str, float]],
+        drift_flag: bool,
+        readiness: float | None,
+        scenario: str | None,
+        ts: str | None,
+    ) -> None:
+        timestamp = ts or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        record = {
+            "workflow_id": workflow_id,
+            "predicted": predicted,
+            "actual": actual,
+            "confidence": confidence,
+            "scenario": scenario,
+            "scenario_deltas": scenario_deltas or {},
+            "drift_flag": bool(drift_flag),
+            "readiness": readiness,
+            "ts": timestamp,
+        }
+        self._noop_events.append(record)
+
+    # ------------------------------------------------------------------
+    def _filter_noop_history(
+        self,
+        workflow_id: str | None,
+        *,
+        scenario: str | None = None,
+        start_ts: str | None = None,
+        end_ts: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for rec in self._noop_events:
+            if workflow_id is not None and rec["workflow_id"] != workflow_id:
+                continue
+            if scenario is not None and rec["scenario"] != scenario:
+                continue
+            if start_ts is not None and rec["ts"] < start_ts:
+                continue
+            if end_ts is not None and rec["ts"] > end_ts:
+                continue
+            results.append(dict(rec))
+        results.sort(key=lambda r: r.get("ts") or "")
+        return results
 
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
@@ -184,6 +341,20 @@ class TelemetryBackend:
     ) -> None:
         """Store a prediction outcome and associated metrics."""
 
+        if self._noop_enabled or self.router is None:
+            self._record_noop_prediction(
+                workflow_id,
+                predicted,
+                actual,
+                confidence,
+                scenario_deltas,
+                drift_flag,
+                readiness,
+                scenario,
+                ts,
+            )
+            return
+
         conn = self.router.get_connection("roi_telemetry")
         with conn:
             params = (
@@ -226,6 +397,14 @@ class TelemetryBackend:
         ``"all"`` disables filtering entirely. ``source_menace_id`` overrides the
         current menace identifier when querying shared databases.
         """
+
+        if self._noop_enabled or self.router is None:
+            return self._filter_noop_history(
+                workflow_id,
+                scenario=scenario,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
 
         conn = self.router.get_connection("roi_telemetry")
         cur = conn.cursor()
@@ -284,6 +463,17 @@ class TelemetryBackend:
         ``scope`` controls menace visibility while ``source_menace_id`` allows
         querying records created by other menaces.
         """
+
+        if self._noop_enabled or self.router is None:
+            flags = [
+                bool(rec["drift_flag"])
+                for rec in self._noop_events
+                if workflow_id is None or rec["workflow_id"] == workflow_id
+            ]
+            total = len(flags)
+            drifted = sum(flags)
+            rate = drifted / total if total else 0.0
+            return {"total": total, "drifted": drifted, "rate": rate}
 
         conn = self.router.get_connection("roi_telemetry")
         cur = conn.cursor()

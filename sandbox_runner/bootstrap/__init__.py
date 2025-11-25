@@ -74,6 +74,9 @@ _INITIALISED = False
 _AUTONOMOUS_LAUNCH_RETRY: threading.Timer | None = None
 
 
+_BOOTSTRAP_WATCHDOG_ENV = "BOOTSTRAP_WATCHDOG_ACTIVE"
+
+
 logger = get_logger(__name__)
 
 
@@ -315,6 +318,21 @@ def _ensure_sqlite_db(path: Path) -> None:
         )
         logger.error(message, exc_info=True)
         raise RuntimeError(message) from exc
+
+
+def _activate_bootstrap_watchdog_flag() -> Callable[[], None]:
+    """Mark the bootstrap watchdog as active and return a restore callback."""
+
+    previous = os.environ.get(_BOOTSTRAP_WATCHDOG_ENV)
+    os.environ[_BOOTSTRAP_WATCHDOG_ENV] = "1"
+
+    def _restore() -> None:
+        if previous is None:
+            os.environ.pop(_BOOTSTRAP_WATCHDOG_ENV, None)
+        else:
+            os.environ[_BOOTSTRAP_WATCHDOG_ENV] = previous
+
+    return _restore
 
 
 def _start_optional_services(
@@ -585,76 +603,80 @@ def _initialize_autonomous_sandbox(
     if _INITIALISED and start_services and start_self_improvement:
         return settings
 
-    _MISSING_OPTIONAL.clear()
-    _OPTIONAL_DEPENDENCY_WARNED.clear()
-
-    print("🧬 A: starting environment auto configuration")
+    restore_watchdog = _activate_bootstrap_watchdog_flag()
     try:
-        auto_configure_env(settings)
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.error("environment bootstrap failed", exc_info=True)
-        raise RuntimeError("environment configuration incomplete") from exc
+        _MISSING_OPTIONAL.clear()
+        _OPTIONAL_DEPENDENCY_WARNED.clear()
 
-    # Ensure the mandatory vector_service dependency is available before
-    # proceeding with further sandbox initialisation.
-    print("🧬 B: ensuring vector service availability")
-    ensure_vector_service()
-    print("🧬 C: vector service confirmed")
-
-    # Verify optional modules referenced in the docstring.  Missing modules are
-    # collected so the version check below can skip them and avoid duplicate
-    # warnings.
-    print("🧬 D: verifying optional modules")
-    try:
-        missing_optional = _verify_optional_modules(
-            ("relevancy_radar", "quick_fix_engine"),
-            settings.optional_service_versions,
-        )
-    except Exception:  # pragma: no cover - best effort
-        logger.warning("optional module verification failed", exc_info=True)
-        missing_optional = set()
-
-    print("🧬 E: preparing sandbox data directory")
-    data_dir = resolve_path(settings.sandbox_data_dir)
-    data_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        probe = data_dir / ".write-test"
-        probe.touch()
-        probe.unlink()
-    except Exception as exc:  # pragma: no cover - environment dependent
-        logger.error("sandbox data directory %s is not writable", data_dir, exc_info=True)
-        raise RuntimeError(
-            f"sandbox data directory '{data_dir}' is not writable; "
-            "adjust permissions or update sandbox_data_dir"
-        ) from exc
-
-    print("🧬 F: ensuring sandbox data directory is writable")
-    # Ensure baseline metrics file exists; fall back to minimal snapshot when
-    # metrics collection fails.
-    print("🧬 G: checking baseline metrics path")
-    baseline_str = getattr(settings, "alignment_baseline_metrics_path", "")
-    baseline_path = Path()
-    if baseline_str:
+        print("🧬 A: starting environment auto configuration")
         try:
-            baseline_path = resolve_path(str(baseline_str))
-        except FileNotFoundError:
-            baseline_path = Path(str(baseline_str))
-            if not baseline_path.is_absolute():
-                baseline_path = repo_root() / baseline_path
-        if not baseline_path.exists():
-            baseline_path.parent.mkdir(parents=True, exist_ok=True)
-            try:  # compute baseline if possible
-                from self_improvement.metrics import _update_alignment_baseline
+            auto_configure_env(settings)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("environment bootstrap failed", exc_info=True)
+            raise RuntimeError("environment configuration incomplete") from exc
 
-                _update_alignment_baseline(settings)
-            except Exception:  # pragma: no cover - best effort
-                logger.warning("failed to populate baseline metrics", exc_info=True)
-                baseline_path.write_text("{}\n", encoding="utf-8")
+        # Ensure the mandatory vector_service dependency is available before
+        # proceeding with further sandbox initialisation.
+        print("🧬 B: ensuring vector service availability")
+        ensure_vector_service()
+        print("🧬 C: vector service confirmed")
 
-    # Create expected SQLite databases
-    print("🧬 H: verifying required SQLite databases")
-    for name in settings.sandbox_required_db_files:
-        _ensure_sqlite_db(data_dir / name)
+        # Verify optional modules referenced in the docstring.  Missing modules are
+        # collected so the version check below can skip them and avoid duplicate
+        # warnings.
+        print("🧬 D: verifying optional modules")
+        try:
+            missing_optional = _verify_optional_modules(
+                ("relevancy_radar", "quick_fix_engine"),
+                settings.optional_service_versions,
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.warning("optional module verification failed", exc_info=True)
+            missing_optional = set()
+
+        print("🧬 E: preparing sandbox data directory")
+        data_dir = resolve_path(settings.sandbox_data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            probe = data_dir / ".write-test"
+            probe.touch()
+            probe.unlink()
+        except Exception as exc:  # pragma: no cover - environment dependent
+            logger.error("sandbox data directory %s is not writable", data_dir, exc_info=True)
+            raise RuntimeError(
+                f"sandbox data directory '{data_dir}' is not writable; "
+                "adjust permissions or update sandbox_data_dir"
+            ) from exc
+
+        print("🧬 F: ensuring sandbox data directory is writable")
+        # Ensure baseline metrics file exists; fall back to minimal snapshot when
+        # metrics collection fails.
+        print("🧬 G: checking baseline metrics path")
+        baseline_str = getattr(settings, "alignment_baseline_metrics_path", "")
+        baseline_path = Path()
+        if baseline_str:
+            try:
+                baseline_path = resolve_path(str(baseline_str))
+            except FileNotFoundError:
+                baseline_path = Path(str(baseline_str))
+                if not baseline_path.is_absolute():
+                    baseline_path = repo_root() / baseline_path
+            if not baseline_path.exists():
+                baseline_path.parent.mkdir(parents=True, exist_ok=True)
+                try:  # compute baseline if possible
+                    from self_improvement.metrics import _update_alignment_baseline
+
+                    _update_alignment_baseline(settings)
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning("failed to populate baseline metrics", exc_info=True)
+                    baseline_path.write_text("{}\n", encoding="utf-8")
+
+        # Create expected SQLite databases
+        print("🧬 H: verifying required SQLite databases")
+        for name in settings.sandbox_required_db_files:
+            _ensure_sqlite_db(data_dir / name)
+    finally:
+        restore_watchdog()
 
     # Verify optional services are importable and meet version requirements
     print("🧬 I: validating optional service versions")
