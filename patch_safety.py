@@ -106,10 +106,19 @@ class PatchSafety:
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:  # pragma: no cover - simple IO
         root = resolve_path(".")
-        if self.storage_path and not Path(self.storage_path).is_absolute():
-            self.storage_path = str((root / self.storage_path).resolve())
-        if self.failure_db_path and not Path(self.failure_db_path).is_absolute():
-            self.failure_db_path = str((root / self.failure_db_path).resolve())
+
+        def _absolute_path(base: Path, value: str | None) -> str | None:
+            """Return an absolute path without resolving symlinks."""
+
+            if not value:
+                return None
+            path = Path(value)
+            if path.is_absolute():
+                return str(path)
+            return str((base / path).absolute())
+
+        self.storage_path = _absolute_path(root, self.storage_path)
+        self.failure_db_path = _absolute_path(root, self.failure_db_path)
         self.load_failures()
 
     # ------------------------------------------------------------------
@@ -156,7 +165,7 @@ class PatchSafety:
         self._last_refresh = now
         pth = path or self.storage_path
         if pth and not Path(pth).is_absolute():
-            pth = str((resolve_path(".") / pth).resolve())
+            pth = str((resolve_path(".") / pth).absolute())
             if path is None:
                 self.storage_path = pth
         reload_needed = force
@@ -169,7 +178,7 @@ class PatchSafety:
                     reload_needed = True
         db_path = self.failure_db_path
         if db_path and not Path(db_path).is_absolute():
-            db_path = str((resolve_path(".") / db_path).resolve())
+            db_path = str((resolve_path(".") / db_path).absolute())
             self.failure_db_path = db_path
         if db_path:
             db_mtime = self._mtime_with_timeout(Path(db_path))
