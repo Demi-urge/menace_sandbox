@@ -830,6 +830,8 @@ class ContextBuilder:
         weights: Dict[str, float] | None = None,
         *,
         vector_metrics: "VectorMetricsDB" | None = None,
+        bootstrap: bool | None = None,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         """Refresh ranking weights for origin databases.
 
@@ -845,12 +847,15 @@ class ContextBuilder:
         """
 
         global _VEC_METRICS
+        fast_bootstrap = bool(bootstrap_fast or bootstrap)
         if weights is None:
             vm = vector_metrics or _VEC_METRICS
             if vm is None:
                 return
+            if fast_bootstrap:
+                return dict(self.db_weights)
             try:
-                weights = vm.get_db_weights()
+                weights = vm.get_db_weights(bootstrap=fast_bootstrap)
             except Exception:
                 return
             if vector_metrics is not None:

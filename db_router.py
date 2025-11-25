@@ -60,6 +60,15 @@ try:
 except Exception:  # pragma: no cover - defensive
     _SCHEMA_TIMEOUT_MS = None
 
+# Short connection timeout used during bootstrap to avoid blocking on locked DBs.
+_BOOTSTRAP_TIMEOUT_MS = 250
+try:
+    _bootstrap_timeout_env = os.getenv("DB_ROUTER_BOOTSTRAP_TIMEOUT_MS")
+    if _bootstrap_timeout_env is not None:
+        _BOOTSTRAP_TIMEOUT_MS = max(0, int(float(_bootstrap_timeout_env)))
+except Exception:  # pragma: no cover - defensive
+    _BOOTSTRAP_TIMEOUT_MS = 250
+
 
 # Tables stored in the shared database.  These tables are visible to every
 # Menace instance.  The container is mutated in-place on reload so existing
@@ -957,6 +966,7 @@ class DBRouter:
         self.local_conn.audit_log_reads = _audit_db_mirror_enabled_default
         self.local_conn.audit_bootstrap_safe = audit_bootstrap_safe_default
         _configure_sqlite_connection(self.local_conn)
+        self.bootstrap_timeout_ms = _BOOTSTRAP_TIMEOUT_MS
 
         if shared_db_path != ":memory:":
             os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
@@ -1097,6 +1107,29 @@ class DBRouter:
                     conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
             except Exception:  # pragma: no cover - best effort cleanup
                 pass
+
+    # ------------------------------------------------------------------
+    @contextlib.contextmanager
+    def bootstrap_connection(
+        self, table_name: str, *, timeout_ms: int | None = None
+    ) -> Iterator[sqlite3.Connection]:
+        """Return a connection configured for quick bootstrap reads."""
+
+        conn = self.get_connection(table_name, operation="bootstrap")
+        previous_timeout: int | None = None
+        effective_timeout = self.bootstrap_timeout_ms if timeout_ms is None else timeout_ms
+        try:
+            if effective_timeout is not None:
+                try:
+                    previous_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                    conn.execute(f"PRAGMA busy_timeout={effective_timeout}")
+                except Exception:  # pragma: no cover - safety during bootstrap
+                    previous_timeout = None
+            yield conn
+        finally:
+            if previous_timeout is not None:
+                with contextlib.suppress(Exception):
+                    conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
 
     # ------------------------------------------------------------------
     def execute_and_log(

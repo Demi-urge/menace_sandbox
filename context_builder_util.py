@@ -195,10 +195,25 @@ def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # ty
     return builder
 
 
-def ensure_fresh_weights(builder) -> None:
-    """Refresh context builder weights with basic error handling."""
+def ensure_fresh_weights(
+    builder,
+    *,
+    bootstrap: bool | None = None,
+    bootstrap_fast: bool | None = None,
+) -> None:
+    """Refresh context builder weights with basic error handling.
+
+    When ``bootstrap_fast`` (or ``bootstrap``) is enabled the helper avoids any
+    expensive refresh calls so bootstrap flows can rely on cached/default
+    weights without blocking on vector metrics stores.
+    """
+
+    fast_bootstrap = bool(bootstrap_fast or bootstrap)
     try:
-        builder.refresh_db_weights()
+        refresh_kwargs: dict[str, object] = {}
+        if fast_bootstrap:
+            refresh_kwargs.update({"bootstrap": True, "bootstrap_fast": True})
+        builder.refresh_db_weights(**refresh_kwargs)
     except Exception as exc:  # pragma: no cover - simple wrapper
         logging.getLogger(__name__).warning("refresh_db_weights failed: %s", exc)
         raise
