@@ -3,6 +3,7 @@ import time
 from types import SimpleNamespace
 
 import coding_bot_interface
+import code_database
 import vector_metrics_db
 from code_database import PatchHistoryDB
 from prompt_memory_trainer import PromptMemoryTrainer
@@ -201,3 +202,64 @@ def test_shared_vector_service_short_circuits_schema_discovery(monkeypatch, tmp_
 
     assert pipeline is not None
     assert elapsed < 5
+
+
+def test_bootstrap_fast_skips_patch_schema(monkeypatch, tmp_path):
+    statements: list[str] = []
+
+    class StubConn:
+        def execute(self, sql: str, *args, **kwargs):  # noqa: ARG002
+            statements.append(sql.strip())
+            normalised = sql.lstrip().upper()
+            if normalised.startswith("PRAGMA") or normalised.startswith("CREATE"):
+                raise AssertionError(f"Schema query executed: {sql}")
+            return SimpleNamespace(fetchall=lambda: [])
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+    stub_conn = StubConn()
+
+    class StubRouter:
+        def get_connection(self, _name: str):
+            return stub_conn
+
+    monkeypatch.setattr(code_database, "_PATCH_HISTORY_BOOTSTRAP_ROUTER", None)
+    monkeypatch.setattr(code_database, "init_db_router", lambda *args, **kwargs: StubRouter())
+
+    class FastPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.trainer = PromptMemoryTrainer(
+                patch_db=PatchHistoryDB(tmp_path / "patch_history.db", bootstrap_fast=bootstrap_fast),
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=FastPipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+
+    promote(object())
+
+    assert pipeline is not None
+    assert not statements
