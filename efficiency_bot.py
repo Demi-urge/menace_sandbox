@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Ty
 from .bot_registry import BotRegistry
 from .coding_bot_interface import self_coding_managed
 from .data_bot import DataBot
+from .sandbox_settings import SandboxSettings
 
 try:
     import pandas as pd  # type: ignore
@@ -31,7 +33,43 @@ from .database_manager import DB_PATH
 
 
 registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+_DATA_BOT: DataBot | None = None
+
+
+def _bootstrap_fast_enabled() -> bool:
+    """Return ``True`` when fast bootstrap mode should avoid heavy setup."""
+
+    value = os.getenv("MENACE_BOOTSTRAP_FAST")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_data_bot() -> DataBot:
+    """Return a shared :class:`DataBot`, creating it lazily when needed."""
+
+    global _DATA_BOT
+    if _DATA_BOT is not None:
+        return _DATA_BOT
+
+    bootstrap_fast = _bootstrap_fast_enabled()
+    settings = None
+    if bootstrap_fast:
+        logger.info(
+            "EfficiencyBot bootstrap_fast enabled; deferring heavy DataBot setup",
+        )
+        settings = SandboxSettings(bootstrap_fast=True, build_groups=False)
+
+    _DATA_BOT = DataBot(
+        start_server=False,
+        settings=settings,
+        bootstrap=bootstrap_fast,
+    )
+    return _DATA_BOT
+
+
+_get_data_bot.__self_coding_lazy__ = True
+data_bot = _get_data_bot
 
 logger = logging.getLogger(__name__)
 
