@@ -994,7 +994,7 @@ class SelfCodingEngine:
         self.context_builder = builder
         self.stack_assist = self._resolve_stack_assist(builder, stack_assist)
         try:
-            self.context_builder.refresh_db_weights()
+            self.context_builder.refresh_db_weights(bootstrap_fast=bootstrap_fast)
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
@@ -1013,6 +1013,7 @@ class SelfCodingEngine:
                     patch_logger=patch_logger,
                     roi_tracker=tracker,
                     context_builder=builder,
+                    bootstrap_fast=bootstrap_fast,
                 )
             except VectorServiceError as exc:
                 self.logger.warning(

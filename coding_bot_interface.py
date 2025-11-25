@@ -1974,6 +1974,7 @@ class _DisabledSelfCodingManager:
     __slots__ = (
         "bot_registry",
         "data_bot",
+        "bootstrap_fast",
         "engine",
         "quick_fix",
         "error_db",
@@ -2004,9 +2005,15 @@ class _DisabledSelfCodingManager:
         bootstrap_owner: bool = False,
         bootstrap_placeholder: bool = False,
         bootstrap_runtime: bool = False,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         self.bot_registry = bot_registry
         self.data_bot = data_bot
+        self.bootstrap_fast = bool(
+            bootstrap_fast
+            if bootstrap_fast is not None
+            else bootstrap_owner or bootstrap_placeholder or bootstrap_runtime
+        )
         self.engine = SimpleNamespace(
             cognition_layer=SimpleNamespace(context_builder=None)
         )
@@ -2393,8 +2400,18 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
         "_bootstrap_owner_delegate",
     )
 
-    def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
-        super().__init__(bot_registry=bot_registry, data_bot=data_bot)
+    def __init__(
+        self,
+        *,
+        bot_registry: Any,
+        data_bot: Any,
+        bootstrap_fast: bool | None = None,
+    ) -> None:
+        super().__init__(
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            bootstrap_fast=bootstrap_fast,
+        )
         self._delegate: Any | None = None
         self._delegate_callbacks: list[Callable[[Any], None]] = []
         self._owner_registry = bot_registry
@@ -2586,13 +2603,14 @@ def _settle_owner_promise(owner_guard: Any, manager: Any | None) -> None:
 
 
 def _create_bootstrap_manager_sentinel(
-    *, bot_registry: Any, data_bot: Any
+    *, bot_registry: Any, data_bot: Any, bootstrap_fast: bool | None = None
 ) -> _BootstrapManagerSentinel:
     """Return a sentinel manager used to guard the legacy bootstrap path."""
 
     return _BootstrapManagerSentinel(
         bot_registry=bot_registry,
         data_bot=data_bot,
+        bootstrap_fast=bootstrap_fast,
     )
 
 
@@ -3797,6 +3815,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         sentinel_manager = _create_bootstrap_manager_sentinel(
             bot_registry=bot_registry,
             data_bot=data_bot,
+            bootstrap_fast=bootstrap_fast,
         )
     _log_timing(
         "sentinel selection",
@@ -4406,6 +4425,7 @@ def _bootstrap_manager(
     sentinel_manager = _create_bootstrap_manager_sentinel(
         bot_registry=bot_registry,
         data_bot=data_bot,
+        bootstrap_fast=bootstrap_fast,
     )
     try:
         sentinel_manager._bootstrap_owner_token = name

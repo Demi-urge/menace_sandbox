@@ -400,3 +400,129 @@ def test_prepare_pipeline_skips_prompt_weights_resolution(monkeypatch, tmp_path)
     assert pipeline is not None
     assert pipeline.prompt_engine.bootstrap_fast is True
     assert pipeline.prompt_engine.weights_path == slow_weights
+
+
+def test_bootstrap_fast_pipeline_shared_vector_service(monkeypatch, tmp_path):
+    logs: list[tuple[str, object]] = []
+
+    class StubVectorMetricsDB:
+        def __init__(self, *_, bootstrap_fast: bool = False, **__):
+            logs.append(("vec_metrics_init", bootstrap_fast))
+            if not bootstrap_fast:
+                raise AssertionError("bootstrap_fast not forwarded to VectorMetricsDB")
+            self.bootstrap_fast = bootstrap_fast
+            self._schema_cache: dict[str, set[str]] = {}
+            self.router = SimpleNamespace(
+                get_connection=lambda *_a, **_k: SimpleNamespace(),
+                bootstrap_timeout_ms=30_000,
+            )
+
+        def load_sessions(self):  # pragma: no cover - smoke stub
+            return {}
+
+        def get_db_weights(self, **_):  # pragma: no cover - smoke stub
+            return {}
+
+    class _Conn(SimpleNamespace):
+        def execute(self, *_a, **_k):  # pragma: no cover - smoke stub
+            return SimpleNamespace(fetchall=lambda: [])
+
+    class StubPatchHistoryDB:
+        def __init__(self, *_a, bootstrap_fast: bool = False, **_k):
+            logs.append(("patch_db", bootstrap_fast))
+            self.bootstrap_fast = bootstrap_fast
+            self._vec_db_enabled = not bool(bootstrap_fast)
+            self.path = tmp_path / "patch_history.db"
+            self.router = SimpleNamespace(get_connection=lambda *_: _Conn())
+
+        def get(self, _pid):  # pragma: no cover - smoke stub
+            return None
+
+    class StubPatchVectorizer:
+        DB_FILE = "patch_history.db"
+
+        def __init__(self, *_, bootstrap_fast: bool = False, **__):
+            logs.append(("patch_vectorizer", bootstrap_fast))
+            self.db = StubPatchHistoryDB(bootstrap_fast=bootstrap_fast)
+
+        def transform(self, _record):  # pragma: no cover - smoke stub
+            return [0.0]
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", StubVectorMetricsDB)
+    import vector_service.cognition_layer as cog_mod
+
+    monkeypatch.setattr(cog_mod, "VectorMetricsDB", StubVectorMetricsDB)
+    import vector_service.retriever as retr_mod
+
+    monkeypatch.setattr(retr_mod, "VectorMetricsDB", StubVectorMetricsDB)
+    import vector_service.patch_vectorizer as pv_mod
+
+    monkeypatch.setattr(pv_mod, "PatchHistoryDB", StubPatchHistoryDB)
+    monkeypatch.setattr(pv_mod, "PatchVectorizer", StubPatchVectorizer)
+    from vector_service import registry as vec_registry
+
+    monkeypatch.setattr(
+        vec_registry,
+        "_VECTOR_REGISTRY",
+        {"patch": ("vector_service.patch_vectorizer", "PatchVectorizer", None, None)},
+    )
+
+    class StubContextBuilder:
+        roi_tag_penalties: dict[str, float] = {}
+        db_weights: dict[str, float] = {}
+
+        def refresh_db_weights(self, **kwargs):
+            logs.append(("refresh", kwargs.get("bootstrap_fast")))
+            return dict(self.db_weights)
+
+    class BootstrapPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast: bool = False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.context_builder = context_builder or StubContextBuilder()
+            patch_retriever = retr_mod.PatchRetriever(
+                context_builder=self.context_builder,
+                bootstrap_fast=bootstrap_fast,
+            )
+            self.cognition_layer = cog_mod.CognitionLayer(
+                context_builder=self.context_builder,
+                patch_logger=SimpleNamespace(roi_tracker=None, event_bus=None),
+                vector_metrics=None,
+                roi_tracker=None,
+                patch_retriever=patch_retriever,
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    builder = StubContextBuilder()
+    start = time.perf_counter()
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=BootstrapPipeline,
+        context_builder=builder,
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_fast=True,
+    )
+    promote(SimpleNamespace(bootstrap_fast=True, bootstrap_mode=True))
+    elapsed = time.perf_counter() - start
+
+    handler = pipeline.cognition_layer.patch_retriever.vector_service._handlers["patch"]
+    patch_vectorizer = getattr(handler, "__self__", None)
+
+    assert pipeline.manager.bootstrap_fast is True
+    assert elapsed < 5
+    assert ("vec_metrics_init", True) in logs
+    assert ("patch_db", True) in logs
+    assert ("patch_vectorizer", True) in logs
+    assert patch_vectorizer is not None
+    assert patch_vectorizer.db._vec_db_enabled is False
+    assert pipeline.cognition_layer.patch_retriever.vector_service.bootstrap_fast is True
