@@ -62,6 +62,7 @@ import os
 import shlex
 import threading
 import time
+import sys
 
 from .yaml_fallback import get_yaml
 from .safe_repr import basic_repr
@@ -233,6 +234,38 @@ def get_cached_config(path: Path | None = None) -> Dict[str, dict]:
         cache_key = _safe_resolve_with_timeout(cache_key, _CONFIG_IO_TIMEOUT_S)
     cached = _get_cached_config(cache_key if isinstance(cache_key, Path) else None)
     return cached or {}
+
+
+def _bootstrap_context_active() -> bool:
+    """Return ``True`` when running inside a bootstrap-aware context."""
+
+    env_flag = os.getenv("SELF_CODING_BOOTSTRAP", "").lower() in {"1", "true", "yes"}
+    if env_flag:
+        return True
+
+    for mod_name in (
+        "coding_bot_interface",
+        "menace_sandbox.coding_bot_interface",
+    ):
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        ctx_getter = getattr(mod, "_current_bootstrap_context", None)
+        if callable(ctx_getter):
+            try:
+                ctx = ctx_getter()
+                if ctx and (getattr(ctx, "bootstrap_safe", False) or getattr(ctx, "bootstrap_fast", False)):
+                    return True
+            except Exception:
+                logger.debug(
+                    "bootstrap context probe failed for %s", mod_name,
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
+        state = getattr(mod, "_BOOTSTRAP_STATE", None)
+        if state is not None and getattr(state, "depth", 0) > 0:
+            return True
+
+    return False
 
 
 def _safe_stat_mtime(cfg_path: Path, timeout: float) -> float | None:
@@ -501,6 +534,9 @@ def _load_config(
     cfg_path = path or _CONFIG_PATH
     base_timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
     bootstrap_active = bootstrap_safe or bool(bootstrap_mode)
+    if not bootstrap_active and _bootstrap_context_active():
+        bootstrap_active = True
+        bootstrap_mode = True
     timeout = (
         min(base_timeout, _BOOTSTRAP_CONFIG_IO_TIMEOUT_S)
         if bootstrap_active

@@ -100,7 +100,10 @@ class ThresholdService:
         bootstrap_mode: bool | None = None,
     ) -> ROIThresholds:
         """Refresh cached thresholds for *bot* and emit update when changed."""
-        raw = self.load(bot, settings, bootstrap_mode=bootstrap_mode)
+        bootstrap_flag = (
+            _bootstrap_context_active() if bootstrap_mode is None else bool(bootstrap_mode)
+        )
+        raw = self.load(bot, settings, bootstrap_mode=bootstrap_flag)
         rt = ROIThresholds(
             roi_drop=raw.roi_drop,
             error_threshold=raw.error_increase,
@@ -111,9 +114,11 @@ class ThresholdService:
         prev = self._thresholds.get(key)
         self._thresholds[key] = rt
         if bot:
-            data = _load_threshold_config()
+            data = _load_threshold_config(
+                bootstrap_safe=bootstrap_flag, bootstrap_mode=bootstrap_flag
+            )
             bots = data.get("bots", {}) if isinstance(data, dict) else {}
-            if bot not in bots:
+            if bot not in bots and not bootstrap_flag:
                 update_thresholds(
                     bot,
                     roi_drop=rt.roi_drop,
