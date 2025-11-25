@@ -2014,9 +2014,19 @@ class _DisabledSelfCodingManager:
             if bootstrap_fast is not None
             else bootstrap_owner or bootstrap_placeholder or bootstrap_runtime
         )
-        self.engine = SimpleNamespace(
-            cognition_layer=SimpleNamespace(context_builder=None)
+        default_context_builder = SimpleNamespace(
+            refresh_db_weights=lambda: None
         )
+        self.engine = SimpleNamespace(
+            cognition_layer=SimpleNamespace(
+                context_builder=default_context_builder
+            ),
+            context_builder=default_context_builder,
+        )
+        # Keep top-level and cognition_layer context builders aligned so callers
+        # (e.g. ImplementationOptimiserBot) can safely attach a shared instance
+        # without encountering attribute errors during bootstrap.
+        self.engine.context_builder = self.engine.cognition_layer.context_builder
         # Mark quick_fix as initialised so downstream code skips heavy bootstrap.
         self.quick_fix = object()
         self.error_db = None
