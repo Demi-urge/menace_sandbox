@@ -135,6 +135,13 @@ try:
 except Exception:
     _CONFIG_IO_TIMEOUT_S = 0.5
 
+try:
+    _BOOTSTRAP_CONFIG_IO_TIMEOUT_S = float(
+        os.getenv("SELF_CODING_BOOTSTRAP_IO_TIMEOUT_S", "0.05")
+    )
+except Exception:
+    _BOOTSTRAP_CONFIG_IO_TIMEOUT_S = 0.05
+
 @dataclass
 class _ConfigCacheEntry:
     data: Dict[str, dict]
@@ -279,7 +286,13 @@ def _safe_resolve_with_timeout(cfg_path: Path, timeout: float) -> Path:
     return cfg_path
 
 
-def _read_text_with_timeout(cfg_path: Path, timeout: float) -> str:
+def _read_text_with_timeout(
+    cfg_path: Path,
+    timeout: float,
+    *,
+    bootstrap_mode: bool = False,
+    fallback_text: str | None = None,
+) -> str:
     result: list[str] = []
     error: list[BaseException] = []
 
@@ -292,11 +305,23 @@ def _read_text_with_timeout(cfg_path: Path, timeout: float) -> str:
     start = time.perf_counter()
     thread = threading.Thread(target=_do_read, daemon=True)
     thread.start()
-    thread.join(timeout)
+    effective_timeout = timeout
+    if bootstrap_mode:
+        effective_timeout = min(timeout, _BOOTSTRAP_CONFIG_IO_TIMEOUT_S)
+    thread.join(effective_timeout)
     if result:
         return result[0]
     if error:
         raise error[0]
+
+    if fallback_text is not None:
+        logger.info(
+            "read_text for %s exceeded %.2fs; returning fallback configuration during bootstrap=%s",
+            cfg_path,
+            effective_timeout,
+            bootstrap_mode,
+        )
+        return fallback_text
 
     duration = time.perf_counter() - start
     logger.warning(
@@ -459,13 +484,23 @@ def _render_threshold_yaml(data: Dict[str, Any], *, path: Path, bot: str) -> str
 
 
 def _load_config(
-    path: Path | None = None, *, bootstrap_safe: bool = False, timeout_s: float | None = None
+    path: Path | None = None,
+    *,
+    bootstrap_safe: bool = False,
+    bootstrap_mode: bool | None = None,
+    timeout_s: float | None = None,
 ) -> Dict[str, dict]:
     cfg_path = path or _CONFIG_PATH
-    timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
-    start = time.perf_counter() if bootstrap_safe else None
+    base_timeout = _CONFIG_IO_TIMEOUT_S if timeout_s is None else timeout_s
+    bootstrap_active = bootstrap_safe or bool(bootstrap_mode)
+    timeout = (
+        min(base_timeout, _BOOTSTRAP_CONFIG_IO_TIMEOUT_S)
+        if bootstrap_active
+        else base_timeout
+    )
+    start = time.perf_counter() if bootstrap_active else None
 
-    if bootstrap_safe:
+    if bootstrap_active:
         cached = _get_cached_config(cfg_path if isinstance(cfg_path, Path) else None)
         if cached is not None:
             logger.info(
@@ -486,7 +521,7 @@ def _load_config(
             return cached
 
         logger.info(
-            "bootstrap-safe threshold load returned empty cache after %.4fs; skipping filesystem access",
+            "bootstrap-safe threshold load returned empty cache after %.4fs; skipping filesystem access and using defaults",
             time.perf_counter() - start if start is not None else -1.0,
         )
         return {}
@@ -497,8 +532,21 @@ def _load_config(
     cached = _get_cached_config(cache_key, mtime=current_mtime)
     cache_mtime = current_mtime
 
+    fallback_text: str | None = None
+    fallback_map: Dict[str, dict] | None = cached if cached is not None else {}
+    if fallback_map is not None:
+        try:
+            fallback_text = _FALLBACK_YAML.safe_dump(fallback_map, sort_keys=False)
+        except Exception:
+            fallback_text = None
+
     try:
-        raw = _read_text_with_timeout(cfg_path, timeout)
+        raw = _read_text_with_timeout(
+            cfg_path,
+            timeout,
+            bootstrap_mode=bootstrap_active,
+            fallback_text=fallback_text,
+        )
     except TimeoutError:
         logger.warning(
             "timed out reading %s after %.2fs; using cached thresholds when available",  # noqa: E501
@@ -665,7 +713,8 @@ def get_thresholds(
         if bot:
             _override_from_bt(thresholds_cfg.get(bot))
 
-    data = _load_config(path, bootstrap_safe=bootstrap_safe)
+    bootstrap_mode = bool(bootstrap_safe)
+    data = _load_config(path, bootstrap_safe=bootstrap_mode, bootstrap_mode=bootstrap_mode)
     default = data.get("default", {})
     bots = data.get("bots", {})
     roi_drop = float(default.get("roi_drop", roi_drop))
@@ -781,12 +830,15 @@ def update_thresholds(
     forecast_params: dict | None = None,
     path: Path | None = None,
     bootstrap_safe: bool | None = None,
+    bootstrap_mode: bool | None = None,
 ) -> None:
     """Persist new thresholds for ``bot`` to the configuration file."""
 
     cfg_path = path or _CONFIG_PATH
-    bootstrap_mode = bool(bootstrap_safe)
-    data = _load_config(cfg_path, bootstrap_safe=bootstrap_mode)
+    bootstrap_mode_flag = bool(bootstrap_mode if bootstrap_mode is not None else bootstrap_safe)
+    data = _load_config(
+        cfg_path, bootstrap_safe=bootstrap_mode_flag, bootstrap_mode=bootstrap_mode_flag
+    )
     bots = data.setdefault("bots", {})
     cfg = bots.setdefault(bot, {})
     if roi_drop is not None:

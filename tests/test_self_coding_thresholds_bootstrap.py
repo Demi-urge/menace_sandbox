@@ -64,3 +64,26 @@ def test_flush_deferred_threshold_writes(tmp_path, monkeypatch):
 
     data = thresholds._load_config(cfg)
     assert data.get("bots", {}).get("cached-bot", {}).get("roi_drop") == -0.9
+
+
+def test_bootstrap_skips_slow_reads(tmp_path, monkeypatch):
+    cfg = tmp_path / "thresholds.yaml"
+    cfg.write_text("default:\n  roi_drop: -0.4\n")
+
+    monkeypatch.setattr(thresholds, "_CONFIG_CACHE", {})
+    monkeypatch.setattr(thresholds, "_LAST_CACHE_KEY", None)
+
+    original_read_text = Path.read_text
+
+    def _slow_read_text(self: Path, *args, **kwargs):
+        time.sleep(1)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _slow_read_text)
+
+    start = time.perf_counter()
+    data = thresholds._load_config(cfg, bootstrap_mode=True, timeout_s=0.01)
+    duration = time.perf_counter() - start
+
+    assert data == {}
+    assert duration < 0.5
