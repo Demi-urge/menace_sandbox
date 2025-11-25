@@ -1987,6 +1987,7 @@ class _DisabledSelfCodingManager:
         "_bootstrap_owner_token",
         "_bootstrap_runtime_marker",
         "_manager",
+        "bootstrap_mode",
     )
 
     def __init__(
@@ -2022,6 +2023,9 @@ class _DisabledSelfCodingManager:
         self._bootstrap_owner_token: Any | None = None
         self._bootstrap_runtime_marker = bootstrap_runtime
         self._manager: Any | None = None
+        self.bootstrap_mode = bool(
+            bootstrap_owner or bootstrap_placeholder or bootstrap_runtime
+        )
 
     def __bool__(self) -> bool:
         """Return ``True`` whenever acting as a bootstrap guard."""
@@ -2390,6 +2394,7 @@ class _BootstrapManagerSentinel(_DisabledSelfCodingManager):
         self._owner_registry = bot_registry
         self._owner_data_bot = data_bot
         self._bootstrap_owner_delegate: Any | None = None
+        self.bootstrap_mode = True
 
     def __bool__(self) -> bool:  # pragma: no cover - truthiness is trivial
         return True
@@ -3213,6 +3218,12 @@ def _promote_pipeline_manager(
         delegate = getattr(sentinel, "_bootstrap_owner_delegate", None)
         if delegate is not None:
             sentinel_candidates.append(delegate)
+    bootstrap_mode = None
+    if sentinel is not None:
+        try:
+            bootstrap_mode = getattr(sentinel, "bootstrap_mode", None)
+        except Exception:
+            bootstrap_mode = None
     if extra_sentinels:
         for candidate in extra_sentinels:
             if candidate is None:
@@ -3226,6 +3237,16 @@ def _promote_pipeline_manager(
         logger.debug(
             "promoting bootstrap sentinel %s for pipeline %s", sentinel, pipeline
         )
+
+    if bootstrap_mode and manager is not None:
+        try:
+            setattr(manager, "bootstrap_mode", bootstrap_mode)
+        except Exception:  # pragma: no cover - attribute assignment best effort
+            logger.debug("failed to propagate bootstrap flag to manager", exc_info=True)
+        try:
+            setattr(pipeline, "bootstrap_mode", bootstrap_mode)
+        except Exception:  # pragma: no cover - pipeline flag best effort
+            logger.debug("failed to propagate bootstrap flag to pipeline", exc_info=True)
 
     def _describe_helper(target: Any) -> str:
         if target is None:

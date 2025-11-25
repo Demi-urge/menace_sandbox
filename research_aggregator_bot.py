@@ -420,6 +420,9 @@ class InfoDB(EmbeddableDBMixin):
         run_migrations: bool = True,
         apply_nonessential_migrations: bool = True,
         batch_migrations: bool = False,
+        bootstrap_mode: bool = False,
+        migration_timeout: float | None = None,
+        non_blocking_migrations: bool | None = None,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
@@ -435,12 +438,22 @@ class InfoDB(EmbeddableDBMixin):
         self.conn = self.router.get_connection("information")
         self.conn.row_factory = sqlite3.Row
         self._schema_initialised = False
+        self._schema_ready_cached = bool(bootstrap_mode)
         self._apply_nonessential_migrations = apply_nonessential_migrations
         self._batch_migrations = batch_migrations
+        self._bootstrap_mode = bool(bootstrap_mode)
+        self._migration_timeout = migration_timeout
+        self._non_blocking_migrations = (
+            non_blocking_migrations
+            if non_blocking_migrations is not None
+            else self._bootstrap_mode
+        )
         if run_migrations:
             self.apply_migrations(
                 apply_nonessential=apply_nonessential_migrations,
                 batch=batch_migrations,
+                timeout=migration_timeout,
+                non_blocking=self._non_blocking_migrations,
             )
         meta_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
@@ -456,10 +469,27 @@ class InfoDB(EmbeddableDBMixin):
         *,
         apply_nonessential: bool | None = None,
         batch: bool | None = None,
+        timeout: float | None = None,
+        non_blocking: bool | None = None,
     ) -> None:
         """Ensure the database schema exists using a single transaction."""
 
         if self._schema_initialised:
+            return
+
+        non_blocking = (
+            self._non_blocking_migrations
+            if non_blocking is None
+            else non_blocking
+        )
+        timeout = self._migration_timeout if timeout is None else timeout
+        if non_blocking and timeout is None:
+            timeout = 0.0
+        if non_blocking and self._schema_ready_cached:
+            logger.info(
+                "InfoDB skipping migrations using cached schema readiness (non_blocking=%s)",
+                non_blocking,
+            )
             return
 
         apply_nonessential = (
@@ -472,6 +502,25 @@ class InfoDB(EmbeddableDBMixin):
         conn = self.conn
         previous_bootstrap_safe = getattr(conn, "audit_bootstrap_safe", False)
         conn.audit_bootstrap_safe = True
+        prior_busy_timeout: int | None = None
+
+        def _restore_busy_timeout() -> None:
+            if prior_busy_timeout is None:
+                return
+            try:
+                conn.execute(f"PRAGMA busy_timeout={prior_busy_timeout}")
+            except Exception:  # pragma: no cover - best effort restore
+                logger.debug("failed to restore busy_timeout", exc_info=True)
+
+        if timeout is not None:
+            try:
+                prior_busy_timeout = int(
+                    conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                )
+                conn.execute(f"PRAGMA busy_timeout={int(max(timeout, 0) * 1000)}")
+            except Exception:  # pragma: no cover - busy timeout best effort
+                prior_busy_timeout = None
+
         start = time.perf_counter()
         migration_success = False
         self.has_fts = False
@@ -545,18 +594,28 @@ class InfoDB(EmbeddableDBMixin):
                 if batch:
                     conn.rollback()
                 raise
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                logger.info(
+                    "InfoDB migrations deferred due to database lock (non_blocking=%s)",
+                    non_blocking,
+                )
+                return
+            raise
         finally:
+            _restore_busy_timeout()
             conn.audit_bootstrap_safe = previous_bootstrap_safe
             if migration_success:
                 self._schema_initialised = True
+                self._schema_ready_cached = True
                 elapsed = time.perf_counter() - start
-                if elapsed > 0.05:
-                    logger.debug(
-                        "InfoDB migrations completed in %.3fs (batch=%s, nonessential=%s)",
-                        elapsed,
-                        batch,
-                        apply_nonessential,
-                    )
+                logger.info(
+                    "InfoDB migrations completed in %.3fs (batch=%s, nonessential=%s, bootstrap_fast_path=%s)",
+                    elapsed,
+                    batch,
+                    apply_nonessential,
+                    non_blocking,
+                )
 
     def set_current_model(self, model_id: int) -> None:
         """Persist the current model id for future inserts."""
@@ -1134,12 +1193,16 @@ class ResearchAggregatorBot:
         self.data_bot = deps.data_bot
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
-        migration_skipped = bootstrap
-        migration_deferred = defer_migrations_until_ready
+        bootstrap_active = bootstrap or bool(getattr(mgr, "bootstrap_mode", False))
+        migration_skipped = bootstrap_active
+        migration_deferred = defer_migrations_until_ready or bootstrap_active
         self.info_db = info_db or InfoDB(
             run_migrations=not migration_deferred,
             apply_nonessential_migrations=not migration_skipped,
             batch_migrations=True,
+            bootstrap_mode=bootstrap_active,
+            migration_timeout=0.0 if bootstrap_active else None,
+            non_blocking_migrations=bootstrap_active,
         )
         self.db_router = db_router or DBRouter(info_db=self.info_db)
         self.enh_db = enhancements_db or EnhancementDB()
