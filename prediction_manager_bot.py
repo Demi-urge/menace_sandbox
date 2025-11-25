@@ -42,6 +42,8 @@ class _LazyBotRegistry:
         commit: str | None = None,
         provenance: Any | None = None,
         is_coding_bot: bool = False,
+        bootstrap_mode: bool | None = None,
+        lock_timeout: float | None = None,
     ) -> str:
         if self._real is None:
             self.graph.nodes.setdefault(name, {})
@@ -61,6 +63,8 @@ class _LazyBotRegistry:
                         "commit": commit,
                         "provenance": provenance,
                         "is_coding_bot": is_coding_bot,
+                        "bootstrap_mode": bootstrap_mode,
+                        "lock_timeout": lock_timeout,
                     },
                 )
             )
@@ -78,6 +82,8 @@ class _LazyBotRegistry:
                 commit=commit,
                 provenance=provenance,
                 is_coding_bot=is_coding_bot,
+                bootstrap_mode=bootstrap_mode,
+                lock_timeout=lock_timeout,
             )
         )
 
