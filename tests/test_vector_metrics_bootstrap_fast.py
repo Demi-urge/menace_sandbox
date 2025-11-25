@@ -1,11 +1,13 @@
 import sqlite3
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import coding_bot_interface
 import code_database
 import vector_metrics_db
 import quick_fix_engine
+import prompt_engine
 from code_database import PatchHistoryDB
 from prompt_memory_trainer import PromptMemoryTrainer
 
@@ -348,3 +350,53 @@ def test_quick_fix_bootstrap_skips_slow_metrics(monkeypatch):
     assert pipeline is not None
     assert slow_calls and slow_calls[-1][0] and slow_calls[-1][1]
     assert elapsed < 1
+
+
+def test_prepare_pipeline_skips_prompt_weights_resolution(monkeypatch, tmp_path):
+    slow_weights = tmp_path / "slow" / "prompt_style_weights.json"
+
+    real_resolve = prompt_engine.resolve_path
+
+    def guarded_resolve(name, *args, **kwargs):
+        if Path(name) == slow_weights:
+            raise AssertionError("weights_path resolution should be skipped during bootstrap")
+        return real_resolve(name, *args, **kwargs)
+
+    monkeypatch.setattr(prompt_engine, "resolve_path", guarded_resolve)
+
+    class PromptPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.prompt_engine = prompt_engine.PromptEngine(
+                context_builder=context_builder,
+                retriever=None,
+                weights_path=slow_weights,
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=PromptPipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+
+    promote(object())
+
+    assert pipeline is not None
+    assert pipeline.prompt_engine.bootstrap_fast is True
+    assert pipeline.prompt_engine.weights_path == slow_weights
