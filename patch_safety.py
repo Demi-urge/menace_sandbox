@@ -20,6 +20,7 @@ import json
 import math
 import time
 from pathlib import Path
+from threading import Thread
 from typing import Any, Dict, List, Mapping, Tuple
 
 from dynamic_path_router import resolve_path
@@ -100,6 +101,7 @@ class PatchSafety:
     _last_refresh: float = 0.0
     _jsonl_mtime: float = 0.0
     _db_mtime: float = 0.0
+    stat_timeout: float = 0.25
 
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:  # pragma: no cover - simple IO
@@ -161,10 +163,7 @@ class PatchSafety:
         if pth:
             p = Path(pth)
             if p.exists():
-                try:
-                    mtime = p.stat().st_mtime
-                except Exception:  # pragma: no cover - best effort
-                    mtime = 0.0
+                mtime = self._mtime_with_timeout(p)
                 if mtime > self._jsonl_mtime:
                     self._jsonl_mtime = mtime
                     reload_needed = True
@@ -173,10 +172,7 @@ class PatchSafety:
             db_path = str((resolve_path(".") / db_path).resolve())
             self.failure_db_path = db_path
         if db_path:
-            try:
-                db_mtime = Path(db_path).stat().st_mtime
-            except Exception:  # pragma: no cover - best effort
-                db_mtime = 0.0
+            db_mtime = self._mtime_with_timeout(Path(db_path))
             if db_mtime > self._db_mtime:
                 self._db_mtime = db_mtime
                 reload_needed = True
@@ -421,6 +417,30 @@ class PatchSafety:
 
         passed = score < self.threshold
         return passed, score, risks
+
+    # ------------------------------------------------------------------
+    def _mtime_with_timeout(self, path: Path) -> float:
+        """Return ``path`` mtime without blocking bootstrapping flows.
+
+        Some environments mount paths on slow or unavailable devices (for
+        example Windows network shares).  ``Path.stat`` can hang in those
+        situations, so we call it in a short-lived daemon thread and bail out
+        once ``stat_timeout`` elapses.  When the call times out we treat the
+        mtime as ``0.0`` which simply disables refreshes from that location.
+        """
+
+        result: List[float] = []
+
+        def _probe() -> None:
+            try:  # pragma: no cover - simple IO
+                result.append(path.stat().st_mtime)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        t = Thread(target=_probe, daemon=True)
+        t.start()
+        t.join(self.stat_timeout)
+        return result[0] if result else 0.0
 
 
 def check_patch_safety(
