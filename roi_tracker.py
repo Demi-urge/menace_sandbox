@@ -100,6 +100,8 @@ LOCAL_TABLES.add("workflow_module_deltas")
 from importlib import import_module
 from types import ModuleType
 
+_BOOTSTRAP_WATCHDOG_ENV = "BOOTSTRAP_WATCHDOG_ACTIVE"
+
 _SELF_TEST_SERVICE: ModuleType | None = None
 _SELF_TEST_SERVICE_FAILED = False
 
@@ -316,6 +318,8 @@ class ROITracker:
         raroi_borderline_threshold: float = 0.0,
         borderline_bucket: BorderlineBucket | None = None,
         telemetry_backend: TelemetryBackend | None = None,
+        telemetry_bootstrap_safe: bool | None = None,
+        telemetry_timeout_s: float | None = None,
         results_db: "ROIResultsDB" | None = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
@@ -353,6 +357,15 @@ class ROITracker:
         telemetry_backend:
             Optional backend used to persist prediction and drift telemetry.
             A default SQLite-backed implementation is used when not provided.
+        telemetry_bootstrap_safe:
+            When ``True`` the telemetry backend is initialised in bootstrap-safe
+            mode, applying a short watchdog to SQLite configuration and
+            falling back to in-memory/no-op telemetry on timeouts.
+            Defaults to the value of ``BOOTSTRAP_WATCHDOG_ACTIVE`` when
+            omitted.
+        telemetry_timeout_s:
+            Optional deadline applied to SQLite configuration when
+            ``telemetry_bootstrap_safe`` is enabled.
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
@@ -371,8 +384,17 @@ class ROITracker:
         self.confidence_threshold = float(confidence_threshold)
         self.raroi_borderline_threshold = float(raroi_borderline_threshold)
         self.borderline_bucket = borderline_bucket or BorderlineBucket()
+        env_bootstrap = os.getenv(_BOOTSTRAP_WATCHDOG_ENV)
+        telemetry_bootstrap_flag = (
+            telemetry_bootstrap_safe
+            if telemetry_bootstrap_safe is not None
+            else env_bootstrap is not None
+            and env_bootstrap.strip().lower() not in {"", "0", "false", "no", "off"}
+        )
         self.telemetry = telemetry_backend or TelemetryBackend(
-            _resolve_telemetry_db_path()
+            _resolve_telemetry_db_path(),
+            bootstrap_safe=telemetry_bootstrap_flag,
+            init_timeout_s=telemetry_timeout_s,
         )
         self.results_db = results_db
         self.current_workflow_id: str | None = None
