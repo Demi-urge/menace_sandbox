@@ -65,6 +65,41 @@ def _module_prefix() -> str:
     return "menace_sandbox"
 
 
+def _pipeline_bootstrap_active() -> bool:
+    """Return ``True`` when a pipeline bootstrap flow is already in progress."""
+
+    env_flag = os.getenv("SELF_CODING_BOOTSTRAP", "").lower() in {"1", "true", "yes"}
+    try:
+        interface_mod = _import_optional("coding_bot_interface")
+    except Exception as exc:  # pragma: no cover - bootstrap probe best effort
+        logger.debug("pipeline bootstrap check failed: %s", exc, exc_info=_exc_info(exc))
+        return env_flag
+
+    context_getter = getattr(interface_mod, "_current_bootstrap_context", None)
+    if callable(context_getter):
+        try:
+            context = context_getter()
+        except Exception as exc:  # pragma: no cover - context lookup best effort
+            logger.debug(
+                "pipeline bootstrap context lookup failed: %s", exc, exc_info=_exc_info(exc)
+            )
+        else:
+            if context and (
+                getattr(context, "pipeline", None) is not None
+                or getattr(context, "bootstrap_safe", False)
+                or getattr(context, "bootstrap_fast", False)
+            ):
+                return True
+
+    state = getattr(interface_mod, "_BOOTSTRAP_STATE", None)
+    if state is not None and (
+        getattr(state, "pipeline", None) is not None or getattr(state, "depth", 0) > 0
+    ):
+        return True
+
+    return env_flag
+
+
 def _import_optional(module: str) -> Any:
     """Import *module* relative to the sandbox, tolerating flat layouts."""
 
@@ -109,6 +144,12 @@ def _bootstrap_self_coding() -> tuple[
     SelfCodingManager | None,
 ]:
     """Initialise shared self-coding helpers with strong fault tolerance."""
+
+    if _pipeline_bootstrap_active():
+        logger.info(
+            "Pipeline bootstrap detected; deferring future prediction self-coding until runtime"
+        )
+        return _noop_self_coding, None, None, None
 
     ready, missing = ensure_self_coding_ready()
     if not ready:
