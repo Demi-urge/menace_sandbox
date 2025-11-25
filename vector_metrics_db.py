@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Mapping, Sequence
+import contextlib
 import json
 import logging
 import os
@@ -202,6 +203,7 @@ class VectorMetricsDB:
                 init_start, using_global_router=using_global_router
             ),
         )
+        self._cached_weights: dict[str, float] = {}
         self._schema_cache: dict[str, list[str]] = {}
         self._default_columns: dict[str, list[str]] = {
             "vector_metrics": [
@@ -520,12 +522,37 @@ class VectorMetricsDB:
         return columns
 
     # ------------------------------------------------------------------
-    def get_db_weights(self) -> dict[str, float]:
+    def get_db_weights(
+        self,
+        *,
+        bootstrap: bool = False,
+        default: Mapping[str, float] | None = None,
+    ) -> dict[str, float]:
         """Return mapping of origin database to current ranking weight."""
 
-        cur = self.conn.execute("SELECT db, weight FROM ranking_weights")
-        rows = cur.fetchall()
-        return {str(db): float(weight) for db, weight in rows}
+        default_weights = dict(default or self._cached_weights)
+        timeout_ms = self.router.bootstrap_timeout_ms if (bootstrap or self.bootstrap_fast) else None
+        start = time.perf_counter()
+        connection_ctx: contextlib.AbstractContextManager = (
+            self.router.bootstrap_connection("ranking_weights", timeout_ms=timeout_ms)
+            if timeout_ms is not None
+            else contextlib.nullcontext(self.conn)
+        )
+        try:
+            with connection_ctx as conn:
+                cur = conn.execute("SELECT db, weight FROM ranking_weights")
+                rows = cur.fetchall()
+        except Exception as exc:  # pragma: no cover - defensive bootstrap fallback
+            logger.info(
+                "vector_metrics_db.weights.cached",
+                extra=_timestamp_payload(
+                    start, cached=len(default_weights), reason=str(exc)
+                ),
+            )
+            return default_weights
+        weights = {str(db): float(weight) for db, weight in rows}
+        self._cached_weights = dict(weights)
+        return weights
 
     # ------------------------------------------------------------------
     def update_db_weight(self, db: str, delta: float, *, normalize: bool = False) -> float:

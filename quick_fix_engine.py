@@ -1924,17 +1924,27 @@ class QuickFixEngine:
         print("[QFE] QuickFixEngine.__init__ entered", flush=True)
         if context_builder is None:
             raise RuntimeError("context_builder is required")
-        try:
-            ensure_fresh_weights(context_builder)
-        except Exception as exc:  # pragma: no cover - validation
-            raise RuntimeError(
-                "provided ContextBuilder cannot query local databases"
-            ) from exc
         bootstrap_mode = bool(
             getattr(manager, "bootstrap", False)
             or getattr(manager, "bootstrap_runtime", False)
             or getattr(getattr(manager, "bot_registry", None), "bootstrap", False)
         )
+        self.bootstrap_fast = bool(
+            getattr(manager, "bootstrap_fast", False)
+            or getattr(manager, "bootstrap", False)
+            or getattr(manager, "bootstrap_runtime", False)
+            or getattr(getattr(manager, "bot_registry", None), "bootstrap_fast", False)
+        )
+        try:
+            ensure_fresh_weights(
+                context_builder,
+                bootstrap=bootstrap_mode,
+                bootstrap_fast=self.bootstrap_fast,
+            )
+        except Exception as exc:  # pragma: no cover - validation
+            raise RuntimeError(
+                "provided ContextBuilder cannot query local databases"
+            ) from exc
         if getattr(manager, "bot_registry", None) is None or getattr(
             manager, "data_bot", None
         ) is None:

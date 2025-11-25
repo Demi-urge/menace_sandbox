@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import coding_bot_interface
 import code_database
 import vector_metrics_db
+import quick_fix_engine
 from code_database import PatchHistoryDB
 from prompt_memory_trainer import PromptMemoryTrainer
 
@@ -263,3 +264,87 @@ def test_bootstrap_fast_skips_patch_schema(monkeypatch, tmp_path):
 
     assert pipeline is not None
     assert not statements
+
+
+def test_quick_fix_bootstrap_skips_slow_metrics(monkeypatch):
+    slow_calls: list[tuple[bool, bool]] = []
+
+    class SlowContextBuilder:
+        def refresh_db_weights(
+            self, *, bootstrap: bool = False, bootstrap_fast: bool = False, **_: object
+        ) -> dict[str, float]:
+            slow_calls.append((bootstrap, bootstrap_fast))
+            if not (bootstrap or bootstrap_fast):
+                raise TimeoutError("refresh_db_weights should not block during bootstrap")
+            return {"code": 1.0}
+
+    class StubRegistry:
+        bootstrap = True
+        bootstrap_fast = True
+
+        def register_bot(self, *_: object, **__: object) -> None:
+            return None
+
+        def set_bootstrap_mode(self, *_: object, **__: object) -> None:
+            return None
+
+    class StubErrorDB:
+        pass
+
+    manager = SimpleNamespace(
+        bootstrap=True,
+        bootstrap_fast=True,
+        bootstrap_runtime=True,
+        bot_registry=StubRegistry(),
+        data_bot=object(),
+    )
+
+    builder = SlowContextBuilder()
+
+    monkeypatch.setattr(
+        quick_fix_engine, "_get_knowledge_graph_cls", lambda: type("KG", (), {})
+    )
+    monkeypatch.setattr(
+        quick_fix_engine, "_get_patch_logger_cls", lambda: lambda **_: SimpleNamespace()
+    )
+
+    class Pipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.quick_fix = quick_fix_engine.QuickFixEngine(
+                StubErrorDB(),
+                manager,
+                context_builder=context_builder,
+                patch_logger=SimpleNamespace(),
+                helper_fn=lambda *_a, **_k: "",
+            )
+
+    start = time.perf_counter()
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=Pipeline,
+        context_builder=builder,
+        bot_registry=manager.bot_registry,
+        data_bot=manager.data_bot,
+        manager_override=manager,
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    promote(manager)
+
+    assert pipeline is not None
+    assert slow_calls and slow_calls[-1][0] and slow_calls[-1][1]
+    assert elapsed < 1
