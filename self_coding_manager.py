@@ -729,6 +729,7 @@ class SelfCodingManager:
                             error_threshold=(
                                 new_err if new_err != t.error_threshold else None
                             ),
+                            bootstrap_mode=self.bootstrap_mode,
                         )
                         try:  # pragma: no cover - best effort persistence
                             persist_sc_thresholds(
