@@ -107,6 +107,7 @@ class Retriever:
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
     risk_penalty: float = 1.0
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+    bootstrap_fast: bool = False
 
     def __post_init__(self) -> None:
         if not hasattr(self.context_builder, "roi_tag_penalties"):
@@ -564,6 +565,7 @@ class PatchRetriever:
     vector_metrics: VectorMetricsDB | None = None
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
     service_url: str | None = None
+    bootstrap_fast: bool = False
 
     def __post_init__(self) -> None:
         if self.service_url is None:
@@ -574,7 +576,9 @@ class PatchRetriever:
                 from .vectorizer import SharedVectorService  # type: ignore
             except Exception:  # pragma: no cover - fallback to absolute import
                 from vector_service.vectorizer import SharedVectorService  # type: ignore
-            self.vector_service = SharedVectorService()
+            self.vector_service = SharedVectorService(
+                bootstrap_fast=self.bootstrap_fast
+            )
         backend = "annoy"
         path = "vectors.index"
         dim = 0
@@ -602,7 +606,9 @@ class PatchRetriever:
 
         if self.vector_metrics is None and VectorMetricsDB is not None and not self.service_url:
             try:
-                self.vector_metrics = VectorMetricsDB()
+                self.vector_metrics = VectorMetricsDB(
+                    bootstrap_fast=self.bootstrap_fast
+                )
             except Exception:
                 self.vector_metrics = None
         if not hasattr(self.context_builder, "roi_tag_penalties"):

@@ -88,6 +88,7 @@ class CognitionLayer:
         event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
+        bootstrap_fast: bool = False,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
@@ -95,17 +96,26 @@ class CognitionLayer:
         self.retriever = retriever or getattr(
             self.context_builder,
             "retriever",
-            Retriever(context_builder=self.context_builder),
+            Retriever(
+                context_builder=self.context_builder,
+                bootstrap_fast=bootstrap_fast,
+            ),
         )
         self.patch_retriever = patch_retriever or getattr(
             self.context_builder,
             "patch_retriever",
-            PatchRetriever(context_builder=self.context_builder),
+            PatchRetriever(
+                context_builder=self.context_builder,
+                bootstrap_fast=bootstrap_fast,
+            ),
         )
-        self.vector_metrics = vector_metrics or VectorMetricsDB()
+        self.vector_metrics = vector_metrics or VectorMetricsDB(
+            bootstrap_fast=bootstrap_fast
+        )
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
         db_weights = None
+        self.bootstrap_fast = bootstrap_fast
         if self.vector_metrics is not None:
             try:
                 db_weights = self.vector_metrics.get_db_weights()
