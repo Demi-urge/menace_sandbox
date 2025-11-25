@@ -396,6 +396,8 @@ class SelfCodingManager:
         threshold_service: ThresholdService | None = None,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
+        bootstrap_mode: bool | None = None,
+        bootstrap_register_timeout: float | None = None,
     ) -> None:
         if data_bot is None or bot_registry is None:
             raise ValueError("data_bot and bot_registry are required")
@@ -406,7 +408,11 @@ class SelfCodingManager:
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.bootstrap = bool(getattr(bot_registry, "bootstrap", False))
+        registry_bootstrap = bool(getattr(bot_registry, "bootstrap", False))
+        resolved_bootstrap = registry_bootstrap if bootstrap_mode is None else bootstrap_mode
+        self.bootstrap = bool(resolved_bootstrap)
+        self.bootstrap_mode = self.bootstrap
+        self.bootstrap_register_timeout = bootstrap_register_timeout
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
@@ -500,11 +506,20 @@ class SelfCodingManager:
         self.evolution_orchestrator = evolution_orchestrator
         if self.bot_registry:
             try:
+                register_kwargs: dict[str, Any] = {}
+                register_timeout = self.bootstrap_register_timeout
+                if register_timeout is None and self.bootstrap_mode:
+                    register_timeout = 0.0
+                if register_timeout is not None:
+                    register_kwargs["lock_timeout"] = register_timeout
+                if self.bootstrap_mode:
+                    register_kwargs["bootstrap_mode"] = True
                 self.bot_registry.register_bot(
                     self.bot_name,
                     manager=self,
                     data_bot=self.data_bot,
                     is_coding_bot=True,
+                    **register_kwargs,
                 )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")

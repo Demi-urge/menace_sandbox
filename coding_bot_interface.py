@@ -4845,6 +4845,8 @@ def _bootstrap_manager(
                 bot_name=name,
                 data_bot=data_bot,
                 bot_registry=bot_registry,
+                bootstrap_mode=bootstrap_safe,
+                bootstrap_register_timeout=0.0 if bootstrap_safe else None,
             )
             helper_callbacks = _consume_bootstrap_helper_callbacks()
             attach_delegate = getattr(sentinel_manager, "attach_delegate", None)
@@ -5715,6 +5717,9 @@ def self_coding_managed(
                         and (register_as_coding_local or register_deferred_local)
                     ):
                         register_kwargs = dict(update_kwargs_local)
+                        if bootstrap_safe_local:
+                            register_kwargs["bootstrap_mode"] = True
+                            register_kwargs.setdefault("lock_timeout", 0.0)
                         if (
                             decision_local is not None
                             and decision_local.provenance is not None

@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import sys
 import contextvars
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -81,6 +83,125 @@ def test_internal_self_coding_modules_not_transient():
         name="quick_fix_engine",
     )
     assert not bot_registry._is_transient_internalization_error(exc_top_level)
+
+
+def test_prepare_pipeline_skips_locked_registry(monkeypatch):
+    registry = _make_registry()
+    registry.set_bootstrap_mode(True)
+    data_bot = SimpleNamespace(
+        reload_thresholds=lambda _name: SimpleNamespace(
+            roi_drop=0.1,
+            error_threshold=0.2,
+            test_failure_threshold=0.05,
+        )
+    )
+
+    class StubPipeline:
+        def __init__(self, context_builder, bot_registry, data_bot, manager=None, **_kwargs):
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    class StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+            self.cognition_layer = SimpleNamespace(context_builder=context_builder)
+
+    class StubCodeDB:
+        pass
+
+    class StubMemory:
+        pass
+
+    class StubManager:
+        def __init__(
+            self,
+            engine,
+            pipeline,
+            *,
+            bot_name="menace",
+            data_bot=None,
+            bot_registry=None,
+            bootstrap_mode=False,
+            bootstrap_register_timeout=None,
+            **_kwargs,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+            if pipeline is not None:
+                pipeline.manager = self
+            if bot_registry is not None:
+                bot_registry.register_bot(
+                    bot_name,
+                    manager=self,
+                    data_bot=data_bot,
+                    is_coding_bot=True,
+                    bootstrap_mode=bootstrap_mode,
+                    lock_timeout=bootstrap_register_timeout,
+                )
+
+    stub_modules = {
+        "code_database": SimpleNamespace(CodeDB=StubCodeDB),
+        "gpt_memory": SimpleNamespace(GPTMemoryManager=StubMemory),
+        "self_coding_engine": SimpleNamespace(SelfCodingEngine=StubEngine),
+        "model_automation_pipeline": SimpleNamespace(ModelAutomationPipeline=StubPipeline),
+        "self_coding_manager": SimpleNamespace(SelfCodingManager=StubManager),
+    }
+
+    def _fake_load_optional(name: str, fallback: str | None = None):
+        module = stub_modules.get(name)
+        if module is None and fallback:
+            module = stub_modules.get(fallback.rsplit(".", 1)[-1], module)
+        if module is None:
+            raise ImportError(name)
+        return module
+
+    monkeypatch.setattr(
+        coding_bot_interface,
+        "_load_optional_module",
+        _fake_load_optional,
+    )
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=StubPipeline,
+        context_builder=object(),
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_safe=True,
+    )
+
+    release_lock = threading.Event()
+    lock_ready = threading.Event()
+
+    def _hold_lock() -> None:
+        with registry._lock:
+            lock_ready.set()
+            release_lock.wait(1)
+
+    holder = threading.Thread(target=_hold_lock)
+    holder.start()
+    assert lock_ready.wait(1)
+
+    start = time.perf_counter()
+    manager = coding_bot_interface._bootstrap_manager(
+        "BootstrapBot",
+        registry,
+        data_bot,
+        pipeline=pipeline,
+        pipeline_promoter=promote,
+        bootstrap_safe=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    release_lock.set()
+    holder.join(timeout=1)
+
+    assert elapsed < 1.0
+    assert pipeline.manager is manager
 
 
 def test_register_bot_records_module_path_on_failure(monkeypatch, tmp_path):
