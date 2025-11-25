@@ -118,7 +118,13 @@ def _noop(*args, **kwargs):  # pragma: no cover - trivial fallback
 class _SimpleSharedVectorService:
     """Lightweight fallback implementation used when vectorizer is unavailable."""
 
-    def __init__(self, embedder: Any | None = None, vector_store: Any | None = None):
+    def __init__(
+        self,
+        embedder: Any | None = None,
+        vector_store: Any | None = None,
+        *,
+        bootstrap_fast: bool | None = None,
+    ):
         self.embedder = embedder or _Stub()
         self.vector_store = vector_store
 

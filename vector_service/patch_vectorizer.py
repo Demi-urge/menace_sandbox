@@ -33,6 +33,7 @@ class PatchVectorizer(EmbeddableDBMixin):
         index_path: str | Path | None = None,
         backend: str = "annoy",
         embedding_version: int = 1,
+        bootstrap_fast: bool = False,
     ) -> None:
         init_start = time.perf_counter()
         logger.debug(
@@ -64,7 +65,7 @@ class PatchVectorizer(EmbeddableDBMixin):
             db_path = None
 
         db_init_start = time.perf_counter()
-        self.db = PatchHistoryDB(db_path)
+        self.db = PatchHistoryDB(db_path, bootstrap_fast=bootstrap_fast)
         logger.info(
             "patch_vectorizer.db.init path=%s duration=%.6fs",
             self.db.path,
