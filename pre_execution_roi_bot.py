@@ -153,6 +153,7 @@ class PreExecutionROIBot:
         data_bot: Optional[DataBot] = None,
         handoff: Optional[TaskHandoffBot] = None,
         prediction_manager: "PredictionManager" | None = None,
+        manager: Any | None = None,
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.history = history or ROIHistoryDB()
@@ -163,6 +164,7 @@ class PreExecutionROIBot:
         self.data_bot = data_bot or DataBot()
         self.handoff = handoff or TaskHandoffBot(event_bus=event_bus)
         self.event_bus = event_bus
+        self.manager = manager
         if prediction_manager is None:
             try:
                 prediction_cls = _prediction_manager_cls()
