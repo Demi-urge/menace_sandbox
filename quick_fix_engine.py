@@ -1930,6 +1930,11 @@ class QuickFixEngine:
             raise RuntimeError(
                 "provided ContextBuilder cannot query local databases"
             ) from exc
+        bootstrap_mode = bool(
+            getattr(manager, "bootstrap", False)
+            or getattr(manager, "bootstrap_runtime", False)
+            or getattr(getattr(manager, "bot_registry", None), "bootstrap", False)
+        )
         if getattr(manager, "bot_registry", None) is None or getattr(
             manager, "data_bot", None
         ) is None:
@@ -1939,10 +1944,13 @@ class QuickFixEngine:
         self.db = error_db
         self.manager = manager
         logger = logging.getLogger(self.__class__.__name__)
-        try:
-            self.manager.register_bot(self.__class__.__name__)
-        except Exception:
-            logger.exception("bot registration failed")
+        if not bootstrap_mode:
+            try:
+                self.manager.register_bot(self.__class__.__name__)
+            except Exception:
+                logger.exception("bot registration failed")
+        else:
+            logger.debug("skipping bot registration during bootstrap")
         self.threshold = threshold
         self.graph = graph or _get_knowledge_graph_cls()()
         self.risk_threshold = risk_threshold

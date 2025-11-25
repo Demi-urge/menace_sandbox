@@ -2326,6 +2326,7 @@ class BotRegistry:
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
         with self._lock:
+            bootstrap_mode = bool(getattr(self, "bootstrap", False))
             self.graph.add_node(name)
             node = self.graph.nodes[name]
             if module_path is None:
@@ -2721,23 +2722,28 @@ class BotRegistry:
                         error_threshold=error_threshold,
                         test_failure_threshold=test_failure_threshold,
                     )
-                    persist_sc_thresholds(
-                        name,
-                        roi_drop=roi_threshold,
-                        error_increase=error_threshold,
-                        test_failure_increase=test_failure_threshold,
-                        event_bus=self.event_bus,
-                    )
+                    if not bootstrap_mode:
+                        persist_sc_thresholds(
+                            name,
+                            roi_drop=roi_threshold,
+                            error_increase=error_threshold,
+                            test_failure_increase=test_failure_threshold,
+                            event_bus=self.event_bus,
+                        )
+                    else:
+                        logger.debug(
+                            "skipping threshold persistence for %s during bootstrap", name
+                        )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.error(
                         "failed to persist thresholds for %s: %s", name, exc
                     )
-            if self.event_bus:
+            if self.event_bus and not bootstrap_mode:
                 try:
                     self.event_bus.publish("bot:new", {"name": name})
                 except Exception as exc:
                     logger.error("Failed to publish bot:new event: %s", exc)
-            if self.persist_path:
+            if self.persist_path and not bootstrap_mode:
                 try:
                     self.save(self.persist_path)
                 except Exception as exc:
