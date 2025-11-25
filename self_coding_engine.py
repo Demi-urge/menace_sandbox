@@ -850,7 +850,7 @@ class SelfCodingEngine:
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.pipeline = pipeline
         self.data_bot = data_bot
-        self.bootstrap_fast = bootstrap_fast
+        self.bootstrap_fast = bool(bootstrap_fast)
         self.patch_db = patch_db
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
@@ -1057,7 +1057,7 @@ class SelfCodingEngine:
             chunk_token_threshold=self.chunk_token_threshold,
             chunk_summary_cache_dir=self.chunk_summary_cache_dir,
             llm=self.llm_client,
-            bootstrap_fast=bootstrap_fast,
+            bootstrap_fast=self.bootstrap_fast,
         )
         if prompt_evolution_memory is None:
             try:

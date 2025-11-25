@@ -398,5 +398,63 @@ def test_prepare_pipeline_skips_prompt_weights_resolution(monkeypatch, tmp_path)
     promote(object())
 
     assert pipeline is not None
+
+
+def test_prepare_pipeline_bootstrap_fast_paths_prompt_engine(monkeypatch, tmp_path):
+    slow_weights = tmp_path / "slow" / "prompt_style_weights.json"
+    slow_template = tmp_path / "slow" / "prompt_templates.json"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    real_resolve = prompt_engine.resolve_path
+    resolved: list[Path] = []
+
+    def tracking_resolve(path, *args, **kwargs):  # noqa: ANN001
+        resolved.append(Path(path))
+        return real_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(prompt_engine, "resolve_path", tracking_resolve)
+
+    class PromptPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.prompt_engine = prompt_engine.PromptEngine(
+                context_builder=SimpleNamespace(roi_tracker=None),
+                retriever=None,
+                weights_path=slow_weights,
+                template_path=slow_template,
+                chunk_summary_cache_dir=cache_dir,
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    start = time.perf_counter()
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=PromptPipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    promote(object())
+
+    assert pipeline is not None
+    assert slow_weights not in resolved
+    assert slow_template not in resolved
+    assert elapsed < 5
     assert pipeline.prompt_engine.bootstrap_fast is True
     assert pipeline.prompt_engine.weights_path == slow_weights
