@@ -8,6 +8,33 @@ from code_database import PatchHistoryDB
 from prompt_memory_trainer import PromptMemoryTrainer
 
 
+def test_prepare_pipeline_with_model_automation_pipeline():
+    class ModelAutomationPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=ModelAutomationPipeline,
+        context_builder=object(),
+        bot_registry=type("Registry", (), {"set_bootstrap_mode": lambda *_: None})(),
+        data_bot=object(),
+    )
+
+    promote(object())
+
+    assert isinstance(pipeline, ModelAutomationPipeline)
+
+
 def test_prepare_pipeline_fast_path_skips_vector_lock(monkeypatch, tmp_path):
     locked_db = tmp_path / "vector_metrics.db"
     locked_db.touch()
