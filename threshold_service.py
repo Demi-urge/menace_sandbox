@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Service encapsulating threshold management and notifications."""
 
+from pathlib import Path
 from typing import Dict, Optional
 import logging
 
@@ -17,6 +18,7 @@ from .self_coding_thresholds import (
     update_thresholds,
     SelfCodingThresholds,
     _load_config as _load_threshold_config,
+    flush_deferred_threshold_writes,
 )
 
 try:  # pragma: no cover - allow flat imports
@@ -113,15 +115,23 @@ class ThresholdService:
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
         patch_success_drop: float | None = None,
+        bootstrap_mode: bool | None = None,
     ) -> None:
         """Persist new thresholds for *bot* and broadcast changes."""
+        bootstrap_mode = bool(bootstrap_mode)
         update_thresholds(
             bot,
             roi_drop=roi_drop,
             error_increase=error_threshold,
             test_failure_increase=test_failure_threshold,
             patch_success_drop=patch_success_drop,
+            bootstrap_safe=bootstrap_mode,
         )
+        if bootstrap_mode:
+            logger.info(
+                "threshold update for %s deferred during bootstrap; cached for later flush",
+                bot,
+            )
         current = self._thresholds.get(bot)
         if current is None:
             current = self.reload(bot)
@@ -145,6 +155,19 @@ class ThresholdService:
         self._thresholds[bot] = new_rt
         if prev != new_rt:
             self._publish(bot, new_rt)
+
+    # ------------------------------------------------------------------
+    def flush_bootstrap_writes(self, path: Path | None = None) -> bool:
+        """Write any deferred bootstrap threshold updates to disk."""
+
+        flushed = flush_deferred_threshold_writes(path)
+        if flushed:
+            logger.info(
+                "flushed deferred threshold updates to %s", path or "config/self_coding_thresholds.yaml"
+            )
+        else:
+            logger.debug("no deferred threshold updates to flush")
+        return flushed
 
 
 # Shared service instance used across the project

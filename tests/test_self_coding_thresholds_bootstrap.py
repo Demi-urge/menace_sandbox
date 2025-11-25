@@ -10,6 +10,7 @@ def test_threshold_cache_used_during_bootstrap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(thresholds, "_CONFIG_CACHE", {})
     monkeypatch.setattr(thresholds, "_LAST_CACHE_KEY", None)
+    monkeypatch.setattr(thresholds, "_DEFERRED_CONFIG_WRITES", {})
 
     initial = thresholds._load_config(cfg, timeout_s=0.1)
     assert initial.get("bots", {}).get("cached-bot") is not None
@@ -30,6 +31,7 @@ def test_update_thresholds_defers_writes_in_bootstrap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(thresholds, "_CONFIG_CACHE", {})
     monkeypatch.setattr(thresholds, "_LAST_CACHE_KEY", None)
+    monkeypatch.setattr(thresholds, "_DEFERRED_CONFIG_WRITES", {})
 
     thresholds._load_config(cfg)
 
@@ -43,3 +45,22 @@ def test_update_thresholds_defers_writes_in_bootstrap(tmp_path, monkeypatch):
     )
     cached = thresholds.get_cached_config(cfg)
     assert cached.get("bots", {}).get("cached-bot", {}).get("roi_drop") == -0.8
+
+
+def test_flush_deferred_threshold_writes(tmp_path, monkeypatch):
+    cfg = tmp_path / "thresholds.yaml"
+    cfg.write_text("bots:\n  cached-bot:\n    roi_drop: -0.5\n")
+
+    monkeypatch.setattr(thresholds, "_CONFIG_CACHE", {})
+    monkeypatch.setattr(thresholds, "_LAST_CACHE_KEY", None)
+    monkeypatch.setattr(thresholds, "_DEFERRED_CONFIG_WRITES", {})
+
+    thresholds.update_thresholds(
+        "cached-bot", roi_drop=-0.9, path=cfg, bootstrap_safe=True
+    )
+
+    flushed = thresholds.flush_deferred_threshold_writes(cfg)
+    assert flushed is True
+
+    data = thresholds._load_config(cfg)
+    assert data.get("bots", {}).get("cached-bot", {}).get("roi_drop") == -0.9

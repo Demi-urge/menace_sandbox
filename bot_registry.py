@@ -2366,6 +2366,14 @@ class BotRegistry:
                 return
 
             bootstrap_mode = resolved_bootstrap
+            if not bootstrap_mode:
+                try:
+                    threshold_service.flush_bootstrap_writes()
+                except Exception:
+                    logger.exception(
+                        "failed to flush deferred threshold updates before registering %s",
+                        name,
+                    )
             self.graph.add_node(name)
             node = self.graph.nodes[name]
             if module_path is None:
@@ -2760,6 +2768,7 @@ class BotRegistry:
                         roi_drop=roi_threshold,
                         error_threshold=error_threshold,
                         test_failure_threshold=test_failure_threshold,
+                        bootstrap_mode=bootstrap_mode,
                     )
                     if not bootstrap_mode:
                         persist_sc_thresholds(
