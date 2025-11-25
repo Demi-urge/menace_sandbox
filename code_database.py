@@ -1249,6 +1249,9 @@ class PatchRecord:
         )
 
 
+_PATCH_HISTORY_BOOTSTRAP_ROUTER: DBRouter | None = None
+
+
 class PatchHistoryDB:
     """SQLite-backed store for patch history."""
 
@@ -1297,154 +1300,180 @@ class PatchHistoryDB:
         # router instance is supplied.  This ensures tests using temporary
         # databases do not share state via ``GLOBAL_ROUTER``.
         router_start = time.perf_counter()
-        self.router = router or init_db_router(
-            "patch_history", str(self.path), str(self.path)
-        )
-        logger.info(
-            "patch_history_db.router.ready duration=%.6fs",
-            time.perf_counter() - router_start,
-            extra={"duration_s": round(time.perf_counter() - router_start, 6)},
-        )
+        if self._bootstrap:
+            global _PATCH_HISTORY_BOOTSTRAP_ROUTER
+            cached_router = router or _PATCH_HISTORY_BOOTSTRAP_ROUTER
+            if cached_router is None:
+                cached_router = init_db_router(
+                    "patch_history_bootstrap",
+                    ":memory:",
+                    ":memory:",
+                    bootstrap_mode=True,
+                    init_deadline_s=1.0,
+                )
+                _PATCH_HISTORY_BOOTSTRAP_ROUTER = cached_router
+            self.router = cached_router
+            logger.info(
+                "patch_history_db.router.bootstrap-fast",
+                extra={
+                    "cached": router is None and _PATCH_HISTORY_BOOTSTRAP_ROUTER is not None,
+                    "duration_s": round(time.perf_counter() - router_start, 6),
+                },
+            )
+        else:
+            self.router = router or init_db_router(
+                "patch_history", str(self.path), str(self.path)
+            )
+            logger.info(
+                "patch_history_db.router.ready duration=%.6fs",
+                time.perf_counter() - router_start,
+                extra={"duration_s": round(time.perf_counter() - router_start, 6)},
+            )
         conn = self.router.get_connection("patch_history")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_history(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT,
-                description TEXT,
-                roi_before REAL,
-                roi_after REAL,
-                errors_before INTEGER DEFAULT 0,
-                errors_after INTEGER DEFAULT 0,
-                tests_failed_before INTEGER DEFAULT 0,
-                tests_failed_after INTEGER DEFAULT 0,
-                roi_delta REAL DEFAULT 0,
-                complexity_before REAL DEFAULT 0,
-                complexity_after REAL DEFAULT 0,
-                complexity_delta REAL DEFAULT 0,
-                entropy_before REAL DEFAULT 0,
-                entropy_after REAL DEFAULT 0,
-                entropy_delta REAL DEFAULT 0,
-                predicted_roi REAL DEFAULT 0,
-                predicted_errors REAL DEFAULT 0,
-                reverted INTEGER DEFAULT 0,
-                trending_topic TEXT,
-                ts TEXT,
-                source_bot TEXT,
-                version TEXT,
-                code_id INTEGER,
-                code_hash TEXT,
-                parent_patch_id INTEGER,
-                reason TEXT,
-                trigger TEXT,
-                diff TEXT,
-                summary TEXT,
-                outcome TEXT,
-                lines_changed INTEGER DEFAULT 0,
-                tests_passed INTEGER DEFAULT 0,
-                context_tokens INTEGER DEFAULT 0,
-                patch_difficulty INTEGER DEFAULT 0,
-                effort_estimate REAL,
-                enhancement_name TEXT,
-                start_time REAL,
-                time_to_completion REAL,
-                timestamp REAL,
-                roi_deltas TEXT,
-                errors TEXT,
-                error_trace_count INTEGER DEFAULT 0,
-                roi_tag TEXT,
-                enhancement_score REAL,
-                prompt_headers TEXT,
-                prompt_order TEXT,
-                prompt_tone TEXT
+        if self._bootstrap:
+            self._init_bootstrap_schema(conn)
+        else:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patch_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT,
+                    description TEXT,
+                    roi_before REAL,
+                    roi_after REAL,
+                    errors_before INTEGER DEFAULT 0,
+                    errors_after INTEGER DEFAULT 0,
+                    tests_failed_before INTEGER DEFAULT 0,
+                    tests_failed_after INTEGER DEFAULT 0,
+                    roi_delta REAL DEFAULT 0,
+                    complexity_before REAL DEFAULT 0,
+                    complexity_after REAL DEFAULT 0,
+                    complexity_delta REAL DEFAULT 0,
+                    entropy_before REAL DEFAULT 0,
+                    entropy_after REAL DEFAULT 0,
+                    entropy_delta REAL DEFAULT 0,
+                    predicted_roi REAL DEFAULT 0,
+                    predicted_errors REAL DEFAULT 0,
+                    reverted INTEGER DEFAULT 0,
+                    trending_topic TEXT,
+                    ts TEXT,
+                    source_bot TEXT,
+                    version TEXT,
+                    code_id INTEGER,
+                    code_hash TEXT,
+                    parent_patch_id INTEGER,
+                    reason TEXT,
+                    trigger TEXT,
+                    diff TEXT,
+                    summary TEXT,
+                    outcome TEXT,
+                    lines_changed INTEGER DEFAULT 0,
+                    tests_passed INTEGER DEFAULT 0,
+                    context_tokens INTEGER DEFAULT 0,
+                    patch_difficulty INTEGER DEFAULT 0,
+                    effort_estimate REAL,
+                    enhancement_name TEXT,
+                    start_time REAL,
+                    time_to_completion REAL,
+                    timestamp REAL,
+                    roi_deltas TEXT,
+                    errors TEXT,
+                    error_trace_count INTEGER DEFAULT 0,
+                    roi_tag TEXT,
+                    enhancement_score REAL,
+                    prompt_headers TEXT,
+                    prompt_order TEXT,
+                    prompt_tone TEXT
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS score_weights(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                w1 REAL,
-                w2 REAL,
-                w3 REAL,
-                w4 REAL,
-                w5 REAL,
-                w6 REAL,
-                ts TEXT
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS score_weights(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    w1 REAL,
+                    w2 REAL,
+                    w3 REAL,
+                    w4 REAL,
+                    w5 REAL,
+                    w6 REAL,
+                    ts TEXT
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS flakiness_history(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT,
-                flakiness REAL,
-                ts TEXT
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flakiness_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT,
+                    flakiness REAL,
+                    ts TEXT
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS failed_strategies(
-                code_hash TEXT PRIMARY KEY,
-                ts TEXT
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS failed_strategies(
+                    code_hash TEXT PRIMARY KEY,
+                    ts TEXT
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_provenance(
-                patch_id INTEGER,
-                origin TEXT,
-                vector_id TEXT,
-                influence REAL,
-                retrieved_at TEXT,
-                position INTEGER,
-                license TEXT,
-                license_fingerprint TEXT,
-                semantic_alerts TEXT,
-                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patch_provenance(
+                    patch_id INTEGER,
+                    origin TEXT,
+                    vector_id TEXT,
+                    influence REAL,
+                    retrieved_at TEXT,
+                    position INTEGER,
+                    license TEXT,
+                    license_fingerprint TEXT,
+                    semantic_alerts TEXT,
+                    FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_ancestry(
-                patch_id INTEGER,
-                origin TEXT,
-                vector_id TEXT,
-                influence REAL,
-                license TEXT,
-                license_fingerprint TEXT,
-                semantic_alerts TEXT,
-                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patch_ancestry(
+                    patch_id INTEGER,
+                    origin TEXT,
+                    vector_id TEXT,
+                    influence REAL,
+                    license TEXT,
+                    license_fingerprint TEXT,
+                    semantic_alerts TEXT,
+                    FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS patch_contributors(
-                patch_id INTEGER,
-                vector_id TEXT,
-                influence REAL,
-                session_id TEXT,
-                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patch_contributors(
+                    patch_id INTEGER,
+                    vector_id TEXT,
+                    influence REAL,
+                    session_id TEXT,
+                    FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS branch_log(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patch_id TEXT,
-                branch TEXT,
-                action TEXT,
-                ts TEXT
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS branch_log(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patch_id TEXT,
+                    branch TEXT,
+                    action TEXT,
+                    ts TEXT
+                )
+                """
             )
-            """
-        )
-        if not self._bootstrap:
+            cols = [
+                r[1] for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
+            ]
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
             ]
@@ -1551,10 +1580,12 @@ class PatchHistoryDB:
             )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
-        else:
             logger.info(
-                "patch_history_db.bootstrap.skip_migrations",
-                extra={"path": str(self.path)},
+                "patch_history_db.schema.ready", extra={"bootstrap": self._bootstrap}
+            )
+        if self._bootstrap:
+            logger.info(
+                "patch_history_db.bootstrap.fast_path", extra={"path": str(self.path)}
             )
         conn.commit()
         # expose connection for diagnostics and tests
@@ -1574,6 +1605,52 @@ class PatchHistoryDB:
         except Exception:  # pragma: no cover - defensive best effort
             logger.exception("failed to initialise VectorMetricsDB")
             return None
+
+    def _init_bootstrap_schema(self, conn: sqlite3.Connection) -> None:
+        """Provision a minimal schema when running in bootstrap mode."""
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                summary TEXT,
+                ts TEXT,
+                source_bot TEXT,
+                code_hash TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_provenance(
+                patch_id INTEGER,
+                origin TEXT,
+                vector_id TEXT,
+                influence REAL,
+                retrieved_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_ancestry(
+                patch_id INTEGER,
+                origin TEXT,
+                vector_id TEXT,
+                influence REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_contributors(
+                patch_id INTEGER,
+                vector_id TEXT,
+                influence REAL,
+                session_id TEXT
+            )
+            """
+        )
 
     def enable_vector_metrics(self) -> None:
         """Allow VectorMetricsDB initialisation after bootstrap."""

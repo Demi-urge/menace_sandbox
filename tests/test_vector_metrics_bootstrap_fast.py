@@ -57,3 +57,48 @@ def test_prepare_pipeline_fast_path_skips_vector_lock(monkeypatch, tmp_path):
 
     assert pipeline is not None
     assert elapsed < 5
+
+
+def test_prepare_pipeline_survives_locked_patch_db(monkeypatch, tmp_path):
+    locked_db = tmp_path / "patch_history.db"
+    lock_conn = sqlite3.connect(locked_db)
+    lock_conn.execute("BEGIN EXCLUSIVE")
+
+    class FastPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.trainer = PromptMemoryTrainer(
+                patch_db=PatchHistoryDB(locked_db, bootstrap=bootstrap_fast),
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    start = time.perf_counter()
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=FastPipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_safe=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    try:
+        promote(object())
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
+
+    assert pipeline is not None
+    assert elapsed < 5

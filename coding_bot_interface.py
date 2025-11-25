@@ -3577,7 +3577,7 @@ def prepare_pipeline_for_bootstrap(
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
-    bootstrap_fast: bool = False,
+    bootstrap_fast: bool = True,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3628,7 +3628,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     sentinel_factory: Callable[[], Any] | None = None,
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
-    bootstrap_fast: bool = False,
+    bootstrap_fast: bool = True,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -3713,6 +3713,12 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     if bootstrap_fast and "bootstrap_fast" not in pipeline_kwargs:
         pipeline_kwargs["bootstrap_fast"] = True
+        logger.info(
+            "prepare_pipeline.bootstrap_fast.enabled",
+            extra={
+                "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
+            },
+        )
 
     setter = getattr(bot_registry, "set_bootstrap_mode", None)
     if callable(setter):
@@ -4302,9 +4308,9 @@ def _bootstrap_manager(
         if bootstrap_safe is None:
             bootstrap_safe = bool(getattr(active_context, "bootstrap_safe", False))
         if bootstrap_fast is None:
-            bootstrap_fast = bool(getattr(active_context, "bootstrap_fast", False))
+            bootstrap_fast = getattr(active_context, "bootstrap_fast", None)
     if bootstrap_fast is None:
-        bootstrap_fast = bool(bootstrap_safe)
+        bootstrap_fast = True
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None
