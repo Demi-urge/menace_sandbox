@@ -108,6 +108,115 @@ def test_prepare_pipeline_bootstrap_skips_path_resolution(monkeypatch):
     assert isinstance(pipeline, _StubPipeline)
 
 
+def test_prepare_pipeline_bootstrap_handles_locked_config(monkeypatch, tmp_path, stub_bootstrap_env):
+    import sandbox_settings_pydantic as ssp
+
+    blocked_calls: dict[str, int] = {"resolve": 0, "mkdir": 0}
+
+    def _blocked_resolve(path: str) -> str:  # pragma: no cover - should be bypassed
+        blocked_calls["resolve"] += 1
+        raise TimeoutError("config directory is locked")
+
+    def _blocked_mkdir(self, *args, **kwargs):  # pragma: no cover - should be bypassed
+        blocked_calls["mkdir"] += 1
+        raise TimeoutError("config directory is locked")
+
+    monkeypatch.setattr(ssp, "resolve_path", _blocked_resolve)
+    monkeypatch.setattr(ssp.Path, "mkdir", _blocked_mkdir)
+    locked_config = tmp_path / "locked-config"
+    locked_config.mkdir()
+    monkeypatch.setenv("MENACE_CONFIG_DIR", locked_config.as_posix())
+
+    class _StubEngine:
+        def __init__(self, *_args, context_builder=None, **_kwargs):
+            self.context_builder = context_builder
+
+    stub_bootstrap_env["self_coding_engine"].SelfCodingEngine = _StubEngine  # type: ignore[index]
+    stub_bootstrap_env["self_coding_engine"].MANAGER_CONTEXT = SimpleNamespace(  # type: ignore[index]
+        set=lambda _v: object(), reset=lambda _t: None
+    )
+
+    class _StubManager:
+        def __init__(
+            self,
+            engine,
+            pipeline,
+            *,
+            bot_name,
+            data_bot,
+            bot_registry,
+            bootstrap_mode=None,
+            bootstrap_register_timeout=None,
+            bootstrap_fast=None,
+            **_kwargs,
+        ) -> None:
+            self.engine = engine
+            self.pipeline = pipeline
+            self.bot_name = bot_name
+            self.data_bot = data_bot
+            self.bot_registry = bot_registry
+            self.bootstrap_mode = bootstrap_mode
+            self.bootstrap_fast = bootstrap_fast
+            self.settings = ssp.SandboxSettings(
+                bootstrap_fast=bool(bootstrap_fast), build_groups=False
+            )
+            self.evolution_orchestrator = SimpleNamespace()
+
+    stub_bootstrap_env["self_coding_manager"].SelfCodingManager = _StubManager  # type: ignore[index]
+
+    class _PatchHistoryDB:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    stub_bootstrap_env["code_database"].PatchHistoryDB = _PatchHistoryDB  # type: ignore[index]
+
+    class _StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_kwargs,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    stub_bootstrap_env["model_automation_pipeline"].ModelAutomationPipeline = _StubPipeline  # type: ignore[index]
+
+    registry = manager_tests.DummyRegistry()
+    data_bot = manager_tests.DummyDataBot()
+    builder = SimpleNamespace(label="locked-config")
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_StubPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+
+    manager = coding_bot_interface._bootstrap_manager(
+        "LockedConfigOwner",
+        registry,
+        data_bot,
+        pipeline=pipeline,
+        pipeline_manager=pipeline.manager,
+        pipeline_promoter=promote,
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+
+    assert isinstance(manager, _StubManager)
+    assert pipeline.manager is manager
+    assert blocked_calls["resolve"] == 0
+    assert blocked_calls["mkdir"] == 0
+
+
 def test_bootstrap_manager_promotes_eager_helper_stub(
     eager_helper_stub_env, monkeypatch, caplog
 ):

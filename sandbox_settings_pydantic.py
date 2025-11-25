@@ -3482,10 +3482,12 @@ class SandboxSettings(BaseSettings):
         if _bootstrap_validation_enabled():
             logger.debug("bootstrap_fast enabled; skipping parent mkdir for %s", v)
             return Path(v).expanduser().as_posix()
+
+        path = Path(v)
         try:
             path = resolve_path(v)
         except FileNotFoundError:
-            path = Path(v)
+            pass
         path.parent.mkdir(parents=True, exist_ok=True)
         return path.as_posix()
 
