@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -526,3 +527,68 @@ def test_bootstrap_fast_pipeline_shared_vector_service(monkeypatch, tmp_path):
     assert patch_vectorizer is not None
     assert patch_vectorizer.db._vec_db_enabled is False
     assert pipeline.cognition_layer.patch_retriever.vector_service.bootstrap_fast is True
+
+
+def test_prepare_pipeline_bootstrap_fast_avoids_vec_metrics_schema(caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="vector_metrics_db")
+
+    class StubVectorMetricsDB:
+        def __init__(self, *_, bootstrap_fast: bool = False, **__):
+            self.bootstrap_fast = bootstrap_fast
+            logger = logging.getLogger("vector_metrics_db")
+            logger.info(
+                "vector_metrics_db.bootstrap.skip_schema"
+                if bootstrap_fast
+                else "vector_metrics_db.schema.ensured"
+            )
+            self.router = SimpleNamespace(
+                bootstrap_timeout_ms=500, get_connection=lambda *_a, **_k: SimpleNamespace()
+            )
+
+        def load_sessions(self):  # pragma: no cover - smoke stub
+            return {}
+
+        def get_db_weights(self, **_):  # pragma: no cover - smoke stub
+            return {}
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", StubVectorMetricsDB)
+
+    class _BootstrapPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast: bool = False,
+            **_: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.vector_metrics = vector_metrics_db.VectorMetricsDB(
+                bootstrap_fast=bootstrap_fast
+            )
+
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_BootstrapPipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_fast=True,
+    )
+
+    promote(object())
+
+    schema_logs = [
+        rec.message
+        for rec in caplog.records
+        if rec.name == "vector_metrics_db"
+    ]
+    assert not any(
+        "schema.ensured" in message or "migration" in message
+        for message in schema_logs
+    ), schema_logs
+    assert pipeline.vector_metrics.bootstrap_fast is True
