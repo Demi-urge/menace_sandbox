@@ -153,6 +153,8 @@ _CONFIG_CACHE_TELEMETRY: dict[str, float | int | None] = {
 }
 THRESHOLD_CONFIG_LOCK = threading.RLock()
 
+_DEFERRED_CONFIG_WRITES: dict[Path, tuple[Dict[str, dict], str]] = {}
+
 
 _FORCED_FALLBACK_PATHS: set[Path] = set()
 
@@ -800,17 +802,45 @@ def update_thresholds(
 
     if bootstrap_mode:
         _cache_config(cfg_path, data, mtime=None)
+        _DEFERRED_CONFIG_WRITES[_safe_resolve_with_timeout(cfg_path, _CONFIG_IO_TIMEOUT_S)] = (
+            data,
+            rendered,
+        )
         logger.info(
             "bootstrap-safe threshold update cached for %s; deferring write until after startup",
             bot,
         )
         return
 
+    _DEFERRED_CONFIG_WRITES.pop(_safe_resolve_with_timeout(cfg_path, _CONFIG_IO_TIMEOUT_S), None)
+
     try:
         cfg_path.write_text(rendered, encoding="utf-8")
     except Exception:
         # best effort – calling code may log failures
         pass
+
+
+def flush_deferred_threshold_writes(path: Path | None = None) -> bool:
+    """Flush any deferred bootstrap threshold writes to disk."""
+
+    cfg_path = path or _CONFIG_PATH
+    cache_key = _safe_resolve_with_timeout(cfg_path, _CONFIG_IO_TIMEOUT_S)
+    deferred = _DEFERRED_CONFIG_WRITES.pop(cache_key, None)
+    if deferred is None:
+        logger.debug("no deferred threshold writes found for %s", cache_key)
+        return False
+
+    data, rendered = deferred
+    try:
+        cfg_path.write_text(rendered, encoding="utf-8")
+        _cache_config(cfg_path, data, mtime=_safe_stat_mtime(cfg_path, _CONFIG_IO_TIMEOUT_S))
+        logger.info("flushed deferred threshold updates to %s", cache_key)
+        return True
+    except Exception:
+        logger.exception("failed to flush deferred threshold updates to %s", cache_key)
+        _DEFERRED_CONFIG_WRITES[cache_key] = (data, rendered)
+        return False
 
 
 def adaptive_thresholds(
@@ -872,5 +902,6 @@ __all__ = [
     "get_thresholds",
     "get_stack_dataset_config",
     "update_thresholds",
+    "flush_deferred_threshold_writes",
     "adaptive_thresholds",
 ]
