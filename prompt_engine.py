@@ -172,19 +172,10 @@ def diff_within_target_region(
 
 
 def _default_weights_path() -> Path:
-    """Return the configured style-weight path if it exists."""
+    """Return the configured style-weight path without resolving it eagerly."""
 
     candidate = os.getenv("PROMPT_STYLE_WEIGHTS_PATH", "prompt_style_weights.json")
-    try:
-        return resolve_path(candidate)
-    except FileNotFoundError:
-        logger.warning(
-            "prompt style weights not found; continuing without cached styles",  # noqa: TRY300
-            extra={"dependency": "prompt_style_weights"},
-        )
-        return Path(candidate)
-    except Exception:
-        return Path(candidate)
+    return Path(candidate).expanduser()
 
 
 @dataclass
@@ -258,6 +249,7 @@ class PromptEngine:
         else resolve_path("chunk_summary_cache")
     )
     llm: LLMClient | None = None
+    bootstrap_fast: bool = False
     roi_weight: float = 1.0
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
@@ -311,6 +303,23 @@ class PromptEngine:
 
         return self.chunk_summary_cache_dir
 
+    def _prepare_weights_path(self) -> Path:
+        """Return a suitable weights path using bootstrap-friendly resolution."""
+
+        candidate = Path(self.weights_path).expanduser()
+        if self.bootstrap_fast:
+            return candidate if candidate.is_absolute() else (Path.cwd() / candidate)
+        try:
+            return resolve_path(candidate)
+        except FileNotFoundError:
+            logger.warning(
+                "prompt style weights not found; continuing without cached styles",  # noqa: TRY300
+                extra={"dependency": "prompt_style_weights"},
+            )
+            return candidate
+        except Exception:
+            return candidate
+
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.context_builder is None:
             raise ValueError("PromptEngine requires a ContextBuilder instance")
@@ -318,10 +327,7 @@ class PromptEngine:
             self.template_path = resolve_path(self.template_path)
         except Exception:
             pass
-        try:
-            self.weights_path = resolve_path(self.weights_path)
-        except Exception:
-            pass
+        self.weights_path = self._prepare_weights_path()
         if self.retriever is None:
             try:
                 self.retriever = Retriever(context_builder=self.context_builder)

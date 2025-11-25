@@ -1057,6 +1057,7 @@ class SelfCodingEngine:
             chunk_token_threshold=self.chunk_token_threshold,
             chunk_summary_cache_dir=self.chunk_summary_cache_dir,
             llm=self.llm_client,
+            bootstrap_fast=bootstrap_fast,
         )
         if prompt_evolution_memory is None:
             try:
