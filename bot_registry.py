@@ -19,6 +19,7 @@ from typing import (
     Tuple,
     TYPE_CHECKING,
     Union,
+    Iterator,
 )
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -2323,10 +2324,48 @@ class BotRegistry:
         commit: str | None = None,
         provenance: Any | None = None,
         is_coding_bot: bool = False,
+        bootstrap_mode: bool | None = None,
+        lock_timeout: float | None = None,
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
-        with self._lock:
-            bootstrap_mode = bool(getattr(self, "bootstrap", False))
+        resolved_bootstrap = (
+            bool(getattr(self, "bootstrap", False))
+            if bootstrap_mode is None
+            else bool(bootstrap_mode)
+        )
+        resolved_timeout = lock_timeout
+        if resolved_timeout is None and resolved_bootstrap:
+            resolved_timeout = 0.0
+
+        @contextmanager
+        def _register_lock() -> Iterator[bool]:
+            if resolved_timeout is None:
+                with self._lock:
+                    yield True
+                return
+            acquired = False
+            try:
+                try:
+                    acquired = self._lock.acquire(timeout=max(0.0, resolved_timeout))
+                except TypeError:  # pragma: no cover - compatibility fallback
+                    acquired = self._lock.acquire(False)
+                yield acquired
+            finally:
+                if acquired:
+                    try:
+                        self._lock.release()
+                    except Exception:  # pragma: no cover - defensive cleanup
+                        logger.debug("failed to release registry lock", exc_info=True)
+
+        with _register_lock() as lock_acquired:
+            if not lock_acquired:
+                logger.warning(
+                    "Skipping registration for %s; registry lock unavailable during bootstrap",
+                    name,
+                )
+                return
+
+            bootstrap_mode = resolved_bootstrap
             self.graph.add_node(name)
             node = self.graph.nodes[name]
             if module_path is None:
