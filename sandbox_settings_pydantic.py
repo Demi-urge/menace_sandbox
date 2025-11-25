@@ -3490,6 +3490,7 @@ class SandboxSettings(BaseSettings):
         return path.as_posix()
 
     # Grouped settings
+    bootstrap_fast: bool = Field(default=False, exclude=True)
     roi: ROISettings | None = Field(default=None, exclude=True)
     synergy: SynergySettings | None = Field(default=None, exclude=True)
     alignment: AlignmentSettings | None = Field(
