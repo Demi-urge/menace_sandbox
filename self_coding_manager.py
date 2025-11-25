@@ -406,6 +406,7 @@ class SelfCodingManager:
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.bootstrap = bool(getattr(bot_registry, "bootstrap", False))
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None

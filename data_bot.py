@@ -105,6 +105,24 @@ _RELOAD_STATE = threading.local()
 _THRESHOLD_LOAD_LOCK = threading.RLock()
 
 
+def _bootstrap_active(candidate: object | None = None) -> bool:
+    """Return ``True`` when running inside a bootstrap helper."""
+
+    if candidate is not None and getattr(candidate, "bootstrap", False):
+        return True
+    for mod_name in ("coding_bot_interface", "menace_sandbox.coding_bot_interface"):
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        ctx_getter = getattr(mod, "_current_bootstrap_context", None)
+        if callable(ctx_getter):
+            try:
+                return bool(ctx_getter())
+            except Exception:
+                continue
+    return False
+
+
 def _is_reloading_thresholds() -> bool:
     """Return ``True`` when ``reload_thresholds`` is already executing."""
 
@@ -409,6 +427,12 @@ def persist_sc_thresholds(
     the :class:`ROIThresholds` naming scheme. Forecast configuration can be
     supplied via ``forecast_model``, ``confidence`` and ``model_params``.
     """
+
+    if _bootstrap_active():
+        logger.info(
+            "persist_sc_thresholds skipped for %s during bootstrap", bot
+        )
+        return
 
     if _save_sc_thresholds is None:  # pragma: no cover - dependency check
         raise RuntimeError("update_thresholds helper is unavailable")
@@ -1424,6 +1448,7 @@ class DataBot:
         metric_predictor: object | None = None,
         threshold_service: ThresholdService | None = None,
         logger: logging.Logger | None = None,
+        bootstrap: bool | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1435,6 +1460,9 @@ class DataBot:
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
         self.logger = logger or logging.getLogger("menace.data_bot")
+        if bootstrap is None:
+            bootstrap = getattr(self.settings, "bootstrap", False)
+        self.bootstrap = bool(bootstrap)
         self.monitoring_enabled = not _env_flag("MENACE_DISABLE_MONITORING")
         if not self.monitoring_enabled:
             self.logger.info(
@@ -2734,6 +2762,24 @@ class DataBot:
         """
         with _THRESHOLD_LOAD_LOCK:
             key = bot or ""
+            if _bootstrap_active(self):
+                cached = self._thresholds.get(key)
+                if cached is None:
+                    service_cache = getattr(self.threshold_service, "_thresholds", None)
+                    if isinstance(service_cache, dict):
+                        cached = service_cache.get(key)
+                if cached is None:
+                    try:
+                        cached = self.threshold_service.get(bot, self.settings)
+                    except Exception:
+                        cached = ROIThresholds(
+                            roi_drop=self.roi_drop_threshold or 0.0,
+                            error_threshold=self.error_threshold or 0.0,
+                        )
+                self.logger.info(
+                    "reload_thresholds skipped during bootstrap for %s", bot or "default"
+                )
+                return cached
             if _is_reloading_thresholds():
                 cached = self._thresholds.get(key)
                 if cached is None:
