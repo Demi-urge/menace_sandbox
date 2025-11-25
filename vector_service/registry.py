@@ -14,6 +14,7 @@ import importlib
 import pkgutil
 import inspect
 import logging
+import os
 import time
 
 
@@ -37,7 +38,21 @@ def register_vectorizer(
     _VECTOR_REGISTRY[kind.lower()] = (module_path, class_name, db_module, db_class)
 
 
-def load_handlers() -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
+def _accepts_bootstrap_fast(target: type[object]) -> bool:
+    try:
+        parameters = inspect.signature(target).parameters
+    except (TypeError, ValueError):
+        return False
+
+    return "bootstrap_fast" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
+
+def load_handlers(
+    *, bootstrap_fast: bool | None = None
+) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
     handlers: Dict[str, Callable[[Dict[str, any]], list[float]]] = {}
@@ -50,12 +65,19 @@ def load_handlers() -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
         handler_start = time.perf_counter()
         logger.debug(
             "vector_registry.handler.init",
-            extra={"kind": kind, "module": mod_name, "class": cls_name},
+            extra={
+                "kind": kind,
+                "module_name": mod_name,
+                "class_name": cls_name,
+            },
         )
         try:
             mod = importlib.import_module(mod_name)
             cls = getattr(mod, cls_name)
-            inst = cls()
+            kwargs = {}
+            if bootstrap_fast is not None and _accepts_bootstrap_fast(cls):
+                kwargs["bootstrap_fast"] = bootstrap_fast
+            inst = cls(**kwargs)
             handlers[kind] = inst.transform
             logger.info(
                 "vector_registry.handler.loaded kind=%s duration=%.6fs",
@@ -232,4 +254,5 @@ register_vectorizer(
 )
 
 # Discover any additional vectorisers packaged under vector_service.*
-_discover_vectorizers()
+if os.getenv("VECTOR_SERVICE_SKIP_DISCOVERY") != "1":
+    _discover_vectorizers()

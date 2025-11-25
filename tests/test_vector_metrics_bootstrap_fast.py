@@ -129,3 +129,75 @@ def test_prepare_pipeline_survives_locked_patch_db(monkeypatch, tmp_path):
 
     assert pipeline is not None
     assert elapsed < 5
+
+
+def test_shared_vector_service_short_circuits_schema_discovery(monkeypatch, tmp_path):
+    locked_db = tmp_path / "vector_metrics.db"
+    locked_db.touch()
+    lock_conn = sqlite3.connect(locked_db)
+    lock_conn.execute("BEGIN EXCLUSIVE")
+
+    monkeypatch.setenv("VECTOR_SERVICE_LAZY_BOOTSTRAP", "1")
+    monkeypatch.setenv("VECTOR_SERVICE_SKIP_DISCOVERY", "1")
+    monkeypatch.setattr(
+        vector_metrics_db, "default_vector_metrics_path", lambda ensure_exists=True: locked_db
+    )
+
+    from vector_service import registry as vec_registry
+    from vector_service.vectorizer import SharedVectorService
+
+    monkeypatch.setattr(
+        vec_registry,
+        "_VECTOR_REGISTRY",
+        {
+            "patch": (
+                "vector_service.patch_vectorizer",
+                "PatchVectorizer",
+                None,
+                None,
+            )
+        },
+    )
+
+    class Pipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            bootstrap_fast=False,
+            **_: object,
+        ) -> None:
+            self.manager = manager
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            embedder = SimpleNamespace(encode=lambda items: [[0.0] * 2 for _ in items])
+            store = SimpleNamespace(add=lambda *_a, **_k: None)
+            self.vector_service = SharedVectorService(
+                text_embedder=embedder,
+                vector_store=store,
+                bootstrap_fast=bootstrap_fast,
+            )
+
+    start = time.perf_counter()
+    pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+        pipeline_cls=Pipeline,
+        context_builder=object(),
+        bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+        data_bot=object(),
+        bootstrap_safe=True,
+        bootstrap_fast=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    try:
+        promote(object())
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
+
+    assert pipeline is not None
+    assert elapsed < 5

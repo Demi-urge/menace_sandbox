@@ -462,6 +462,20 @@ class VectorMetricsDB:
         """Return column names for ``table`` using non-blocking pragmas."""
 
         start = time.perf_counter()
+        if self.bootstrap_fast:
+            columns = self._schema_cache.get(table) or self._default_columns.get(
+                table, []
+            )
+            logger.info(
+                "vector_metrics_db.schema.cached",
+                extra=_timestamp_payload(
+                    start,
+                    table=table,
+                    column_count=len(columns),
+                    fast_path=True,
+                ),
+            )
+            return list(columns)
         timeout_ms: int | None = None
         try:
             if self.bootstrap_fast:

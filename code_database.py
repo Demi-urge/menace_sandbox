@@ -1262,6 +1262,7 @@ class PatchHistoryDB:
         code_db: CodeDB | None = None,
         router: DBRouter | None = None,
         bootstrap: bool = False,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         """Initialise the patch history database."""
         init_start = time.perf_counter()
@@ -1277,6 +1278,9 @@ class PatchHistoryDB:
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
         )
         self._bootstrap = bool(bootstrap)
+        self._bootstrap_fast = (
+            self._bootstrap if bootstrap_fast is None else bool(bootstrap_fast)
+        )
         logger.info(
             "patch_history_db.path.resolved path=%s",
             self.path,
@@ -1601,7 +1605,7 @@ class PatchHistoryDB:
         if VectorMetricsDB is None:
             return None
         try:
-            return VectorMetricsDB(bootstrap_fast=self._bootstrap)
+            return VectorMetricsDB(bootstrap_fast=self._bootstrap_fast)
         except Exception:  # pragma: no cover - defensive best effort
             logger.exception("failed to initialise VectorMetricsDB")
             return None

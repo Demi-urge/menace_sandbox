@@ -153,6 +153,7 @@ class SharedVectorService:
 
     text_embedder: SentenceTransformer | None = None
     vector_store: VectorStore | None = None
+    bootstrap_fast: bool = False
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -164,7 +165,7 @@ class SharedVectorService:
             extra=_timestamp_payload(init_start),
         )
         handler_start = time.perf_counter()
-        self._handlers = load_handlers()
+        self._handlers = load_handlers(bootstrap_fast=self.bootstrap_fast)
         logger.info(
             "shared_vector_service.handlers.loaded",
             extra=_timestamp_payload(
