@@ -4343,6 +4343,8 @@ def _bootstrap_manager(
             bootstrap_safe = bool(getattr(active_context, "bootstrap_safe", False))
         if bootstrap_fast is None:
             bootstrap_fast = getattr(active_context, "bootstrap_fast", None)
+        elif bootstrap_fast is False and getattr(active_context, "bootstrap_safe", False):
+            bootstrap_fast = True
     if bootstrap_fast is None:
         bootstrap_fast = True
 
@@ -4766,7 +4768,10 @@ def _bootstrap_manager(
                     memory_cls(),
                     context_builder=ctx_builder,
                     bootstrap_fast=bool(bootstrap_fast),
-                    patch_db=patch_db_cls(bootstrap=bool(bootstrap_fast)),
+                    patch_db=patch_db_cls(
+                        bootstrap=bool(bootstrap_fast),
+                        bootstrap_fast=bool(bootstrap_fast),
+                    ),
                 )
                 pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
                 if pipeline_cls is None:

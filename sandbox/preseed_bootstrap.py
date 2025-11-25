@@ -488,6 +488,7 @@ def initialize_bootstrap_context(
                 manager=bootstrap_manager,
                 pipeline=bootstrap_manager,
                 bootstrap_safe=True,
+                bootstrap_fast=True,
             )
             LOGGER.info(
                 "after _push_bootstrap_context (last_step=%s)",
@@ -546,6 +547,7 @@ def initialize_bootstrap_context(
                 bootstrap_runtime_manager=bootstrap_manager,
                 manager=bootstrap_manager,
                 bootstrap_safe=True,
+                bootstrap_fast=True,
             )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
@@ -666,6 +668,7 @@ def initialize_bootstrap_context(
             manager=manager,
             pipeline=pipeline,
             bootstrap_safe=True,
+            bootstrap_fast=True,
         )
         LOGGER.info(
             "_push_bootstrap_context finished (last_step=%s)",
