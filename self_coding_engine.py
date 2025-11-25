@@ -851,6 +851,22 @@ class SelfCodingEngine:
         self.pipeline = pipeline
         self.data_bot = data_bot
         self.bootstrap_fast = bootstrap_fast
+
+        def _resolve_bootstrap_path(
+            path_value: str | Path | None, *, description: str
+        ) -> Path:
+            unresolved = Path(path_value or "")
+            if bootstrap_fast:
+                logger.debug(
+                    "bootstrap_fast enabled; using unresolved %s path: %s",
+                    description,
+                    unresolved,
+                )
+                return unresolved
+            try:
+                return resolve_path(path_value)
+            except FileNotFoundError:
+                return unresolved
         self.patch_db = patch_db
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
@@ -878,7 +894,9 @@ class SelfCodingEngine:
             or prompt_chunk_cache_dir
             or getattr(_settings, "chunk_summary_cache_dir", "")
         )
-        self.chunk_summary_cache_dir = resolve_path(cache_dir)
+        self.chunk_summary_cache_dir = _resolve_bootstrap_path(
+            cache_dir, description="chunk summary cache"
+        )
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
         self.simplify_prompt = prompt_simplifier or strip_prompt_context
@@ -893,11 +911,11 @@ class SelfCodingEngine:
         )
         self.baseline_tracker = delta_tracker or METRIC_BASELINES
         data_dir = getattr(_settings, "sandbox_data_dir", ".")
-        state_candidate = resolve_path(data_dir) / "self_coding_engine_state.json"
-        try:
-            self._state_path = resolve_path(state_candidate)
-        except FileNotFoundError:
-            self._state_path = state_candidate
+        data_root = _resolve_bootstrap_path(data_dir, description="sandbox data dir")
+        state_candidate = data_root / "self_coding_engine_state.json"
+        self._state_path = _resolve_bootstrap_path(
+            state_candidate, description="self-coding state"
+        )
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -929,10 +947,7 @@ class SelfCodingEngine:
         ] = {}
         self.bot_roles: Dict[str, str] = dict(bot_roles or BOT_ROLES)
         path_setting = audit_trail_path or getattr(_settings, "audit_log_path", "")
-        try:
-            path = resolve_path(path_setting)
-        except FileNotFoundError:
-            path = Path(path_setting)
+        path = _resolve_bootstrap_path(path_setting, description="audit trail")
         key_source = audit_privkey or getattr(_settings, "audit_privkey", None)
         key_path = None if key_source else getattr(_settings, "audit_privkey_path", None)
         # Fallback to unsigned logging when no key is provided
@@ -943,15 +958,15 @@ class SelfCodingEngine:
                 "Failed to load audit private key; audit trail entries will be unsigned"
             )
             priv = None
-        logger = logging.getLogger(__name__)
+        init_logger = logging.getLogger(__name__)
         if not priv:
-            logger.warning(
+            init_logger.warning(
                 "AUDIT_PRIVKEY not set; audit trail entries will not be signed"
             )
         try:
             self.audit_trail = AuditTrail(path, priv)
         except ValueError:
-            logger.exception(
+            init_logger.exception(
                 "Invalid audit private key; audit trail will continue without signatures"
             )
             self.audit_trail = AuditTrail(path, None)
@@ -1024,18 +1039,14 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
-        try:
-            success_log_path = resolve_path(
-                getattr(_settings, "prompt_success_log_path", "")
-            )
-        except FileNotFoundError:
-            success_log_path = Path(getattr(_settings, "prompt_success_log_path", ""))
-        try:
-            failure_log_path = resolve_path(
-                getattr(_settings, "prompt_failure_log_path", "")
-            )
-        except FileNotFoundError:
-            failure_log_path = Path(getattr(_settings, "prompt_failure_log_path", ""))
+        success_log_path = _resolve_bootstrap_path(
+            getattr(_settings, "prompt_success_log_path", ""),
+            description="prompt success log",
+        )
+        failure_log_path = _resolve_bootstrap_path(
+            getattr(_settings, "prompt_failure_log_path", ""),
+            description="prompt failure log",
+        )
         if prompt_optimizer is None:
             try:
                 prompt_optimizer = PromptOptimizer(
