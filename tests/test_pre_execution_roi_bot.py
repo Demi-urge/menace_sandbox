@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import importlib.machinery
 import pytest
+from shared.cooperative_init import cooperative_init_call
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -213,3 +214,17 @@ def test_scrape_bonus_with_sentiment(monkeypatch):
     bot = prb.PreExecutionROIBot()
     val = bot._scrape_bonus()
     assert val > 0
+
+
+def test_cooperative_init_accepts_manager_keyword():
+    manager = object()
+    bot = prb.PreExecutionROIBot.__new__(prb.PreExecutionROIBot)
+
+    state = cooperative_init_call(
+        prb.PreExecutionROIBot.__init__,
+        bot,
+        manager=manager,
+    )
+
+    assert state["dropped"] == ()
+    assert bot.manager is manager
