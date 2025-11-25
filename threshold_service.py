@@ -58,18 +58,22 @@ class ThresholdService:
         self,
         bot: str | None = None,
         settings: SandboxSettings | None = None,
+        *,
+        bootstrap_mode: bool | None = None,
     ) -> SelfCodingThresholds:
         """Return raw thresholds for *bot* from configuration."""
-        return get_thresholds(bot, settings)
+        return get_thresholds(bot, settings, bootstrap_fast=bool(bootstrap_mode))
 
     # ------------------------------------------------------------------
     def reload(
         self,
         bot: str | None = None,
         settings: SandboxSettings | None = None,
+        *,
+        bootstrap_mode: bool | None = None,
     ) -> ROIThresholds:
         """Refresh cached thresholds for *bot* and emit update when changed."""
-        raw = self.load(bot, settings)
+        raw = self.load(bot, settings, bootstrap_mode=bootstrap_mode)
         rt = ROIThresholds(
             roi_drop=raw.roi_drop,
             error_threshold=raw.error_increase,
@@ -99,11 +103,13 @@ class ThresholdService:
         self,
         bot: str | None = None,
         settings: SandboxSettings | None = None,
+        *,
+        bootstrap_mode: bool | None = None,
     ) -> ROIThresholds:
         """Return cached thresholds for *bot* loading them if missing."""
         key = bot or ""
         if key not in self._thresholds:
-            return self.reload(bot, settings)
+            return self.reload(bot, settings, bootstrap_mode=bootstrap_mode)
         return self._thresholds[key]
 
     # ------------------------------------------------------------------

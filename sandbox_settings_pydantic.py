@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Pydantic settings for sandbox utilities."""
 
+import contextvars
 import json
 import logging
 import os
@@ -30,6 +31,14 @@ except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 
 logger = logging.getLogger(__name__)
+_BOOTSTRAP_VALIDATION = contextvars.ContextVar("sandbox_settings_bootstrap", default=False)
+
+
+def _bootstrap_validation_enabled() -> bool:
+    try:
+        return bool(_BOOTSTRAP_VALIDATION.get())
+    except Exception:
+        return False
 
 
 def _remove_items(target: list[str], forbidden: Collection[str]) -> list[str]:
@@ -3450,6 +3459,9 @@ class SandboxSettings(BaseSettings):
 
     @field_validator("sandbox_data_dir", "self_test_report_dir")
     def _ensure_dirs(cls, v: str) -> str:
+        if _bootstrap_validation_enabled():
+            logger.debug("bootstrap_fast enabled; skipping mkdir for %s", v)
+            return Path(v).expanduser().as_posix()
         try:
             path = resolve_path(v)
         except FileNotFoundError:
@@ -3467,6 +3479,9 @@ class SandboxSettings(BaseSettings):
         "self_mod_lockdown_flag_path",
     )
     def _ensure_parent_dirs(cls, v: str) -> str:
+        if _bootstrap_validation_enabled():
+            logger.debug("bootstrap_fast enabled; skipping parent mkdir for %s", v)
+            return Path(v).expanduser().as_posix()
         try:
             path = resolve_path(v)
         except FileNotFoundError:
@@ -3490,9 +3505,22 @@ class SandboxSettings(BaseSettings):
         default=None, exclude=True
     )
 
-    def __init__(self, *, build_groups: bool = True, **data: Any) -> None:  # pragma: no cover - simple wiring
+    def __init__(
+        self, *, build_groups: bool = True, bootstrap_fast: bool = False, **data: Any
+    ) -> None:  # pragma: no cover - simple wiring
         init_start = time.perf_counter()
-        super().__init__(**data)
+        token = _BOOTSTRAP_VALIDATION.set(bool(bootstrap_fast))
+        try:
+            super().__init__(**data)
+        finally:
+            try:
+                _BOOTSTRAP_VALIDATION.reset(token)
+            except Exception:  # pragma: no cover - defensive reset
+                logger.debug("failed to reset bootstrap validation flag", exc_info=True)
+
+        self.bootstrap_fast = bool(bootstrap_fast)
+        if self.bootstrap_fast:
+            logger.info("SandboxSettings bootstrap_fast enabled; using lightweight validation")
         parse_ms = (time.perf_counter() - init_start) * 1000
         self._suppressed_dependencies: dict[str, list[str]] = {
             "python": [],
@@ -3519,6 +3547,8 @@ class SandboxSettings(BaseSettings):
             group_start = time.perf_counter()
             self._build_grouped_settings()
             groups_ms = (time.perf_counter() - group_start) * 1000
+        elif self.bootstrap_fast:
+            logger.debug("SandboxSettings bootstrap_fast enabled; skipping grouped settings")
         else:
             logger.debug("SandboxSettings build_groups disabled; skipping grouped settings")
         total_ms = (time.perf_counter() - init_start) * 1000

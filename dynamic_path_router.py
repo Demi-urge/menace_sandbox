@@ -170,7 +170,10 @@ def get_project_roots(*, fast: bool = False) -> List[Path]:
 
 
 def resolve_path(
-    name: str | Path, root: Optional[Path | str] = None, *, trace: bool = False
+    name: str | Path,
+    root: Optional[Path | str] = None,
+    *,
+    trace: bool = False,
 ) -> Path:
     """Resolve *name* to an absolute :class:`Path` within configured roots."""
 
@@ -187,6 +190,15 @@ def resolve_path(
     norm_name = _normalize(name_str)
     path = Path(name_str)
     if path.is_absolute():
+        if bootstrap_fast:
+            # During bootstrap we only need a stable, normalised absolute path
+            # and want to avoid the potential filesystem I/O triggered by
+            # ``Path.resolve()``.  Stash the shallow ``Path`` instance directly
+            # so subsequent lookups continue to bypass resolution.
+            with _CACHE_LOCK:
+                _PATH_CACHE[path.as_posix()] = path
+            return path
+
         # ``Path.resolve()`` defaults to ``strict=False`` so it will happily
         # normalise non-existent absolute paths.  Allowing this keeps callers
         # such as ``run_autonomous`` portable on Windows where sandbox

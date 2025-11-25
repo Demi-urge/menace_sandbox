@@ -417,7 +417,9 @@ class SelfCodingManager:
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
         self._last_validation_summary: Dict[str, Any] | None = None
-        thresholds = self.threshold_service.get(bot_name)
+        thresholds = self.threshold_service.get(
+            bot_name, bootstrap_mode=self.bootstrap_mode
+        )
         print(
             f"[debug] SelfCodingManager init for: {bot_name}, thresholds={thresholds}, orchestrator={evolution_orchestrator}"
         )
@@ -669,7 +671,7 @@ class SelfCodingManager:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to register bot in registry")
 
-    def _refresh_thresholds(self) -> None:
+    def _refresh_thresholds(self, *, bootstrap_fast: bool | None = None) -> None:
         """Fetch ROI, error and test-failure thresholds via ``ThresholdService``.
 
         When adaptive thresholding is enabled via :class:`SandboxSettings`,
@@ -682,7 +684,14 @@ class SelfCodingManager:
             return
         try:
             getattr(self, "_last_thresholds", None)
-            t = self.threshold_service.reload(self.bot_name)
+            t = self.threshold_service.reload(
+                self.bot_name,
+                bootstrap_mode=(
+                    bootstrap_fast
+                    if bootstrap_fast is not None
+                    else self.bootstrap_mode
+                ),
+            )
 
             adaptive = False
             try:
