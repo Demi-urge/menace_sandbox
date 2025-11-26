@@ -3764,44 +3764,86 @@ def _prepare_pipeline_for_bootstrap_impl(
     if resolved_deadline is None and timeout is not None:
         resolved_deadline = start_time + max(0.0, float(timeout))
 
-    def _record_timeout(stage: str, reason: str) -> None:
+    def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
             stage,
             elapsed=time.perf_counter() - start_time,
             timeout=True,
-            extra={"reason": reason},
+            extra=dict(context),
         )
 
-    def _emit_timeout_diagnostics(stage: str) -> None:
-        vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+    def _emit_timeout_diagnostics(stage: str, context: Mapping[str, Any]) -> None:
+        vector_heavy = bool(context.get("vector_heavy", False))
         timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
         logger.warning(
-            "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s timeline=%s",
+            (
+                "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
+                "resolved_timeout=%s env_wait=%r env_vector_wait=%r timeline=%s"
+            ),
             stage,
             vector_heavy,
+            context.get("resolved_timeout"),
+            context.get("env_menace_bootstrap_wait_secs"),
+            context.get("env_menace_bootstrap_vector_wait_secs"),
             timeline,
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
+        resolved_timeout = None
+        if resolved_deadline is not None:
+            resolved_timeout = max(0.0, resolved_deadline - start_time)
+        vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+        env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+        env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+
         if stop_event is not None and stop_event.is_set():
+            context = {
+                "reason": "stop_event",
+                "resolved_timeout": resolved_timeout,
+                "vector_heavy": vector_heavy,
+                "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+            }
             logger.warning(
-                "prepare_pipeline_for_bootstrap cancelled during %s via stop event",
+                (
+                    "prepare_pipeline_for_bootstrap cancelled during %s via stop event "
+                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
                 stage,
+                resolved_timeout,
+                vector_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
             )
-            _record_timeout(stage, "stop_event")
-            _emit_timeout_diagnostics(stage)
+            _record_timeout(stage, context)
+            _emit_timeout_diagnostics(stage, context)
             raise TimeoutError(
                 f"prepare_pipeline_for_bootstrap cancelled via stop event during {stage}"
             )
         if resolved_deadline is not None and time.perf_counter() > resolved_deadline:
             elapsed = time.perf_counter() - start_time
+            context = {
+                "reason": "deadline",
+                "resolved_timeout": resolved_timeout,
+                "vector_heavy": vector_heavy,
+                "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                "elapsed": elapsed,
+            }
             logger.warning(
-                "prepare_pipeline_for_bootstrap timed out during %s after %.3fs",
+                (
+                    "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
+                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
                 stage,
                 elapsed,
+                resolved_timeout,
+                vector_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
             )
-            _record_timeout(stage, "deadline")
-            _emit_timeout_diagnostics(stage)
+            _record_timeout(stage, context)
+            _emit_timeout_diagnostics(stage, context)
             raise TimeoutError(
                 f"prepare_pipeline_for_bootstrap timed out during {stage}"
             )
