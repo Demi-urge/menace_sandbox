@@ -63,6 +63,7 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = (
     if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
     else 300.0
 )
+_PREPARE_SAFE_TIMEOUT_FLOOR = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
 _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(
     os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))
 )
@@ -265,6 +266,54 @@ def _resolve_timeout(
     return effective_timeout, metadata
 
 
+def _enforce_prepare_timeout_floor(
+    resolved_timeout: tuple[float | None, dict[str, Any]],
+    *,
+    vector_heavy: bool,
+    heavy_prepare: bool,
+    bootstrap_deadline: float | None,
+) -> tuple[float | None, dict[str, Any]]:
+    """Clamp prepare timeouts to a safe floor when possible."""
+
+    effective_timeout, timeout_context = resolved_timeout
+    if effective_timeout is None:
+        return resolved_timeout
+
+    deadline_remaining = None
+    if bootstrap_deadline is not None:
+        deadline_remaining = bootstrap_deadline - time.monotonic()
+
+    if effective_timeout < _PREPARE_SAFE_TIMEOUT_FLOOR:
+        updated_context = dict(timeout_context)
+        updated_context.update(
+            {
+                "timeout_safe_floor": _PREPARE_SAFE_TIMEOUT_FLOOR,
+                "timeout_before_floor": effective_timeout,
+                "vector_heavy": vector_heavy,
+                "heavy_prepare": heavy_prepare,
+                "deadline_remaining_now": deadline_remaining,
+            }
+        )
+
+        if deadline_remaining is None or deadline_remaining >= _PREPARE_SAFE_TIMEOUT_FLOOR:
+            LOGGER.warning(
+                "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",
+                extra={"timeout_context": updated_context},
+            )
+            effective_timeout = _PREPARE_SAFE_TIMEOUT_FLOOR
+            updated_context["effective_timeout"] = effective_timeout
+            updated_context["timeout_escalated_to_floor"] = True
+        else:
+            LOGGER.warning(
+                "prepare_pipeline_for_bootstrap timeout below safe floor but constrained by deadline",
+                extra={"timeout_context": updated_context},
+            )
+            updated_context["effective_timeout"] = effective_timeout
+        timeout_context = updated_context
+
+    return effective_timeout, timeout_context
+
+
 def _describe_timeout(value: float | None) -> str:
     return "disabled" if value is None else f"{value:.1f}s"
 
@@ -330,6 +379,13 @@ def _run_with_timeout(
         deadline_remaining_now = (
             bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
         )
+        remediation_hints = None
+        if description == "prepare_pipeline_for_bootstrap":
+            remediation_hints = [
+                "Increase MENACE_BOOTSTRAP_WAIT_SECS or BOOTSTRAP_STEP_TIMEOUT for slower bootstrap hosts.",
+                "Set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS or BOOTSTRAP_VECTOR_STEP_TIMEOUT and mark vector-heavy pipelines to avoid the legacy cap.",
+                "Stagger concurrent bootstrap runs to reduce contention when initializing pipelines or vector services.",
+            ]
         metadata = {
             "start_time": _format_timestamp(start_wall),
             "end_time": _format_timestamp(end_wall),
@@ -347,6 +403,7 @@ def _run_with_timeout(
             "active_step": active_step,
             "active_elapsed_ms": active_elapsed_ms,
             "timeout_context": timeout_context,
+            "remediation_hints": remediation_hints,
         }
 
         LOGGER.error(
@@ -812,24 +869,27 @@ def initialize_bootstrap_context(
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
             prepare_timeout = vector_timeout if vector_heavy else standard_timeout
-            if (
-                prepare_timeout is not None
-                and prepare_timeout < _BASELINE_BOOTSTRAP_STEP_TIMEOUT
-            ):
+            if prepare_timeout is not None and prepare_timeout < _PREPARE_SAFE_TIMEOUT_FLOOR:
                 LOGGER.warning(
-                    "prepare_pipeline_for_bootstrap timeout below recommended minimum; clamping",
+                    "prepare_pipeline_for_bootstrap timeout below safe floor; clamping",
                     extra={
                         "vector_heavy": vector_heavy,
                         "requested_timeout": prepare_timeout,
-                        "minimum_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                        "minimum_timeout": _PREPARE_SAFE_TIMEOUT_FLOOR,
                     },
                 )
-                prepare_timeout = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+                prepare_timeout = _PREPARE_SAFE_TIMEOUT_FLOOR
             heavy_prepare = heavy_bootstrap or vector_heavy
             resolved_prepare_timeout = _resolve_timeout(
                 prepare_timeout,
                 bootstrap_deadline=bootstrap_deadline,
                 heavy_bootstrap=heavy_prepare,
+            )
+            resolved_prepare_timeout = _enforce_prepare_timeout_floor(
+                resolved_prepare_timeout,
+                vector_heavy=vector_heavy,
+                heavy_prepare=heavy_prepare,
+                bootstrap_deadline=bootstrap_deadline,
             )
             effective_prepare_timeout = resolved_prepare_timeout[0]
             LOGGER.info(
