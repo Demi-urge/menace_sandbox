@@ -4374,8 +4374,11 @@ def _bootstrap_manager(
             bootstrap_fast = getattr(active_context, "bootstrap_fast", None)
         elif bootstrap_fast is False and getattr(active_context, "bootstrap_safe", False):
             bootstrap_fast = True
-    if bootstrap_fast is None:
-        bootstrap_fast = True
+    bootstrap_fast = bootstrap_fast if bootstrap_fast is not None else True
+    if bootstrap_fast:
+        logger.info(
+            "self-coding manager bootstrap using fast path for %s", name
+        )
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None
@@ -4788,8 +4791,6 @@ def _bootstrap_manager(
                 )
                 patch_logger = None
                 patch_db_bootstrap_fast = bootstrap_fast
-                if patch_db_bootstrap_fast is None:
-                    patch_db_bootstrap_fast = True
                 patch_db_kwargs = {
                     "bootstrap": patch_db_bootstrap_fast,
                     "bootstrap_fast": bootstrap_fast,
@@ -4811,7 +4812,7 @@ def _bootstrap_manager(
                             patch_logger = patch_logger_cls(
                                 patch_db=patch_db,
                                 vector_metrics=None,
-                                bootstrap_fast=True,
+                                bootstrap_fast=bootstrap_fast,
                             )
                             logger.info(
                                 (
@@ -4840,7 +4841,7 @@ def _bootstrap_manager(
                     code_db_cls(),
                     memory_cls(),
                     context_builder=ctx_builder,
-                    bootstrap_fast=bool(bootstrap_fast),
+                    bootstrap_fast=bootstrap_fast,
                     patch_db=patch_db,
                     patch_logger=patch_logger,
                 )
