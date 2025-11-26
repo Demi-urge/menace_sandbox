@@ -6234,6 +6234,17 @@ def self_coding_managed(
                     context_guard.release()
 
             name_local = getattr(self, "name", getattr(self, "bot_name", name))
+            bootstrap_context = _current_bootstrap_context()
+            bootstrap_fast_flag = bool(
+                getattr(bootstrap_context, "bootstrap_fast", False)
+                if bootstrap_context is not None
+                else False
+            )
+            bootstrap_safe_flag = bool(
+                getattr(bootstrap_context, "bootstrap_safe", False)
+                if bootstrap_context is not None
+                else False
+            )
             thresholds = None
             if hasattr(d_bot, "reload_thresholds"):
                 try:
@@ -6243,6 +6254,8 @@ def self_coding_managed(
                         roi_drop=thresholds.roi_drop,
                         error_increase=thresholds.error_threshold,
                         test_failure_increase=thresholds.test_failure_threshold,
+                        bootstrap_mode=bootstrap_safe_flag or bootstrap_fast_flag,
+                        bootstrap_fast=bootstrap_fast_flag,
                     )
                 except Exception:  # pragma: no cover - best effort
                     logger.exception(
