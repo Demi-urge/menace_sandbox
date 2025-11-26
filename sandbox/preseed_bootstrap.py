@@ -87,7 +87,6 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
     resolved_timeout: float | None = None
-    resolved_from_resolver = False
     fallback_timeout = (
         _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
         if vector_heavy
@@ -97,16 +96,16 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
     if resolver:
         try:
             resolved_timeout = resolver(vector_heavy)
-            resolved_from_resolver = True
+            if resolved_timeout is not None:
+                return resolved_timeout
+            LOGGER.debug(
+                "bootstrap wait resolver returned None; using fallback timeout",
+                extra={"vector_heavy": vector_heavy, "fallback": fallback_timeout},
+            )
         except Exception:  # pragma: no cover - helper availability best effort
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
 
-    if resolved_timeout is None:
-        if resolved_from_resolver:
-            return None
-        return fallback_timeout
-
-    return resolved_timeout
+    return fallback_timeout
 
 
 # Resolve the default timeout eagerly so legacy users retain a stable baseline.
