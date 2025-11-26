@@ -1,3 +1,4 @@
+import contextlib
 import time
 
 import pytest
@@ -71,3 +72,67 @@ def test_run_with_timeout_reports_timeline(capsys):
     assert "active_step=phase-two" in captured
     assert "[bootstrap-timeout][timeline] phase-one" in captured
     assert "[bootstrap-timeout][timeline] phase-two" in captured
+
+
+def test_vector_heavy_bootstrap_prefers_vector_timeout(monkeypatch):
+    """Vector-heavy bootstraps should inherit the extended wait window."""
+
+    timeouts: dict[str, float] = {}
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "30")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "120")
+    monkeypatch.setattr(bootstrap._coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", 30.0)
+    monkeypatch.setattr(bootstrap, "BOOTSTRAP_STEP_TIMEOUT", 30.0)
+    monkeypatch.setattr(bootstrap, "_BOOTSTRAP_CACHE", {})
+
+    class DummyManager:
+        engine = "engine"
+        bootstrap_runtime_active = True
+
+        def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
+            return self
+
+    dummy_manager = DummyManager()
+
+    @contextlib.contextmanager
+    def fake_fallback_helper_manager(**_kwargs):
+        yield dummy_manager
+
+    def fake_context_builder(**_kwargs):
+        class _VectorHeavyBuilder:
+            __module__ = "vector_service.bootstrap"
+
+        return _VectorHeavyBuilder()
+
+    monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
+    monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
+    monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
+    monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
+    monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
+    monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
+    monkeypatch.setattr(bootstrap, "prepare_pipeline_for_bootstrap", lambda **_k: (object(), lambda *_a, **_k: None))
+    monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
+    monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
+    monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
+    monkeypatch.setattr(bootstrap, "get_thresholds", lambda *_a, **_k: type("Thresholds", (), {
+        "roi_drop": 1,
+        "error_increase": 2,
+        "test_failure_increase": 3,
+    })())
+    monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
+    monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
+    monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
+
+    def fake_run_with_timeout(fn, *, timeout: float, description: str, **kwargs):
+        timeouts[description] = timeout
+        if description == "prepare_pipeline_for_bootstrap":
+            return (object(), lambda *_a, **_k: None)
+        return None if fn is None else fn(**kwargs)
+
+    monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
+
+    context = bootstrap.initialize_bootstrap_context(use_cache=False)
+
+    assert context["manager"] is dummy_manager
+    assert timeouts["prepare_pipeline_for_bootstrap"] == pytest.approx(120.0)
+    assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(30.0)

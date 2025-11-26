@@ -63,6 +63,23 @@ _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
 
 
+def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
+    """Identify vector-heavy helpers by their module/qualname."""
+
+    module_name = getattr(candidate, "__module__", "") or ""
+    qualname = getattr(candidate, "__qualname__", "") or ""
+    text = f"{module_name}:{qualname}".lower()
+    heavy_tokens = (
+        "vector_service",
+        "vectorservice",
+        "vector_metrics",
+        "vectormetrics",
+        "patch_history",
+        "patchhistory",
+    )
+    return any(token in text for token in heavy_tokens)
+
+
 def _resolve_step_timeout(vector_heavy: bool = False) -> float:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
@@ -659,14 +676,29 @@ def initialize_bootstrap_context(
                 BOOTSTRAP_PROGRESS["last_step"],
             )
             vector_heavy = False
+            vector_timeout = _resolve_step_timeout(vector_heavy=True)
+            standard_timeout = _resolve_step_timeout(vector_heavy=False)
             try:
                 vector_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
                 if vector_state is not None:
                     vector_heavy = bool(getattr(vector_state, "vector_heavy", False))
+                if not vector_heavy and _is_vector_bootstrap_heavy(context_builder):
+                    vector_heavy = True
+                if not vector_heavy and _is_vector_bootstrap_heavy(ModelAutomationPipeline):
+                    vector_heavy = True
             except Exception:  # pragma: no cover - diagnostics only
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
-            prepare_timeout = _resolve_step_timeout(vector_heavy)
+            prepare_timeout = vector_timeout if vector_heavy else standard_timeout
+            LOGGER.info(
+                "prepare_pipeline timeout selected",
+                extra={
+                    "vector_heavy": vector_heavy,
+                    "timeout": prepare_timeout,
+                    "vector_timeout": vector_timeout,
+                    "standard_timeout": standard_timeout,
+                },
+            )
             print(
                 (
                     "starting prepare_pipeline_for_bootstrap "
