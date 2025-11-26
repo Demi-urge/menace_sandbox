@@ -47,12 +47,15 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python 
 from governed_embeddings import governed_embed, get_embedder
 
 try:  # pragma: no cover - prefer package-relative imports
-    from .registry import load_handlers
+    from .registry import load_handlers, _resolve_bootstrap_fast
     from .vector_store import VectorStore, get_default_vector_store
 except ImportError as exc:  # pragma: no cover - fallback when executed as a script
     if "attempted relative import" not in str(exc):
         raise
-    from vector_service.registry import load_handlers  # type: ignore
+    from vector_service.registry import (  # type: ignore
+        load_handlers,
+        _resolve_bootstrap_fast,
+    )
     from vector_service.vector_store import (  # type: ignore
         VectorStore,
         get_default_vector_store,
@@ -165,7 +168,20 @@ class SharedVectorService:
             extra=_timestamp_payload(init_start),
         )
         handler_start = time.perf_counter()
-        self._handlers = load_handlers(bootstrap_fast=self.bootstrap_fast)
+        resolved_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
+            self.bootstrap_fast
+        )
+        if self.bootstrap_fast is None:
+            self.bootstrap_fast = resolved_fast
+        if bootstrap_context and resolved_fast:
+            logger.info(
+                "shared_vector_service.bootstrap_fast.active",
+                extra={
+                    "bootstrap_fast_defaulted": defaulted_fast,
+                    "bootstrap_context": True,
+                },
+            )
+        self._handlers = load_handlers(bootstrap_fast=resolved_fast)
         logger.info(
             "shared_vector_service.handlers.loaded",
             extra=_timestamp_payload(
