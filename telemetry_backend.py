@@ -15,7 +15,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 
 from .db_router import (
     DBRouter,
@@ -69,8 +69,16 @@ def _select_router(
     *,
     bootstrap_safe: bool = False,
     init_timeout_s: float | None = None,
-) -> DBRouter:
+    bootstrap_fast: bool = False,
+) -> DBRouter | None:
     """Return a router bound to ``db_path`` creating one when required."""
+
+    if bootstrap_fast:
+        logger.info(
+            "telemetry.bootstrap.fast-router-skip",
+            extra={"db_path": db_path, "bootstrap_safe": bootstrap_safe},
+        )
+        return None
 
     desired = Path(db_path).expanduser().resolve()
     existing = GLOBAL_ROUTER
@@ -156,6 +164,7 @@ class TelemetryBackend:
         *,
         router: DBRouter | None = None,
         bootstrap_safe: bool | None = None,
+        bootstrap_fast: bool | None = None,
         init_timeout_s: float | None = None,
     ) -> None:
         self.db_path = db_path
@@ -168,6 +177,7 @@ class TelemetryBackend:
             "off",
         }
         self.bootstrap_safe = env_flag if bootstrap_safe is None else bool(bootstrap_safe)
+        self.bootstrap_fast = bool(bootstrap_fast) if bootstrap_fast is not None else False
         self.init_timeout_s = (
             _DEFAULT_BOOTSTRAP_TIMEOUT_S
             if self.bootstrap_safe and init_timeout_s is None
@@ -183,14 +193,28 @@ class TelemetryBackend:
                 db_path,
                 bootstrap_safe=self.bootstrap_safe,
                 init_timeout_s=self.init_timeout_s,
+                bootstrap_fast=self.bootstrap_fast,
             )
+
+        if chosen is None or self.bootstrap_fast:
+            self.router = None  # type: ignore[assignment]
+            self._enable_noop("bootstrap-fast-path")
+            logger.info(
+                "telemetry.bootstrap.fast-path", extra={"db_path": db_path, "bootstrap_safe": self.bootstrap_safe}
+            )
+            return
+
         self.router = chosen
         LOCAL_TABLES.add("roi_telemetry")
         LOCAL_TABLES.add("roi_prediction_events")
         try:
             if self.bootstrap_safe and not self._configure_with_deadline(chosen):
                 raise TimeoutError("telemetry bootstrap configuration deadline exceeded")
-            self._init_db()
+            if self.bootstrap_safe:
+                if not self._run_with_deadline(self._init_db, self.init_timeout_s):
+                    raise TimeoutError("telemetry bootstrap schema deadline exceeded")
+            else:
+                self._init_db()
         except sqlite3.OperationalError as exc:
             if self.bootstrap_safe:
                 self._enable_noop(f"operational-error: {exc}")
@@ -232,6 +256,29 @@ class TelemetryBackend:
                 return False
             if exc is not None:
                 raise exc
+        return True
+
+    # ------------------------------------------------------------------
+    def _run_with_deadline(self, func: Callable[[], None], timeout: float | None) -> bool:
+        if timeout is None or timeout <= 0:
+            func()
+            return True
+
+        result: dict[str, Exception | None] = {"exc": None}
+
+        def _target() -> None:
+            try:
+                func()
+            except Exception as exc:  # pragma: no cover - defensive capture
+                result["exc"] = exc
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            return False
+        if result["exc"] is not None:
+            raise result["exc"]
         return True
 
     # ------------------------------------------------------------------
