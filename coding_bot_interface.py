@@ -3802,6 +3802,37 @@ def _prepare_pipeline_for_bootstrap_impl(
         return "manager" in lowered and "unexpected" in lowered
 
     def _vector_service_heavy(candidate: Any) -> bool:
+        env_toggle = os.getenv("VECTOR_SERVICE_HEAVY")
+        if env_toggle:
+            normalized = env_toggle.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+
+        hinted_flag = getattr(candidate, "vector_bootstrap_heavy", None)
+        if hinted_flag is None:
+            hinted_flag = getattr(candidate, "vector_service_heavy", None)
+        if isinstance(hinted_flag, bool):
+            return hinted_flag
+
+        def _vector_path_hint(obj: Any) -> Path | None:
+            for attr in ("vector_db", "vector_db_path", "vector_metrics_path"):
+                candidate_path = getattr(obj, attr, None)
+                if isinstance(candidate_path, (str, os.PathLike)):
+                    path = Path(candidate_path)
+                    if path.is_absolute() or path.exists():
+                        return path
+            return None
+
+        vector_path = _vector_path_hint(candidate)
+        if vector_path is not None:
+            try:
+                if vector_path.exists() and vector_path.stat().st_size > 25 * 1024 * 1024:
+                    return True
+            except OSError:
+                logger.debug("vector path probe failed", exc_info=True)
+
         module_name = getattr(candidate, "__module__", "") or ""
         qualname = getattr(candidate, "__qualname__", "") or ""
         text = f"{module_name}:{qualname}".lower()
@@ -4151,15 +4182,17 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_rejected = False
         constructor_loop_start = time.perf_counter()
 
-        vector_lazy_enabled = vector_bootstrap_heavy
-        if vector_bootstrap_heavy:
-            logger.info(
-                "prepare_pipeline.lazy_vector_bootstrap.enabled",
-                extra={
-                    "context_builder": type(context_builder).__name__,
-                    "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
-                },
-            )
+    vector_lazy_enabled = vector_bootstrap_heavy or bool(bootstrap_fast)
+    if vector_lazy_enabled:
+        logger.info(
+            "prepare_pipeline.lazy_vector_bootstrap.enabled",
+            extra={
+                "context_builder": type(context_builder).__name__,
+                "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
+                "vector_bootstrap_heavy": vector_bootstrap_heavy,
+                "bootstrap_fast": bool(bootstrap_fast),
+            },
+        )
 
         def _vector_excursion_triggered(exc: BaseException) -> bool:
             message = f"{type(exc).__name__}:{exc}"
@@ -4207,9 +4240,19 @@ def _prepare_pipeline_for_bootstrap_impl(
                 last_error = exc
                 if vector_bootstrap_heavy and not vector_lazy_enabled and _vector_excursion_triggered(exc):
                     vector_lazy_enabled = True
+                    last_error = None
                     logger.warning(
                         "pipeline constructor triggered lazy vector bootstrap retry",
                         exc_info=exc,
+                    )
+                    logger.info(
+                        "prepare_pipeline.lazy_vector_bootstrap.deferred",
+                        extra={
+                            "context_builder": type(context_builder).__name__,
+                            "pipeline_cls": getattr(
+                                pipeline_cls, "__name__", str(pipeline_cls)
+                            ),
+                        },
                     )
                     _record_prepare_pipeline_stage(
                         "pipeline constructor lazy vector retry",
