@@ -256,6 +256,7 @@ class _BootstrapContextGuard:
 
 _BOOTSTRAP_THREAD_STATE = threading.local()
 _SENTINEL_UNSET = object()
+_PATCH_HISTORY_BOOTSTRAP_FLAG = "PATCH_HISTORY_BOOTSTRAP"
 
 
 def _push_bootstrap_context(
@@ -326,6 +327,24 @@ def _current_bootstrap_context() -> _BootstrapContext | None:
     if not stack:
         return None
     return stack[-1]
+
+
+@contextlib.contextmanager
+def _patch_history_bootstrap_env(enabled: bool) -> Iterator[None]:
+    """Temporarily flag ``PatchHistoryDB`` to run in bootstrap-fast mode."""
+
+    original = os.environ.get(_PATCH_HISTORY_BOOTSTRAP_FLAG)
+    if enabled:
+        os.environ[_PATCH_HISTORY_BOOTSTRAP_FLAG] = "1"
+    try:
+        yield
+    finally:
+        if not enabled:
+            return
+        if original is None:
+            os.environ.pop(_PATCH_HISTORY_BOOTSTRAP_FLAG, None)
+        else:
+            os.environ[_PATCH_HISTORY_BOOTSTRAP_FLAG] = original
 
 
 def _is_bootstrap_owner(candidate: Any) -> bool:
@@ -4774,7 +4793,8 @@ def _bootstrap_manager(
                 }
                 if bootstrap_fast:
                     patch_db_kwargs.setdefault("path", ":memory:")
-                patch_db = patch_db_cls(**patch_db_kwargs)
+                with _patch_history_bootstrap_env(bool(bootstrap_fast)):
+                    patch_db = patch_db_cls(**patch_db_kwargs)
                 if bootstrap_fast:
                     try:
                         patch_logger_mod = _load_optional_module(
