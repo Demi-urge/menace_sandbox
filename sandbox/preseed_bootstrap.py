@@ -7,12 +7,14 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import sys
 import threading
 import time
 import traceback
+import faulthandler
 from time import perf_counter
 from typing import Any, Dict
 
@@ -33,6 +35,8 @@ from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
+from safe_repr import summarise_value
+from security.secret_redactor import redact_dict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +59,54 @@ def _mark_bootstrap_step(step_name: str) -> None:
     BOOTSTRAP_PROGRESS["last_step"] = step_name
 
 
+def _format_timestamp(epoch_seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
+
+
+def _safe_kwargs_summary(kwargs: dict[str, Any]) -> dict[str, str]:
+    try:
+        redacted = redact_dict(kwargs)
+    except Exception:  # pragma: no cover - defensive fallback
+        redacted = kwargs
+
+    summary: dict[str, str] = {}
+    for key, value in redacted.items():
+        try:
+            summary[key] = summarise_value(value)
+        except Exception:  # pragma: no cover - defensive fallback
+            summary[key] = "<unrepresentable>"
+    return summary
+
+
+def _dump_thread_traces(target_thread: threading.Thread) -> None:
+    frames = sys._current_frames()
+    for thread in threading.enumerate():
+        if not thread.ident:
+            continue
+
+        marker = f"[bootstrap-timeout][thread={thread.name} id={thread.ident}" + (
+            " target]" if thread is target_thread else "]"
+        )
+        print(f"{marker} stack trace:", flush=True)
+        buffer = io.StringIO()
+        try:
+            faulthandler.dump_traceback(
+                file=buffer, all_threads=False, thread_id=thread.ident
+            )
+            trace = buffer.getvalue()
+        except Exception:  # pragma: no cover - fallback for unsupported platforms
+            trace = ""
+
+        if not trace:
+            frame = frames.get(thread.ident)
+            if frame:
+                trace = "".join(traceback.format_stack(frame))
+        if trace:
+            print(trace.rstrip(), flush=True)
+        else:
+            print(f"{marker} unable to capture stack trace", flush=True)
+
+
 def _run_with_timeout(
     fn,
     *,
@@ -66,8 +118,14 @@ def _run_with_timeout(
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
 
+    start_monotonic = time.monotonic()
+    start_wall = time.time()
+    deadline_remaining_start = (
+        bootstrap_deadline - start_monotonic if bootstrap_deadline else None
+    )
+
     if bootstrap_deadline:
-        time_remaining = bootstrap_deadline - time.monotonic()
+        time_remaining = bootstrap_deadline - start_monotonic
         if time_remaining > 0:
             buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
             deadline_constrained = min(timeout, time_remaining)
@@ -91,39 +149,39 @@ def _run_with_timeout(
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
 
     if thread.is_alive():
-        if thread.ident:
-            frame = sys._current_frames().get(thread.ident)
-            if frame:
-                stack_trace = "".join(traceback.format_stack(frame))
-                LOGGER.debug(
-                    "Hanging thread %s (id=%s) stack trace:\n%s",
-                    thread.name,
-                    thread.ident,
-                    stack_trace,
-                )
-                print(
-                    "[bootstrap-timeout] hanging thread stack trace:\n" + stack_trace,
-                    flush=True,
-                )
-            else:
-                LOGGER.debug(
-                    "Unable to capture stack trace for hanging thread %s (id=%s)",
-                    thread.name,
-                    thread.ident,
-                )
-        else:
-            LOGGER.debug("Timeout waiting for thread %s without ident", thread.name)
+        end_wall = time.time()
+        deadline_remaining_now = (
+            bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
+        )
+        metadata = {
+            "start_time": _format_timestamp(start_wall),
+            "end_time": _format_timestamp(end_wall),
+            "elapsed": round(time.monotonic() - start_monotonic, 3),
+            "timeout": timeout,
+            "bootstrap_deadline": bootstrap_deadline,
+            "bootstrap_remaining_start": deadline_remaining_start,
+            "bootstrap_remaining_now": deadline_remaining_now,
+            "function": getattr(fn, "__name__", fn.__class__.__name__),
+            "kwargs": _safe_kwargs_summary(kwargs),
+            "thread_name": thread.name,
+            "thread_ident": thread.ident,
+            "last_step": last_step,
+        }
 
         LOGGER.error(
-            "%s timed out after %.1fs (last_step=%s)",
+            "%s timed out after %.1fs (last_step=%s) metadata=%s",
             description,
             timeout,
             last_step,
+            metadata,
         )
         print(
-            f"[bootstrap-timeout] {description} timed out after {timeout:.1f}s (last_step={last_step})",
+            f"[bootstrap-timeout][metadata] {description} timed out after {timeout:.1f}s: {metadata}",
             flush=True,
         )
+
+        _dump_thread_traces(thread)
+
         if abort_on_timeout:
             raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
 
