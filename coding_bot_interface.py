@@ -3787,10 +3787,16 @@ def _prepare_pipeline_for_bootstrap_impl(
     def _emit_timeout_diagnostics(stage: str, context: Mapping[str, Any]) -> None:
         vector_heavy = bool(context.get("vector_heavy", False))
         timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
+        remediation_tips = (
+            "increase MENACE_BOOTSTRAP_WAIT_SECS or BOOTSTRAP_STEP_TIMEOUT for heavy "
+            "pipelines; avoid running concurrent bootstraps or large directory "
+            "watchers during bootstrap"
+        )
         logger.warning(
             (
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
-                "resolved_timeout=%s env_wait=%r env_vector_wait=%r timeline=%s"
+                "resolved_timeout=%s env_wait=%r env_vector_wait=%r timeline=%s "
+                "remediation_tips=%s"
             ),
             stage,
             vector_heavy,
@@ -3798,6 +3804,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             context.get("env_menace_bootstrap_wait_secs"),
             context.get("env_menace_bootstrap_vector_wait_secs"),
             timeline,
+            remediation_tips,
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
