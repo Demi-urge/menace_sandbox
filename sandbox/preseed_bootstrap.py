@@ -58,14 +58,18 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-_BASELINE_BOOTSTRAP_STEP_TIMEOUT = (
-    _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
-    if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
-    else 300.0
+_BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
+    300.0,
+    (
+        _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
+        if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
+        else 300.0
+    ),
 )
 _PREPARE_SAFE_TIMEOUT_FLOOR = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
-_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(
-    os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))
+_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
+    _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+    float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))),
 )
 _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = float(
     os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")

@@ -13,6 +13,37 @@ def _install_menace_sandbox_stub() -> None:
     pkg.__path__ = []  # type: ignore[attr-defined]
 
     coding_stub = types.ModuleType("menace_sandbox.coding_bot_interface")
+    coding_stub.logger = logging.getLogger("menace_sandbox.coding_bot_interface")
+    coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT = 300.0  # type: ignore[attr-defined]
+
+    def _get_bootstrap_wait_timeout():
+        raw = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+        if not raw:
+            return coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT
+
+        lowered = raw.lower()
+        if lowered == "none":
+            return None
+
+        try:
+            parsed_timeout = float(raw)
+        except ValueError:
+            coding_stub.logger.warning(  # type: ignore[attr-defined]
+                "Invalid MENACE_BOOTSTRAP_WAIT_SECS=%r; using default %ss",
+                raw,
+                coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT,
+            )
+            return coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT
+
+        clamped_timeout = max(coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT, parsed_timeout)
+        if clamped_timeout > parsed_timeout:
+            coding_stub.logger.warning(  # type: ignore[attr-defined]
+                "MENACE_BOOTSTRAP_WAIT_SECS=%r below minimum; clamping to %ss",
+                raw,
+                clamped_timeout,
+            )
+        return clamped_timeout
+
     def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False):
         if not vector_heavy:
             raw = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
@@ -21,9 +52,9 @@ def _install_menace_sandbox_stub() -> None:
                 if lowered == "none":
                     return None
                 try:
-                    return max(1.0, float(raw))
+                    return max(coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT, float(raw))
                 except ValueError:
-                    return 300.0
+                    return coding_stub._MIN_BOOTSTRAP_WAIT_TIMEOUT
             return coding_stub._BOOTSTRAP_WAIT_TIMEOUT
 
         raw = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
@@ -41,7 +72,8 @@ def _install_menace_sandbox_stub() -> None:
         return max(coding_stub._BOOTSTRAP_WAIT_TIMEOUT, default_timeout)
 
     coding_stub._resolve_bootstrap_wait_timeout = _resolve_bootstrap_wait_timeout  # type: ignore[attr-defined]
-    coding_stub._BOOTSTRAP_WAIT_TIMEOUT = 300.0  # type: ignore[attr-defined]
+    coding_stub._get_bootstrap_wait_timeout = _get_bootstrap_wait_timeout  # type: ignore[attr-defined]
+    coding_stub._BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()  # type: ignore[attr-defined]
     coding_stub._push_bootstrap_context = lambda **_k: {"placeholder": True}  # type: ignore[attr-defined]
     coding_stub._pop_bootstrap_context = lambda *_a, **_k: None  # type: ignore[attr-defined]
 
@@ -278,8 +310,8 @@ def test_prepare_timeout_uses_clamped_value(monkeypatch, caplog):
 
     assert context["manager"] is dummy_manager
     assert timeouts["prepare_pipeline_for_bootstrap"] == (
-        pytest.approx(75.0),
-        pytest.approx(75.0),
+        pytest.approx(bootstrap._PREPARE_SAFE_TIMEOUT_FLOOR),
+        pytest.approx(bootstrap._PREPARE_SAFE_TIMEOUT_FLOOR),
     )
     assert any("clamping" in record.message for record in caplog.records)
 
@@ -364,6 +396,38 @@ def test_vector_heavy_bootstrap_prefers_vector_timeout(monkeypatch, caplog):
     if expected_timeout > 120.0:
         assert any("clamping" in record.message for record in caplog.records)
     assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(30.0)
+
+
+def test_menace_bootstrap_wait_is_clamped(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "120")
+
+    clamped_timeout = bootstrap._coding_bot_interface._get_bootstrap_wait_timeout()
+    bootstrap._coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT = clamped_timeout
+
+    bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
+        300.0,
+        (
+            bootstrap._coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
+            if getattr(bootstrap._coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None)
+            is not None
+            else 300.0
+        ),
+    )
+    bootstrap._DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
+        bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+        float(
+            os.getenv(
+                "BOOTSTRAP_STEP_TIMEOUT", str(bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT)
+            )
+        ),
+    )
+    bootstrap.BOOTSTRAP_STEP_TIMEOUT = bootstrap._resolve_step_timeout()
+
+    assert clamped_timeout == pytest.approx(300.0)
+    assert bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT == pytest.approx(clamped_timeout)
+    assert bootstrap.BOOTSTRAP_STEP_TIMEOUT == pytest.approx(clamped_timeout)
+    assert any("below minimum" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(
