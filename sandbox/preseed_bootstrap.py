@@ -384,13 +384,15 @@ def _run_with_timeout(
         effective_timeout, timeout_context = _resolve_timeout(
             timeout, bootstrap_deadline=bootstrap_deadline, heavy_bootstrap=heavy_bootstrap
         )
+        requested_timeout = timeout
     else:
         effective_timeout, timeout_context = resolved_timeout
+        requested_timeout = effective_timeout
 
     LOGGER.info(
         "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
         description,
-        _describe_timeout(timeout),
+        _describe_timeout(requested_timeout),
         _describe_timeout(effective_timeout),
         heavy_bootstrap,
         bootstrap_deadline,
@@ -455,7 +457,7 @@ def _run_with_timeout(
             "start_time": _format_timestamp(start_wall),
             "end_time": _format_timestamp(end_wall),
             "elapsed": round(time.monotonic() - start_monotonic, 3),
-            "timeout_requested": timeout,
+            "timeout_requested": requested_timeout,
             "timeout_effective": effective_timeout,
             "timeout_effective_after_clamp": timeout_context.get(
                 "effective_timeout", effective_timeout
@@ -968,7 +970,8 @@ def initialize_bootstrap_context(
                 extra={
                     "vector_heavy": vector_heavy,
                     "timeout": effective_prepare_timeout,
-                    "timeout_requested": prepare_timeout,
+                    "timeout_requested": effective_prepare_timeout,
+                    "timeout_requested_raw": prepare_timeout,
                     "vector_timeout": vector_timeout,
                     "standard_timeout": standard_timeout,
                     "heavy_bootstrap": heavy_prepare,
@@ -1005,7 +1008,7 @@ def initialize_bootstrap_context(
                     )
                     pipeline, promote_pipeline = _run_with_timeout(
                         _timed_callable,
-                        timeout=prepare_timeout,
+                        timeout=effective_prepare_timeout,
                         bootstrap_deadline=bootstrap_deadline,
                         description="prepare_pipeline_for_bootstrap",
                         abort_on_timeout=True,
