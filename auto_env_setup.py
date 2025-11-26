@@ -65,9 +65,9 @@ DEFAULT_VARS: Dict[str, str] = {
     # delay between orchestration cycles; 0 runs continuously
     "SLEEP_SECONDS": "0",
     # keep bootstrap helpers from clamping to legacy 30s ceilings
-    "MENACE_BOOTSTRAP_WAIT_SECS": "180",
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
-    "BOOTSTRAP_STEP_TIMEOUT": "180",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
     "AUTO_BOOTSTRAP": "1",
     "AUTO_UPDATE": "1",
