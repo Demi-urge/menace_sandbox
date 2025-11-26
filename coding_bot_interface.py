@@ -3799,7 +3799,15 @@ def _prepare_pipeline_for_bootstrap_impl(
         module_name = getattr(candidate, "__module__", "") or ""
         qualname = getattr(candidate, "__qualname__", "") or ""
         text = f"{module_name}:{qualname}".lower()
-        return "vector_service" in text or "vectorservice" in text
+        heavy_tokens = (
+            "vector_service",
+            "vectorservice",
+            "vector_metrics",
+            "vectormetrics",
+            "patch_history",
+            "patchhistory",
+        )
+        return any(token in text for token in heavy_tokens)
 
     def _lazy_vector_bootstrap_guard(active: bool) -> contextlib.AbstractContextManager[None]:
         if not active:

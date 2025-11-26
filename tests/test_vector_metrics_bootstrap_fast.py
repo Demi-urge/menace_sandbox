@@ -1,8 +1,11 @@
 import logging
+import os
 import sqlite3
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import coding_bot_interface
 import code_database
@@ -592,3 +595,54 @@ def test_prepare_pipeline_bootstrap_fast_avoids_vec_metrics_schema(caplog, monke
         for message in schema_logs
     ), schema_logs
     assert pipeline.vector_metrics.bootstrap_fast is True
+
+
+@pytest.mark.parametrize(
+    "pipeline_module, context_module",
+    [
+        ("vector_metrics.worker", "dummy.module"),
+        ("safe.pipeline", "patch_history.bootstrap"),
+    ],
+)
+def test_vector_identifiers_enable_lazy_bootstrap(monkeypatch, pipeline_module, context_module):
+    previous_env = os.environ.pop("VECTOR_SERVICE_LAZY_BOOTSTRAP", None)
+    lazy_states: list[str | None] = []
+
+    class LazyPipeline:
+        __module__ = pipeline_module
+
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_: object,
+        ) -> None:
+            lazy_states.append(os.getenv("VECTOR_SERVICE_LAZY_BOOTSTRAP"))
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    try:
+        pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+            pipeline_cls=LazyPipeline,
+            context_builder=SimpleNamespace(__module__=context_module),
+            bot_registry=SimpleNamespace(set_bootstrap_mode=lambda *_: None),
+            data_bot=object(),
+        )
+
+        promote(object())
+
+        assert isinstance(pipeline, LazyPipeline)
+        assert lazy_states == ["1"]
+    finally:
+        if previous_env is None:
+            os.environ.pop("VECTOR_SERVICE_LAZY_BOOTSTRAP", None)
+        else:
+            os.environ["VECTOR_SERVICE_LAZY_BOOTSTRAP"] = previous_env
+
+    restored = os.getenv("VECTOR_SERVICE_LAZY_BOOTSTRAP")
+    assert restored == previous_env
