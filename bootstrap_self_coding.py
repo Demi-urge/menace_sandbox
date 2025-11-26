@@ -24,6 +24,8 @@ from pathlib import Path
 from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any
 
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -113,6 +115,30 @@ def _monitor_disabled_manager_stream() -> Iterator[list[Mapping[str, Any]]]:
 
 def bootstrap_self_coding(bot_name: str) -> None:
     """Trigger :func:`internalize_coding_bot` for *bot_name*."""
+
+    timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
+    LOGGER.info(
+        "bootstrap timeout policy applied",
+        extra={"timeout_policy": timeout_policy},
+    )
+    policy_summary = []
+    for key in (
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        "BOOTSTRAP_STEP_TIMEOUT",
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ):
+        entry = timeout_policy.get(key, {})
+        effective = entry.get("effective")
+        requested = entry.get("requested")
+        clamped = entry.get("clamped")
+        if effective is None:
+            continue
+        fragment = f"{key}={effective}s"
+        if clamped and requested is not None:
+            fragment += f" (requested={requested}s)"
+        policy_summary.append(fragment)
+    print("bootstrap timeout policy: %s" % ", ".join(policy_summary), flush=True)
 
     from menace_sandbox.bot_registry import BotRegistry
     from menace_sandbox.code_database import CodeDB

@@ -50,6 +50,7 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
 
 LOGGER = logging.getLogger(__name__)
 
@@ -86,6 +87,58 @@ def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
         )
         return _BOOTSTRAP_TIMEOUT_FLOOR
     return timeout
+
+
+def _apply_timeout_policy_snapshot(policy_snapshot: dict[str, dict[str, Any]]) -> None:
+    """Re-apply default timeout resolution after policy enforcement."""
+
+    global _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+    global _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
+    global BOOTSTRAP_STEP_TIMEOUT
+
+    def _resolved_value(env_var: str, current: float) -> float:
+        entry = policy_snapshot.get(env_var, {})
+        value = entry.get("effective")
+        return float(value) if isinstance(value, (int, float)) else current
+
+    _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
+        _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+        _clamp_timeout_floor(
+            _resolved_value("BOOTSTRAP_STEP_TIMEOUT", _DEFAULT_BOOTSTRAP_STEP_TIMEOUT),
+            env_var="BOOTSTRAP_STEP_TIMEOUT",
+        ),
+    )
+    _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
+        _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+        _clamp_timeout_floor(
+            _resolved_value(
+                "BOOTSTRAP_VECTOR_STEP_TIMEOUT", _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
+            ),
+            env_var="BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+        ),
+    )
+    BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout()
+
+
+def _render_timeout_policy(policy_snapshot: dict[str, dict[str, Any]]) -> str:
+    parts = []
+    for key in (
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        "BOOTSTRAP_STEP_TIMEOUT",
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ):
+        entry = policy_snapshot.get(key, {})
+        effective = entry.get("effective")
+        requested = entry.get("requested")
+        clamped = entry.get("clamped")
+        if effective is None:
+            continue
+        fragment = f"{key}={_describe_timeout(float(effective))}"
+        if clamped and requested is not None:
+            fragment += f" (requested={_describe_timeout(float(requested))})"
+        parts.append(fragment)
+    return ", ".join(parts) if parts else "defaults"
 
 
 _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
@@ -737,6 +790,16 @@ def initialize_bootstrap_context(
         "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,
         extra={"heavy_env": env_heavy},
     )
+    timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
+    _apply_timeout_policy_snapshot(timeout_policy)
+    LOGGER.info(
+        "bootstrap timeout policy applied",
+        extra={"timeout_policy": timeout_policy},
+    )
+    print(
+        "bootstrap timeout policy: %s" % _render_timeout_policy(timeout_policy),
+        flush=True,
+    )
 
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
@@ -976,16 +1039,18 @@ def initialize_bootstrap_context(
                     "standard_timeout": standard_timeout,
                     "heavy_bootstrap": heavy_prepare,
                     "timeout_context": resolved_prepare_timeout[1],
+                    "timeout_policy": timeout_policy,
                 },
             )
             print(
                 (
                     "starting prepare_pipeline_for_bootstrap "
-                    "(last_step=%s, timeout=%s, elapsed=0.0s)"
+                    "(last_step=%s, timeout=%s, elapsed=0.0s, timeouts=%s)"
                 )
                 % (
                     BOOTSTRAP_PROGRESS["last_step"],
                     _describe_timeout(effective_prepare_timeout),
+                    _render_timeout_policy(timeout_policy),
                 ),
                 flush=True,
             )
