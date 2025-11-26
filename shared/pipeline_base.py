@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
 import traceback
 import weakref
 
@@ -705,8 +706,11 @@ class ModelAutomationPipeline:
         context_builder: ContextBuilder,
         validator_factory: Callable[[], "TaskValidationBot"] | None = None,
         manager: "SelfCodingManager | None" = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
+        self._stop_event: threading.Event | None = stop_event
         with _pipeline_bootstrap_scope(self):
+            self._abort_if_stopped()
             self._initialize_pipeline(
                 aggregator=aggregator,
                 synthesis_bot=synthesis_bot,
@@ -757,6 +761,10 @@ class ModelAutomationPipeline:
                 validator_factory=validator_factory,
                 manager=manager,
             )
+
+    def _abort_if_stopped(self) -> None:
+        if self._stop_event is not None and self._stop_event.is_set():
+            raise TimeoutError("ModelAutomationPipeline bootstrap cancelled via stop event")
 
     def _initialize_pipeline(
         self,
@@ -819,6 +827,7 @@ class ModelAutomationPipeline:
         implementation_optimiser_cls = helpers["implementation_optimiser_cls"]
         planning_components = helpers["planning_components"]
 
+        self._abort_if_stopped()
         self._create_synthesis_task = helpers["create_synthesis_task"]
         self._make_research_item = helpers["make_research_item"]
         self._build_default_validator = build_default_validator
@@ -841,6 +850,7 @@ class ModelAutomationPipeline:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
         initial_manager = normalise_manager_arg(manager, None, fallback=None)
+        self._abort_if_stopped()
         self._placeholder_context_token = None
         placeholder_candidate = (
             initial_manager if self._is_placeholder_manager(initial_manager) else None
@@ -887,16 +897,19 @@ class ModelAutomationPipeline:
         self._manager: "SelfCodingManager | None" = None
         self.manager = initial_manager
 
+        self._abort_if_stopped()
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
             self.logger.exception("context builder refresh failed: %s", exc)
+        self._abort_if_stopped()
         if aggregator is None:
             aggregator = LazyAggregator(
                 lambda: load_research_aggregator(self.context_builder)
             )
         self.aggregator = aggregator
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
+        self._abort_if_stopped()
         if synthesis_bot is None:
             from ..information_synthesis_bot import InformationSynthesisBot
 
@@ -937,6 +950,7 @@ class ModelAutomationPipeline:
         else:
             self.predictor = self._build_or_defer_predictor()
 
+        self._abort_if_stopped()
         self.handoff = self._build_or_defer_handoff(handoff, event_bus=event_bus)
         pre_bot_cls, build_task_cls, roi_result_cls = self._ensure_pre_execution_components()
         self._build_task_cls = build_task_cls
