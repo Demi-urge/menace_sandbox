@@ -115,20 +115,90 @@ def test_prepare_timeout_floor_escalates_low_override(monkeypatch, caplog):
 
     caplog.set_level("WARNING")
 
-    requested_timeout = module._resolve_step_timeout(vector_heavy=False)
-    bootstrap_deadline = time.monotonic() + 60
     resolved_timeout = module._resolve_timeout(
-        requested_timeout, bootstrap_deadline=bootstrap_deadline, heavy_bootstrap=False
+        30.0, bootstrap_deadline=None, heavy_bootstrap=False
     )
     effective_timeout, timeout_context = module._enforce_prepare_timeout_floor(
         resolved_timeout,
         vector_heavy=False,
         heavy_prepare=False,
-        bootstrap_deadline=bootstrap_deadline,
+        bootstrap_deadline=None,
     )
 
-    assert effective_timeout < module._PREPARE_SAFE_TIMEOUT_FLOOR
-    assert timeout_context.get("timeout_safe_floor") == module._PREPARE_SAFE_TIMEOUT_FLOOR
+    assert effective_timeout == module._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert timeout_context.get("timeout_safe_floor") == module._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert timeout_context.get("timeout_floor_auto_escalated") is True
+    assert any("safe floor" in record.message for record in caplog.records)
+
+
+def test_prepare_timeout_floor_clamps_menace_wait(monkeypatch, caplog):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "45")
+
+    module = _load_preseed_bootstrap(monkeypatch)
+
+    monkeypatch.setattr(
+        module._coding_bot_interface,
+        "_resolve_bootstrap_wait_timeout",
+        lambda vector_heavy=False: float(
+            os.getenv(
+                "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
+                if vector_heavy
+                else "MENACE_BOOTSTRAP_WAIT_SECS",
+                "0",
+            )
+        ),
+    )
+
+    caplog.set_level("WARNING")
+
+    timeout = module._resolve_step_timeout(vector_heavy=False)
+
+    assert timeout == module._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert any("recommended minimum" in record.message for record in caplog.records)
+
+
+def test_vector_prepare_timeout_floor_clamps_low_override(monkeypatch, caplog):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "30")
+
+    module = _load_preseed_bootstrap(monkeypatch)
+
+    monkeypatch.setattr(
+        module._coding_bot_interface,
+        "_resolve_bootstrap_wait_timeout",
+        lambda vector_heavy=False: float(
+            os.getenv(
+                "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
+                if vector_heavy
+                else "MENACE_BOOTSTRAP_WAIT_SECS",
+                "0",
+            )
+        ),
+    )
+
+    caplog.set_level("WARNING")
+
+    timeout = module._resolve_step_timeout(vector_heavy=True)
+
+    assert timeout == module._PREPARE_VECTOR_TIMEOUT_FLOOR
+    assert any("recommended minimum" in record.message for record in caplog.records)
+
+
+def test_vector_floor_applied_even_when_not_detected(monkeypatch, caplog):
+    module = _load_preseed_bootstrap(monkeypatch)
+
+    caplog.set_level("WARNING")
+
+    resolved_timeout = (45.0, {"effective_timeout": 45.0})
+    effective_timeout, timeout_context = module._enforce_prepare_timeout_floor(
+        resolved_timeout,
+        vector_heavy=False,
+        heavy_prepare=True,
+        bootstrap_deadline=None,
+    )
+
+    assert effective_timeout == module._PREPARE_VECTOR_TIMEOUT_FLOOR
+    assert timeout_context.get("timeout_floor_applied") == module._PREPARE_VECTOR_TIMEOUT_FLOOR
+    assert timeout_context.get("timeout_floor_auto_escalated") is True
     assert any("safe floor" in record.message for record in caplog.records)
 
 
