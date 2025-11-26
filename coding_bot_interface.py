@@ -4151,7 +4151,15 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_rejected = False
         constructor_loop_start = time.perf_counter()
 
-        vector_lazy_enabled = False
+        vector_lazy_enabled = vector_bootstrap_heavy
+        if vector_bootstrap_heavy:
+            logger.info(
+                "prepare_pipeline.lazy_vector_bootstrap.enabled",
+                extra={
+                    "context_builder": type(context_builder).__name__,
+                    "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
+                },
+            )
 
         def _vector_excursion_triggered(exc: BaseException) -> bool:
             message = f"{type(exc).__name__}:{exc}"
