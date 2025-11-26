@@ -104,24 +104,39 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
     if resolver:
         try:
             resolved_timeout = resolver(vector_heavy)
-            if resolved_timeout is not None:
-                return resolved_timeout
-            LOGGER.debug(
-                "bootstrap wait resolver returned None; using fallback timeout",
-                extra={
-                    "vector_heavy": vector_heavy,
-                    "fallback": fallback_timeout,
-                    "env_override": (
-                        "BOOTSTRAP_VECTOR_STEP_TIMEOUT"
-                        if vector_heavy
-                        else "BOOTSTRAP_STEP_TIMEOUT"
-                    ),
-                },
-            )
+            if resolved_timeout is None:
+                LOGGER.debug(
+                    "bootstrap wait resolver returned None; using fallback timeout",
+                    extra={
+                        "vector_heavy": vector_heavy,
+                        "fallback": fallback_timeout,
+                        "env_override": (
+                            "BOOTSTRAP_VECTOR_STEP_TIMEOUT"
+                            if vector_heavy
+                            else "BOOTSTRAP_STEP_TIMEOUT"
+                        ),
+                    },
+                )
         except Exception:  # pragma: no cover - helper availability best effort
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
 
-    return fallback_timeout
+    resolved_timeout = fallback_timeout if resolved_timeout is None else resolved_timeout
+
+    if (
+        resolved_timeout is not None
+        and resolved_timeout < _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+    ):
+        LOGGER.warning(
+            "bootstrap wait timeout below recommended minimum; clamping",
+            extra={
+                "requested_timeout": resolved_timeout,
+                "minimum_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                "vector_heavy": vector_heavy,
+            },
+        )
+        resolved_timeout = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+
+    return resolved_timeout
 
 
 # Resolve the default timeout eagerly so legacy users retain a stable baseline.
@@ -792,6 +807,19 @@ def initialize_bootstrap_context(
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
             prepare_timeout = vector_timeout if vector_heavy else standard_timeout
+            if (
+                prepare_timeout is not None
+                and prepare_timeout < _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+            ):
+                LOGGER.warning(
+                    "prepare_pipeline_for_bootstrap timeout below recommended minimum; clamping",
+                    extra={
+                        "vector_heavy": vector_heavy,
+                        "requested_timeout": prepare_timeout,
+                        "minimum_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                    },
+                )
+                prepare_timeout = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
             heavy_prepare = heavy_bootstrap or vector_heavy
             resolved_prepare_timeout = _resolve_timeout(
                 prepare_timeout,
