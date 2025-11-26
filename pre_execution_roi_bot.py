@@ -52,6 +52,17 @@ def _prediction_manager_cls() -> Type["PredictionManager"]:
     return module.PredictionManager  # type: ignore[attr-defined]
 
 
+def _bootstrap_fast_flag() -> bool:
+    """Return ``True`` when fast bootstrap mode is active."""
+
+    try:
+        from .coding_bot_interface import _current_bootstrap_context
+    except Exception:
+        return False
+    context = _current_bootstrap_context()
+    return bool(getattr(context, "bootstrap_fast", False)) if context else False
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -155,6 +166,7 @@ class PreExecutionROIBot:
         prediction_manager: "PredictionManager" | None = None,
         manager: Any | None = None,
         event_bus: UnifiedEventBus | None = None,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         self.history = history or ROIHistoryDB()
         self.router = router or GLOBAL_ROUTER or init_db_router("pre_execution_roi")
@@ -167,9 +179,13 @@ class PreExecutionROIBot:
         self.manager = manager
         if prediction_manager is None:
             try:
+                bootstrap_context_fast = _bootstrap_fast_flag()
+                if bootstrap_fast is None:
+                    bootstrap_fast = bootstrap_context_fast
                 prediction_cls = _prediction_manager_cls()
                 prediction_manager = prediction_cls(
                     data_bot=self.data_bot,
+                    bootstrap_fast=bootstrap_fast,
                 )
             except Exception:
                 prediction_manager = None
