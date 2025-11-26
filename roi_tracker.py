@@ -319,6 +319,7 @@ class ROITracker:
         borderline_bucket: BorderlineBucket | None = None,
         telemetry_backend: TelemetryBackend | None = None,
         telemetry_bootstrap_safe: bool | None = None,
+        telemetry_bootstrap_fast: bool | None = None,
         telemetry_timeout_s: float | None = None,
         results_db: "ROIResultsDB" | None = None,
     ) -> None:
@@ -363,6 +364,10 @@ class ROITracker:
             falling back to in-memory/no-op telemetry on timeouts.
             Defaults to the value of ``BOOTSTRAP_WATCHDOG_ACTIVE`` when
             omitted.
+        telemetry_bootstrap_fast:
+            When enabled, telemetry initialisation defers SQLite router
+            creation and uses an in-memory/no-op sink to avoid blocking
+            bootstrap watchdogs.
         telemetry_timeout_s:
             Optional deadline applied to SQLite configuration when
             ``telemetry_bootstrap_safe`` is enabled.
@@ -391,9 +396,15 @@ class ROITracker:
             else env_bootstrap is not None
             and env_bootstrap.strip().lower() not in {"", "0", "false", "no", "off"}
         )
+        telemetry_bootstrap_fast_flag = (
+            telemetry_bootstrap_fast
+            if telemetry_bootstrap_fast is not None
+            else telemetry_bootstrap_flag
+        )
         self.telemetry = telemetry_backend or TelemetryBackend(
             _resolve_telemetry_db_path(),
             bootstrap_safe=telemetry_bootstrap_flag,
+            bootstrap_fast=telemetry_bootstrap_fast_flag,
             init_timeout_s=telemetry_timeout_s,
         )
         self.results_db = results_db
