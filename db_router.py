@@ -395,7 +395,31 @@ class _BootstrapAuditController:
             self._enabled = True
             self._metrics["activations"] += 1
 
-    def disable(self) -> None:
+    def _replay_buffered(
+        self,
+        log_buffer: list[tuple[tuple[object, ...], dict[str, object]]],
+        record_buffer: list[dict[str, str]],
+        *,
+        bootstrap_safe: bool,
+    ) -> None:
+        for entry in record_buffer:
+            _record_audit_impl(entry)
+            with self._lock:
+                self._metrics["bootstrap_record_flushes"] += 1
+
+        for args, kwargs in log_buffer:
+            start = time.perf_counter()
+            replay_kwargs = dict(kwargs)
+            if bootstrap_safe:
+                replay_kwargs.setdefault("bootstrap_safe", True)
+            _ensure_log_db_access()(*args, **replay_kwargs)
+            duration = time.perf_counter() - start
+            with self._lock:
+                self._metrics["bootstrap_calls"] += 1
+                self._metrics["bootstrap_duration"] += duration
+                self._metrics["bootstrap_replayed_calls"] += 1
+
+    def disable(self, *, defer_if_bootstrap: bool = False) -> None:
         with self._lock:
             if self._depth == 0:
                 return
@@ -408,20 +432,23 @@ class _BootstrapAuditController:
             self._log_buffer.clear()
             self._record_buffer.clear()
 
-        # Replay outside the lock to avoid deadlocks during callbacks.
-        for entry in record_buffer:
-            _record_audit_impl(entry)
-            with self._lock:
-                self._metrics["bootstrap_record_flushes"] += 1
+        if defer_if_bootstrap and _bootstrap_context_active():
+            logger.info(
+                "Deferring audit replay until bootstrap completes (%d calls, %d records)",
+                len(log_buffer),
+                len(record_buffer),
+            )
 
-        for args, kwargs in log_buffer:
-            start = time.perf_counter()
-            _ensure_log_db_access()(*args, **kwargs)
-            duration = time.perf_counter() - start
-            with self._lock:
-                self._metrics["bootstrap_calls"] += 1
-                self._metrics["bootstrap_duration"] += duration
-                self._metrics["bootstrap_replayed_calls"] += 1
+            def _flush_when_ready() -> None:
+                while _bootstrap_context_active():
+                    time.sleep(0.1)
+                self._replay_buffered(log_buffer, record_buffer, bootstrap_safe=True)
+
+            threading.Thread(target=_flush_when_ready, daemon=True).start()
+            return
+
+        # Replay outside the lock to avoid deadlocks during callbacks.
+        self._replay_buffered(log_buffer, record_buffer, bootstrap_safe=True)
 
     def buffer_log_call(self, args: tuple[object, ...], kwargs: dict[str, object]) -> None:
         with self._lock:
@@ -481,27 +508,28 @@ def _log_db_access(*args: object, **kwargs: object) -> None:
     """Invoke :func:`audit.log_db_access` using a lazily imported handle."""
 
     bootstrap_safe = bool(kwargs.get("bootstrap_safe", False))
-    if not bootstrap_safe and _bootstrap_context_active():
+    bootstrap_context = _bootstrap_context_active()
+    if bootstrap_context and not bootstrap_safe:
         bootstrap_safe = True
         kwargs["bootstrap_safe"] = True
     start = time.perf_counter()
 
-    if bootstrap_safe:
-        _bootstrap_audit_controller.note_call(
-            duration=time.perf_counter() - start, bootstrap=True, skipped=True
-        )
-        return
-
-    if _bootstrap_audit_controller.enabled:
+    if bootstrap_safe and _bootstrap_audit_controller.enabled:
         _bootstrap_audit_controller.buffer_log_call(args, kwargs)
         _bootstrap_audit_controller.note_call(
             duration=time.perf_counter() - start, bootstrap=True
         )
+        logger.info(
+            "audit fast-path: buffering during bootstrap (bootstrap_safe=%s)", bootstrap_safe
+        )
         return
+
+    if bootstrap_safe and bootstrap_context:
+        logger.info("audit fast-path: direct bootstrap-safe logging")
 
     _ensure_log_db_access()(*args, **kwargs)
     _bootstrap_audit_controller.note_call(
-        duration=time.perf_counter() - start, bootstrap=False
+        duration=time.perf_counter() - start, bootstrap=bootstrap_safe or bootstrap_context
     )
 
 
@@ -549,13 +577,19 @@ def configure_db_router_audit_logging(*, audit_log_path: str | None = None) -> N
 
 
 @contextlib.contextmanager
-def bootstrap_audit_buffering(router: "DBRouter" | None = None):
+def bootstrap_audit_buffering(
+    router: "DBRouter" | None = None, *, bootstrap: bool = False
+):
     """Delay audit writes during bootstrap-sensitive sections.
 
     The controller buffers both file-based audit entries and ``log_db_access``
     calls, replaying them after the context exits.  Connections on ``router``
     inherit ``audit_bootstrap_safe=True`` while the guard is active and have
     their previous flag restored afterwards.
+
+    When ``bootstrap`` is ``True`` the buffered entries are replayed
+    asynchronously once any active bootstrap context clears, ensuring the main
+    thread stays responsive even if file locking would otherwise block.
     """
 
     previous_default = _audit_bootstrap_safe_default
@@ -575,7 +609,7 @@ def bootstrap_audit_buffering(router: "DBRouter" | None = None):
         globals()["_audit_bootstrap_safe_default"] = previous_default
         for conn, previous in connection_flags:
             conn.audit_bootstrap_safe = previous
-        _bootstrap_audit_controller.disable()
+        _bootstrap_audit_controller.disable(defer_if_bootstrap=bootstrap)
 
 
 def get_bootstrap_audit_metrics() -> dict[str, float]:
