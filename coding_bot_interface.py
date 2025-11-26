@@ -3970,14 +3970,46 @@ def _prepare_pipeline_for_bootstrap_impl(
     if resolved_wait_timeout is None:
         resolved_wait_timeout = _resolve_bootstrap_wait_timeout(vector_bootstrap_heavy)
 
+    env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+    env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+
+    if resolved_deadline is not None:
+        resolved_timeout_budget = max(0.0, resolved_deadline - start_time)
+        effective_min_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
+        if resolved_wait_timeout is not None:
+            effective_min_timeout = max(effective_min_timeout, resolved_wait_timeout)
+        clamped_timeout = max(resolved_timeout_budget, effective_min_timeout)
+        if clamped_timeout > resolved_timeout_budget:
+            resolved_deadline = start_time + clamped_timeout
+            logger.warning(
+                (
+                    "prepare_pipeline deadline clamped requested_timeout=%s "
+                    "clamped_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
+                resolved_timeout_budget,
+                clamped_timeout,
+                vector_bootstrap_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
+                extra={
+                    "requested_timeout": resolved_timeout_budget,
+                    "timeout_floor": effective_min_timeout,
+                    "effective_timeout": clamped_timeout,
+                },
+            )
+        if clamped_timeout:
+            requested_timeout = (
+                clamped_timeout
+                if requested_timeout is None
+                else max(requested_timeout, clamped_timeout)
+            )
+
     if (
         deadline is None
         and requested_timeout is not None
         and resolved_wait_timeout is not None
         and requested_timeout < resolved_wait_timeout
     ):
-        env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
-        env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
         resolved_deadline = start_time + resolved_wait_timeout
         logger.warning(
             (
