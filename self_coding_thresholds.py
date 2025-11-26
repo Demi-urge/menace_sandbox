@@ -875,13 +875,20 @@ def update_thresholds(
     path: Path | None = None,
     bootstrap_safe: bool | None = None,
     bootstrap_mode: bool | None = None,
+    bootstrap_fast: bool | None = None,
 ) -> None:
     """Persist new thresholds for ``bot`` to the configuration file."""
 
     cfg_path = path or _CONFIG_PATH
-    bootstrap_mode_flag = bool(bootstrap_mode if bootstrap_mode is not None else bootstrap_safe)
+    bootstrap_mode_flag = bool(
+        bootstrap_mode if bootstrap_mode is not None else bootstrap_safe
+    )
+    bootstrap_fast_flag = bool(bootstrap_fast)
+    bootstrap_active = bootstrap_mode_flag or bootstrap_fast_flag
+    if not bootstrap_active and _bootstrap_context_active():
+        bootstrap_active = True
     data = _load_config(
-        cfg_path, bootstrap_safe=bootstrap_mode_flag, bootstrap_mode=bootstrap_mode_flag
+        cfg_path, bootstrap_safe=bootstrap_mode_flag, bootstrap_mode=bootstrap_active
     )
     bots = data.setdefault("bots", {})
     cfg = bots.setdefault(bot, {})
@@ -917,14 +924,12 @@ def update_thresholds(
     if rendered is None:
         return
 
-    if bootstrap_mode:
+    if bootstrap_active:
         _cache_config(cfg_path, data, mtime=None)
-        _DEFERRED_CONFIG_WRITES[_safe_resolve_with_timeout(cfg_path, _CONFIG_IO_TIMEOUT_S)] = (
-            data,
-            rendered,
-        )
+        mode_label = "fast" if bootstrap_fast_flag else "safe"
         logger.info(
-            "bootstrap-safe threshold update cached for %s; deferring write until after startup",
+            "bootstrap-%s threshold update cached for %s; skipping disk write and deferred bookkeeping",
+            mode_label,
             bot,
         )
         return
