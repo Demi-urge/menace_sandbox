@@ -11,6 +11,8 @@ See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required envi
 3. Review the live status feed, elapsed-time banner, and optional debug panel. If every check passes, the banner switches to a success state and the **Start Sandbox** button becomes available.
 4. Launch the sandbox by selecting **Start Sandbox**, then stop it with **Stop Sandbox** when finished.
 
+If preflight pauses with a `prepare_pipeline_for_bootstrap` timeout, jump to [Bootstrap timeouts and tuning](#bootstrap-timeouts-and-tuning) for the recommended mitigations.
+
 The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the failure message in a modal prompt while capturing traceback details in the debug panel. When a pause occurs, the **Retry Step** control becomes available so you can rerun only the failing action without restarting from the beginning. You can also kick off a fresh run with **Run Preflight** after resolving the root cause.
 
 ### Logging and troubleshooting
@@ -22,6 +24,16 @@ All GUI events stream into the on-screen log with severity-based colouring, and 
 The GUI invokes `bootstrap_self_coding.py` during preflight which, in turn, builds a `ModelAutomationPipeline` before a real `SelfCodingManager` exists. Scripts that do the same must either pass an already-initialised manager via the pipeline's `manager` argument or route construction through `coding_bot_interface.prepare_pipeline_for_bootstrap`. The helper injects a bootstrap sentinel that pretends to be the manager until `_bootstrap_manager` finishes and then atomically promotes every helper via the returned callback. Reusing the sentinel avoids the "re-entrant initialisation depth" warning that appears when nested helpers try to bootstrap their own manager while the GUI (or any manual maintenance script) is still wiring up the pipeline. When that warning surfaces, inspect the `self_coding.disabled_manager` telemetry payloads (emitted via `MANAGER_CONTEXT.emit_metric`, the shared event bus or fall-back logging) to identify which script instantiated a pipeline without a real manager and then swap the offending code over to `prepare_pipeline_for_bootstrap`. Regression tests such as `tests/test_bootstrap_self_coding.py::test_prepare_pipeline_avoids_nested_bootstrap_manager` and `tests/test_bootstrap_manager_self_coding.py::test_prebuilt_manager_kwarg_reject_pipeline_promotes_helpers` ensure the safeguards stay active.
 
 When `_bootstrap_manager` falls back to building a sentinel pipeline, it also seeds the helper bootstrap context with the `_DisabledSelfCodingManager` runtime stub so helpers that instantiate before the pipeline context exists reuse that override instead of re-entering `_bootstrap_manager`. This guarantees that one-off maintenance scripts still avoid the re-entrant depth warning even when they cannot defer helper construction. `tests/test_bootstrap_manager_self_coding.py::test_script_fallback_helper_override_prevents_reentrant_bootstrap` covers the new override path.
+
+### Bootstrap timeouts and tuning
+
+The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
+
+- `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, bump this to **90–120 seconds** so preflight does not race the first vector warm-up.
+- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. Increase to **60–90 seconds** when the host is under contention or CPU quotas are tight.
+- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. For large vector stores, set **90–150 seconds** so batched uploads finish before the watchdog fires.
+
+Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
 ### Testing checklist and smoke coverage
 
