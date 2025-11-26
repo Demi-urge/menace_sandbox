@@ -5,6 +5,7 @@ import importlib
 import logging
 import sys
 import time
+from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from types import ModuleType, SimpleNamespace
@@ -280,6 +281,53 @@ def test_prepare_pipeline_bootstrap_skips_threshold_load(
 
     assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
     assert duration < 1.0
+
+
+def test_prepare_pipeline_timeout_floor_prevents_early_cancellation(
+    stub_bootstrap_env: dict[str, ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import menace.coding_bot_interface as cbi
+
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    builder = SimpleNamespace(label="timeout-floor")
+
+    tick = count(0, 50)
+    monkeypatch.setattr(cbi.time, "perf_counter", lambda: next(tick))
+
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+
+    class VectorHeavyPipeline:
+        vector_bootstrap_heavy = True
+
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+
+    pipeline, _promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=VectorHeavyPipeline,
+        context_builder=builder,
+        bot_registry=registry,
+        data_bot=data_bot,
+        timeout=1.0,
+    )
+
+    assert pipeline.bot_registry is registry
+    assert isinstance(pipeline.manager, cbi._BootstrapManagerSentinel)
+    assert any(
+        "timeout below minimum" in record.message for record in caplog.records
+    )
 
 
 @pytest.fixture
