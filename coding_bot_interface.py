@@ -3771,8 +3771,10 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     start_time = time.perf_counter()
     resolved_deadline = deadline
+    requested_timeout = None
     if resolved_deadline is None and timeout is not None:
-        resolved_deadline = start_time + max(0.0, float(timeout))
+        requested_timeout = max(0.0, float(timeout))
+        resolved_deadline = start_time + requested_timeout
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
@@ -3936,6 +3938,31 @@ def _prepare_pipeline_for_bootstrap_impl(
     previous_vector_flag = getattr(_BOOTSTRAP_STATE, "vector_heavy", False)
     if vector_bootstrap_heavy:
         _BOOTSTRAP_STATE.vector_heavy = True
+
+    resolved_wait_timeout = bootstrap_wait_timeout
+    if resolved_wait_timeout is None:
+        resolved_wait_timeout = _resolve_bootstrap_wait_timeout(vector_bootstrap_heavy)
+
+    if (
+        deadline is None
+        and requested_timeout is not None
+        and resolved_wait_timeout is not None
+        and requested_timeout < resolved_wait_timeout
+    ):
+        env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+        env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+        resolved_deadline = start_time + resolved_wait_timeout
+        logger.warning(
+            (
+                "prepare_pipeline bootstrap wait timeout clamped requested_timeout=%s "
+                "clamped_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+            ),
+            requested_timeout,
+            resolved_wait_timeout,
+            vector_bootstrap_heavy,
+            env_bootstrap_wait,
+            env_vector_wait,
+        )
 
     if bootstrap_safe:
         os.environ.setdefault("VECTOR_METRICS_BOOTSTRAP_SAFE", "1")
