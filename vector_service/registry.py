@@ -58,18 +58,47 @@ def _patch_stub_handler(record: Dict[str, any]) -> list[float]:
 _patch_stub_handler.is_patch_stub = True  # type: ignore[attr-defined]
 
 
+def _env_flag(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_bootstrap_fast(
+    bootstrap_fast: bool | None,
+) -> tuple[bool, bool, bool]:
+    bootstrap_context = any(
+        _env_flag(env) for env in ("MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE", "MENACE_BOOTSTRAP")
+    )
+    if bootstrap_fast is not None:
+        return bootstrap_fast, bootstrap_context, False
+    return bootstrap_context or False, bootstrap_context, bootstrap_context
+
+
 def load_handlers(
     *, bootstrap_fast: bool | None = None
 ) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
     handlers: Dict[str, Callable[[Dict[str, any]], list[float]]] = {}
-    bootstrap_fast = bool(bootstrap_fast) if bootstrap_fast is not None else False
+    bootstrap_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
+        bootstrap_fast
+    )
     start = time.perf_counter()
     logger.debug(
         "vector_registry.load_handlers.start",
         extra={"registered": len(_VECTOR_REGISTRY)},
     )
+    if bootstrap_context and bootstrap_fast:
+        logger.info(
+            "vector_registry.bootstrap_fast.enabled",
+            extra={
+                "bootstrap_context": True,
+                "bootstrap_fast": bootstrap_fast,
+                "defaulted": defaulted_fast,
+            },
+        )
     for kind, (mod_name, cls_name, _, _) in _VECTOR_REGISTRY.items():
         handler_start = time.perf_counter()
         logger.debug(
@@ -86,6 +115,7 @@ def load_handlers(
                 extra={
                     "kind": kind,
                     "reason": "bootstrap_fast",
+                    "bootstrap_context": bootstrap_context,
                 },
             )
             handlers[kind] = _patch_stub_handler
@@ -94,7 +124,7 @@ def load_handlers(
             mod = importlib.import_module(mod_name)
             cls = getattr(mod, cls_name)
             kwargs = {}
-            if bootstrap_fast is not None and _accepts_bootstrap_fast(cls):
+            if _accepts_bootstrap_fast(cls):
                 kwargs["bootstrap_fast"] = bootstrap_fast
             inst = cls(**kwargs)
             handlers[kind] = inst.transform
