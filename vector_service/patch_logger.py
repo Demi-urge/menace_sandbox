@@ -246,13 +246,28 @@ class PatchLogger:
         license_denylist: set[str] | None = None,
         patch_safety: PatchSafety | None = None,
         weight_adjuster: WeightAdjuster | None = None,
+        bootstrap_fast: bool = False,
     ) -> None:
-        self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
+        self.bootstrap_fast = bool(bootstrap_fast)
+        if patch_db is not None:
+            self.patch_db = patch_db
+        elif PatchHistoryDB is not None:
+            try:
+                self.patch_db = PatchHistoryDB(
+                    bootstrap=self.bootstrap_fast,
+                    bootstrap_fast=self.bootstrap_fast,
+                )
+            except Exception:
+                self.patch_db = None
+        else:
+            self.patch_db = None
         if vector_metrics is not None:
             self.vector_metrics = vector_metrics
         elif VectorMetricsDB is not None:
             try:
-                self.vector_metrics = VectorMetricsDB()
+                self.vector_metrics = VectorMetricsDB(
+                    bootstrap_fast=self.bootstrap_fast
+                )
             except Exception:
                 self.vector_metrics = None
         else:
@@ -275,6 +290,17 @@ class PatchLogger:
             if self.vector_metrics is not None
             else None
         )
+        if self.bootstrap_fast:
+            logger.info(
+                "patch_logger.bootstrap_fast.enabled; skipping heavy patch history schema setup",
+                extra={
+                    "bootstrap_fast": True,
+                    "patch_db": type(self.patch_db).__name__ if self.patch_db else None,
+                    "vector_metrics": type(self.vector_metrics).__name__
+                    if self.vector_metrics
+                    else None,
+                },
+            )
 
     # ------------------------------------------------------------------
     def _parse_vectors(

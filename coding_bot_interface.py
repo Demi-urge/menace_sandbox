@@ -4767,6 +4767,46 @@ def _bootstrap_manager(
                 pipeline_mod = _load_optional_module(
                     "model_automation_pipeline", fallback="menace.model_automation_pipeline"
                 )
+                patch_logger = None
+                patch_db_kwargs = {
+                    "bootstrap": bool(bootstrap_fast),
+                    "bootstrap_fast": bool(bootstrap_fast),
+                }
+                if bootstrap_fast:
+                    patch_db_kwargs.setdefault("path", ":memory:")
+                patch_db = patch_db_cls(**patch_db_kwargs)
+                if bootstrap_fast:
+                    try:
+                        patch_logger_mod = _load_optional_module(
+                            "vector_service.patch_logger",
+                            fallback="menace.vector_service.patch_logger",
+                        )
+                        patch_logger_cls = getattr(
+                            patch_logger_mod, "PatchLogger", None
+                        )
+                        if patch_logger_cls is not None:
+                            patch_logger = patch_logger_cls(
+                                patch_db=patch_db,
+                                vector_metrics=None,
+                                bootstrap_fast=True,
+                            )
+                            logger.info(
+                                (
+                                    "bootstrap_fast patch logger injected to avoid "
+                                    "disk-backed patch_history PRAGMA/schema during pipeline preparation"
+                                ),
+                                extra={
+                                    "schema_bypass": True,
+                                    "patch_logger": type(patch_logger).__name__,
+                                    "patch_db": type(patch_db).__name__,
+                                    "disk_schema_avoided": True,
+                                },
+                            )
+                    except Exception:
+                        logger.debug(
+                            "bootstrap patch logger unavailable; using cognition defaults",
+                            exc_info=True,
+                        )
                 if pipeline is None:
                     ctx_builder = create_context_builder()
                 else:
@@ -4778,10 +4818,8 @@ def _bootstrap_manager(
                     memory_cls(),
                     context_builder=ctx_builder,
                     bootstrap_fast=bool(bootstrap_fast),
-                    patch_db=patch_db_cls(
-                        bootstrap=bool(bootstrap_fast),
-                        bootstrap_fast=bool(bootstrap_fast),
-                    ),
+                    patch_db=patch_db,
+                    patch_logger=patch_logger,
                 )
                 pipeline_cls = getattr(pipeline_mod, "ModelAutomationPipeline", None)
                 if pipeline_cls is None:
