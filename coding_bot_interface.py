@@ -140,6 +140,8 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "timeouts": 0,
 }
 
+_BOOTSTRAP_TIMEOUT_FLOOR = 120.0
+
 
 
 def _get_bootstrap_wait_timeout() -> float | None:
@@ -153,7 +155,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
     aggressive clamps.
     """
 
-    default_timeout = 300.0
+    default_timeout = max(300.0, _BOOTSTRAP_TIMEOUT_FLOOR)
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     if not raw_timeout:
         return default_timeout
@@ -169,14 +171,19 @@ def _get_bootstrap_wait_timeout() -> float | None:
         )
         return default_timeout
 
-    clamped_timeout = max(default_timeout, parsed_timeout)
+    clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
     if clamped_timeout > parsed_timeout:
         logger.warning(
             "MENACE_BOOTSTRAP_WAIT_SECS=%r below minimum; clamping to %ss",
             raw_timeout,
             clamped_timeout,
+            extra={
+                "requested_timeout": parsed_timeout,
+                "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
+                "effective_timeout": clamped_timeout,
+            },
         )
-    return clamped_timeout
+    return max(default_timeout, clamped_timeout)
 
 
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
@@ -220,12 +227,25 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
         return _BOOTSTRAP_WAIT_TIMEOUT
 
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
-    default_timeout = 900.0
+    default_timeout = max(900.0, _BOOTSTRAP_TIMEOUT_FLOOR)
     if raw_timeout:
         if raw_timeout.strip().lower() == "none":
             return None
         try:
-            return max(1.0, float(raw_timeout))
+            parsed_timeout = float(raw_timeout)
+            clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
+            if clamped_timeout > parsed_timeout:
+                logger.warning(
+                    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r below minimum; clamping to %ss",
+                    raw_timeout,
+                    clamped_timeout,
+                    extra={
+                        "requested_timeout": parsed_timeout,
+                        "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
+                        "effective_timeout": clamped_timeout,
+                    },
+                )
+            return max(1.0, clamped_timeout)
         except ValueError:
             logger.warning(
                 "Invalid MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r; using default %ss",
