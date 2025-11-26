@@ -510,9 +510,9 @@ def _run_with_timeout(
         remediation_hints = None
         if description == "prepare_pipeline_for_bootstrap":
             remediation_hints = [
-                "Increase MENACE_BOOTSTRAP_WAIT_SECS or BOOTSTRAP_STEP_TIMEOUT for slower bootstrap hosts.",
-                "Set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS or BOOTSTRAP_VECTOR_STEP_TIMEOUT and mark vector-heavy pipelines to avoid the legacy cap.",
-                "Stagger concurrent bootstrap runs to reduce contention when initializing pipelines or vector services.",
+                "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
+                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
+                "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
             ]
         try:
             watchdog_timeline = list(
@@ -584,6 +584,11 @@ def _run_with_timeout(
             ),
             flush=True,
         )
+
+        if remediation_hints:
+            for hint in remediation_hints:
+                LOGGER.warning("[bootstrap-timeout][remediation] %s", hint)
+                print(f"[bootstrap-timeout][remediation] {hint}", flush=True)
 
         for line in _render_bootstrap_timeline(now):
             print(line, flush=True)
