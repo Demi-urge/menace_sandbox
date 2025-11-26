@@ -1097,16 +1097,26 @@ def _discover_repo_root_from_fs(search_root: Path) -> Path | None:
     return None
 
 
-def _resolve_git_repository(path: Path) -> Path | None:
+def _resolve_git_repository(
+    path: Path, *, stop_event: threading.Event | None = None
+) -> Path | None:
     """Return the git repository root for ``path`` or ``None`` when unavailable."""
 
+    if stop_event is not None and stop_event.is_set():
+        return None
     search_root = path if path.is_dir() else path.parent
     try:
         output = subprocess.check_output(
             ["git", "-C", str(search_root), "rev-parse", "--show-toplevel"],
             stderr=subprocess.STDOUT,
+            timeout=3,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        OSError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         logger.debug(
             "failed to resolve git repository for %s using git executable: %s",
             path,
@@ -1289,7 +1299,7 @@ def _lookup_patch_by_commit(commit: str, *, log_hint: str) -> tuple[int | None, 
 
 
 def _resolve_repository_context(
-    name: str, module_path: str | os.PathLike[str] | None
+    name: str, module_path: str | os.PathLike[str] | None, *, stop_event: threading.Event | None = None
 ) -> _RepositoryContext:
     """Collect repository provenance hints for ``module_path``."""
 
@@ -1297,7 +1307,7 @@ def _resolve_repository_context(
     if path is None:
         return _RepositoryContext(None, None, None, None, None)
 
-    repo_root = _resolve_git_repository(path)
+    repo_root = _resolve_git_repository(path, stop_event=stop_event)
     if repo_root is None:
         return _RepositoryContext(None, None, None, None, None)
 
@@ -1369,11 +1379,11 @@ def _resolve_repository_context(
 
 
 def _derive_repository_provenance(
-    name: str, module_path: str | os.PathLike[str] | None
+    name: str, module_path: str | os.PathLike[str] | None, *, stop_event: threading.Event | None = None
 ) -> tuple[int | None, str | None]:
     """Attempt to recover signed provenance by inspecting the git repository."""
 
-    ctx = _resolve_repository_context(name, module_path)
+    ctx = _resolve_repository_context(name, module_path, stop_event=stop_event)
     return ctx.patch_id, ctx.commit
 
 
@@ -3639,6 +3649,7 @@ def prepare_pipeline_for_bootstrap(
     context_builder: Any,
     bot_registry: Any,
     data_bot: Any,
+    stop_event: threading.Event | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3671,6 +3682,7 @@ def prepare_pipeline_for_bootstrap(
             context_builder=context_builder,
             bot_registry=bot_registry,
             data_bot=data_bot,
+            stop_event=stop_event,
             bootstrap_manager=bootstrap_manager,
             bootstrap_runtime_manager=bootstrap_runtime_manager,
             force_manager_kwarg=force_manager_kwarg,
@@ -3690,6 +3702,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     context_builder: Any,
     bot_registry: Any,
     data_bot: Any,
+    stop_event: threading.Event | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3804,6 +3817,21 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
             },
         )
+
+    def _accepts_stop_event(target: type[Any]) -> bool:
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            return False
+
+        return "stop_event" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    if stop_event is not None and "stop_event" not in pipeline_kwargs:
+        if _accepts_stop_event(pipeline_cls):
+            pipeline_kwargs["stop_event"] = stop_event
 
     setter = getattr(bot_registry, "set_bootstrap_mode", None)
     if callable(setter):
@@ -3996,6 +4024,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
     try:
+        if stop_event is not None and stop_event.is_set():
+            raise TimeoutError("prepare_pipeline_for_bootstrap cancelled via stop event")
         context_start = time.perf_counter()
         context = _push_bootstrap_context(
             registry=bot_registry,
@@ -4076,6 +4106,8 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         def _attempt_constructor(keys: tuple[str, ...]) -> bool:
             nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
+            if stop_event is not None and stop_event.is_set():
+                raise TimeoutError("prepare_pipeline_for_bootstrap cancelled via stop event")
             call_kwargs = {key: init_kwargs[key] for key in keys}
             call_kwargs.update(static_items)
             start_time = time.perf_counter()
