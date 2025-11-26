@@ -4429,11 +4429,15 @@ def _bootstrap_manager(
             bootstrap_fast = getattr(active_context, "bootstrap_fast", None)
         elif bootstrap_fast is False and getattr(active_context, "bootstrap_safe", False):
             bootstrap_fast = True
-    bootstrap_fast = bootstrap_fast if bootstrap_fast is not None else True
+    if bootstrap_fast is None:
+        bootstrap_fast = bootstrap_safe is not False
     if bootstrap_fast:
         logger.info(
             "self-coding manager bootstrap using fast path for %s", name
         )
+    logger.debug(
+        "bootstrap flags resolved for %s: fast=%s, safe=%s", name, bootstrap_fast, bootstrap_safe
+    )
 
     def _disabled_manager(reason: str, *, reentrant: bool = False) -> Any:
         placeholder: Any | None = None

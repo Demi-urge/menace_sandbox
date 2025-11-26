@@ -414,13 +414,37 @@ class SelfCodingManager:
         self.bootstrap = bool(resolved_bootstrap)
         self.bootstrap_mode = self.bootstrap
         self.bootstrap_register_timeout = bootstrap_register_timeout
-        self.bootstrap_fast = (
-            bool(bootstrap_fast)
-            if bootstrap_fast is not None
-            else bool(self.bootstrap_mode)
-        )
+        if bootstrap_fast is None:
+            self.bootstrap_fast = bool(
+                bootstrap_mode is None or self.bootstrap_mode
+            )
+        else:
+            self.bootstrap_fast = bool(bootstrap_fast)
         self._settings: SandboxSettings | None = None
-        self._get_settings()
+        settings = self._get_settings()
+        if self.bootstrap_fast:
+            self.logger.info(
+                "bootstrap_fast requested for %s (bootstrap_mode=%s)",
+                bot_name,
+                self.bootstrap_mode,
+            )
+            try:
+                settings_mod = importlib.import_module(
+                    settings.__class__.__module__ if settings else "sandbox_settings"
+                )
+                validation_check = bool(
+                    getattr(settings_mod, "_bootstrap_validation_enabled", lambda: False)()
+                )
+                assert validation_check, (
+                    "bootstrap_fast expected sandbox validation fast-path to be enabled"
+                )
+                self.logger.info(
+                    "bootstrap_fast validation active; parent directory creation is skipped",
+                )
+            except Exception:  # pragma: no cover - defensive verification
+                self.logger.exception(
+                    "unable to verify bootstrap_fast validation state during init",
+                )
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
