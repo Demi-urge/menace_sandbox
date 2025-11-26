@@ -72,6 +72,7 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 180.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 240.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
+_VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 
 
@@ -120,6 +121,38 @@ def _apply_timeout_policy_snapshot(policy_snapshot: dict[str, dict[str, Any]]) -
         ),
     )
     BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout()
+
+
+def _hydrate_vector_bootstrap_env(minimum: float = _VECTOR_ENV_MINIMUM) -> dict[str, float]:
+    """Ensure vector-heavy bootstrap env vars exist at or above ``minimum``."""
+
+    resolved: dict[str, float] = {}
+    for env_var in (
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ):
+        raw_value = os.getenv(env_var)
+        effective = minimum
+        update_env = False
+
+        if raw_value is None:
+            update_env = True
+        else:
+            try:
+                parsed = float(raw_value)
+            except (TypeError, ValueError):
+                update_env = True
+            else:
+                effective = parsed
+                if parsed < minimum:
+                    effective = minimum
+                    update_env = True
+
+        if update_env:
+            os.environ[env_var] = str(effective)
+        resolved[env_var] = float(os.getenv(env_var, str(effective)))
+
+    return resolved
 
 
 def _render_timeout_policy(policy_snapshot: dict[str, dict[str, Any]]) -> str:
@@ -821,20 +854,19 @@ def initialize_bootstrap_context(
 
     env_heavy = os.getenv("BOOTSTRAP_HEAVY_BOOTSTRAP", "")
     heavy_bootstrap = heavy_bootstrap or env_heavy.lower() in {"1", "true", "yes"}
+    vector_bootstrap_hint = False
     LOGGER.info(
         "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,
         extra={"heavy_env": env_heavy},
     )
     timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
     _apply_timeout_policy_snapshot(timeout_policy)
+    timeout_policy_summary = _render_timeout_policy(timeout_policy)
     LOGGER.info(
         "bootstrap timeout policy applied",
         extra={"timeout_policy": timeout_policy},
     )
-    print(
-        "bootstrap timeout policy: %s" % _render_timeout_policy(timeout_policy),
-        flush=True,
-    )
+    print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
 
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
@@ -871,6 +903,31 @@ def initialize_bootstrap_context(
             LOGGER.exception("context_builder creation failed (step=context_builder)")
             raise
         _log_step("context_builder", ctx_builder_start)
+
+        try:
+            vector_bootstrap_hint = _is_vector_bootstrap_heavy(context_builder)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("failed to inspect context builder for vector-heavy hint", exc_info=True)
+            vector_bootstrap_hint = False
+
+        if vector_bootstrap_hint:
+            vector_env = _hydrate_vector_bootstrap_env()
+            try:
+                _coding_bot_interface._BOOTSTRAP_STATE.vector_heavy = True
+            except Exception:  # pragma: no cover - defensive
+                LOGGER.debug("unable to propagate vector-heavy bootstrap flag", exc_info=True)
+
+            timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
+            _apply_timeout_policy_snapshot(timeout_policy)
+            timeout_policy_summary = _render_timeout_policy(timeout_policy)
+            LOGGER.info(
+                "vector-heavy bootstrap env hydrated",
+                extra={
+                    "vector_env": vector_env,
+                    "timeout_policy": timeout_policy,
+                },
+            )
+            print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("bot_registry")
