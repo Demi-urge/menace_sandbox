@@ -141,6 +141,7 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
 }
 
 
+
 def _get_bootstrap_wait_timeout() -> float | None:
     """Return the maximum time (in seconds) to wait for helper bootstrap.
 
@@ -545,6 +546,10 @@ class _RepositoryContext:
     repo_root: Path | None
     relative_path: Path | None
     canonical_path: str | None
+
+
+_REPOSITORY_CONTEXT_CACHE: dict[tuple[str, str], _RepositoryContext] = {}
+_REPOSITORY_CONTEXT_LOCK = threading.Lock()
 
 
 def _unsigned_provenance_allowed() -> bool:
@@ -1300,6 +1305,12 @@ def _resolve_repository_context(
     rel_path_posix = rel_path.as_posix()
     canonical_path = _canonicalise_repo_path(rel_path_posix)
 
+    cache_key = (str(repo_root.resolve()), rel_path_posix)
+    with _REPOSITORY_CONTEXT_LOCK:
+        cached_ctx = _REPOSITORY_CONTEXT_CACHE.get(cache_key)
+    if cached_ctx is not None:
+        return cached_ctx
+
     try:
         output = subprocess.check_output(
             [
@@ -1327,22 +1338,34 @@ def _resolve_repository_context(
         )
         commit = _read_git_head_commit(repo_root)
         if not commit:
-            return _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
+            ctx = _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
+            with _REPOSITORY_CONTEXT_LOCK:
+                _REPOSITORY_CONTEXT_CACHE[cache_key] = ctx
+            return ctx
         logger.debug(
             "using HEAD commit fallback for %s because git log invocation failed", name
         )
     else:
         commit = _coerce_commit(output.decode("utf-8", "replace").strip())
         if not commit:
-            return _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
+            ctx = _RepositoryContext(None, None, repo_root, rel_path, canonical_path)
+            with _REPOSITORY_CONTEXT_LOCK:
+                _REPOSITORY_CONTEXT_CACHE[cache_key] = ctx
+            return ctx
 
     patch_id, commit_hash = _lookup_patch_by_commit(
         commit, log_hint=f"{name}@{rel_path_posix}"
     )
     if patch_id is None:
-        return _RepositoryContext(None, commit, repo_root, rel_path, canonical_path)
+        ctx = _RepositoryContext(None, commit, repo_root, rel_path, canonical_path)
+        with _REPOSITORY_CONTEXT_LOCK:
+            _REPOSITORY_CONTEXT_CACHE[cache_key] = ctx
+        return ctx
 
-    return _RepositoryContext(patch_id, commit_hash or commit, repo_root, rel_path, canonical_path)
+    ctx = _RepositoryContext(patch_id, commit_hash or commit, repo_root, rel_path, canonical_path)
+    with _REPOSITORY_CONTEXT_LOCK:
+        _REPOSITORY_CONTEXT_CACHE[cache_key] = ctx
+    return ctx
 
 
 def _derive_repository_provenance(
