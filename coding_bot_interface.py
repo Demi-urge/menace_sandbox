@@ -3650,6 +3650,8 @@ def prepare_pipeline_for_bootstrap(
     bot_registry: Any,
     data_bot: Any,
     stop_event: threading.Event | None = None,
+    timeout: float | None = None,
+    deadline: float | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3683,6 +3685,8 @@ def prepare_pipeline_for_bootstrap(
             bot_registry=bot_registry,
             data_bot=data_bot,
             stop_event=stop_event,
+            timeout=timeout,
+            deadline=deadline,
             bootstrap_manager=bootstrap_manager,
             bootstrap_runtime_manager=bootstrap_runtime_manager,
             force_manager_kwarg=force_manager_kwarg,
@@ -3703,6 +3707,8 @@ def _prepare_pipeline_for_bootstrap_impl(
     bot_registry: Any,
     data_bot: Any,
     stop_event: threading.Event | None = None,
+    timeout: float | None = None,
+    deadline: float | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3746,6 +3752,41 @@ def _prepare_pipeline_for_bootstrap_impl(
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
+
+    start_time = time.perf_counter()
+    resolved_deadline = deadline
+    if resolved_deadline is None and timeout is not None:
+        resolved_deadline = start_time + max(0.0, float(timeout))
+
+    def _record_timeout(stage: str, reason: str) -> None:
+        _record_prepare_pipeline_stage(
+            stage,
+            elapsed=time.perf_counter() - start_time,
+            timeout=True,
+            extra={"reason": reason},
+        )
+
+    def _check_stop_or_timeout(stage: str) -> None:
+        if stop_event is not None and stop_event.is_set():
+            logger.warning(
+                "prepare_pipeline_for_bootstrap cancelled during %s via stop event",
+                stage,
+            )
+            _record_timeout(stage, "stop_event")
+            raise TimeoutError(
+                f"prepare_pipeline_for_bootstrap cancelled via stop event during {stage}"
+            )
+        if resolved_deadline is not None and time.perf_counter() > resolved_deadline:
+            elapsed = time.perf_counter() - start_time
+            logger.warning(
+                "prepare_pipeline_for_bootstrap timed out during %s after %.3fs",
+                stage,
+                elapsed,
+            )
+            _record_timeout(stage, "deadline")
+            raise TimeoutError(
+                f"prepare_pipeline_for_bootstrap timed out during {stage}"
+            )
 
     def _typeerror_rejects_manager(exc: TypeError) -> bool:
         message = str(exc)
@@ -4024,8 +4065,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         managed_extra_manager_sentinels = tuple(dict.fromkeys(extra_candidates))
 
     try:
-        if stop_event is not None and stop_event.is_set():
-            raise TimeoutError("prepare_pipeline_for_bootstrap cancelled via stop event")
+        _check_stop_or_timeout("context push")
         context_start = time.perf_counter()
         context = _push_bootstrap_context(
             registry=bot_registry,
@@ -4106,8 +4146,7 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         def _attempt_constructor(keys: tuple[str, ...]) -> bool:
             nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
-            if stop_event is not None and stop_event.is_set():
-                raise TimeoutError("prepare_pipeline_for_bootstrap cancelled via stop event")
+            _check_stop_or_timeout("pipeline constructor attempt")
             call_kwargs = {key: init_kwargs[key] for key in keys}
             call_kwargs.update(static_items)
             start_time = time.perf_counter()
@@ -4202,6 +4241,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 if callable(candidate_release):
                     shim_release_candidate = candidate_release
             with _runtime_context_manager():
+                _check_stop_or_timeout("pipeline constructor attempts")
                 for keys in manager_variants:
                     if _attempt_constructor(keys):
                         break
@@ -4255,6 +4295,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                     if callable(candidate_release):
                         shim_release_candidate = candidate_release
                 with _runtime_context_manager():
+                    _check_stop_or_timeout("managerless constructor attempts")
                     for keys in managerless_variants:
                         if _attempt_constructor(keys):
                             shim_manager_placeholder = managerless_placeholder
@@ -4332,6 +4373,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         extra_sentinel_candidates = tuple(extra_sentinels or ())
         aggregation_start = time.perf_counter()
         try:
+            _check_stop_or_timeout("promotion aggregation")
             combined: list[Any] = []
             seen: set[int] = set()
             sentinel_groups: tuple[Iterable[Any] | None, ...] = (
