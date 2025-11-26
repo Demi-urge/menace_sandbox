@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterable
@@ -66,6 +67,7 @@ except Exception:  # pragma: no cover - fallback for package execution
 
 from ..cli import main as _cli_main
 from ..cycle import ensure_vector_service
+from lock_utils import SandboxLock, Timeout as LockTimeout
 
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
@@ -75,6 +77,12 @@ _AUTONOMOUS_LAUNCH_RETRY: threading.Timer | None = None
 
 
 _BOOTSTRAP_WATCHDOG_ENV = "BOOTSTRAP_WATCHDOG_ACTIVE"
+_BOOTSTRAP_LOCK_ENV = "MENACE_BOOTSTRAP_LOCK_FILE"
+_BOOTSTRAP_LOCK_TIMEOUT_ENV = "MENACE_BOOTSTRAP_LOCK_TIMEOUT"
+_MINIMISE_WATCHERS_ENV = "MENACE_MINIMISE_BOOTSTRAP_WATCHERS"
+_WATCHER_ROOTS_ENV = "MENACE_BOOTSTRAP_WATCH_ROOTS"
+
+_DEFAULT_BOOTSTRAP_LOCK = Path("/tmp/menace_bootstrap.lock")
 
 
 logger = get_logger(__name__)
@@ -318,6 +326,84 @@ def _ensure_sqlite_db(path: Path) -> None:
         )
         logger.error(message, exc_info=True)
         raise RuntimeError(message) from exc
+
+
+@contextmanager
+def _serialize_bootstrap(label: str = "bootstrap") -> Iterable[None]:
+    """Enforce a host-level bootstrap mutex.
+
+    A :class:`SandboxLock` backed by ``MENACE_BOOTSTRAP_LOCK_FILE`` (or a
+    ``/tmp`` default) ensures only one bootstrap runs per host at a time.  This
+    prevents competing CI jobs or manual launches from thrashing shared
+    resources and tripping timeouts.
+    """
+
+    lock_path = Path(os.getenv(_BOOTSTRAP_LOCK_ENV, str(_DEFAULT_BOOTSTRAP_LOCK)))
+    timeout_env = os.getenv(_BOOTSTRAP_LOCK_TIMEOUT_ENV, "600")
+    try:
+        timeout = float(timeout_env)
+    except ValueError:
+        timeout = 600.0
+
+    start = time.perf_counter()
+    lock = SandboxLock(str(lock_path))
+    logger.info("waiting for %s lock at %s", label, lock_path)
+    try:
+        with lock.acquire(timeout=timeout):
+            waited = time.perf_counter() - start
+            logger.info(
+                "%s lock acquired after %.2fs", label, waited, extra={"lock": str(lock_path)}
+            )
+            yield
+    except LockTimeout as exc:  # pragma: no cover - relies on external contention
+        raise SystemExit(
+            f"another bootstrap is already running on this host (lock={lock_path})"
+        ) from exc
+
+
+@contextmanager
+def _limit_recursive_watchers(settings: SandboxSettings | None) -> Iterable[None]:
+    """Temporarily minimise filesystem watchers during bootstrap.
+
+    The context signals other components to avoid spawning recursive watchers
+    (for example IDE sync tools or background indexers) by setting
+    ``MENACE_MINIMISE_BOOTSTRAP_WATCHERS``.  It also exposes a best-effort list
+    of bootstrap-critical paths via ``MENACE_BOOTSTRAP_WATCH_ROOTS`` so that any
+    tooling that *must* watch can restrict scope.
+    """
+
+    previous_flag = os.environ.get(_MINIMISE_WATCHERS_ENV)
+    previous_roots = os.environ.get(_WATCHER_ROOTS_ENV)
+
+    roots: set[str] = set()
+    for candidate in (
+        getattr(settings, "sandbox_repo_path", None),
+        getattr(settings, "sandbox_data_dir", None),
+    ):
+        if not candidate:
+            continue
+        try:
+            resolved = resolve_path(str(candidate))
+        except Exception:
+            continue
+        roots.add(str(resolved))
+
+    os.environ[_MINIMISE_WATCHERS_ENV] = "1"
+    if roots:
+        os.environ[_WATCHER_ROOTS_ENV] = os.pathsep.join(sorted(roots))
+
+    try:
+        yield
+    finally:
+        if previous_flag is None:
+            os.environ.pop(_MINIMISE_WATCHERS_ENV, None)
+        else:
+            os.environ[_MINIMISE_WATCHERS_ENV] = previous_flag
+
+        if previous_roots is None:
+            os.environ.pop(_WATCHER_ROOTS_ENV, None)
+        else:
+            os.environ[_WATCHER_ROOTS_ENV] = previous_roots
 
 
 def _activate_bootstrap_watchdog_flag() -> Callable[[], None]:
@@ -1271,13 +1357,14 @@ def bootstrap_environment(
     sandbox_restart_total.labels(service="bootstrap", reason="bootstrap").inc()
     logger.info("bootstrap environment start", extra=log_record(event="start"))
     try:
-        result = _bootstrap_environment(
-            settings,
-            verifier,
-            auto_install=auto_install,
-            initialize=initialize,
-            enforce_dependencies=enforce_dependencies,
-        )
+        with _serialize_bootstrap():
+            result = _bootstrap_environment(
+                settings,
+                verifier,
+                auto_install=auto_install,
+                initialize=initialize,
+                enforce_dependencies=enforce_dependencies,
+            )
         logger.info(
             "bootstrap environment complete", extra=log_record(event="shutdown")
         )
@@ -1309,51 +1396,52 @@ def _bootstrap_environment(
     """
 
     settings = settings or load_sandbox_settings()
-    effective_auto_install = (
-        settings.auto_install_dependencies if auto_install is None else auto_install
-    )
-    env_file = Path(settings.menace_env_file)
-    created_env = not env_file.exists()
-    ensure_env(str(env_file))
-    # populate defaults for any missing configuration values without prompting
-    DefaultConfigManager(str(env_file)).apply_defaults()
-    if created_env:
-        logger.info("created env file at %s", env_file)
-    if verifier:
-        try:
-            errors = verifier(settings, effective_auto_install)  # type: ignore[misc]
-        except TypeError:
-            errors = verifier(settings)  # type: ignore[misc]
-    else:
-        errors = _verify_required_dependencies(
-            settings, strict=enforce_dependencies
+    with _limit_recursive_watchers(settings):
+        effective_auto_install = (
+            settings.auto_install_dependencies if auto_install is None else auto_install
         )
-
-    if (
-        errors
-        and effective_auto_install
-        and verifier is None
-        and (errors.get("python") or errors.get("optional"))
-    ):
-        if _auto_install_missing_python_packages(errors):
+        env_file = Path(settings.menace_env_file)
+        created_env = not env_file.exists()
+        ensure_env(str(env_file))
+        # populate defaults for any missing configuration values without prompting
+        DefaultConfigManager(str(env_file)).apply_defaults()
+        if created_env:
+            logger.info("created env file at %s", env_file)
+        if verifier:
+            try:
+                errors = verifier(settings, effective_auto_install)  # type: ignore[misc]
+            except TypeError:
+                errors = verifier(settings)  # type: ignore[misc]
+        else:
             errors = _verify_required_dependencies(
                 settings, strict=enforce_dependencies
             )
 
-    if errors and not enforce_dependencies:
-        _log_dependency_warnings(errors)
-        errors = {}
+        if (
+            errors
+            and effective_auto_install
+            and verifier is None
+            and (errors.get("python") or errors.get("optional"))
+        ):
+            if _auto_install_missing_python_packages(errors):
+                errors = _verify_required_dependencies(
+                    settings, strict=enforce_dependencies
+                )
 
-    if errors:
-        raise SystemExit("\n".join(_format_dependency_errors(errors)))
-    if not initialize:
-        return initialize_autonomous_sandbox(
-            settings,
-            start_services=False,
-            start_self_improvement=False,
-        )
+        if errors and not enforce_dependencies:
+            _log_dependency_warnings(errors)
+            errors = {}
 
-    return initialize_autonomous_sandbox(settings)
+        if errors:
+            raise SystemExit("\n".join(_format_dependency_errors(errors)))
+        if not initialize:
+            return initialize_autonomous_sandbox(
+                settings,
+                start_services=False,
+                start_self_improvement=False,
+            )
+
+        return initialize_autonomous_sandbox(settings)
 
 
 def _format_dependency_errors(errors: dict[str, list[str]]) -> list[str]:
