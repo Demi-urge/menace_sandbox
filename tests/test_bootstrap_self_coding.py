@@ -12,6 +12,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Any, Callable
 import time
+import threading
 
 import pytest
 
@@ -66,6 +67,53 @@ def test_prepare_pipeline_promotes_eager_helper_stub(
     assert helper.manager is manager
     assert env.helper_final_managers and env.helper_final_managers[-1] is manager
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_prepare_pipeline_clamps_deadline_to_safe_floor(caplog):
+    stop_event = threading.Event()
+    stop_event.set()
+
+    caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
+
+    class _StubPipeline:
+        def __init__(self, **_kwargs):
+            pass
+
+    class _StubRegistry:
+        pass
+
+    class _StubBuilder:
+        pass
+
+    class _StubDataBot:
+        pass
+
+    with pytest.raises(TimeoutError):
+        coding_bot_interface.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_StubPipeline,
+            context_builder=_StubBuilder(),
+            bot_registry=_StubRegistry(),
+            data_bot=_StubDataBot(),
+            stop_event=stop_event,
+            timeout=30,
+        )
+
+    clamp_records = [
+        record for record in caplog.records if "deadline clamped" in record.getMessage()
+    ]
+    assert clamp_records
+
+    stop_records = [
+        record for record in caplog.records if "cancelled during" in record.getMessage()
+    ]
+    assert stop_records
+    resolved_timeouts = [
+        float(record.args[1]) for record in stop_records if len(record.args) > 1
+    ]
+    assert any(
+        timeout >= coding_bot_interface._BOOTSTRAP_TIMEOUT_FLOOR
+        for timeout in resolved_timeouts
+    )
 
 
 def test_prepare_pipeline_bootstrap_skips_path_resolution(monkeypatch):
