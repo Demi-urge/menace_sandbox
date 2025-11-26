@@ -3652,6 +3652,7 @@ def prepare_pipeline_for_bootstrap(
     stop_event: threading.Event | None = None,
     timeout: float | None = None,
     deadline: float | None = None,
+    bootstrap_wait_timeout: float | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3687,6 +3688,7 @@ def prepare_pipeline_for_bootstrap(
             stop_event=stop_event,
             timeout=timeout,
             deadline=deadline,
+            bootstrap_wait_timeout=bootstrap_wait_timeout,
             bootstrap_manager=bootstrap_manager,
             bootstrap_runtime_manager=bootstrap_runtime_manager,
             force_manager_kwarg=force_manager_kwarg,
@@ -3709,6 +3711,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     stop_event: threading.Event | None = None,
     timeout: float | None = None,
     deadline: float | None = None,
+    bootstrap_wait_timeout: float | None = None,
     bootstrap_manager: Any | None = None,
     bootstrap_runtime_manager: Any | None = None,
     force_manager_kwarg: bool = False,
@@ -3749,6 +3752,9 @@ def _prepare_pipeline_for_bootstrap_impl(
     construction; once the pipeline instance exists the sentinel bookkeeping is
     reapplied so promotion callbacks behave as before.  Callers that need a
     specific temporary manager can supply it via ``bootstrap_runtime_manager``.
+    ``bootstrap_wait_timeout`` overrides the helper coordination wait window so
+    heavy bootstrap workloads can increase the limit without changing global
+    environment defaults.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -5568,9 +5574,21 @@ def self_coding_managed(
                         getattr(active_context, "data_bot", None),
                         None,
                     )
-                timeout = _resolve_bootstrap_wait_timeout(
-                    bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
-                )
+                vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+                timeout = bootstrap_wait_timeout
+                if timeout is None:
+                    timeout = _resolve_bootstrap_wait_timeout(vector_heavy)
+                    logger.debug(
+                        "bootstrap helper wait timeout resolved to %s (vector_heavy=%s)",
+                        timeout,
+                        vector_heavy,
+                    )
+                else:
+                    logger.debug(
+                        "bootstrap helper wait timeout overridden to %s (vector_heavy=%s)",
+                        timeout,
+                        vector_heavy,
+                    )
                 wait_start = time.perf_counter()
                 if not bootstrap_event.wait(timeout=timeout):
                     timeout_error = TimeoutError(
