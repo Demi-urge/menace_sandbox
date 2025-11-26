@@ -1,7 +1,30 @@
 import sys
+import os
+import sys
 import types
 from pathlib import Path
-import os
+
+menace_sandbox_pkg = types.ModuleType("menace_sandbox")
+menace_sandbox_pkg.__path__ = [str(Path(__file__).resolve().parent)]
+sys.modules.setdefault("menace_sandbox", menace_sandbox_pkg)
+
+
+class _StubBotRegistry:
+    def _verify_signed_provenance(self, *args, **kwargs):
+        return True
+
+
+sandbox_bot_registry = types.ModuleType("menace_sandbox.bot_registry")
+sandbox_bot_registry.BotRegistry = _StubBotRegistry
+sys.modules.setdefault("menace_sandbox.bot_registry", sandbox_bot_registry)
+
+root_pkg = types.ModuleType("menace")
+root_pkg.__path__ = [str(Path(__file__).resolve().parent)]
+sys.modules.setdefault("menace", root_pkg)
+
+root_bot_registry = types.ModuleType("menace.bot_registry")
+root_bot_registry.BotRegistry = _StubBotRegistry
+sys.modules.setdefault("menace.bot_registry", root_bot_registry)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
