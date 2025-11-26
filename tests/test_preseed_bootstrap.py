@@ -329,3 +329,6 @@ def test_prepare_pipeline_timeout_falls_back_when_resolver_none(monkeypatch, res
 
     assert context["manager"] is dummy_manager
     assert timeouts["prepare_pipeline_for_bootstrap"] == pytest.approx(bootstrap._DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT)
+    assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(
+        bootstrap._DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+    )

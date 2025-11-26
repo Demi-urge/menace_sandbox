@@ -6,8 +6,9 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 
 Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
-``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous fallback for
-compatibility unless timeouts are explicitly disabled.
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 300s
+fallback derived from ``_get_bootstrap_wait_timeout`` (or
+``BOOTSTRAP_STEP_TIMEOUT``) unless timeouts are explicitly disabled.
 """
 
 from __future__ import annotations
@@ -52,7 +53,14 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "300.0"))
+_BASELINE_BOOTSTRAP_STEP_TIMEOUT = (
+    _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
+    if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
+    else 300.0
+)
+_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(
+    os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))
+)
 _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = float(
     os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")
 )
@@ -100,7 +108,15 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
                 return resolved_timeout
             LOGGER.debug(
                 "bootstrap wait resolver returned None; using fallback timeout",
-                extra={"vector_heavy": vector_heavy, "fallback": fallback_timeout},
+                extra={
+                    "vector_heavy": vector_heavy,
+                    "fallback": fallback_timeout,
+                    "env_override": (
+                        "BOOTSTRAP_VECTOR_STEP_TIMEOUT"
+                        if vector_heavy
+                        else "BOOTSTRAP_STEP_TIMEOUT"
+                    ),
+                },
             )
         except Exception:  # pragma: no cover - helper availability best effort
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
