@@ -761,7 +761,9 @@ class PatchLogger:
                             if svc is None:
                                 try:
                                     from .vectorizer import SharedVectorService  # type: ignore
-                                    svc = SharedVectorService()
+                                    svc = SharedVectorService(
+                                        bootstrap_fast=self.bootstrap_fast
+                                    )
                                 except Exception:
                                     svc = None
                             if svc is not None:
@@ -780,9 +782,9 @@ class PatchLogger:
                             else:
                                 try:
                                     from .patch_vectorizer import PatchVectorizer  # type: ignore
-                                    PatchVectorizer().try_add_embedding(
-                                        int(patch_id), record, "patch"
-                                    )
+                                    PatchVectorizer(
+                                        bootstrap_fast=self.bootstrap_fast
+                                    ).try_add_embedding(int(patch_id), record, "patch")
                                 except Exception:
                                     logger.exception(
                                         "PatchVectorizer patch embedding failed",
