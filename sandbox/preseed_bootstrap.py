@@ -52,7 +52,7 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = 30.0
+_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "30.0"))
 BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
@@ -182,6 +182,40 @@ def _render_bootstrap_timeline(now: float) -> list[str]:
     return lines
 
 
+def _resolve_timeout(
+    base_timeout: float,
+    *,
+    bootstrap_deadline: float | None,
+    heavy_bootstrap: bool = False,
+) -> tuple[float, dict[str, Any]]:
+    """Resolve an effective timeout with deadline- and heavy-aware scaling."""
+
+    effective_timeout = base_timeout
+    now = time.monotonic()
+    deadline_remaining = bootstrap_deadline - now if bootstrap_deadline else None
+    metadata: dict[str, Any] = {
+        "base_timeout": base_timeout,
+        "heavy_bootstrap": heavy_bootstrap,
+        "deadline_remaining": deadline_remaining,
+        "deadline_buffer": BOOTSTRAP_DEADLINE_BUFFER,
+    }
+
+    if heavy_bootstrap:
+        heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
+        effective_timeout = max(effective_timeout, base_timeout * heavy_scale)
+        metadata["heavy_scale"] = heavy_scale
+
+    if deadline_remaining is not None:
+        buffered_remaining = max(deadline_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
+        metadata["deadline_buffered_remaining"] = buffered_remaining
+        if buffered_remaining > effective_timeout:
+            effective_timeout = buffered_remaining
+        effective_timeout = min(effective_timeout, max(deadline_remaining, 0.0))
+
+    metadata["effective_timeout"] = effective_timeout
+    return effective_timeout, metadata
+
+
 def _run_with_timeout(
     fn,
     *,
@@ -189,25 +223,30 @@ def _run_with_timeout(
     bootstrap_deadline: float | None = None,
     description: str,
     abort_on_timeout: bool = True,
+    heavy_bootstrap: bool = False,
+    resolved_timeout: tuple[float, dict[str, Any]] | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
 
     start_monotonic = time.monotonic()
     start_wall = time.time()
-    deadline_remaining_start = (
-        bootstrap_deadline - start_monotonic if bootstrap_deadline else None
+    if resolved_timeout is None:
+        effective_timeout, timeout_context = _resolve_timeout(
+            timeout, bootstrap_deadline=bootstrap_deadline, heavy_bootstrap=heavy_bootstrap
+        )
+    else:
+        effective_timeout, timeout_context = resolved_timeout
+
+    LOGGER.info(
+        "%s starting with timeout (requested=%.1fs effective=%.1fs heavy=%s deadline=%s)",
+        description,
+        timeout,
+        effective_timeout,
+        heavy_bootstrap,
+        bootstrap_deadline,
+        extra={"timeout_context": timeout_context},
     )
-
-    if bootstrap_deadline:
-        time_remaining = bootstrap_deadline - start_monotonic
-        if time_remaining > 0:
-            buffered_remaining = max(time_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
-            deadline_constrained = min(timeout, time_remaining)
-            if buffered_remaining > 0:
-                deadline_constrained = min(deadline_constrained, buffered_remaining)
-
-            timeout = max(deadline_constrained, 0.0)
 
     result: Dict[str, Any] = {}
 
@@ -219,7 +258,7 @@ def _run_with_timeout(
 
     thread = threading.Thread(target=_target, daemon=True)
     thread.start()
-    thread.join(timeout)
+    thread.join(effective_timeout)
 
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
 
@@ -242,9 +281,10 @@ def _run_with_timeout(
             "start_time": _format_timestamp(start_wall),
             "end_time": _format_timestamp(end_wall),
             "elapsed": round(time.monotonic() - start_monotonic, 3),
-            "timeout": timeout,
+            "timeout_requested": timeout,
+            "timeout_effective": effective_timeout,
             "bootstrap_deadline": bootstrap_deadline,
-            "bootstrap_remaining_start": deadline_remaining_start,
+            "bootstrap_remaining_start": timeout_context.get("deadline_remaining"),
             "bootstrap_remaining_now": deadline_remaining_now,
             "function": getattr(fn, "__name__", fn.__class__.__name__),
             "kwargs": _safe_kwargs_summary(kwargs),
@@ -253,12 +293,13 @@ def _run_with_timeout(
             "last_step": last_step,
             "active_step": active_step,
             "active_elapsed_ms": active_elapsed_ms,
+            "timeout_context": timeout_context,
         }
 
         LOGGER.error(
             "%s timed out after %.1fs (last_step=%s) metadata=%s",
             description,
-            timeout,
+            effective_timeout,
             last_step,
             metadata,
         )
@@ -268,7 +309,10 @@ def _run_with_timeout(
             else "active_step=unknown"
         )
         print(
-            f"[bootstrap-timeout][metadata] {description} timed out after {timeout:.1f}s ({active_fragment}): {metadata}",
+            (
+                "[bootstrap-timeout][metadata] %s timed out after %.1fs (%s): %s"
+            )
+            % (description, effective_timeout, active_fragment, metadata),
             flush=True,
         )
 
@@ -278,7 +322,9 @@ def _run_with_timeout(
         _dump_thread_traces(thread)
 
         if abort_on_timeout:
-            raise TimeoutError(f"{description} timed out after {timeout:.1f}s")
+            raise TimeoutError(
+                f"{description} timed out after {effective_timeout:.1f}s"
+            )
 
         LOGGER.warning("skipping %s due to timeout", description)
         return None
@@ -286,7 +332,7 @@ def _run_with_timeout(
     if "exc" in result:
         LOGGER.exception("%s failed", description, exc_info=result["exc"])
         print(
-            f"[bootstrap-error] {description} failed after {timeout:.1f}s (last_step={last_step})",
+            f"[bootstrap-error] {description} failed after {effective_timeout:.1f}s (last_step={last_step})",
             flush=True,
         )
         raise result["exc"]
@@ -465,6 +511,7 @@ def initialize_bootstrap_context(
     bot_name: str = "ResearchAggregatorBot",
     *,
     use_cache: bool = True,
+    heavy_bootstrap: bool = False,
     stop_event: threading.Event | None = None,
     bootstrap_deadline: float | None = None,
 ) -> Dict[str, Any]:
@@ -474,7 +521,9 @@ def initialize_bootstrap_context(
     ``context_builder``, ``engine``, ``pipeline`` and ``manager`` instances.
     Subsequent invocations return cached instances for the given ``bot_name`` when
     ``use_cache`` is ``True``. Pass ``use_cache=False`` to force a fresh bootstrap
-    without populating or reading the shared cache.
+    without populating or reading the shared cache. Enable ``heavy_bootstrap`` (or
+    set ``BOOTSTRAP_HEAVY_BOOTSTRAP``) to allow timeouts to scale up when more time
+    is available or heavy vector work is expected.
     """
 
     global _BOOTSTRAP_CACHE
@@ -489,6 +538,13 @@ def initialize_bootstrap_context(
             return func(**func_kwargs)
         finally:
             LOGGER.debug("%s completed (elapsed=%.3fs)", label, perf_counter() - start)
+
+    env_heavy = os.getenv("BOOTSTRAP_HEAVY_BOOTSTRAP", "")
+    heavy_bootstrap = heavy_bootstrap or env_heavy.lower() in {"1", "true", "yes"}
+    LOGGER.info(
+        "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,
+        extra={"heavy_env": env_heavy},
+    )
 
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
@@ -566,6 +622,7 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="_push_bootstrap_context final",
                     abort_on_timeout=True,
+                    heavy_bootstrap=heavy_bootstrap,
                     registry=registry,
                     data_bot=data_bot,
                     manager=bootstrap_manager,
@@ -578,6 +635,7 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="_seed_research_aggregator_context final",
                     abort_on_timeout=False,
+                    heavy_bootstrap=heavy_bootstrap,
                     registry=registry,
                     data_bot=data_bot,
                     context_builder=context_builder,
@@ -634,6 +692,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
+                heavy_bootstrap=heavy_bootstrap,
                 func=_push_bootstrap_context,
                 label="_push_bootstrap_context placeholder",
                 registry=registry,
@@ -658,6 +717,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
+                heavy_bootstrap=heavy_bootstrap,
                 func=_seed_research_aggregator_context,
                 label="_seed_research_aggregator_context placeholder",
                 registry=registry,
@@ -690,13 +750,23 @@ def initialize_bootstrap_context(
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
             prepare_timeout = vector_timeout if vector_heavy else standard_timeout
+            heavy_prepare = heavy_bootstrap or vector_heavy
+            resolved_prepare_timeout = _resolve_timeout(
+                prepare_timeout,
+                bootstrap_deadline=bootstrap_deadline,
+                heavy_bootstrap=heavy_prepare,
+            )
+            effective_prepare_timeout = resolved_prepare_timeout[0]
             LOGGER.info(
                 "prepare_pipeline timeout selected",
                 extra={
                     "vector_heavy": vector_heavy,
-                    "timeout": prepare_timeout,
+                    "timeout": effective_prepare_timeout,
+                    "timeout_requested": prepare_timeout,
                     "vector_timeout": vector_timeout,
                     "standard_timeout": standard_timeout,
+                    "heavy_bootstrap": heavy_prepare,
+                    "timeout_context": resolved_prepare_timeout[1],
                 },
             )
             print(
@@ -704,7 +774,7 @@ def initialize_bootstrap_context(
                     "starting prepare_pipeline_for_bootstrap "
                     "(last_step=%s, timeout=%.1fs, elapsed=0.0s)"
                 )
-                % (BOOTSTRAP_PROGRESS["last_step"], prepare_timeout),
+                % (BOOTSTRAP_PROGRESS["last_step"], effective_prepare_timeout),
                 flush=True,
             )
             prepare_start = perf_counter()
@@ -715,6 +785,8 @@ def initialize_bootstrap_context(
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
+                    heavy_bootstrap=heavy_prepare,
+                    resolved_timeout=resolved_prepare_timeout,
                     func=prepare_pipeline_for_bootstrap,
                     label="prepare_pipeline_for_bootstrap",
                     stop_event=stop_event,
@@ -730,13 +802,13 @@ def initialize_bootstrap_context(
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
-                    (
+                    ( 
                         "prepare_pipeline_for_bootstrap failed "
                         "(last_step=%s, timeout=%.1fs, elapsed=%.2fs)"
                     )
                     % (
                         BOOTSTRAP_PROGRESS["last_step"],
-                        prepare_timeout,
+                        effective_prepare_timeout,
                         perf_counter() - prepare_start,
                     ),
                     flush=True,
@@ -755,7 +827,7 @@ def initialize_bootstrap_context(
                 )
                 % (
                     BOOTSTRAP_PROGRESS["last_step"],
-                    prepare_timeout,
+                    effective_prepare_timeout,
                     perf_counter() - prepare_start,
                 ),
                 flush=True,
@@ -816,6 +888,7 @@ def initialize_bootstrap_context(
                 bootstrap_deadline=bootstrap_deadline,
                 description="promote_pipeline",
                 abort_on_timeout=True,
+                heavy_bootstrap=heavy_bootstrap,
                 func=promote_pipeline,
                 label="promote_pipeline",
                 manager=manager,
@@ -841,6 +914,7 @@ def initialize_bootstrap_context(
             bootstrap_deadline=bootstrap_deadline,
             description="_push_bootstrap_context final",
             abort_on_timeout=True,
+            heavy_bootstrap=heavy_bootstrap,
             registry=registry,
             data_bot=data_bot,
             manager=manager,
@@ -863,6 +937,7 @@ def initialize_bootstrap_context(
             bootstrap_deadline=bootstrap_deadline,
             description="_seed_research_aggregator_context final",
             abort_on_timeout=False,
+            heavy_bootstrap=heavy_bootstrap,
             registry=registry,
             data_bot=data_bot,
             context_builder=context_builder,
