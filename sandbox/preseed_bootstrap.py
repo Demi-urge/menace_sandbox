@@ -3,6 +3,11 @@
 The utilities here build the same pipeline/manager setup used by the runtime
 bootstrapping helpers and then expose that state to lazy modules so they can
 skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
+
+Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
+when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a minimum fallback to the
+legacy 30s defaults for compatibility.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import faulthandler
 from time import perf_counter
 from typing import Any, Dict
 
+from menace_sandbox import coding_bot_interface as _coding_bot_interface
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.context_builder_util import create_context_builder
@@ -46,7 +52,8 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-BOOTSTRAP_STEP_TIMEOUT = 30.0
+_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = 30.0
+BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
@@ -54,6 +61,27 @@ SELF_CODING_MIN_REMAINING_BUDGET = float(
 BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
+
+
+def _resolve_step_timeout(vector_heavy: bool = False) -> float:
+    """Resolve a bootstrap step timeout with backwards-compatible defaults."""
+
+    resolved_timeout: float | None = None
+    resolver = getattr(_coding_bot_interface, "_resolve_bootstrap_wait_timeout", None)
+    if resolver:
+        try:
+            resolved_timeout = resolver(vector_heavy)
+        except Exception:  # pragma: no cover - helper availability best effort
+            LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
+
+    if resolved_timeout is None:
+        resolved_timeout = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+
+    return max(resolved_timeout, _DEFAULT_BOOTSTRAP_STEP_TIMEOUT)
+
+
+# Resolve the default timeout eagerly so legacy users retain a stable baseline.
+BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout()
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
@@ -630,19 +658,28 @@ def initialize_bootstrap_context(
                 "starting prepare_pipeline_for_bootstrap (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            vector_heavy = False
+            try:
+                vector_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+                if vector_state is not None:
+                    vector_heavy = bool(getattr(vector_state, "vector_heavy", False))
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
+
+            prepare_timeout = _resolve_step_timeout(vector_heavy)
             print(
                 (
                     "starting prepare_pipeline_for_bootstrap "
                     "(last_step=%s, timeout=%.1fs, elapsed=0.0s)"
                 )
-                % (BOOTSTRAP_PROGRESS["last_step"], BOOTSTRAP_STEP_TIMEOUT),
+                % (BOOTSTRAP_PROGRESS["last_step"], prepare_timeout),
                 flush=True,
             )
             prepare_start = perf_counter()
             try:
                 pipeline, promote_pipeline = _run_with_timeout(
                     _timed_callable,
-                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    timeout=prepare_timeout,
                     bootstrap_deadline=bootstrap_deadline,
                     description="prepare_pipeline_for_bootstrap",
                     abort_on_timeout=True,
@@ -654,10 +691,10 @@ def initialize_bootstrap_context(
                     bot_registry=registry,
                     data_bot=data_bot,
                     bootstrap_runtime_manager=bootstrap_manager,
-                manager=bootstrap_manager,
-                bootstrap_safe=True,
-                bootstrap_fast=True,
-            )
+                    manager=bootstrap_manager,
+                    bootstrap_safe=True,
+                    bootstrap_fast=True,
+                )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
@@ -667,7 +704,7 @@ def initialize_bootstrap_context(
                     )
                     % (
                         BOOTSTRAP_PROGRESS["last_step"],
-                        BOOTSTRAP_STEP_TIMEOUT,
+                        prepare_timeout,
                         perf_counter() - prepare_start,
                     ),
                     flush=True,
@@ -686,7 +723,7 @@ def initialize_bootstrap_context(
                 )
                 % (
                     BOOTSTRAP_PROGRESS["last_step"],
-                    BOOTSTRAP_STEP_TIMEOUT,
+                    prepare_timeout,
                     perf_counter() - prepare_start,
                 ),
                 flush=True,
