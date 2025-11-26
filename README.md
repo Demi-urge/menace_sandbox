@@ -34,6 +34,12 @@ The bootstrap helpers respect several environment variables that govern how long
 - `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. Increase to **180 seconds** or more when the host is under contention or CPU quotas are tight.
 - `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. For large vector stores, set **240 seconds** or higher so batched uploads finish before the watchdog fires.
 
+If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
+
+- Set `MENACE_BOOTSTRAP_WAIT_SECS=240` or `BOOTSTRAP_STEP_TIMEOUT=240` before rerunning bootstrap on slower hosts.
+- For vector-heavy runs, use `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=240` to bypass the legacy ceiling.
+- Stagger concurrent bootstraps or trim watched directories (e.g., editors/sync tools) to cut I/O contention during startup.
+
 Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
 ### Testing checklist and smoke coverage
