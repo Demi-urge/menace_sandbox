@@ -763,6 +763,7 @@ class PredictionManager:
         data_bot: DataBot | None = None,
         capital_bot: "CapitalManagementBot | None" = None,
         default_metric_bots: Iterable[str] | None = DEFAULT_METRIC_BOTS,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         self.registry_path = Path(registry_file)
         self.registry: Dict[str, PredictionBotEntry] = {}
@@ -770,8 +771,11 @@ class PredictionManager:
         self.matcher = PredictionModelMatcher()
         self.data_bot = data_bot
         self.capital_bot = capital_bot
+        self.bootstrap_fast = bool(bootstrap_fast)
         self._auto_evolution_available = True
         self._load_registry()
+        if self.bootstrap_fast:
+            return
         if default_metric_bots and self.data_bot:
             synergy_map = {
                 "synergy_security_score": FutureSynergySecurityScoreBot,

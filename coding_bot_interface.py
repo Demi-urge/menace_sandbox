@@ -5480,6 +5480,7 @@ def self_coding_managed(
             pipeline: Any | None = None,
             override_manager: Any | None = None,
             bootstrap_safe: bool | None = None,
+            bootstrap_fast: bool | None = None,
         ) -> tuple[BotRegistry, DataBot, _BootstrapContextGuard | None]:
             nonlocal manager_instance, update_kwargs, should_update, register_as_coding
             nonlocal decision, resolved_registry, resolved_data_bot, bootstrap_done
@@ -5610,6 +5611,11 @@ def self_coding_managed(
             if bootstrap_safe_local:
                 update_kwargs.setdefault("bootstrap_safe", True)
 
+            bootstrap_fast_local = bootstrap_fast
+            if bootstrap_fast_local is None and active_context is not None:
+                bootstrap_fast_local = getattr(active_context, "bootstrap_fast", False)
+            bootstrap_fast_local = bool(bootstrap_fast_local)
+
             try:
                 with audit_guard:
                     registry_obj = _resolve_candidate(bot_registry)
@@ -5636,6 +5642,7 @@ def self_coding_managed(
                         manager=manager_for_context,
                         pipeline=pipeline_for_context,
                         bootstrap_safe=bootstrap_safe_local,
+                        bootstrap_fast=bootstrap_fast_local,
                     )
                     if (
                         context is not None
