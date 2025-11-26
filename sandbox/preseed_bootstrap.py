@@ -6,8 +6,8 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 
 Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
-``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a minimum fallback to the
-legacy 30s defaults for compatibility unless timeouts are explicitly disabled.
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous fallback for
+compatibility unless timeouts are explicitly disabled.
 """
 
 from __future__ import annotations
@@ -52,7 +52,10 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "30.0"))
+_DEFAULT_BOOTSTRAP_STEP_TIMEOUT = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "300.0"))
+_DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = float(
+    os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")
+)
 BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
@@ -85,6 +88,11 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
 
     resolved_timeout: float | None = None
     resolved_from_resolver = False
+    fallback_timeout = (
+        _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
+        if vector_heavy
+        else _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+    )
     resolver = getattr(_coding_bot_interface, "_resolve_bootstrap_wait_timeout", None)
     if resolver:
         try:
@@ -94,12 +102,11 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
 
     if resolved_timeout is None:
-        if not resolved_from_resolver:
-            resolved_timeout = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
-        else:
+        if resolved_from_resolver:
             return None
+        return fallback_timeout
 
-    return max(resolved_timeout, _DEFAULT_BOOTSTRAP_STEP_TIMEOUT)
+    return resolved_timeout
 
 
 # Resolve the default timeout eagerly so legacy users retain a stable baseline.
