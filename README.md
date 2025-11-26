@@ -29,9 +29,10 @@ When `_bootstrap_manager` falls back to building a sentinel pipeline, it also se
 
 The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
 
-- `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, bump this to **90–120 seconds** so preflight does not race the first vector warm-up.
-- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. Increase to **60–90 seconds** when the host is under contention or CPU quotas are tight.
-- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. For large vector stores, set **90–150 seconds** so batched uploads finish before the watchdog fires.
+- `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, bump this to **180–240 seconds** so preflight does not race the first vector warm-up.
+- `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this at **240 seconds or higher** ensures the vector warm-up watchdog inherits the longer window.
+- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. Increase to **180 seconds** or more when the host is under contention or CPU quotas are tight.
+- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. For large vector stores, set **240 seconds** or higher so batched uploads finish before the watchdog fires.
 
 Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
