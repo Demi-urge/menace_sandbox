@@ -81,6 +81,32 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
 
+BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
+BOOTSTRAP_SENTINEL_PATH = Path("maintenance-logs/bootstrap_status.json")
+DEFAULT_STEP_BUDGET = float(os.getenv("BOOTSTRAP_STEP_BUDGET", "60"))
+BOOTSTRAP_STEP_BUDGETS: Mapping[str, float] = {
+    "embedder_preload": float(os.getenv("BOOTSTRAP_EMBEDDER_BUDGET", "45")),
+    "context_builder": 90.0,
+    "bot_registry": 60.0,
+    "data_bot": 60.0,
+    "self_coding_engine": 120.0,
+    "prepare_pipeline": 120.0,
+    "threshold_persistence": 90.0,
+    "internalize_coding_bot": 150.0,
+    "promote_pipeline": 120.0,
+    "seed_final_context": 120.0,
+    "push_final_context": 120.0,
+    "bootstrap_complete": 30.0,
+}
+ADAPTIVE_LONG_STAGE_GRACE: Mapping[str, tuple[float, int]] = {
+    "internalize_coding_bot": (30.0, 3),
+    "promote_pipeline": (20.0, 2),
+    "seed_final_context": (15.0, 2),
+}
+BOOTSTRAP_BACKOFF_BASE = float(os.getenv("BOOTSTRAP_BACKOFF_BASE", "20"))
+BOOTSTRAP_BACKOFF_MAX = float(os.getenv("BOOTSTRAP_BACKOFF_MAX", "300"))
+BOOTSTRAP_MAX_RETRIES = int(os.getenv("BOOTSTRAP_MAX_RETRIES", "2"))
+
 
 def _normalize_log_level(value: str | int | None) -> int:
     """Return a numeric logging level from user-provided *value*."""
@@ -109,6 +135,147 @@ def cleanup_and_exit(exit_code: int = 0) -> None:
 
 
 signal.signal(signal.SIGINT, handle_sigint)
+
+
+def _read_json_file(path: Path) -> Mapping[str, Any]:
+    try:
+        raw = path.read_text()
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _extract_context_hint(bootstrap_context: Mapping[str, Any]) -> str | None:
+    context_builder = bootstrap_context.get("context_builder")
+    for attr in ("context_path", "context_file", "db_path", "path"):
+        value = getattr(context_builder, attr, None)
+        if isinstance(value, (str, Path)):
+            path_value = Path(value)
+            if path_value.exists():
+                return str(path_value)
+    return None
+
+
+def _persist_bootstrap_artifacts(
+    *,
+    last_step: str,
+    bootstrap_context: Mapping[str, Any],
+    completed_steps: Sequence[str] | None = None,
+) -> None:
+    artifact = {
+        "status": "complete",
+        "timestamp": time.time(),
+        "last_step": last_step,
+        "completed_steps": list(completed_steps or []),
+    }
+    context_hint = _extract_context_hint(bootstrap_context)
+    if context_hint:
+        artifact["context_hint"] = context_hint
+
+    BOOTSTRAP_ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        BOOTSTRAP_ARTIFACT_PATH.write_text(json.dumps(artifact, indent=2, sort_keys=True))
+    except Exception:
+        LOGGER.debug("failed to persist bootstrap artifact", exc_info=True)
+
+
+def _load_bootstrap_artifacts() -> Mapping[str, Any]:
+    if not BOOTSTRAP_ARTIFACT_PATH.exists():
+        return {}
+    return _read_json_file(BOOTSTRAP_ARTIFACT_PATH)
+
+
+def _reset_bootstrap_sentinel() -> None:
+    if BOOTSTRAP_SENTINEL_PATH.exists():
+        try:
+            BOOTSTRAP_SENTINEL_PATH.unlink()
+        except Exception:
+            LOGGER.debug("failed to clear bootstrap sentinel", exc_info=True)
+
+
+def _record_bootstrap_timeout(
+    *, last_step: str, elapsed: float, attempt: int, step_budget: float
+) -> float:
+    backoff = min(BOOTSTRAP_BACKOFF_BASE * (2 ** max(attempt - 1, 0)), BOOTSTRAP_BACKOFF_MAX)
+    payload = {
+        "status": "timeout",
+        "last_step": last_step,
+        "timestamp": time.time(),
+        "elapsed": elapsed,
+        "attempt": attempt,
+        "next_allowed": time.time() + backoff,
+        "step_budget": step_budget,
+    }
+    BOOTSTRAP_SENTINEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        BOOTSTRAP_SENTINEL_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    except Exception:
+        LOGGER.debug("failed to persist bootstrap sentinel", exc_info=True)
+    return backoff
+
+
+def _check_bootstrap_sentinel() -> float:
+    if not BOOTSTRAP_SENTINEL_PATH.exists():
+        return 0.0
+    sentinel = _read_json_file(BOOTSTRAP_SENTINEL_PATH)
+    next_allowed = float(sentinel.get("next_allowed", 0))
+    wait_time = max(next_allowed - time.time(), 0.0)
+    return wait_time
+
+
+def _monitor_bootstrap_thread(
+    *,
+    bootstrap_thread: threading.Thread,
+    bootstrap_stop_event: threading.Event,
+    bootstrap_start: float,
+    step_budgets: Mapping[str, float],
+    adaptive_grace: Mapping[str, tuple[float, int]],
+    completed_steps: set[str] | None = None,
+) -> tuple[bool, str, float, float, set[str]]:
+    """Track bootstrap progress and enforce per-step budgets.
+
+    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps)``.
+    """
+
+    completed = completed_steps or set()
+    last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
+    step_start_times: dict[str, float] = {last_step: bootstrap_start}
+    grace_extensions: dict[str, int] = {}
+
+    while bootstrap_thread.is_alive():
+        if SHUTDOWN_EVENT.is_set():
+            cleanup_and_exit()
+
+        current_step = BOOTSTRAP_PROGRESS.get("last_step", last_step)
+        if current_step not in step_start_times:
+            step_start_times[current_step] = time.monotonic()
+        last_step = current_step
+
+        elapsed = time.monotonic() - step_start_times[current_step]
+        budget = step_budgets.get(current_step, DEFAULT_STEP_BUDGET)
+        if current_step in completed:
+            budget += 10.0
+
+        grace = adaptive_grace.get(current_step)
+        extension_count = grace_extensions.get(current_step, 0)
+        if grace and elapsed > budget and extension_count < grace[1]:
+            grace_extensions[current_step] = extension_count + 1
+            budget += grace[0] * grace_extensions[current_step]
+            LOGGER.info(
+                "bootstrap step %s exceeded budget; applying adaptive grace (%d/%d)",
+                current_step,
+                grace_extensions[current_step],
+                grace[1],
+            )
+
+        if elapsed > budget:
+            return True, current_step, elapsed, budget, set(step_start_times)
+
+        bootstrap_thread.join(1.0)
+
+    elapsed = time.monotonic() - bootstrap_start
+    budget = step_budgets.get(last_step, DEFAULT_STEP_BUDGET)
+    return False, last_step, elapsed, budget, set(step_start_times)
 
 
 def _emit_meta_trace(logger: logging.Logger, message: str, **details: Any) -> None:
@@ -1201,7 +1368,6 @@ def main(argv: list[str] | None = None) -> None:
             last_pre_meta_trace_step = "entering non-health-check bootstrap block"
             try:
                 try:
-                    last_pre_meta_trace_step = "initialize_bootstrap_context entry"
                     print(
                         "[DEBUG] About to call initialize_bootstrap_context()",
                         flush=True,
@@ -1213,15 +1379,42 @@ def main(argv: list[str] | None = None) -> None:
                             health_check=args.health_check,
                         ),
                     )
-                    try:
+                    artifacts = _load_bootstrap_artifacts()
+                    completed_steps = set(artifacts.get("completed_steps", []) or [])
+                    if artifacts.get("status") == "complete":
+                        logger.info(
+                            "bootstrap artifacts detected; enabling warm-start hints",
+                            extra=log_record(
+                                event="bootstrap-artifacts-loaded",
+                                artifact_path=str(BOOTSTRAP_ARTIFACT_PATH),
+                                context_hint=artifacts.get("context_hint"),
+                                completed_steps=list(completed_steps),
+                            ),
+                        )
+
+                    sentinel_wait = _check_bootstrap_sentinel()
+                    if sentinel_wait > 0:
+                        logger.warning(
+                            "bootstrap sentinel requires backoff before restart",
+                            extra=log_record(
+                                event="bootstrap-sentinel-wait",
+                                wait_time=round(sentinel_wait, 2),
+                            ),
+                        )
+                        time.sleep(sentinel_wait)
+
+                    max_attempts = max(1, BOOTSTRAP_MAX_RETRIES + 1)
+                    bootstrap_context: dict[str, Any] | None = None
+                    bootstrap_error: BaseException | None = None
+                    bootstrap_seen_steps: set[str] = set()
+
+                    for attempt in range(1, max_attempts + 1):
                         last_pre_meta_trace_step = "initialize_bootstrap_context invocation"
                         bootstrap_context_result: dict[str, Any] | None = None
-                        bootstrap_error: BaseException | None = None
+                        bootstrap_error = None
                         bootstrap_start = time.monotonic()
                         bootstrap_deadline = bootstrap_start + args.bootstrap_timeout
                         bootstrap_stop_event = threading.Event()
-                        critical_grace_extension_applied = False
-                        critical_grace_extension_seconds = 15.0
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
@@ -1235,149 +1428,34 @@ def main(argv: list[str] | None = None) -> None:
 
                         bootstrap_thread = threading.Thread(
                             target=_run_bootstrap,
-                            name="bootstrap-context",
+                            name=f"bootstrap-context-{attempt}",
                             daemon=True,
                         )
                         bootstrap_thread.start()
                         print(
                             "[BOOTSTRAP-TRACE] bootstrap thread started "
-                            f"(elapsed={time.monotonic() - bootstrap_start:.3f}s, "
+                            f"(attempt={attempt} elapsed={time.monotonic() - bootstrap_start:.3f}s, "
                             f"last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})",
                             flush=True,
                         )
-                        initial_wait = max(args.bootstrap_timeout - 5.0, 0.0)
-                        bootstrap_thread.join(initial_wait)
 
-                        if bootstrap_thread.is_alive():
-                            print(
-                                "[BOOTSTRAP-TRACE] bootstrap thread active after "
-                                f"initial wait (elapsed={time.monotonic() - bootstrap_start:.3f}s, "
-                                f"last_step={BOOTSTRAP_PROGRESS.get('last_step', 'unknown')})",
-                                flush=True,
-                            )
-
-                        last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
-                            "last_step", "unknown"
+                        (
+                            timed_out,
+                            last_bootstrap_step,
+                            elapsed,
+                            budget_used,
+                            observed_steps,
+                        ) = _monitor_bootstrap_thread(
+                            bootstrap_thread=bootstrap_thread,
+                            bootstrap_stop_event=bootstrap_stop_event,
+                            bootstrap_start=bootstrap_start,
+                            step_budgets=BOOTSTRAP_STEP_BUDGETS,
+                            adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
+                            completed_steps=completed_steps,
                         )
-                        if last_bootstrap_step == "bootstrap_complete":
-                            bootstrap_thread.join()
-                            _emit_meta_trace(
-                                logger,
-                                "bootstrap thread finished; fast-forwarding to meta planning",
-                                last_step=last_bootstrap_step,
-                                elapsed=round(time.monotonic() - bootstrap_start, 3),
-                            )
-                        elif bootstrap_thread.is_alive():
-                            critical_bootstrap_steps = {
-                                "self_coding_engine",
-                                "prepare_pipeline",
-                                "internalize_coding_bot",
-                                "promote_pipeline",
-                                "seed_final_context",
-                                "push_final_context",
-                            }
-                            finalization_steps = {
-                                "prepare_pipeline",
-                                "internalize_coding_bot",
-                                "promote_pipeline",
-                                "seed_final_context",
-                                "push_final_context",
-                            }
-                            finalization_grace_seconds = 5.0
-                            finalization_grace_applied = False
-                            while bootstrap_thread.is_alive():
-                                if SHUTDOWN_EVENT.is_set():
-                                    cleanup_and_exit()
-                                time_remaining = bootstrap_deadline - time.monotonic()
-                                last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
-                                    "last_step", "unknown"
-                                )
-                                if (
-                                    time_remaining <= 3.0
-                                    and last_bootstrap_step in finalization_steps
-                                    and not finalization_grace_applied
-                                ):
-                                    LOGGER.warning(
-                                        "bootstrap in %s with %.1fs remaining; applying "
-                                        "finalization grace window",
-                                        last_bootstrap_step,
-                                        max(time_remaining, 0.0),
-                                        extra=log_record(
-                                            event="bootstrap-finalization-grace",
-                                            last_bootstrap_step=last_bootstrap_step,
-                                            time_remaining=max(time_remaining, 0.0),
-                                            grace_seconds=finalization_grace_seconds,
-                                        ),
-                                    )
-                                    finalization_grace_applied = True
-                                    bootstrap_deadline += finalization_grace_seconds
-                                    time_remaining = bootstrap_deadline - time.monotonic()
-                                if (
-                                    time_remaining <= 5.0
-                                    and last_bootstrap_step == "embedder_preload"
-                                ):
-                                    LOGGER.warning(
-                                        "bootstrap embedder still active with %.1fs remaining; "
-                                        "requesting early self-coding abort",
-                                        max(time_remaining, 0.0),
-                                    )
-                                    bootstrap_stop_event.set()
+                        bootstrap_seen_steps.update(observed_steps)
 
-                                if last_bootstrap_step in critical_bootstrap_steps:
-                                    if (
-                                        time_remaining <= 10.0
-                                        and not critical_grace_extension_applied
-                                    ):
-                                        LOGGER.warning(
-                                            "bootstrap still in %s with %.1fs remaining; "
-                                            "granting one-time grace window",
-                                            last_bootstrap_step,
-                                            max(time_remaining, 0.0),
-                                            extra=log_record(
-                                                event="bootstrap-deadline-guard",
-                                                last_bootstrap_step=last_bootstrap_step,
-                                                time_remaining=max(time_remaining, 0.0),
-                                                grace_applied=True,
-                                                grace_seconds=critical_grace_extension_seconds,
-                                            ),
-                                        )
-                                        critical_grace_extension_applied = True
-                                        bootstrap_deadline += critical_grace_extension_seconds
-                                        time_remaining = bootstrap_deadline - time.monotonic()
-                                    elif time_remaining <= 2.0 and not (
-                                        last_bootstrap_step in finalization_steps
-                                        and finalization_grace_applied
-                                    ):
-                                        LOGGER.error(
-                                            "bootstrap still in %s with %.1fs remaining after grace; "
-                                            "signaling stop event",
-                                            last_bootstrap_step,
-                                            max(time_remaining, 0.0),
-                                            extra=log_record(
-                                                event="bootstrap-deadline-guard",
-                                                last_bootstrap_step=last_bootstrap_step,
-                                                time_remaining=max(time_remaining, 0.0),
-                                                grace_applied=critical_grace_extension_applied,
-                                            ),
-                                        )
-                                        bootstrap_stop_event.set()
-
-                                wait_time = min(max(time_remaining, 0.0), 1.0)
-                                if wait_time <= 0:
-                                    break
-                                bootstrap_thread.join(wait_time)
-
-                        elapsed = time.monotonic() - bootstrap_start
-                        if bootstrap_thread.is_alive():
-                            last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
-                                "last_step", "unknown"
-                            )
-                            print(
-                                "[BOOTSTRAP-TRACE] initialize_bootstrap_context exceeded "
-                                f"timeout after {elapsed:.1f}s (limit={args.bootstrap_timeout}s, "
-                                f"last_step={last_bootstrap_step})",
-                                flush=True,
-                            )
+                        if timed_out:
                             bootstrap_stop_event.set()
                             dump_path = Path("maintenance-logs") / (
                                 f"bootstrap_timeout_traceback_{int(time.time())}.log"
@@ -1429,22 +1507,32 @@ def main(argv: list[str] | None = None) -> None:
                                         elapsed=elapsed,
                                     ),
                                 )
+
                             logger.error(
-                                "initialize_bootstrap_context exceeded timeout",
+                                "initialize_bootstrap_context exceeded per-step budget",
                                 extra=log_record(
                                     event="bootstrap-context-timeout",
                                     elapsed=elapsed,
                                     timeout=args.bootstrap_timeout,
                                     last_bootstrap_step=last_bootstrap_step,
-                                    last_pre_meta_trace_step=last_pre_meta_trace_step,
+                                    budget_used=budget_used,
+                                    attempt=attempt,
                                 ),
+                            )
+                            backoff = _record_bootstrap_timeout(
+                                last_step=last_bootstrap_step,
+                                elapsed=elapsed,
+                                attempt=attempt,
+                                step_budget=budget_used,
                             )
                             try:
                                 shutdown_autonomous_sandbox(timeout=5)
                             except Exception:  # pragma: no cover - best effort cleanup
                                 logger.exception(
                                     "cleanup after bootstrap timeout failed",
-                                    extra=log_record(event="bootstrap-timeout-cleanup-error"),
+                                    extra=log_record(
+                                        event="bootstrap-timeout-cleanup-error"
+                                    ),
                                 )
                             try:
                                 bootstrap_thread.join(2)
@@ -1453,38 +1541,54 @@ def main(argv: list[str] | None = None) -> None:
                                     "bootstrap thread join after timeout raised",
                                     exc_info=True,
                                 )
-                            raise TimeoutError(
-                                "initialize_bootstrap_context exceeded timeout; "
-                                f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
+                            if attempt >= max_attempts:
+                                raise TimeoutError(
+                                    "initialize_bootstrap_context exceeded timeout; "
+                                    f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
+                                )
+                            logger.info(
+                                "retrying bootstrap after backoff",  # expose retry policy
+                                extra=log_record(
+                                    event="bootstrap-retry-backoff",
+                                    attempt=attempt,
+                                    backoff_seconds=backoff,
+                                    last_step=last_bootstrap_step,
+                                ),
                             )
+                            time.sleep(backoff)
+                            continue
 
+                        bootstrap_thread.join(2)
                         if bootstrap_error:
-                            raise bootstrap_error
+                            if attempt >= max_attempts:
+                                raise bootstrap_error
+                            delay = min(
+                                BOOTSTRAP_BACKOFF_BASE * attempt, BOOTSTRAP_BACKOFF_MAX
+                            )
+                            logger.warning(
+                                "bootstrap raised; retrying after backoff",
+                                extra=log_record(
+                                    event="bootstrap-exception-retry",
+                                    attempt=attempt,
+                                    delay=delay,
+                                    error=str(bootstrap_error),
+                                ),
+                            )
+                            time.sleep(delay)
+                            continue
 
                         bootstrap_context = bootstrap_context_result
-                    except Exception as bootstrap_exc:
-                        last_bootstrap_step = BOOTSTRAP_PROGRESS.get(
-                            "last_step", "unknown"
+                        _persist_bootstrap_artifacts(
+                            last_step=last_bootstrap_step,
+                            bootstrap_context=bootstrap_context or {},
+                            completed_steps=bootstrap_seen_steps or observed_steps,
                         )
-                        print(
-                            "[DEBUG] initialize_bootstrap_context raised: "
-                            f"{bootstrap_exc} (last_step={last_bootstrap_step})",
-                            flush=True,
-                        )
-                        print(
-                            "[BOOTSTRAP-TRACE] bootstrap failed before meta-trace; "
-                            f"last_step={last_bootstrap_step}",
-                            flush=True,
-                        )
-                        logger.exception(
-                            "initialize_bootstrap_context encountered an exception",
-                            extra=log_record(
-                                event="bootstrap-context-error",
-                                last_bootstrap_step=last_bootstrap_step,
-                                last_pre_meta_trace_step=last_pre_meta_trace_step,
-                            ),
-                        )
-                        raise
+                        _reset_bootstrap_sentinel()
+                        break
+
+                    if bootstrap_context is None and bootstrap_error:
+                        raise bootstrap_error
+
                     print(
                         "[DEBUG] initialize_bootstrap_context completed successfully",
                         flush=True,
