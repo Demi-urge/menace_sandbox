@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
+from types import SimpleNamespace
 import logging
 import time
 
@@ -43,8 +44,48 @@ class PatchVectorizer(EmbeddableDBMixin):
                 "index_path": str(index_path) if index_path is not None else None,
                 "backend": backend,
                 "embedding_version": embedding_version,
+                "bootstrap_fast": bootstrap_fast,
             },
         )
+        self.bootstrap_fast = bool(bootstrap_fast)
+        if self.bootstrap_fast:
+            fast_db_path = Path(path) if path is not None else Path(self.DB_FILE)
+            index_fallback = Path(index_path) if index_path is not None else fast_db_path.with_suffix(
+                ".patch.index"
+            )
+            metadata_fallback = index_fallback.with_suffix(".json")
+            stub_conn = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchall=lambda: []))
+            stub_router = SimpleNamespace(get_connection=lambda *_a, **_k: stub_conn)
+            self.db = SimpleNamespace(
+                path=fast_db_path,
+                router=stub_router,
+                get=lambda *_a, **_k: None,
+                _vec_db_enabled=False,
+            )
+            self.conn = stub_router.get_connection("patch_history")
+            self.index_path = index_fallback
+            self.metadata_path = metadata_fallback
+            self.model_name = "sentence-transformers/all-MiniLM-L6-v2"
+            self.embedding_version = embedding_version
+            self.backend = backend
+            self._model = None
+            self._index = None
+            self._vector_dim = 0
+            self._id_map = []
+            self._metadata = {}
+            self._last_embedding_tokens = 0
+            self._last_embedding_time = 0.0
+            self._last_chunk_meta: Dict[str, Any] = {}
+            self.encode_text = lambda _text: []  # type: ignore[assignment]
+            logger.info(
+                "patch_vectorizer.bootstrap_fast.stubbed",
+                extra={
+                    "db_path": str(fast_db_path),
+                    "index_path": str(index_fallback),
+                    "metadata_path": str(metadata_fallback),
+                },
+            )
+            return
         db_path: Path | str | None
         if path is not None:
             path_resolve_start = time.perf_counter()
