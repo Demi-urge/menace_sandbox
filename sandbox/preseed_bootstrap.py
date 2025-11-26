@@ -433,12 +433,33 @@ def _run_with_timeout(
                 "Set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS or BOOTSTRAP_VECTOR_STEP_TIMEOUT and mark vector-heavy pipelines to avoid the legacy cap.",
                 "Stagger concurrent bootstrap runs to reduce contention when initializing pipelines or vector services.",
             ]
+        try:
+            watchdog_timeline = list(
+                getattr(_coding_bot_interface, "_PREPARE_PIPELINE_WATCHDOG", {}).get(
+                    "stages", ()
+                )
+            )
+        except Exception:  # pragma: no cover - best effort diagnostics
+            watchdog_timeline = []
+
+        resolved_bootstrap_wait = None
+        resolved_vector_wait = None
+        try:
+            resolved_bootstrap_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(
+                False
+            )
+            resolved_vector_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(True)
+        except Exception:  # pragma: no cover - best effort diagnostics
+            LOGGER.debug("failed to resolve MENACE bootstrap waits", exc_info=True)
         metadata = {
             "start_time": _format_timestamp(start_wall),
             "end_time": _format_timestamp(end_wall),
             "elapsed": round(time.monotonic() - start_monotonic, 3),
             "timeout_requested": timeout,
             "timeout_effective": effective_timeout,
+            "timeout_effective_after_clamp": timeout_context.get(
+                "effective_timeout", effective_timeout
+            ),
             "bootstrap_deadline": bootstrap_deadline,
             "bootstrap_remaining_start": timeout_context.get("deadline_remaining"),
             "bootstrap_remaining_now": deadline_remaining_now,
@@ -450,6 +471,9 @@ def _run_with_timeout(
             "active_step": active_step,
             "active_elapsed_ms": active_elapsed_ms,
             "timeout_context": timeout_context,
+            "prepare_watchdog_timeline": watchdog_timeline,
+            "env_menace_bootstrap_wait_resolved": resolved_bootstrap_wait,
+            "env_menace_bootstrap_vector_wait_resolved": resolved_vector_wait,
             "remediation_hints": remediation_hints,
         }
 

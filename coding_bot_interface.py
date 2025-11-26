@@ -3831,6 +3831,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
         env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
         env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+        watchdog_timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
+        resolved_env_bootstrap_wait = _resolve_bootstrap_wait_timeout(False)
+        resolved_env_vector_wait = _resolve_bootstrap_wait_timeout(True)
 
         if stop_event is not None and stop_event.is_set():
             context = {
@@ -3839,17 +3842,23 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "vector_heavy": vector_heavy,
                 "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
                 "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                "prepare_watchdog_timeline": watchdog_timeline,
             }
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap cancelled during %s via stop event "
-                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r "
+                    "resolved_env_wait=%s resolved_env_vector_wait=%s"
                 ),
                 stage,
                 resolved_timeout,
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
+                resolved_env_bootstrap_wait,
+                resolved_env_vector_wait,
             )
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
@@ -3865,11 +3874,15 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
                 "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
                 "elapsed": elapsed,
+                "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                "prepare_watchdog_timeline": watchdog_timeline,
             }
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
-                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r "
+                    "resolved_env_wait=%s resolved_env_vector_wait=%s timeline_entries=%s"
                 ),
                 stage,
                 elapsed,
@@ -3877,6 +3890,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
+                resolved_env_bootstrap_wait,
+                resolved_env_vector_wait,
+                len(watchdog_timeline),
             )
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
