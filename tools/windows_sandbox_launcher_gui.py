@@ -32,6 +32,14 @@ LOG_FILE_ENV = "MENACE_GUI_LOG_PATH"
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+_BOOTSTRAP_TIMEOUT_DEFAULTS = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "120",
+    "BOOTSTRAP_STEP_TIMEOUT": "90",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "150",
+}
+for _env_key, _env_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
+    os.environ.setdefault(_env_key, _env_value)
+
 
 # Warnings emitted by Celery when the in-memory transport is configured are
 # expected during preflight. They do not require operator intervention, but the
