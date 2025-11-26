@@ -133,8 +133,10 @@ class VectorMetricsDB:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
         )
-        self.bootstrap_fast = bootstrap_fast or _env_flag(
-            "VECTOR_METRICS_BOOTSTRAP_FAST", False
+        vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
+        patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
+        self.bootstrap_fast = bool(
+            bootstrap_fast or vector_bootstrap_env or patch_bootstrap_env
         )
         init_start = time.perf_counter()
         logger.info(
@@ -193,7 +195,12 @@ class VectorMetricsDB:
         if self.bootstrap_fast:
             logger.info(
                 "vector_metrics_db.bootstrap.fast_path_short_circuit",
-                extra=_timestamp_payload(init_start, fast_path=True),
+                extra=_timestamp_payload(
+                    init_start,
+                    fast_path=True,
+                    vector_bootstrap_env=vector_bootstrap_env,
+                    patch_bootstrap_env=patch_bootstrap_env,
+                ),
             )
             self.router = None
             self.conn = None
