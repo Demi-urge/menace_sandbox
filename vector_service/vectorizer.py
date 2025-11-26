@@ -153,11 +153,10 @@ class SharedVectorService:
 
     text_embedder: SentenceTransformer | None = None
     vector_store: VectorStore | None = None
-    bootstrap_fast: bool = False
+    bootstrap_fast: bool | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.bootstrap_fast = bool(self.bootstrap_fast)
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
         init_start = time.perf_counter()
@@ -174,14 +173,17 @@ class SharedVectorService:
                 handler_count=len(self._handlers),
             ),
         )
-        if self.bootstrap_fast and getattr(
-            self._handlers.get("patch"), "is_patch_stub", False
-        ):
+        patch_handler = self._handlers.get("patch")
+        patch_handler_deferred = getattr(patch_handler, "is_patch_stub", False)
+        if patch_handler_deferred:
             logger.info(
                 "shared_vector_service.bootstrap_fast.patch_handler_deferred",
                 extra=_timestamp_payload(
                     handler_start,
                     handler_count=len(self._handlers),
+                    bootstrap_fast_requested=self.bootstrap_fast,
+                    bootstrap_fast_active=True,
+                    bootstrap_fast_defaulted=self.bootstrap_fast is None,
                     deferred_patch=True,
                 ),
             )
