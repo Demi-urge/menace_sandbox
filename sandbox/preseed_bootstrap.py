@@ -7,7 +7,7 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
 ``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a minimum fallback to the
-legacy 30s defaults for compatibility.
+legacy 30s defaults for compatibility unless timeouts are explicitly disabled.
 """
 
 from __future__ import annotations
@@ -80,19 +80,24 @@ def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
     return any(token in text for token in heavy_tokens)
 
 
-def _resolve_step_timeout(vector_heavy: bool = False) -> float:
+def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
     resolved_timeout: float | None = None
+    resolved_from_resolver = False
     resolver = getattr(_coding_bot_interface, "_resolve_bootstrap_wait_timeout", None)
     if resolver:
         try:
             resolved_timeout = resolver(vector_heavy)
+            resolved_from_resolver = True
         except Exception:  # pragma: no cover - helper availability best effort
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
 
     if resolved_timeout is None:
-        resolved_timeout = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+        if not resolved_from_resolver:
+            resolved_timeout = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+        else:
+            return None
 
     return max(resolved_timeout, _DEFAULT_BOOTSTRAP_STEP_TIMEOUT)
 
@@ -183,11 +188,11 @@ def _render_bootstrap_timeline(now: float) -> list[str]:
 
 
 def _resolve_timeout(
-    base_timeout: float,
+    base_timeout: float | None,
     *,
     bootstrap_deadline: float | None,
     heavy_bootstrap: bool = False,
-) -> tuple[float, dict[str, Any]]:
+) -> tuple[float | None, dict[str, Any]]:
     """Resolve an effective timeout with deadline- and heavy-aware scaling."""
 
     effective_timeout = base_timeout
@@ -200,7 +205,7 @@ def _resolve_timeout(
         "deadline_buffer": BOOTSTRAP_DEADLINE_BUFFER,
     }
 
-    if heavy_bootstrap:
+    if heavy_bootstrap and effective_timeout is not None:
         heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
         effective_timeout = max(effective_timeout, base_timeout * heavy_scale)
         metadata["heavy_scale"] = heavy_scale
@@ -208,7 +213,9 @@ def _resolve_timeout(
     if deadline_remaining is not None:
         buffered_remaining = max(deadline_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
         metadata["deadline_buffered_remaining"] = buffered_remaining
-        if buffered_remaining > effective_timeout:
+        if effective_timeout is None:
+            effective_timeout = buffered_remaining
+        elif buffered_remaining > effective_timeout:
             effective_timeout = buffered_remaining
         effective_timeout = min(effective_timeout, max(deadline_remaining, 0.0))
 
@@ -216,15 +223,19 @@ def _resolve_timeout(
     return effective_timeout, metadata
 
 
+def _describe_timeout(value: float | None) -> str:
+    return "disabled" if value is None else f"{value:.1f}s"
+
+
 def _run_with_timeout(
     fn,
     *,
-    timeout: float,
+    timeout: float | None,
     bootstrap_deadline: float | None = None,
     description: str,
     abort_on_timeout: bool = True,
     heavy_bootstrap: bool = False,
-    resolved_timeout: tuple[float, dict[str, Any]] | None = None,
+    resolved_timeout: tuple[float | None, dict[str, Any]] | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -239,10 +250,10 @@ def _run_with_timeout(
         effective_timeout, timeout_context = resolved_timeout
 
     LOGGER.info(
-        "%s starting with timeout (requested=%.1fs effective=%.1fs heavy=%s deadline=%s)",
+        "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
         description,
-        timeout,
-        effective_timeout,
+        _describe_timeout(timeout),
+        _describe_timeout(effective_timeout),
         heavy_bootstrap,
         bootstrap_deadline,
         extra={"timeout_context": timeout_context},
@@ -297,9 +308,9 @@ def _run_with_timeout(
         }
 
         LOGGER.error(
-            "%s timed out after %.1fs (last_step=%s) metadata=%s",
+            "%s timed out after %s (last_step=%s) metadata=%s",
             description,
-            effective_timeout,
+            _describe_timeout(effective_timeout),
             last_step,
             metadata,
         )
@@ -309,10 +320,13 @@ def _run_with_timeout(
             else "active_step=unknown"
         )
         print(
-            (
-                "[bootstrap-timeout][metadata] %s timed out after %.1fs (%s): %s"
-            )
-            % (description, effective_timeout, active_fragment, metadata),
+            ("[bootstrap-timeout][metadata] %s timed out after %s (%s): %s")
+            % (
+                description,
+                _describe_timeout(effective_timeout),
+                active_fragment,
+                metadata,
+            ),
             flush=True,
         )
 
@@ -323,7 +337,7 @@ def _run_with_timeout(
 
         if abort_on_timeout:
             raise TimeoutError(
-                f"{description} timed out after {effective_timeout:.1f}s"
+                f"{description} timed out after {_describe_timeout(effective_timeout)}"
             )
 
         LOGGER.warning("skipping %s due to timeout", description)
@@ -332,7 +346,13 @@ def _run_with_timeout(
     if "exc" in result:
         LOGGER.exception("%s failed", description, exc_info=result["exc"])
         print(
-            f"[bootstrap-error] {description} failed after {effective_timeout:.1f}s (last_step={last_step})",
+            (
+                "[bootstrap-error] %s failed after %s (last_step=%s)" % (
+                    description,
+                    _describe_timeout(effective_timeout),
+                    last_step,
+                )
+            ),
             flush=True,
         )
         raise result["exc"]
@@ -772,9 +792,12 @@ def initialize_bootstrap_context(
             print(
                 (
                     "starting prepare_pipeline_for_bootstrap "
-                    "(last_step=%s, timeout=%.1fs, elapsed=0.0s)"
+                    "(last_step=%s, timeout=%s, elapsed=0.0s)"
                 )
-                % (BOOTSTRAP_PROGRESS["last_step"], effective_prepare_timeout),
+                % (
+                    BOOTSTRAP_PROGRESS["last_step"],
+                    _describe_timeout(effective_prepare_timeout),
+                ),
                 flush=True,
             )
             prepare_start = perf_counter()
@@ -802,13 +825,13 @@ def initialize_bootstrap_context(
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
-                    ( 
+                    (
                         "prepare_pipeline_for_bootstrap failed "
-                        "(last_step=%s, timeout=%.1fs, elapsed=%.2fs)"
+                        "(last_step=%s, timeout=%s, elapsed=%.2fs)"
                     )
                     % (
                         BOOTSTRAP_PROGRESS["last_step"],
-                        effective_prepare_timeout,
+                        _describe_timeout(effective_prepare_timeout),
                         perf_counter() - prepare_start,
                     ),
                     flush=True,
@@ -823,11 +846,11 @@ def initialize_bootstrap_context(
             print(
                 (
                     "prepare_pipeline_for_bootstrap finished "
-                    "(last_step=%s, timeout=%.1fs, elapsed=%.2fs)"
+                    "(last_step=%s, timeout=%s, elapsed=%.2fs)"
                 )
                 % (
                     BOOTSTRAP_PROGRESS["last_step"],
-                    effective_prepare_timeout,
+                    _describe_timeout(effective_prepare_timeout),
                     perf_counter() - prepare_start,
                 ),
                 flush=True,
