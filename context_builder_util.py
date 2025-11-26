@@ -192,6 +192,14 @@ def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # ty
     except TypeError as exc:
         raise ValueError("ContextBuilder implementation rejected database paths") from exc
 
+    try:
+        # Hint downstream bootstrap helpers that vector workloads are expected so
+        # they can select the correct timeout tier.
+        setattr(builder, "vector_bootstrap_heavy", True)
+        setattr(builder, "vector_service_heavy", True)
+    except Exception:  # pragma: no cover - advisory only
+        _LOGGER.debug("unable to mark context builder as vector-heavy", exc_info=True)
+
     return builder
 
 
