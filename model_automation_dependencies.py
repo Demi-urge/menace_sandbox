@@ -49,6 +49,13 @@ else:  # pragma: no cover - runtime fallback avoids circular imports
 MENACE_ID = "model_automation_pipeline"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
 _PLANNING_IMPORT_TIMEOUT = 5.0
+_PLANNING_IMPORT_LOCK = threading.Lock()
+_PLANNING_IMPORT_THREAD: threading.Thread | None = None
+_PLANNING_IMPORT_QUEUE: (
+    "queue.Queue[tuple[tuple[type, type, type] | None, BaseException | None]]" | None
+) = None
+_PLANNING_IMPORT_CANCEL_EVENT: threading.Event | None = None
+_PLANNING_IMPORT_FAILED = False
 
 
 def _create_synthesis_task(**kwargs: Any) -> "SynthesisTask":
@@ -160,28 +167,85 @@ def _import_planning_classes() -> tuple[type, type, type]:
     return _BotPlanningBot, _PlanningTask, _BotPlan
 
 
+def _reset_planning_import_state() -> None:
+    """Reset global helpers used to guard planning imports.
+
+    Exposed primarily for tests to ensure deterministic behaviour across runs.
+    """
+
+    global _PLANNING_IMPORT_THREAD, _PLANNING_IMPORT_QUEUE, _PLANNING_IMPORT_FAILED
+    global _PLANNING_IMPORT_CANCEL_EVENT
+
+    with _PLANNING_IMPORT_LOCK:
+        _PLANNING_IMPORT_THREAD = None
+        _PLANNING_IMPORT_QUEUE = None
+        _PLANNING_IMPORT_CANCEL_EVENT = None
+        _PLANNING_IMPORT_FAILED = False
+
+
 def _load_with_timeout(
     loader: Callable[[], tuple[type, type, type]], timeout: float
 ) -> tuple[tuple[type, type, type] | None, BaseException | None]:
     """Execute ``loader`` in a helper thread, returning on completion or timeout."""
 
-    result_queue: "queue.Queue[tuple[tuple[type, type, type] | None, BaseException | None]]" = (
-        queue.Queue(maxsize=1)
-    )
+    global _PLANNING_IMPORT_THREAD, _PLANNING_IMPORT_QUEUE, _PLANNING_IMPORT_FAILED
+    global _PLANNING_IMPORT_CANCEL_EVENT
 
-    def _runner() -> None:
-        try:
-            result_queue.put((loader(), None))
-        except BaseException as exc:  # pragma: no cover - passthrough
-            result_queue.put((None, exc))
+    with _PLANNING_IMPORT_LOCK:
+        if _PLANNING_IMPORT_FAILED:
+            return None, TimeoutError(
+                "planning import previously exceeded timeout; using cached failure"
+            )
 
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
+        if _PLANNING_IMPORT_THREAD is None or not _PLANNING_IMPORT_THREAD.is_alive():
+            _PLANNING_IMPORT_QUEUE = queue.Queue(maxsize=1)
+            _PLANNING_IMPORT_CANCEL_EVENT = threading.Event()
+
+            result_queue = _PLANNING_IMPORT_QUEUE
+            cancel_event = _PLANNING_IMPORT_CANCEL_EVENT
+
+            def _runner() -> None:
+                try:
+                    if cancel_event.is_set():
+                        return
+                    result_queue.put((loader(), None))
+                except BaseException as exc:  # pragma: no cover - passthrough
+                    if not cancel_event.is_set():
+                        result_queue.put((None, exc))
+
+            _PLANNING_IMPORT_THREAD = threading.Thread(
+                target=_runner,
+                name="planning-import-loader",
+                daemon=True,
+            )
+            _PLANNING_IMPORT_THREAD.start()
+
+        result_queue = _PLANNING_IMPORT_QUEUE
+        thread = _PLANNING_IMPORT_THREAD
+        cancel_event = _PLANNING_IMPORT_CANCEL_EVENT
 
     try:
-        return result_queue.get(timeout=timeout)
+        loaded, error = result_queue.get(timeout=timeout)
     except queue.Empty:
+        cancel_event.set()
+        thread.join(timeout=0.1)
+
+        with _PLANNING_IMPORT_LOCK:
+            _PLANNING_IMPORT_THREAD = None
+            _PLANNING_IMPORT_QUEUE = None
+            _PLANNING_IMPORT_CANCEL_EVENT = None
+            _PLANNING_IMPORT_FAILED = True
+
         return None, TimeoutError(f"planning import exceeded {timeout} seconds")
+
+    thread.join(timeout=0.1)
+
+    with _PLANNING_IMPORT_LOCK:
+        _PLANNING_IMPORT_THREAD = None
+        _PLANNING_IMPORT_QUEUE = None
+        _PLANNING_IMPORT_CANCEL_EVENT = None
+
+    return loaded, error
 
 
 @lru_cache(maxsize=1)
