@@ -39,6 +39,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+
 try:  # pragma: no cover - prefer package-relative import
     from menace_sandbox.shared.self_coding_import_guard import (
         self_coding_import_guard,
@@ -3788,6 +3790,8 @@ def _prepare_pipeline_for_bootstrap_impl(
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
+
+    enforce_bootstrap_timeout_policy(logger=logger)
 
     start_time = time.perf_counter()
     resolved_deadline = deadline
