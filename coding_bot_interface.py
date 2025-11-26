@@ -149,7 +149,8 @@ def _get_bootstrap_wait_timeout() -> float | None:
     slower initialisation paths.  It can be tuned via
     ``MENACE_BOOTSTRAP_WAIT_SECS``; specify ``"none"`` to disable timeouts.
     Invalid overrides fall back to a sensible default while emitting a warning
-    for visibility.
+    for visibility. A hard minimum of 300 seconds is enforced to avoid overly
+    aggressive clamps.
     """
 
     default_timeout = 300.0
@@ -159,7 +160,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
     if raw_timeout.lower() == "none":
         return None
     try:
-        return max(1.0, float(raw_timeout))
+        parsed_timeout = float(raw_timeout)
     except ValueError:
         logger.warning(
             "Invalid MENACE_BOOTSTRAP_WAIT_SECS=%r; using default %ss",
@@ -167,6 +168,15 @@ def _get_bootstrap_wait_timeout() -> float | None:
             default_timeout,
         )
         return default_timeout
+
+    clamped_timeout = max(default_timeout, parsed_timeout)
+    if clamped_timeout > parsed_timeout:
+        logger.warning(
+            "MENACE_BOOTSTRAP_WAIT_SECS=%r below minimum; clamping to %ss",
+            raw_timeout,
+            clamped_timeout,
+        )
+    return clamped_timeout
 
 
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
@@ -4236,177 +4246,123 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_rejected = False
         constructor_loop_start = time.perf_counter()
 
-    vector_lazy_enabled = vector_bootstrap_heavy or bool(bootstrap_fast)
-    if vector_lazy_enabled:
-        logger.info(
-            "prepare_pipeline.lazy_vector_bootstrap.enabled",
-            extra={
-                "context_builder": type(context_builder).__name__,
-                "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
-                "vector_bootstrap_heavy": vector_bootstrap_heavy,
-                "bootstrap_fast": bool(bootstrap_fast),
-            },
-        )
-
-        def _vector_excursion_triggered(exc: BaseException) -> bool:
-            message = f"{type(exc).__name__}:{exc}"
-            lowered = message.lower()
-            return "vector_service" in lowered or isinstance(exc, TimeoutError)
-
-        def _attempt_constructor(keys: tuple[str, ...]) -> bool:
-            nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
-            _check_stop_or_timeout("pipeline constructor attempt")
-            call_kwargs = {key: init_kwargs[key] for key in keys}
-            call_kwargs.update(static_items)
-            start_time = time.perf_counter()
-            try:
-                with _lazy_vector_bootstrap_guard(
-                    vector_lazy_enabled or vector_bootstrap_heavy
-                ):
-                    pipeline = pipeline_cls(**call_kwargs)
-            except TypeError as exc:
-                last_error = exc
-                if (
-                    not manager_rejected
-                    and "manager" in keys
-                    and _typeerror_rejects_manager(exc)
-                ):
-                    manager_rejected = True
-                _log_slow_hook(
-                    "pipeline constructor failure",
-                    start_time,
-                    keys=keys,
-                    manager_rejected=manager_rejected,
-                )
-                _log_timing(
-                    "pipeline constructor failure",
-                    start_time,
-                    keys=keys,
-                    manager_rejected=manager_rejected,
-                )
-                _record_prepare_pipeline_stage(
-                    "pipeline constructor failure",
-                    elapsed=time.perf_counter() - start_time,
-                    extra={"keys": keys, "manager_rejected": manager_rejected},
-                )
-                return False
-            except Exception as exc:  # pragma: no cover - defensive diagnostics
-                last_error = exc
-                if vector_bootstrap_heavy and not vector_lazy_enabled and _vector_excursion_triggered(exc):
-                    vector_lazy_enabled = True
-                    last_error = None
-                    logger.warning(
-                        "pipeline constructor triggered lazy vector bootstrap retry",
-                        exc_info=exc,
+        vector_lazy_enabled = vector_bootstrap_heavy or bool(bootstrap_fast)
+        if vector_lazy_enabled:
+            logger.info(
+                "prepare_pipeline.lazy_vector_bootstrap.enabled",
+                extra={
+                    "context_builder": type(context_builder).__name__,
+                    "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
+                    "vector_bootstrap_heavy": vector_bootstrap_heavy,
+                    "bootstrap_fast": bool(bootstrap_fast),
+                },
+            )
+    
+            def _vector_excursion_triggered(exc: BaseException) -> bool:
+                message = f"{type(exc).__name__}:{exc}"
+                lowered = message.lower()
+                return "vector_service" in lowered or isinstance(exc, TimeoutError)
+    
+            def _attempt_constructor(keys: tuple[str, ...]) -> bool:
+                nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
+                _check_stop_or_timeout("pipeline constructor attempt")
+                call_kwargs = {key: init_kwargs[key] for key in keys}
+                call_kwargs.update(static_items)
+                start_time = time.perf_counter()
+                try:
+                    with _lazy_vector_bootstrap_guard(
+                        vector_lazy_enabled or vector_bootstrap_heavy
+                    ):
+                        pipeline = pipeline_cls(**call_kwargs)
+                except TypeError as exc:
+                    last_error = exc
+                    if (
+                        not manager_rejected
+                        and "manager" in keys
+                        and _typeerror_rejects_manager(exc)
+                    ):
+                        manager_rejected = True
+                    _log_slow_hook(
+                        "pipeline constructor failure",
+                        start_time,
+                        keys=keys,
+                        manager_rejected=manager_rejected,
                     )
-                    logger.info(
-                        "prepare_pipeline.lazy_vector_bootstrap.deferred",
-                        extra={
-                            "context_builder": type(context_builder).__name__,
-                            "pipeline_cls": getattr(
-                                pipeline_cls, "__name__", str(pipeline_cls)
-                            ),
-                        },
+                    _log_timing(
+                        "pipeline constructor failure",
+                        start_time,
+                        keys=keys,
+                        manager_rejected=manager_rejected,
                     )
                     _record_prepare_pipeline_stage(
-                        "pipeline constructor lazy vector retry",
+                        "pipeline constructor failure",
                         elapsed=time.perf_counter() - start_time,
-                        extra={"keys": keys},
+                        extra={"keys": keys, "manager_rejected": manager_rejected},
                     )
                     return False
-                _log_timing(
-                    "pipeline constructor failure",
-                    start_time,
-                    keys=keys,
-                    manager_rejected=manager_rejected,
-                )
-                _record_prepare_pipeline_stage(
-                    "pipeline constructor failure",
-                    elapsed=time.perf_counter() - start_time,
-                    extra={"keys": keys, "error": type(exc).__name__},
-                )
-                raise
-            elapsed = time.perf_counter() - start_time
-            _log_slow_hook("pipeline construction", start_time, keys=keys)
-            _log_timing("pipeline construction", start_time, keys=keys)
-            _record_prepare_pipeline_stage(
-                "pipeline construction",
-                elapsed=elapsed,
-                extra={"keys": keys},
-            )
-            return True
-
-        shim_context: contextlib.AbstractContextManager[Any]
-        if shim_manager_placeholder is None:
-            shim_context = contextlib.nullcontext(_PipelineShimHandle(False, None))
-        else:
-            shim_context = _pipeline_manager_placeholder_shim(
-                pipeline_cls, shim_manager_placeholder
-            )
-        shim_release_candidate: Callable[[], None] | None = None
-
-        def _runtime_context_manager() -> contextlib.AbstractContextManager[
-            contextvars.Token[Any] | None
-        ]:
-            if runtime_manager is None:
-                return contextlib.nullcontext(None)
-            return _runtime_manager_context(runtime_manager)
-
-        with shim_context as shim_handle:
-            if isinstance(shim_handle, _PipelineShimHandle):
-                shim_release_candidate = shim_handle.release
-            else:
-                candidate_release = getattr(shim_handle, "release", None)
-                if callable(candidate_release):
-                    shim_release_candidate = candidate_release
-            with _runtime_context_manager():
-                _check_stop_or_timeout("pipeline constructor attempts")
-                for keys in manager_variants:
-                    if _attempt_constructor(keys):
-                        break
-        _log_timing(
-            "constructor attempt loop",
-            constructor_loop_start,
-            attempts=len(manager_variants),
-            manager_rejected=manager_rejected,
-            shim_placeholder=bool(shim_manager_placeholder),
-        )
-        managerless_placeholder = None
-        if pipeline is None:
-            if callable(shim_release_candidate):
-                try:
-                    shim_release_candidate()
-                except Exception:  # pragma: no cover - cleanup best effort
-                    logger.debug(
-                        "failed to release pipeline shim placeholder", exc_info=True
+                except Exception as exc:  # pragma: no cover - defensive diagnostics
+                    last_error = exc
+                    if vector_bootstrap_heavy and not vector_lazy_enabled and _vector_excursion_triggered(exc):
+                        vector_lazy_enabled = True
+                        last_error = None
+                        logger.warning(
+                            "pipeline constructor triggered lazy vector bootstrap retry",
+                            exc_info=exc,
+                        )
+                        logger.info(
+                            "prepare_pipeline.lazy_vector_bootstrap.deferred",
+                            extra={
+                                "context_builder": type(context_builder).__name__,
+                                "pipeline_cls": getattr(
+                                    pipeline_cls, "__name__", str(pipeline_cls)
+                                ),
+                            },
+                        )
+                        _record_prepare_pipeline_stage(
+                            "pipeline constructor lazy vector retry",
+                            elapsed=time.perf_counter() - start_time,
+                            extra={"keys": keys},
+                        )
+                        return False
+                    _log_timing(
+                        "pipeline constructor failure",
+                        start_time,
+                        keys=keys,
+                        manager_rejected=manager_rejected,
                     )
-            shim_release_candidate = None
-        if pipeline is None and manager_rejected and managerless_variants:
-            managerless_placeholder = _select_placeholder(
-                shim_manager_placeholder,
-                manager_placeholder,
-                sentinel_manager,
-            )
-            if managerless_placeholder is None:
-                managerless_placeholder = runtime_manager
-            if managerless_placeholder is None:
-                managerless_placeholder = _DisabledSelfCodingManager(
-                    bot_registry=bot_registry,
-                    data_bot=data_bot,
-                    bootstrap_placeholder=True,
+                    _record_prepare_pipeline_stage(
+                        "pipeline constructor failure",
+                        elapsed=time.perf_counter() - start_time,
+                        extra={"keys": keys, "error": type(exc).__name__},
+                    )
+                    raise
+                elapsed = time.perf_counter() - start_time
+                _log_slow_hook("pipeline construction", start_time, keys=keys)
+                _log_timing("pipeline construction", start_time, keys=keys)
+                _record_prepare_pipeline_stage(
+                    "pipeline construction",
+                    elapsed=elapsed,
+                    extra={"keys": keys},
                 )
-            _mark_bootstrap_placeholder(managerless_placeholder)
-            logger.debug(
-                "retrying %s bootstrap without manager kwarg using placeholder %s",
-                pipeline_cls,
-                type(managerless_placeholder),
-            )
-            managerless_context: contextlib.AbstractContextManager[Any]
-            managerless_context = _pipeline_manager_placeholder_shim(
-                pipeline_cls, managerless_placeholder
-            )
-            managerless_loop_start = time.perf_counter()
-            with managerless_context as shim_handle:
+                return True
+    
+            shim_context: contextlib.AbstractContextManager[Any]
+            if shim_manager_placeholder is None:
+                shim_context = contextlib.nullcontext(_PipelineShimHandle(False, None))
+            else:
+                shim_context = _pipeline_manager_placeholder_shim(
+                    pipeline_cls, shim_manager_placeholder
+                )
+            shim_release_candidate: Callable[[], None] | None = None
+    
+            def _runtime_context_manager() -> contextlib.AbstractContextManager[
+                contextvars.Token[Any] | None
+            ]:
+                if runtime_manager is None:
+                    return contextlib.nullcontext(None)
+                return _runtime_manager_context(runtime_manager)
+    
+            with shim_context as shim_handle:
                 if isinstance(shim_handle, _PipelineShimHandle):
                     shim_release_candidate = shim_handle.release
                 else:
@@ -4414,48 +4370,102 @@ def _prepare_pipeline_for_bootstrap_impl(
                     if callable(candidate_release):
                         shim_release_candidate = candidate_release
                 with _runtime_context_manager():
-                    _check_stop_or_timeout("managerless constructor attempts")
-                    for keys in managerless_variants:
+                    _check_stop_or_timeout("pipeline constructor attempts")
+                    for keys in manager_variants:
                         if _attempt_constructor(keys):
-                            shim_manager_placeholder = managerless_placeholder
                             break
             _log_timing(
-                "managerless constructor loop",
-                managerless_loop_start,
-                attempts=len(managerless_variants),
-                managerless_placeholder=bool(managerless_placeholder),
+                "constructor attempt loop",
+                constructor_loop_start,
+                attempts=len(manager_variants),
+                manager_rejected=manager_rejected,
+                shim_placeholder=bool(shim_manager_placeholder),
             )
-            _record_prepare_pipeline_stage(
-                "managerless constructor loop",
-                elapsed=time.perf_counter() - managerless_loop_start,
-                extra={
-                    "attempts": len(managerless_variants),
-                    "managerless_placeholder": bool(managerless_placeholder),
-                },
-            )
-        if pipeline is None:
-            if callable(shim_release_candidate):
-                try:
-                    shim_release_candidate()
-                except Exception:  # pragma: no cover - cleanup best effort
-                    logger.debug(
-                        "failed to release pipeline shim placeholder", exc_info=True
+            managerless_placeholder = None
+            if pipeline is None:
+                if callable(shim_release_candidate):
+                    try:
+                        shim_release_candidate()
+                    except Exception:  # pragma: no cover - cleanup best effort
+                        logger.debug(
+                            "failed to release pipeline shim placeholder", exc_info=True
+                        )
+                shim_release_candidate = None
+            if pipeline is None and manager_rejected and managerless_variants:
+                managerless_placeholder = _select_placeholder(
+                    shim_manager_placeholder,
+                    manager_placeholder,
+                    sentinel_manager,
+                )
+                if managerless_placeholder is None:
+                    managerless_placeholder = runtime_manager
+                if managerless_placeholder is None:
+                    managerless_placeholder = _DisabledSelfCodingManager(
+                        bot_registry=bot_registry,
+                        data_bot=data_bot,
+                        bootstrap_placeholder=True,
                     )
-            if last_error is None:
-                raise RuntimeError("pipeline bootstrap failed")
-            raise last_error
-        if callable(shim_release_candidate):
-            shim_release_callback = shim_release_candidate
-        _assign_bootstrap_manager_placeholder(
-            pipeline,
-            manager_placeholder,
-            propagate_nested=True,
-        )
-        _log_timing(
-            "assign bootstrap manager placeholder",
-            constructor_loop_start,
-            propagate_nested=True,
-            has_context=bool(context),
+                _mark_bootstrap_placeholder(managerless_placeholder)
+                logger.debug(
+                    "retrying %s bootstrap without manager kwarg using placeholder %s",
+                    pipeline_cls,
+                    type(managerless_placeholder),
+                )
+                managerless_context: contextlib.AbstractContextManager[Any]
+                managerless_context = _pipeline_manager_placeholder_shim(
+                    pipeline_cls, managerless_placeholder
+                )
+                managerless_loop_start = time.perf_counter()
+                with managerless_context as shim_handle:
+                    if isinstance(shim_handle, _PipelineShimHandle):
+                        shim_release_candidate = shim_handle.release
+                    else:
+                        candidate_release = getattr(shim_handle, "release", None)
+                        if callable(candidate_release):
+                            shim_release_candidate = candidate_release
+                    with _runtime_context_manager():
+                        _check_stop_or_timeout("managerless constructor attempts")
+                        for keys in managerless_variants:
+                            if _attempt_constructor(keys):
+                                shim_manager_placeholder = managerless_placeholder
+                                break
+                _log_timing(
+                    "managerless constructor loop",
+                    managerless_loop_start,
+                    attempts=len(managerless_variants),
+                    managerless_placeholder=bool(managerless_placeholder),
+                )
+                _record_prepare_pipeline_stage(
+                    "managerless constructor loop",
+                    elapsed=time.perf_counter() - managerless_loop_start,
+                    extra={
+                        "attempts": len(managerless_variants),
+                        "managerless_placeholder": bool(managerless_placeholder),
+                    },
+                )
+            if pipeline is None:
+                if callable(shim_release_candidate):
+                    try:
+                        shim_release_candidate()
+                    except Exception:  # pragma: no cover - cleanup best effort
+                        logger.debug(
+                            "failed to release pipeline shim placeholder", exc_info=True
+                        )
+                if last_error is None:
+                    raise RuntimeError("pipeline bootstrap failed")
+                raise last_error
+            if callable(shim_release_candidate):
+                shim_release_callback = shim_release_candidate
+            _assign_bootstrap_manager_placeholder(
+                pipeline,
+                manager_placeholder,
+                propagate_nested=True,
+            )
+            _log_timing(
+                "assign bootstrap manager placeholder",
+                constructor_loop_start,
+                propagate_nested=True,
+                has_context=bool(context),
         )
         if context is not None and context.pipeline is None:
             context.pipeline = pipeline
