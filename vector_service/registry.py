@@ -50,12 +50,21 @@ def _accepts_bootstrap_fast(target: type[object]) -> bool:
     )
 
 
+def _patch_stub_handler(record: Dict[str, any]) -> list[float]:
+    return []
+
+
+# Mark stub so callers can detect deferred bootstrap handling.
+_patch_stub_handler.is_patch_stub = True  # type: ignore[attr-defined]
+
+
 def load_handlers(
     *, bootstrap_fast: bool | None = None
 ) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
     handlers: Dict[str, Callable[[Dict[str, any]], list[float]]] = {}
+    bootstrap_fast = bool(bootstrap_fast) if bootstrap_fast is not None else False
     start = time.perf_counter()
     logger.debug(
         "vector_registry.load_handlers.start",
@@ -71,6 +80,16 @@ def load_handlers(
                 "class_name": cls_name,
             },
         )
+        if bootstrap_fast and kind == "patch":
+            logger.info(
+                "vector_registry.handler.deferred",
+                extra={
+                    "kind": kind,
+                    "reason": "bootstrap_fast",
+                },
+            )
+            handlers[kind] = _patch_stub_handler
+            continue
         try:
             mod = importlib.import_module(mod_name)
             cls = getattr(mod, cls_name)

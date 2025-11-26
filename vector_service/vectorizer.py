@@ -174,6 +174,17 @@ class SharedVectorService:
                 handler_count=len(self._handlers),
             ),
         )
+        if self.bootstrap_fast and getattr(
+            self._handlers.get("patch"), "is_patch_stub", False
+        ):
+            logger.info(
+                "shared_vector_service.bootstrap_fast.patch_handler_deferred",
+                extra=_timestamp_payload(
+                    handler_start,
+                    handler_count=len(self._handlers),
+                    deferred_patch=True,
+                ),
+            )
         _trace(
             "shared_vector_service.handlers.loaded",
             handler_count=len(self._handlers),
