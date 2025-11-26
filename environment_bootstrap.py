@@ -54,12 +54,14 @@ class EnvironmentBootstrapper:
         policy: DependencyPolicy | None = None,
     ) -> None:
         self._clock = time.monotonic
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.config_discovery = ConfigDiscovery()
         self.config_discovery.discover()
         self._background_threads: list[threading.Thread] = []
         self._stop_events: list[threading.Event] = []
+        self._watchers_limited = os.getenv("MENACE_MINIMISE_BOOTSTRAP_WATCHERS") == "1"
         interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
-        if interval:
+        if interval and not self._watchers_limited:
             try:
                 sec = float(interval)
             except ValueError:
@@ -71,8 +73,11 @@ class EnvironmentBootstrapper:
                 )
                 self._stop_events.append(stop_event)
                 self._background_threads.append(t)
+        elif self._watchers_limited:
+            self.logger.info(
+                "config discovery watcher disabled via MENACE_MINIMISE_BOOTSTRAP_WATCHERS"
+            )
         self.tf_dir = tf_dir or os.getenv("TERRAFORM_DIR")
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.bootstrapper = InfrastructureBootstrapper(self.tf_dir)
         self.policy = policy or PolicyLoader().resolve()
         self.required_commands = list(self.policy.required_commands)
