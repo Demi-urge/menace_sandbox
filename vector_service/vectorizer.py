@@ -182,7 +182,8 @@ class SharedVectorService:
                     "bootstrap_context": True,
                 },
             )
-        self._handlers = load_handlers(bootstrap_fast=requested_fast)
+        handler_bootstrap_flag = resolved_fast
+        self._handlers = load_handlers(bootstrap_fast=handler_bootstrap_flag)
         logger.info(
             "shared_vector_service.handlers.loaded",
             extra=_timestamp_payload(
@@ -199,9 +200,23 @@ class SharedVectorService:
                     handler_start,
                     handler_count=len(self._handlers),
                     bootstrap_fast_requested=requested_fast,
+                    bootstrap_fast_resolved=handler_bootstrap_flag,
                     bootstrap_fast_active=True,
                     bootstrap_fast_defaulted=defaulted_fast,
                     deferred_patch=True,
+                ),
+            )
+        elif resolved_fast and bootstrap_context:
+            logger.info(
+                "shared_vector_service.bootstrap_fast.patch_handler_stub_missing",
+                extra=_timestamp_payload(
+                    handler_start,
+                    handler_count=len(self._handlers),
+                    bootstrap_fast_requested=requested_fast,
+                    bootstrap_fast_resolved=handler_bootstrap_flag,
+                    bootstrap_fast_active=True,
+                    bootstrap_fast_defaulted=defaulted_fast,
+                    deferred_patch=False,
                 ),
             )
         _trace(
