@@ -136,3 +136,39 @@ def test_vector_heavy_bootstrap_prefers_vector_timeout(monkeypatch):
     assert context["manager"] is dummy_manager
     assert timeouts["prepare_pipeline_for_bootstrap"] == pytest.approx(120.0)
     assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(30.0)
+
+
+def test_prepare_pipeline_timeout_respects_none(monkeypatch):
+    """Disabling bootstrap timeouts should flow through to prepare pipeline."""
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "none")
+    monkeypatch.setattr(bootstrap._coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None)
+    monkeypatch.setattr(
+        bootstrap._coding_bot_interface,
+        "_resolve_bootstrap_wait_timeout",
+        lambda vector_heavy=False: None,
+    )
+
+    bootstrap.BOOTSTRAP_STEP_TIMEOUT = bootstrap._resolve_step_timeout()
+    effective_timeout, timeout_context = bootstrap._resolve_timeout(
+        bootstrap.BOOTSTRAP_STEP_TIMEOUT,
+        bootstrap_deadline=None,
+        heavy_bootstrap=False,
+    )
+
+    assert bootstrap.BOOTSTRAP_STEP_TIMEOUT is None
+    assert effective_timeout is None
+    assert timeout_context["effective_timeout"] is None
+
+    def slow_prepare(**_kwargs):
+        time.sleep(0.05)
+        return "pipeline", lambda *_a, **_k: None
+
+    pipeline, _promote = bootstrap._run_with_timeout(
+        slow_prepare,
+        timeout=bootstrap.BOOTSTRAP_STEP_TIMEOUT,
+        description="prepare_pipeline_for_bootstrap",
+        resolved_timeout=(effective_timeout, timeout_context),
+    )
+
+    assert pipeline == "pipeline"
