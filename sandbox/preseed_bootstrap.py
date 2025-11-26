@@ -58,8 +58,9 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
+_BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 120.0)
 _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
-    300.0,
+    _BOOTSTRAP_TIMEOUT_FLOOR,
     (
         _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
         if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
@@ -67,12 +68,37 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
     ),
 )
 _PREPARE_SAFE_TIMEOUT_FLOOR = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+
+
+def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
+    if timeout < _BOOTSTRAP_TIMEOUT_FLOOR:
+        LOGGER.warning(
+            "%s below minimum; clamping to %ss",
+            env_var,
+            _BOOTSTRAP_TIMEOUT_FLOOR,
+            extra={
+                "requested_timeout": timeout,
+                "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
+                "effective_timeout": _BOOTSTRAP_TIMEOUT_FLOOR,
+            },
+        )
+        return _BOOTSTRAP_TIMEOUT_FLOOR
+    return timeout
+
+
 _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
     _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
-    float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))),
+    _clamp_timeout_floor(
+        float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))),
+        env_var="BOOTSTRAP_STEP_TIMEOUT",
+    ),
 )
-_DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = float(
-    os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")
+_DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
+    _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+    _clamp_timeout_floor(
+        float(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")),
+        env_var="BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ),
 )
 BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
@@ -141,7 +167,9 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
             extra={
                 "requested_timeout": resolved_timeout,
                 "minimum_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
                 "vector_heavy": vector_heavy,
+                "effective_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
             },
         )
         resolved_timeout = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
