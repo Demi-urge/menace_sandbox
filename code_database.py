@@ -1283,10 +1283,12 @@ class PatchHistoryDB:
         self.path = Path(
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
         )
-        self._bootstrap_fast = bool(
-            bootstrap or bootstrap_fast or _patch_history_bootstrap_active()
-        )
-        self._bootstrap = self._bootstrap_fast
+        env_bootstrap = _patch_history_bootstrap_active()
+        bootstrap_fast_signal = bootstrap_fast
+        if bootstrap_fast_signal is None and (bootstrap or env_bootstrap):
+            bootstrap_fast_signal = True
+        self._bootstrap_fast = bool(bootstrap_fast_signal)
+        self._bootstrap = bool(bootstrap or bootstrap_fast_signal or env_bootstrap)
         if self._bootstrap_fast and not (bootstrap or bootstrap_fast):
             logger.info(
                 "patch_history_db.bootstrap.env_override",

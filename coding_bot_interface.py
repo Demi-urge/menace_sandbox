@@ -4787,15 +4787,18 @@ def _bootstrap_manager(
                     "model_automation_pipeline", fallback="menace.model_automation_pipeline"
                 )
                 patch_logger = None
+                patch_db_bootstrap_fast = bootstrap_fast
+                if patch_db_bootstrap_fast is None:
+                    patch_db_bootstrap_fast = True
                 patch_db_kwargs = {
-                    "bootstrap": bool(bootstrap_fast),
-                    "bootstrap_fast": bool(bootstrap_fast),
+                    "bootstrap": patch_db_bootstrap_fast,
+                    "bootstrap_fast": bootstrap_fast,
                 }
-                if bootstrap_fast:
+                if patch_db_bootstrap_fast:
                     patch_db_kwargs.setdefault("path", ":memory:")
-                with _patch_history_bootstrap_env(bool(bootstrap_fast)):
+                with _patch_history_bootstrap_env(bool(patch_db_bootstrap_fast)):
                     patch_db = patch_db_cls(**patch_db_kwargs)
-                if bootstrap_fast:
+                if patch_db_bootstrap_fast:
                     try:
                         patch_logger_mod = _load_optional_module(
                             "vector_service.patch_logger",
