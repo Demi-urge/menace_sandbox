@@ -118,6 +118,7 @@ def load_handlers(
                     "kind": kind,
                     "reason": "bootstrap_fast",
                     "bootstrap_context": bootstrap_context,
+                    "bootstrap_fast_defaulted": defaulted_fast,
                 },
             )
             handlers[kind] = _patch_stub_handler
