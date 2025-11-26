@@ -569,8 +569,9 @@ class PatchRetriever:
     bootstrap_fast: bool | None = None
 
     def __post_init__(self) -> None:
+        requested_fast = self.bootstrap_fast
         resolved_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
-            self.bootstrap_fast
+            requested_fast
         )
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
@@ -592,7 +593,7 @@ class PatchRetriever:
             except Exception:  # pragma: no cover - fallback to absolute import
                 from vector_service.vectorizer import SharedVectorService  # type: ignore
             self.vector_service = SharedVectorService(
-                bootstrap_fast=resolved_fast
+                bootstrap_fast=requested_fast
             )
         backend = "annoy"
         path = "vectors.index"

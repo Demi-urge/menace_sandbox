@@ -168,8 +168,9 @@ class SharedVectorService:
             extra=_timestamp_payload(init_start),
         )
         handler_start = time.perf_counter()
+        requested_fast = self.bootstrap_fast
         resolved_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
-            self.bootstrap_fast
+            requested_fast
         )
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
@@ -181,7 +182,7 @@ class SharedVectorService:
                     "bootstrap_context": True,
                 },
             )
-        self._handlers = load_handlers(bootstrap_fast=resolved_fast)
+        self._handlers = load_handlers(bootstrap_fast=requested_fast)
         logger.info(
             "shared_vector_service.handlers.loaded",
             extra=_timestamp_payload(
@@ -197,9 +198,9 @@ class SharedVectorService:
                 extra=_timestamp_payload(
                     handler_start,
                     handler_count=len(self._handlers),
-                    bootstrap_fast_requested=self.bootstrap_fast,
+                    bootstrap_fast_requested=requested_fast,
                     bootstrap_fast_active=True,
-                    bootstrap_fast_defaulted=self.bootstrap_fast is None,
+                    bootstrap_fast_defaulted=defaulted_fast,
                     deferred_patch=True,
                 ),
             )
