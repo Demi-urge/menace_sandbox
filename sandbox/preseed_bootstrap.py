@@ -8,7 +8,12 @@ Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
 ``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 300s
 fallback derived from ``_get_bootstrap_wait_timeout`` (or
-``BOOTSTRAP_STEP_TIMEOUT``) unless timeouts are explicitly disabled.
+``BOOTSTRAP_STEP_TIMEOUT``) unless timeouts are explicitly disabled. Operators
+who hit the legacy 30s cap on ``prepare_pipeline_for_bootstrap`` should set
+``MENACE_BOOTSTRAP_WAIT_SECS`` (standard paths) and
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` (vector-heavy pipelines) to higher values
+like 120–300 seconds before running bootstrap, especially on slow disks or when
+vector DB migrations need extra breathing room.
 """
 
 from __future__ import annotations
