@@ -507,3 +507,37 @@ def test_prepare_pipeline_disabled_manager_skips_bootstrap(monkeypatch, caplog):
     assert isinstance(pipeline, _PipelineProbe)
     assert "re-entrant" not in caplog.text
 
+
+def test_prepare_pipeline_timeout_emits_watchdog(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
+    cbi._PREPARE_PIPELINE_WATCHDOG["timeouts"] = 0
+
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "vector_heavy", True, raising=False)
+
+    perf_calls = iter([0.0, 10.0, 10.0])
+    monkeypatch.setattr(cbi.time, "perf_counter", lambda: next(perf_calls))
+
+    class _Pipeline:
+        def __init__(self, *_, **__):
+            pass
+
+    with pytest.raises(TimeoutError):
+        cbi._prepare_pipeline_for_bootstrap_impl(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=DummyRegistry(),
+            data_bot=DummyDataBot(),
+            timeout=0.0,
+        )
+
+    diagnostics = [
+        record.message for record in caplog.records if "timeout diagnostics" in record.message
+    ]
+    assert diagnostics, "timeout diagnostics should be emitted when timing out"
+    assert "vector_heavy=True" in diagnostics[-1]
+    assert "context push" in diagnostics[-1]
+
+    if hasattr(cbi._BOOTSTRAP_STATE, "vector_heavy"):
+        delattr(cbi._BOOTSTRAP_STATE, "vector_heavy")
+

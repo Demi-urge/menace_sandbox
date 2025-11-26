@@ -3772,6 +3772,16 @@ def _prepare_pipeline_for_bootstrap_impl(
             extra={"reason": reason},
         )
 
+    def _emit_timeout_diagnostics(stage: str) -> None:
+        vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+        timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
+        logger.warning(
+            "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s timeline=%s",
+            stage,
+            vector_heavy,
+            timeline,
+        )
+
     def _check_stop_or_timeout(stage: str) -> None:
         if stop_event is not None and stop_event.is_set():
             logger.warning(
@@ -3779,6 +3789,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 stage,
             )
             _record_timeout(stage, "stop_event")
+            _emit_timeout_diagnostics(stage)
             raise TimeoutError(
                 f"prepare_pipeline_for_bootstrap cancelled via stop event during {stage}"
             )
@@ -3790,6 +3801,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 elapsed,
             )
             _record_timeout(stage, "deadline")
+            _emit_timeout_diagnostics(stage)
             raise TimeoutError(
                 f"prepare_pipeline_for_bootstrap timed out during {stage}"
             )
