@@ -69,7 +69,9 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
         else 300.0
     ),
 )
-_PREPARE_SAFE_TIMEOUT_FLOOR = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+_PREPARE_STANDARD_TIMEOUT_FLOOR = 180.0
+_PREPARE_VECTOR_TIMEOUT_FLOOR = 240.0
+_PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 
 
@@ -199,10 +201,16 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
     resolved_timeout: float | None = None
-    fallback_timeout = (
-        _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
-        if vector_heavy
-        else _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+    timeout_floor = (
+        _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+    )
+    fallback_timeout = max(
+        timeout_floor,
+        (
+            _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
+            if vector_heavy
+            else _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+        ),
     )
     resolver = getattr(_coding_bot_interface, "_resolve_bootstrap_wait_timeout", None)
     if resolver:
@@ -226,21 +234,18 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
 
     resolved_timeout = fallback_timeout if resolved_timeout is None else resolved_timeout
 
-    if (
-        resolved_timeout is not None
-        and resolved_timeout < _BASELINE_BOOTSTRAP_STEP_TIMEOUT
-    ):
+    if resolved_timeout is not None and resolved_timeout < timeout_floor:
         LOGGER.warning(
             "bootstrap wait timeout below recommended minimum; clamping",
             extra={
                 "requested_timeout": resolved_timeout,
-                "minimum_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                "minimum_timeout": timeout_floor,
                 "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
                 "vector_heavy": vector_heavy,
-                "effective_timeout": _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+                "effective_timeout": timeout_floor,
             },
         )
-        resolved_timeout = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+        resolved_timeout = timeout_floor
 
     return resolved_timeout
 
@@ -376,39 +381,54 @@ def _enforce_prepare_timeout_floor(
     """Clamp prepare timeouts to a safe floor when possible."""
 
     effective_timeout, timeout_context = resolved_timeout
+    timeout_floor = (
+        _PREPARE_VECTOR_TIMEOUT_FLOOR
+        if vector_heavy or heavy_prepare
+        else _PREPARE_STANDARD_TIMEOUT_FLOOR
+    )
+    updated_context = dict(timeout_context)
+    updated_context.update(
+        {
+            "timeout_safe_floor": timeout_floor,
+            "timeout_floor_applied": timeout_floor,
+            "timeout_floor_mode": "vector" if (vector_heavy or heavy_prepare) else "standard",
+            "timeout_floor_auto_escalated": False,
+            "vector_heavy": vector_heavy,
+            "heavy_prepare": heavy_prepare,
+        }
+    )
+    timeout_context = updated_context
     if effective_timeout is None:
-        return resolved_timeout
+        return effective_timeout, updated_context
 
     deadline_remaining = None
     if bootstrap_deadline is not None:
         deadline_remaining = bootstrap_deadline - time.monotonic()
 
-    if effective_timeout < _PREPARE_SAFE_TIMEOUT_FLOOR:
-        updated_context = dict(timeout_context)
+    if effective_timeout < timeout_floor:
         updated_context.update(
             {
-                "timeout_safe_floor": _PREPARE_SAFE_TIMEOUT_FLOOR,
                 "timeout_before_floor": effective_timeout,
-                "vector_heavy": vector_heavy,
-                "heavy_prepare": heavy_prepare,
                 "deadline_remaining_now": deadline_remaining,
             }
         )
 
-        if deadline_remaining is None or deadline_remaining >= _PREPARE_SAFE_TIMEOUT_FLOOR:
+        if deadline_remaining is None or deadline_remaining >= timeout_floor:
             LOGGER.warning(
                 "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",
                 extra={"timeout_context": updated_context},
             )
-            effective_timeout = _PREPARE_SAFE_TIMEOUT_FLOOR
+            effective_timeout = timeout_floor
             updated_context["effective_timeout"] = effective_timeout
             updated_context["timeout_escalated_to_floor"] = True
+            updated_context["timeout_floor_auto_escalated"] = True
         else:
             LOGGER.warning(
                 "prepare_pipeline_for_bootstrap timeout below safe floor but constrained by deadline",
                 extra={"timeout_context": updated_context},
             )
             updated_context["effective_timeout"] = effective_timeout
+            updated_context["timeout_floor_blocked_by_deadline"] = True
         timeout_context = updated_context
 
     return effective_timeout, timeout_context
@@ -449,7 +469,13 @@ def _run_with_timeout(
         _describe_timeout(effective_timeout),
         heavy_bootstrap,
         bootstrap_deadline,
-        extra={"timeout_context": timeout_context},
+        extra={
+            "timeout_context": timeout_context,
+            "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
+            "timeout_floor_auto_escalated": timeout_context.get(
+                "timeout_floor_auto_escalated"
+            ),
+        },
     )
 
     result: Dict[str, Any] = {}
@@ -526,6 +552,10 @@ def _run_with_timeout(
             "active_step": active_step,
             "active_elapsed_ms": active_elapsed_ms,
             "timeout_context": timeout_context,
+            "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
+            "timeout_floor_auto_escalated": timeout_context.get(
+                "timeout_floor_auto_escalated"
+            ),
             "prepare_watchdog_timeline": watchdog_timeline,
             "env_menace_bootstrap_wait_resolved": resolved_bootstrap_wait,
             "env_menace_bootstrap_vector_wait_resolved": resolved_vector_wait,
@@ -1005,16 +1035,21 @@ def initialize_bootstrap_context(
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
             prepare_timeout = vector_timeout if vector_heavy else standard_timeout
-            if prepare_timeout is not None and prepare_timeout < _PREPARE_SAFE_TIMEOUT_FLOOR:
+            prepare_timeout_floor = (
+                _PREPARE_VECTOR_TIMEOUT_FLOOR
+                if vector_heavy or heavy_bootstrap
+                else _PREPARE_STANDARD_TIMEOUT_FLOOR
+            )
+            if prepare_timeout is not None and prepare_timeout < prepare_timeout_floor:
                 LOGGER.warning(
                     "prepare_pipeline_for_bootstrap timeout below safe floor; clamping",
                     extra={
                         "vector_heavy": vector_heavy,
                         "requested_timeout": prepare_timeout,
-                        "minimum_timeout": _PREPARE_SAFE_TIMEOUT_FLOOR,
+                        "minimum_timeout": prepare_timeout_floor,
                     },
                 )
-                prepare_timeout = _PREPARE_SAFE_TIMEOUT_FLOOR
+                prepare_timeout = prepare_timeout_floor
             heavy_prepare = heavy_bootstrap or vector_heavy
             resolved_prepare_timeout = _resolve_timeout(
                 prepare_timeout,
