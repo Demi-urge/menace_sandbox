@@ -1250,6 +1250,12 @@ class PatchRecord:
 
 
 _PATCH_HISTORY_BOOTSTRAP_ROUTER: DBRouter | None = None
+_PATCH_HISTORY_BOOTSTRAP_FLAG = "PATCH_HISTORY_BOOTSTRAP"
+
+
+def _patch_history_bootstrap_active() -> bool:
+    flag = os.getenv(_PATCH_HISTORY_BOOTSTRAP_FLAG, "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class PatchHistoryDB:
@@ -1277,8 +1283,15 @@ class PatchHistoryDB:
         self.path = Path(
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
         )
-        self._bootstrap_fast = bool(bootstrap or bootstrap_fast)
+        self._bootstrap_fast = bool(
+            bootstrap or bootstrap_fast or _patch_history_bootstrap_active()
+        )
         self._bootstrap = self._bootstrap_fast
+        if self._bootstrap_fast and not (bootstrap or bootstrap_fast):
+            logger.info(
+                "patch_history_db.bootstrap.env_override",
+                extra={"flag": _PATCH_HISTORY_BOOTSTRAP_FLAG},
+            )
         logger.info(
             "patch_history_db.path.resolved path=%s",
             self.path,

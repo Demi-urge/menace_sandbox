@@ -142,6 +142,64 @@ class VectorMetricsDB:
             extra=_timestamp_payload(init_start, configured_path=str(path)),
         )
 
+        self._cached_weights: dict[str, float] = {}
+        self._schema_cache: dict[str, list[str]] = {}
+        self._default_columns: dict[str, list[str]] = {
+            "vector_metrics": [
+                "event_type",
+                "db",
+                "tokens",
+                "wall_time_ms",
+                "store_time_ms",
+                "hit",
+                "rank",
+                "contribution",
+                "prompt_tokens",
+                "patch_id",
+                "session_id",
+                "vector_id",
+                "similarity",
+                "context_score",
+                "age",
+                "win",
+                "regret",
+                "ts",
+            ],
+            "patch_ancestry": [
+                "patch_id",
+                "vector_id",
+                "rank",
+                "contribution",
+                "license",
+                "semantic_alerts",
+                "alignment_severity",
+                "risk_score",
+            ],
+            "patch_metrics": [
+                "patch_id",
+                "errors",
+                "tests_passed",
+                "lines_changed",
+                "context_tokens",
+                "patch_difficulty",
+                "start_time",
+                "time_to_completion",
+                "error_trace_count",
+                "roi_tag",
+                "effort_estimate",
+                "enhancement_score",
+            ],
+        }
+        if self.bootstrap_fast:
+            logger.info(
+                "vector_metrics_db.bootstrap.fast_path_short_circuit",
+                extra=_timestamp_payload(init_start, fast_path=True),
+            )
+            self.router = None
+            self.conn = None
+            self._schema_cache.update(self._default_columns)
+            return
+
         LOCAL_TABLES.add("vector_metrics")
 
         if bootstrap_safe:
@@ -203,61 +261,6 @@ class VectorMetricsDB:
                 init_start, using_global_router=using_global_router
             ),
         )
-        self._cached_weights: dict[str, float] = {}
-        self._schema_cache: dict[str, list[str]] = {}
-        self._default_columns: dict[str, list[str]] = {
-            "vector_metrics": [
-                "event_type",
-                "db",
-                "tokens",
-                "wall_time_ms",
-                "store_time_ms",
-                "hit",
-                "rank",
-                "contribution",
-                "prompt_tokens",
-                "patch_id",
-                "session_id",
-                "vector_id",
-                "similarity",
-                "context_score",
-                "age",
-                "win",
-                "regret",
-                "ts",
-            ],
-            "patch_ancestry": [
-                "patch_id",
-                "vector_id",
-                "rank",
-                "contribution",
-                "license",
-                "semantic_alerts",
-                "alignment_severity",
-                "risk_score",
-            ],
-            "patch_metrics": [
-                "patch_id",
-                "errors",
-                "tests_passed",
-                "lines_changed",
-                "context_tokens",
-                "patch_difficulty",
-                "start_time",
-                "time_to_completion",
-                "error_trace_count",
-                "roi_tag",
-                "effort_estimate",
-                "enhancement_score",
-            ],
-        }
-        if self.bootstrap_fast:
-            logger.info(
-                "vector_metrics_db.bootstrap.skip_schema",
-                extra=_timestamp_payload(init_start, fast_path=True),
-            )
-            self._schema_cache.update(self._default_columns)
-            return
         schema_start = time.perf_counter()
         self.conn.execute(
             """
