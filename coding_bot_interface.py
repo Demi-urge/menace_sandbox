@@ -3792,9 +3792,6 @@ def _prepare_pipeline_for_bootstrap_impl(
     start_time = time.perf_counter()
     resolved_deadline = deadline
     requested_timeout = None
-    if resolved_deadline is None and timeout is not None:
-        requested_timeout = max(0.0, float(timeout))
-        resolved_deadline = start_time + requested_timeout
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
@@ -3968,6 +3965,63 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+
+    effective_timeout_floor = _BOOTSTRAP_TIMEOUT_FLOOR
+    if vector_bootstrap_heavy:
+        effective_timeout_floor = max(effective_timeout_floor, 900.0)
+
+    def _clamp_to_timeout_floor(value: float) -> tuple[float, bool]:
+        clamped_value = max(effective_timeout_floor, value)
+        return clamped_value, clamped_value > value
+
+    if timeout is not None:
+        requested_timeout = max(0.0, float(timeout))
+        requested_timeout, timeout_escalated = _clamp_to_timeout_floor(requested_timeout)
+        if timeout_escalated:
+            logger.warning(
+                (
+                    "prepare_pipeline caller timeout below minimum; clamping "
+                    "requested_timeout=%s clamped_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
+                timeout,
+                requested_timeout,
+                vector_bootstrap_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
+                extra={
+                    "requested_timeout": timeout,
+                    "timeout_floor": effective_timeout_floor,
+                    "effective_timeout": requested_timeout,
+                    "vector_heavy": vector_bootstrap_heavy,
+                    "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                    "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                },
+            )
+        resolved_deadline = start_time + requested_timeout
+    elif resolved_deadline is not None:
+        deadline_budget = max(0.0, float(resolved_deadline - start_time))
+        requested_timeout, timeout_escalated = _clamp_to_timeout_floor(deadline_budget)
+        if timeout_escalated:
+            resolved_deadline = start_time + requested_timeout
+            logger.warning(
+                (
+                    "prepare_pipeline caller deadline below minimum; clamping "
+                    "requested_timeout=%s clamped_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
+                deadline_budget,
+                requested_timeout,
+                vector_bootstrap_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
+                extra={
+                    "requested_timeout": deadline_budget,
+                    "timeout_floor": effective_timeout_floor,
+                    "effective_timeout": requested_timeout,
+                    "vector_heavy": vector_bootstrap_heavy,
+                    "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                    "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                },
+            )
 
     resolved_wait_timeout = bootstrap_wait_timeout
     if resolved_wait_timeout is None:
