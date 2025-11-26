@@ -4430,7 +4430,7 @@ def _bootstrap_manager(
         elif bootstrap_fast is False and getattr(active_context, "bootstrap_safe", False):
             bootstrap_fast = True
     if bootstrap_fast is None:
-        bootstrap_fast = bootstrap_safe is not False
+        bootstrap_fast = True
     if bootstrap_fast:
         logger.info(
             "self-coding manager bootstrap using fast path for %s", name

@@ -25,6 +25,7 @@ from retrieval_cache import RetrievalCache
 from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_redact_text
 from governed_retrieval import govern_retrieval, redact, redact_dict
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
+from .registry import _resolve_bootstrap_fast
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # noqa: F401  # type: ignore
 except Exception:  # pragma: no cover - fallback when running as script
@@ -107,7 +108,7 @@ class Retriever:
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
     risk_penalty: float = 1.0
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
-    bootstrap_fast: bool = False
+    bootstrap_fast: bool | None = None
 
     def __post_init__(self) -> None:
         if not hasattr(self.context_builder, "roi_tag_penalties"):
@@ -565,9 +566,23 @@ class PatchRetriever:
     vector_metrics: VectorMetricsDB | None = None
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
     service_url: str | None = None
-    bootstrap_fast: bool = False
+    bootstrap_fast: bool | None = None
 
     def __post_init__(self) -> None:
+        resolved_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
+            self.bootstrap_fast
+        )
+        if self.bootstrap_fast is None:
+            self.bootstrap_fast = resolved_fast
+        if bootstrap_context and resolved_fast:
+            logger.info(
+                "patch_retriever.bootstrap_fast.active",
+                extra={
+                    "bootstrap_fast_defaulted": defaulted_fast,
+                    "bootstrap_context": True,
+                },
+            )
+
         if self.service_url is None:
             self.service_url = os.environ.get("VECTOR_SERVICE_URL")
 
@@ -577,7 +592,7 @@ class PatchRetriever:
             except Exception:  # pragma: no cover - fallback to absolute import
                 from vector_service.vectorizer import SharedVectorService  # type: ignore
             self.vector_service = SharedVectorService(
-                bootstrap_fast=self.bootstrap_fast
+                bootstrap_fast=resolved_fast
             )
         backend = "annoy"
         path = "vectors.index"

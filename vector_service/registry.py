@@ -73,7 +73,9 @@ def _resolve_bootstrap_fast(
     )
     if bootstrap_fast is not None:
         return bootstrap_fast, bootstrap_context, False
-    return bootstrap_context or False, bootstrap_context, bootstrap_context
+    if bootstrap_context:
+        return True, bootstrap_context, True
+    return False, bootstrap_context, True
 
 
 def load_handlers(
