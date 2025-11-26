@@ -2,7 +2,19 @@ import time
 
 import pytest
 
+import sandbox.preseed_bootstrap as bootstrap
 from sandbox.preseed_bootstrap import _run_with_timeout
+
+
+@pytest.fixture(autouse=True)
+def reset_bootstrap_timeline():
+    bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
+    bootstrap._BOOTSTRAP_TIMELINE_START = None
+    bootstrap.BOOTSTRAP_PROGRESS["last_step"] = "not-started"
+    yield
+    bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
+    bootstrap._BOOTSTRAP_TIMELINE_START = None
+    bootstrap.BOOTSTRAP_PROGRESS["last_step"] = "not-started"
 
 
 def test_run_with_timeout_respects_requested_timeout():
@@ -41,3 +53,21 @@ def test_run_with_timeout_emits_metadata(capsys):
     assert "[bootstrap-timeout][metadata]" in captured
     assert "metadata-check" in captured
     assert "[bootstrap-timeout][thread=" in captured
+
+
+def test_run_with_timeout_reports_timeline(capsys):
+    bootstrap._mark_bootstrap_step("phase-one")
+    time.sleep(0.01)
+    bootstrap._mark_bootstrap_step("phase-two")
+
+    with pytest.raises(TimeoutError):
+        _run_with_timeout(
+            lambda: time.sleep(0.2),
+            timeout=0.05,
+            description="timeline-check",
+        )
+
+    captured = capsys.readouterr().out
+    assert "active_step=phase-two" in captured
+    assert "[bootstrap-timeout][timeline] phase-one" in captured
+    assert "[bootstrap-timeout][timeline] phase-two" in captured

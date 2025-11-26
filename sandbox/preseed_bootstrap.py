@@ -43,6 +43,9 @@ LOGGER = logging.getLogger(__name__)
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
+BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
+_BOOTSTRAP_TIMELINE_START: float | None = None
+_BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
 BOOTSTRAP_STEP_TIMEOUT = 30.0
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
@@ -55,6 +58,15 @@ _BOOTSTRAP_EMBEDDER_STARTED = False
 
 def _mark_bootstrap_step(step_name: str) -> None:
     """Record the latest bootstrap step for external visibility."""
+
+    global _BOOTSTRAP_TIMELINE_START
+
+    now = time.monotonic()
+    with _BOOTSTRAP_TIMELINE_LOCK:
+        if _BOOTSTRAP_TIMELINE_START is None:
+            _BOOTSTRAP_TIMELINE_START = now
+
+        BOOTSTRAP_STEP_TIMELINE.append((step_name, now))
 
     BOOTSTRAP_PROGRESS["last_step"] = step_name
 
@@ -107,6 +119,24 @@ def _dump_thread_traces(target_thread: threading.Thread) -> None:
             print(f"{marker} unable to capture stack trace", flush=True)
 
 
+def _render_bootstrap_timeline(now: float) -> list[str]:
+    with _BOOTSTRAP_TIMELINE_LOCK:
+        timeline = list(BOOTSTRAP_STEP_TIMELINE)
+        start = _BOOTSTRAP_TIMELINE_START
+
+    if not timeline:
+        return ["[bootstrap-timeout][timeline] no bootstrap steps recorded"]
+
+    baseline = start if start is not None else timeline[0][1]
+
+    lines = []
+    for step, timestamp in timeline:
+        elapsed_ms = int((timestamp - baseline) * 1000)
+        lines.append(f"[bootstrap-timeout][timeline] {step} → {elapsed_ms}ms")
+
+    return lines
+
+
 def _run_with_timeout(
     fn,
     *,
@@ -149,6 +179,16 @@ def _run_with_timeout(
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
 
     if thread.is_alive():
+        now = time.monotonic()
+        with _BOOTSTRAP_TIMELINE_LOCK:
+            timeline = list(BOOTSTRAP_STEP_TIMELINE)
+        active_step = timeline[-1][0] if timeline else last_step
+        active_started_at = timeline[-1][1] if timeline else None
+        active_elapsed_ms = (
+            int((now - active_started_at) * 1000)
+            if active_started_at is not None
+            else None
+        )
         end_wall = time.time()
         deadline_remaining_now = (
             bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
@@ -166,6 +206,8 @@ def _run_with_timeout(
             "thread_name": thread.name,
             "thread_ident": thread.ident,
             "last_step": last_step,
+            "active_step": active_step,
+            "active_elapsed_ms": active_elapsed_ms,
         }
 
         LOGGER.error(
@@ -175,10 +217,18 @@ def _run_with_timeout(
             last_step,
             metadata,
         )
+        active_fragment = (
+            f"active_step={active_step} (+{active_elapsed_ms}ms)"
+            if active_step is not None and active_elapsed_ms is not None
+            else "active_step=unknown"
+        )
         print(
-            f"[bootstrap-timeout][metadata] {description} timed out after {timeout:.1f}s: {metadata}",
+            f"[bootstrap-timeout][metadata] {description} timed out after {timeout:.1f}s ({active_fragment}): {metadata}",
             flush=True,
         )
+
+        for line in _render_bootstrap_timeline(now):
+            print(line, flush=True)
 
         _dump_thread_traces(thread)
 
