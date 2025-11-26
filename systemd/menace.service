@@ -6,6 +6,9 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/menace
 ExecStart=/usr/bin/python -m menace.service_supervisor
+Environment="MENACE_BOOTSTRAP_WAIT_SECS=120"
+Environment="BOOTSTRAP_STEP_TIMEOUT=90"
+Environment="BOOTSTRAP_VECTOR_STEP_TIMEOUT=150"
 Restart=always
 
 [Install]
