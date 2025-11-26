@@ -29,6 +29,7 @@ import faulthandler
 from time import perf_counter
 from typing import Any, Dict
 
+from lock_utils import SandboxLock
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
@@ -68,6 +69,7 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
     ),
 )
 _PREPARE_SAFE_TIMEOUT_FLOOR = _BASELINE_BOOTSTRAP_STEP_TIMEOUT
+_BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 
 
 def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
@@ -108,6 +110,19 @@ SELF_CODING_MIN_REMAINING_BUDGET = float(
 BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
+
+
+def _resolve_bootstrap_lock_path() -> str:
+    env_path = os.getenv(_BOOTSTRAP_LOCK_PATH_ENV)
+    if env_path:
+        lock_dir = os.path.dirname(env_path)
+        if lock_dir:
+            os.makedirs(lock_dir, exist_ok=True)
+        return env_path
+
+    default_root = os.path.join(os.getcwd(), "sandbox_data")
+    os.makedirs(default_root, exist_ok=True)
+    return os.path.join(default_root, "bootstrap.lock")
 
 
 def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
@@ -948,27 +963,42 @@ def initialize_bootstrap_context(
                 flush=True,
             )
             prepare_start = perf_counter()
+            lock_path = _resolve_bootstrap_lock_path()
+            bootstrap_lock = SandboxLock(lock_path)
+            lock_wait_start = perf_counter()
+            LOGGER.info(
+                "waiting for bootstrap lock",
+                extra={"lock_path": lock_path},
+            )
             try:
-                pipeline, promote_pipeline = _run_with_timeout(
-                    _timed_callable,
-                    timeout=prepare_timeout,
-                    bootstrap_deadline=bootstrap_deadline,
-                    description="prepare_pipeline_for_bootstrap",
-                    abort_on_timeout=True,
-                    heavy_bootstrap=heavy_prepare,
-                    resolved_timeout=resolved_prepare_timeout,
-                    func=prepare_pipeline_for_bootstrap,
-                    label="prepare_pipeline_for_bootstrap",
-                    stop_event=stop_event,
-                    pipeline_cls=ModelAutomationPipeline,
-                    context_builder=context_builder,
-                    bot_registry=registry,
-                    data_bot=data_bot,
-                    bootstrap_runtime_manager=bootstrap_manager,
-                    manager=bootstrap_manager,
-                    bootstrap_safe=True,
-                    bootstrap_fast=True,
-                )
+                with bootstrap_lock:
+                    LOGGER.info(
+                        "bootstrap lock acquired",
+                        extra={
+                            "lock_path": lock_path,
+                            "wait_time": perf_counter() - lock_wait_start,
+                        },
+                    )
+                    pipeline, promote_pipeline = _run_with_timeout(
+                        _timed_callable,
+                        timeout=prepare_timeout,
+                        bootstrap_deadline=bootstrap_deadline,
+                        description="prepare_pipeline_for_bootstrap",
+                        abort_on_timeout=True,
+                        heavy_bootstrap=heavy_prepare,
+                        resolved_timeout=resolved_prepare_timeout,
+                        func=prepare_pipeline_for_bootstrap,
+                        label="prepare_pipeline_for_bootstrap",
+                        stop_event=stop_event,
+                        pipeline_cls=ModelAutomationPipeline,
+                        context_builder=context_builder,
+                        bot_registry=registry,
+                        data_bot=data_bot,
+                        bootstrap_runtime_manager=bootstrap_manager,
+                        manager=bootstrap_manager,
+                        bootstrap_safe=True,
+                        bootstrap_fast=True,
+                    )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
