@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _BOOTSTRAP_TIMEOUT_DEFAULTS = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": "180",
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
-    "BOOTSTRAP_STEP_TIMEOUT": "180",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
 }
 for _env_key, _env_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
