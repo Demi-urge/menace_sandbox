@@ -310,6 +310,74 @@ def _log_watcher_scope_hint(logger: logging.Logger) -> None:
     )
 
 
+def _detect_heavy_watchers(logger: logging.Logger) -> None:
+    """Inspect platform watcher state for heavyweight paths and emit warnings.
+
+    The bootstrap sequence is sensitive to broad filesystem watchers that scan
+    large artifact trees (``sandbox_data`` checkpoints, virtual environments,
+    etc.). This probe opportunistically uses ``lsof`` on Unix-like systems to
+    surface processes watching those paths so operators can pause them before
+    heavy initialization begins.
+    """
+
+    repo_root, excluded = _compute_watcher_scope()
+    heavy_paths = [path for path in excluded if path.exists()]
+    if not heavy_paths:
+        return
+
+    watcher_hits: dict[Path, set[str]] = {path: set() for path in heavy_paths}
+
+    if sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
+        try:
+            cmd = ["lsof", "-Fpn"] + [str(path) for path in heavy_paths]
+            result = subprocess.run(
+                cmd, check=False, capture_output=True, text=True, timeout=10
+            )
+        except FileNotFoundError:
+            logger.debug("lsof unavailable; skipping watcher inspection")
+            return
+        except Exception:
+            logger.debug("failed to inspect watchers via lsof", exc_info=True)
+            return
+
+        current_pid: str | None = None
+        for line in (result.stdout or "").splitlines():
+            if not line:
+                continue
+            if line.startswith("p"):
+                current_pid = line[1:]
+            elif line.startswith("n") and current_pid:
+                path_str = line[1:]
+                for heavy_path in heavy_paths:
+                    try:
+                        if Path(path_str).is_relative_to(heavy_path):
+                            watcher_hits.setdefault(heavy_path, set()).add(current_pid)
+                    except Exception:
+                        continue
+
+    noisy_paths = {path: pids for path, pids in watcher_hits.items() if pids}
+    if noisy_paths:
+        logger.warning(
+            "potentially noisy filesystem watchers detected; bootstrap may stall",
+            extra=log_record(
+                event="bootstrap-watchers-detected",
+                repo_root=str(repo_root),
+                heavy_paths=[str(path) for path in noisy_paths],
+                processes={str(path): sorted(pids) for path, pids in noisy_paths.items()},
+                guidance=(
+                    "pause background sync or editor watchers touching sandbox_data, checkpoints, "
+                    "and virtualenv folders, or reconfigure them to ignore these directories "
+                    "before retrying bootstrap"
+                ),
+            ),
+        )
+        print(
+            "[WARN] Detected active watchers on heavyweight paths (sandbox_data/checkpoints/venv). "
+            "Pause sync tools or update ignore rules before continuing to reduce I/O contention.",
+            flush=True,
+        )
+
+
 def _scan_for_parallel_bootstraps(logger: logging.Logger) -> list[str]:
     """Return any other bootstrap processes currently running on the host."""
 
@@ -362,6 +430,35 @@ def _scan_for_parallel_bootstraps(logger: logging.Logger) -> list[str]:
         )
 
     return conflicts
+
+
+def _preflight_bootstrap_conflicts(logger: logging.Logger) -> None:
+    """Abort or delay startup when another bootstrap appears to be running."""
+
+    conflicts = _scan_for_parallel_bootstraps(logger)
+    if not conflicts:
+        return
+
+    delay = float(os.getenv("MENACE_BOOTSTRAP_CONFLICT_DELAY", "0") or 0)
+    if delay > 0:
+        logger.warning(
+            "bootstrap conflict detected; delaying before re-checking",
+            extra=log_record(
+                event="bootstrap-conflict-delay",
+                delay=delay,
+                processes=conflicts,
+            ),
+        )
+        time.sleep(delay)
+        conflicts = _scan_for_parallel_bootstraps(logger)
+
+    if conflicts:
+        print(
+            "[ERROR] Another sandbox bootstrap appears to be running. "
+            "Please stop the other process before retrying.",
+            flush=True,
+        )
+        sys.exit(1)
 
 
 def _record_bootstrap_timeout(
@@ -1539,14 +1636,7 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("sandbox start", extra=log_record(event="start"))
 
     if not args.health_check:
-        conflicts = _scan_for_parallel_bootstraps(logger)
-        if conflicts:
-            print(
-                "[ERROR] Another sandbox bootstrap appears to be running. "
-                "Please stop the other process before retrying.",
-                flush=True,
-            )
-            sys.exit(1)
+        _preflight_bootstrap_conflicts(logger)
 
     ready_to_launch = True
     roi_backoff_triggered = False
@@ -1560,6 +1650,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 try:
                     _log_watcher_scope_hint(logger)
+                    _detect_heavy_watchers(logger)
                     print(
                         "[DEBUG] About to call initialize_bootstrap_context()",
                         flush=True,
