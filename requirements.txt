@@ -424,8 +424,6 @@ scikit-learn==1.7.0
     #   menace (pyproject.toml)
     #   hdbscan
     #   sentence-transformers
-sklearn==0.0.post11
-    # via scikit-learn
 scipy==1.16.0
     # via
     #   menace (pyproject.toml)
