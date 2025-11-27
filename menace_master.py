@@ -39,6 +39,36 @@ ROOT = resolve_path(".")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+
+def _apply_bootstrap_timeout_env(minimum: float = 240.0) -> dict[str, str]:
+    """Clamp bootstrap timeout env vars to at least ``minimum`` seconds."""
+
+    snapshot: dict[str, str] = {}
+    for env_var in (
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        "BOOTSTRAP_STEP_TIMEOUT",
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ):
+        raw_value = os.getenv(env_var)
+        try:
+            parsed = float(raw_value) if raw_value is not None else minimum
+        except (TypeError, ValueError):
+            parsed = minimum
+
+        effective = parsed if parsed >= minimum else minimum
+        os.environ[env_var] = str(effective)
+        snapshot[env_var] = os.environ[env_var]
+
+    return snapshot
+
+
+BOOTSTRAP_TIMEOUT_ENV = _apply_bootstrap_timeout_env()
+logger.info(
+    "bootstrap timeout env applied",
+    extra={"bootstrap_env": BOOTSTRAP_TIMEOUT_ENV, "event": "bootstrap-timeouts"},
+)
+
 try:
     from menace.db_router import init_db_router  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
