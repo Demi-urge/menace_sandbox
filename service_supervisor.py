@@ -13,6 +13,14 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
+DEFAULT_BOOTSTRAP_TIMEOUTS = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+}
+
+for _timeout_env, _default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
+    os.environ.setdefault(_timeout_env, _default)
+
 from .db_router import GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -599,6 +607,14 @@ class ServiceSupervisor:
 def main() -> None:
     """Entry point starting the service supervisor."""
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger(__name__).info(
+        "bootstrap timeout configuration",
+        extra={
+            "event": "bootstrap-timeouts",
+            "MENACE_BOOTSTRAP_WAIT_SECS": os.getenv("MENACE_BOOTSTRAP_WAIT_SECS"),
+            "BOOTSTRAP_STEP_TIMEOUT": os.getenv("BOOTSTRAP_STEP_TIMEOUT"),
+        },
+    )
     EnvironmentBootstrapper().bootstrap()
     builder = create_context_builder()
     sup = ServiceSupervisor(context_builder=builder)
