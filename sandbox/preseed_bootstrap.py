@@ -244,11 +244,6 @@ class _BootstrapContentionCoordinator:
         return gate
 
 
-_BOOTSTRAP_CONTENTION_COORDINATOR = _BootstrapContentionCoordinator(
-    _resolve_bootstrap_lock_path()
-)
-
-
 def _publish_online_state() -> None:
     BOOTSTRAP_ONLINE_STATE.update(_BOOTSTRAP_SCHEDULER.snapshot())
 
@@ -424,6 +419,11 @@ def _resolve_bootstrap_lock_path() -> str:
     default_root = os.path.join(os.getcwd(), "sandbox_data")
     os.makedirs(default_root, exist_ok=True)
     return os.path.join(default_root, "bootstrap.lock")
+
+
+_BOOTSTRAP_CONTENTION_COORDINATOR = _BootstrapContentionCoordinator(
+    _resolve_bootstrap_lock_path()
+)
 
 
 def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
@@ -620,28 +620,93 @@ def _resolve_timeout(
         effective_timeout *= contention_scale
         metadata["contention_scale"] = contention_scale
 
-    if deadline_remaining is not None:
-        buffered_remaining = max(deadline_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
-        metadata["deadline_buffered_remaining"] = buffered_remaining
-        if effective_timeout is None:
-            effective_timeout = buffered_remaining
-            metadata["deadline_default_timeout"] = True
-        elif buffered_remaining < effective_timeout:
-            metadata["deadline_soft_exceeded"] = True
-            metadata["deadline_soft_gap"] = round(effective_timeout - buffered_remaining, 3)
-
     metadata["effective_timeout"] = effective_timeout
     return effective_timeout, metadata
 
 
-def _enforce_prepare_timeout_floor(
+def _compute_adaptive_budget(
+    step_name: str,
+    effective_timeout: float | None,
+    *,
+    bootstrap_deadline: float | None,
+    abort_on_timeout: bool,
+    vector_heavy: bool = False,
+    contention_scale: float = 1.0,
+) -> tuple[float | None, dict[str, Any]]:
+    """Adapt timeout budgets using history and remaining global window."""
+
+    now = time.monotonic()
+    remaining_global = bootstrap_deadline - now if bootstrap_deadline else None
+    adaptive_context: dict[str, Any] = {
+        "step": step_name,
+        "requested_timeout": effective_timeout,
+        "remaining_global_window": remaining_global,
+        "abort_on_timeout": abort_on_timeout,
+        "vector_heavy": vector_heavy,
+        "contention_scale": contention_scale,
+    }
+
+    predicted_budget = _BOOTSTRAP_SCHEDULER.allocate_timeout(
+        step_name,
+        effective_timeout,
+        vector_heavy=vector_heavy,
+        contention_scale=contention_scale,
+    )
+    adaptive_context["predicted_budget"] = predicted_budget
+
+    adaptive_budget = predicted_budget
+    if adaptive_budget is None:
+        return adaptive_budget, adaptive_context
+
+    start_reference = _BOOTSTRAP_TIMELINE_START or now
+    elapsed_total = max(0.0, now - start_reference)
+    allowed_total = None
+    if bootstrap_deadline is not None:
+        allowed_total = max(0.0, bootstrap_deadline - start_reference)
+
+    projected_total = elapsed_total + adaptive_budget
+    slack_total = None if allowed_total is None else allowed_total - projected_total
+
+    adaptive_context.update(
+        {
+            "timeline_start": _BOOTSTRAP_TIMELINE_START,
+            "elapsed_total": elapsed_total,
+            "allowed_total": allowed_total,
+            "projected_total": projected_total,
+            "slack_total": slack_total,
+        }
+    )
+
+    if slack_total is not None:
+        if slack_total > 0 and not abort_on_timeout:
+            extension = min(slack_total, max(adaptive_budget * 0.5, BOOTSTRAP_DEADLINE_BUFFER))
+            adaptive_budget += extension
+            adaptive_context.update(
+                {
+                    "extended_with_slack": True,
+                    "extension": extension,
+                }
+            )
+        elif slack_total < 0:
+            adaptive_context["deadline_guardrail"] = True
+            if remaining_global is not None:
+                adaptive_budget = max(0.0, remaining_global - BOOTSTRAP_DEADLINE_BUFFER)
+
+    if remaining_global is not None and adaptive_budget is not None:
+        adaptive_budget = max(0.0, min(adaptive_budget, remaining_global))
+        adaptive_context["adaptive_budget"] = adaptive_budget
+
+    return adaptive_budget, adaptive_context
+
+
+def _clamp_prepare_timeout_floor(
     resolved_timeout: tuple[float | None, dict[str, Any]],
     *,
     vector_heavy: bool,
     heavy_prepare: bool,
     bootstrap_deadline: float | None,
 ) -> tuple[float | None, dict[str, Any]]:
-    """Clamp prepare timeouts to a safe floor when possible."""
+    """Clamp prepare timeouts while respecting adaptive stage budgets."""
 
     effective_timeout, timeout_context = resolved_timeout
     timeout_floor = (
@@ -660,18 +725,28 @@ def _enforce_prepare_timeout_floor(
             "heavy_prepare": heavy_prepare,
         }
     )
+
+    adaptive_timeout, adaptive_context = _compute_adaptive_budget(
+        "prepare_pipeline_for_bootstrap",
+        effective_timeout,
+        bootstrap_deadline=bootstrap_deadline,
+        abort_on_timeout=True,
+        vector_heavy=vector_heavy or heavy_prepare,
+    )
+    updated_context["adaptive_prepare"] = adaptive_context
     timeout_context = updated_context
-    if effective_timeout is None:
-        return effective_timeout, updated_context
+
+    if adaptive_timeout is None:
+        return adaptive_timeout, updated_context
 
     deadline_remaining = None
     if bootstrap_deadline is not None:
         deadline_remaining = bootstrap_deadline - time.monotonic()
 
-    if effective_timeout < timeout_floor:
+    if adaptive_timeout < timeout_floor:
         updated_context.update(
             {
-                "timeout_before_floor": effective_timeout,
+                "timeout_before_floor": adaptive_timeout,
                 "deadline_remaining_now": deadline_remaining,
             }
         )
@@ -685,15 +760,17 @@ def _enforce_prepare_timeout_floor(
             "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",
             extra={"timeout_context": updated_context},
         )
-        effective_timeout = timeout_floor
-        updated_context["effective_timeout"] = effective_timeout
+        adaptive_timeout = timeout_floor
+        updated_context["effective_timeout"] = adaptive_timeout
         updated_context["timeout_escalated_to_floor"] = True
         updated_context["timeout_floor_auto_escalated"] = True
         if shortfall is not None:
             updated_context["timeout_floor_exceeded_deadline"] = True
         timeout_context = updated_context
+    else:
+        updated_context["effective_timeout"] = adaptive_timeout
 
-    return effective_timeout, timeout_context
+    return adaptive_timeout, timeout_context
 
 
 def _describe_timeout(value: float | None) -> str:
@@ -728,6 +805,17 @@ def _run_with_timeout(
         effective_timeout, timeout_context = resolved_timeout
         requested_timeout = effective_timeout
 
+    adaptive_timeout, adaptive_context = _compute_adaptive_budget(
+        description,
+        effective_timeout,
+        bootstrap_deadline=bootstrap_deadline,
+        abort_on_timeout=abort_on_timeout,
+        vector_heavy=heavy_bootstrap,
+        contention_scale=contention_scale,
+    )
+    timeout_context = {**timeout_context, "adaptive": adaptive_context}
+    effective_timeout = adaptive_timeout
+
     LOGGER.info(
         "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
         description,
@@ -741,6 +829,8 @@ def _run_with_timeout(
             "timeout_floor_auto_escalated": timeout_context.get(
                 "timeout_floor_auto_escalated"
             ),
+            "remaining_global_window": adaptive_context.get("remaining_global_window"),
+            "adaptive_budget": adaptive_context.get("adaptive_budget", effective_timeout),
         },
     )
 
@@ -1427,7 +1517,7 @@ def initialize_bootstrap_context(
                 heavy_bootstrap=heavy_prepare,
                 contention_scale=prepare_gate["timeout_scale"],
             )
-            resolved_prepare_timeout = _enforce_prepare_timeout_floor(
+            resolved_prepare_timeout = _clamp_prepare_timeout_floor(
                 resolved_prepare_timeout,
                 vector_heavy=vector_heavy,
                 heavy_prepare=heavy_prepare,
