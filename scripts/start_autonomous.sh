@@ -9,6 +9,16 @@ PY
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 export REPO_ROOT="$repo_root"
 
+# Ensure bootstrap timeouts are exported before any Python entry point executes
+: "${MENACE_BOOTSTRAP_WAIT_SECS:=240}"
+: "${MENACE_BOOTSTRAP_VECTOR_WAIT_SECS:=240}"
+: "${BOOTSTRAP_STEP_TIMEOUT:=240}"
+: "${BOOTSTRAP_VECTOR_STEP_TIMEOUT:=240}"
+export MENACE_BOOTSTRAP_WAIT_SECS
+export MENACE_BOOTSTRAP_VECTOR_WAIT_SECS
+export BOOTSTRAP_STEP_TIMEOUT
+export BOOTSTRAP_VECTOR_STEP_TIMEOUT
+
 # Execute run_autonomous after ensuring the environment is configured
 exec python - "$@" <<'PYCODE'
 import importlib
