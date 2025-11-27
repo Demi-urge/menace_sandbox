@@ -546,6 +546,72 @@ def _monitor_bootstrap_thread(
     return False, last_step, elapsed, budget, set(step_start_times)
 
 
+def _detect_heavy_bootstrap_hints(args: argparse.Namespace | None = None) -> tuple[bool, dict[str, Any]]:
+    """Surface signals that bootstrap may be vector-heavy or slow."""
+
+    hints: dict[str, Any] = {}
+    if args and getattr(args, "heavy_bootstrap", False):
+        hints["flag"] = "cli"
+    env_heavy = os.getenv("BOOTSTRAP_HEAVY_BOOTSTRAP", "")
+    if env_heavy.lower() in {"1", "true", "yes"}:
+        hints["env"] = env_heavy
+    vector_env = os.getenv("VECTOR_SERVICE_HEAVY", "")
+    if vector_env:
+        hints["vector_env"] = vector_env
+    vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
+    standard_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
+    if vector_wait and vector_wait != standard_wait:
+        hints["vector_wait_secs"] = vector_wait
+    vector_timeout = os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT")
+    standard_timeout = os.getenv("BOOTSTRAP_STEP_TIMEOUT")
+    if vector_timeout and vector_timeout != standard_timeout:
+        hints["vector_step_timeout"] = vector_timeout
+
+    return bool(hints), hints
+
+
+def _resolve_soft_deadline_flag(args: argparse.Namespace | None = None) -> bool:
+    env_soft = os.getenv("BOOTSTRAP_SOFT_DEADLINE", "").lower()
+    soft_env = env_soft in {"1", "true", "yes"}
+    cli_soft = bool(getattr(args, "soft_bootstrap_deadline", False))
+    return soft_env or cli_soft
+
+
+def _resolve_bootstrap_deadline_policy(
+    *,
+    baseline_timeout: float,
+    heavy_detected: bool,
+    soft_deadline: bool,
+    hints: Mapping[str, Any],
+) -> tuple[float | None, dict[str, Any]]:
+    """Determine the effective bootstrap deadline policy."""
+
+    heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
+    adjusted_timeout: float | None = baseline_timeout
+    policy: dict[str, Any] = {
+        "baseline_timeout": baseline_timeout,
+        "heavy_detected": heavy_detected,
+        "soft_deadline": soft_deadline,
+        "hints": dict(hints),
+        "heavy_scale": heavy_scale,
+    }
+
+    if soft_deadline and heavy_detected:
+        adjusted_timeout = None
+        policy["mode"] = "soft-heavy"
+    elif soft_deadline:
+        adjusted_timeout = None
+        policy["mode"] = "soft"
+    elif heavy_detected:
+        adjusted_timeout = baseline_timeout * heavy_scale
+        policy["mode"] = "scaled"
+    else:
+        policy["mode"] = "baseline"
+
+    policy["adjusted_timeout"] = adjusted_timeout
+    return adjusted_timeout, policy
+
+
 def _emit_meta_trace(logger: logging.Logger, message: str, **details: Any) -> None:
     """Log and print a dense meta-planning breadcrumb for immediate visibility."""
 
@@ -1575,6 +1641,16 @@ def main(argv: list[str] | None = None) -> None:
         help="Continuously monitor ROI backoff and pause launch when triggered",
     )
     parser.add_argument(
+        "--heavy-bootstrap",
+        action="store_true",
+        help="Hint that heavy vector/bootstrap work is expected so timeouts may scale",
+    )
+    parser.add_argument(
+        "--soft-bootstrap-deadline",
+        action="store_true",
+        help="Treat the bootstrap deadline as advisory when heavy work is detected",
+    )
+    parser.add_argument(
         "--bootstrap-timeout",
         type=float,
         default=bootstrap_timeout_default,
@@ -1637,6 +1713,22 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.health_check:
         _preflight_bootstrap_conflicts(logger)
+
+    heavy_bootstrap_detected, deadline_hints = _detect_heavy_bootstrap_hints(args)
+    soft_bootstrap_deadline = _resolve_soft_deadline_flag(args)
+    effective_bootstrap_timeout, bootstrap_deadline_policy = _resolve_bootstrap_deadline_policy(
+        baseline_timeout=args.bootstrap_timeout,
+        heavy_detected=heavy_bootstrap_detected,
+        soft_deadline=soft_bootstrap_deadline,
+        hints=deadline_hints,
+    )
+    logger.info(
+        "bootstrap deadline policy resolved",
+        extra=log_record(
+            event="bootstrap-deadline-policy",
+            policy=bootstrap_deadline_policy,
+        ),
+    )
 
     ready_to_launch = True
     roi_backoff_triggered = False
@@ -1735,8 +1827,24 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_context_result: dict[str, Any] | None = None
                         bootstrap_error = None
                         bootstrap_start = time.monotonic()
-                        bootstrap_deadline = bootstrap_start + args.bootstrap_timeout
+                        deadline_timeout = effective_bootstrap_timeout
+                        bootstrap_deadline = (
+                            None
+                            if deadline_timeout is None
+                            else bootstrap_start + deadline_timeout
+                        )
                         bootstrap_stop_event = threading.Event()
+
+                        logger.info(
+                            "initialize_bootstrap_context deadline configured",
+                            extra=log_record(
+                                event="bootstrap-deadline-configured",
+                                deadline=bootstrap_deadline,
+                                deadline_timeout=deadline_timeout,
+                                baseline_timeout=args.bootstrap_timeout,
+                                policy=bootstrap_deadline_policy,
+                            ),
+                        )
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
@@ -1744,6 +1852,7 @@ def main(argv: list[str] | None = None) -> None:
                                 bootstrap_context_result = initialize_bootstrap_context(
                                     stop_event=bootstrap_stop_event,
                                     bootstrap_deadline=bootstrap_deadline,
+                                    heavy_bootstrap=heavy_bootstrap_detected,
                                 )
                             except BaseException as exc:  # pragma: no cover - propagate errors
                                 bootstrap_error = exc
@@ -1835,10 +1944,11 @@ def main(argv: list[str] | None = None) -> None:
                                 extra=log_record(
                                     event="bootstrap-context-timeout",
                                     elapsed=elapsed,
-                                    timeout=args.bootstrap_timeout,
+                                    timeout=deadline_timeout or args.bootstrap_timeout,
                                     last_bootstrap_step=last_bootstrap_step,
                                     budget_used=budget_used,
                                     attempt=attempt,
+                                    policy=bootstrap_deadline_policy,
                                 ),
                             )
                             backoff = _record_bootstrap_timeout(
@@ -1910,6 +2020,21 @@ def main(argv: list[str] | None = None) -> None:
 
                     if bootstrap_context is None and bootstrap_error:
                         raise bootstrap_error
+
+                    bootstrap_elapsed = time.monotonic() - bootstrap_start
+                    if args.bootstrap_timeout and bootstrap_elapsed > args.bootstrap_timeout:
+                        logger.warning(
+                            "bootstrap exceeded original budget but allowed by relaxed deadline",
+                            extra=log_record(
+                                event="bootstrap-deadline-stretched",
+                                elapsed=bootstrap_elapsed,
+                                original_budget=args.bootstrap_timeout,
+                                adjusted_timeout=deadline_timeout,
+                                heavy_bootstrap=heavy_bootstrap_detected,
+                                policy=bootstrap_deadline_policy,
+                                hints=deadline_hints,
+                            ),
+                        )
 
                     print(
                         "[DEBUG] initialize_bootstrap_context completed successfully",
