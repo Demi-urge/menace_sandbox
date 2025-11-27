@@ -48,6 +48,8 @@ When timeouts persist, audit the host before retrying:
 
 Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
+Operational safeguards baked into `start_autonomous_sandbox.py` help enforce these recommendations. Each launch now waits for a stagger window (when `MENACE_BOOTSTRAP_STAGGER_SECS`/`MENACE_BOOTSTRAP_STAGGER_JITTER_SECS` are set) and then takes a host-level lock at `maintenance-logs/bootstrap.lock` for up to `MENACE_BOOTSTRAP_LOCK_TIMEOUT` (default 300s) before bootstrapping. If the lock cannot be acquired, the run exits early rather than competing for disk/CPU. Before launching, make sure editors or sync daemons only watch the repository root and explicitly exclude `sandbox_data`, checkpoints, and any virtual environments so their file watchers do not override the guardrails.
+
 ### Testing checklist and smoke coverage
 
 Refer to [docs/windows_sandbox_manual_tests.md](docs/windows_sandbox_manual_tests.md) for the full manual verification checklist, environment prerequisites, and known limitations. Quick smoke coverage for the GUI logging pipeline can be executed headlessly with:
