@@ -18,6 +18,7 @@ import argparse
 import contextlib
 import io
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -31,6 +32,17 @@ LOGGER = logging.getLogger(__name__)
 
 
 REPO_ROOT = Path(__file__).resolve().parent
+
+
+DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+}
+
+for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
+    os.environ.setdefault(_timeout_env, _timeout_default)
 
 
 # ``bootstrap_self_coding.py`` is often executed directly via ``python`` or
