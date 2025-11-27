@@ -435,9 +435,10 @@ def _resolve_timeout(
         metadata["deadline_buffered_remaining"] = buffered_remaining
         if effective_timeout is None:
             effective_timeout = buffered_remaining
-        elif buffered_remaining > effective_timeout:
-            effective_timeout = buffered_remaining
-        effective_timeout = min(effective_timeout, max(deadline_remaining, 0.0))
+            metadata["deadline_default_timeout"] = True
+        elif buffered_remaining < effective_timeout:
+            metadata["deadline_soft_exceeded"] = True
+            metadata["deadline_soft_gap"] = round(effective_timeout - buffered_remaining, 3)
 
     metadata["effective_timeout"] = effective_timeout
     return effective_timeout, metadata
@@ -485,22 +486,21 @@ def _enforce_prepare_timeout_floor(
             }
         )
 
-        if deadline_remaining is None or deadline_remaining >= timeout_floor:
-            LOGGER.warning(
-                "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",
-                extra={"timeout_context": updated_context},
-            )
-            effective_timeout = timeout_floor
-            updated_context["effective_timeout"] = effective_timeout
-            updated_context["timeout_escalated_to_floor"] = True
-            updated_context["timeout_floor_auto_escalated"] = True
-        else:
-            LOGGER.warning(
-                "prepare_pipeline_for_bootstrap timeout below safe floor but constrained by deadline",
-                extra={"timeout_context": updated_context},
-            )
-            updated_context["effective_timeout"] = effective_timeout
-            updated_context["timeout_floor_blocked_by_deadline"] = True
+        shortfall = None
+        if deadline_remaining is not None and deadline_remaining < timeout_floor:
+            shortfall = round(timeout_floor - deadline_remaining, 3)
+            updated_context["deadline_shortfall"] = shortfall
+
+        LOGGER.warning(
+            "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",
+            extra={"timeout_context": updated_context},
+        )
+        effective_timeout = timeout_floor
+        updated_context["effective_timeout"] = effective_timeout
+        updated_context["timeout_escalated_to_floor"] = True
+        updated_context["timeout_floor_auto_escalated"] = True
+        if shortfall is not None:
+            updated_context["timeout_floor_exceeded_deadline"] = True
         timeout_context = updated_context
 
     return effective_timeout, timeout_context
