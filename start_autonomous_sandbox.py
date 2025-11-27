@@ -1427,6 +1427,14 @@ def main(argv: list[str] | None = None) -> None:
     cid = f"sas-{uuid.uuid4()}"
     set_correlation_id(cid)
     logger = get_logger(__name__)
+    logger.info(
+        "bootstrap timeout configuration",
+        extra=log_record(
+            event="bootstrap-timeouts",
+            MENACE_BOOTSTRAP_WAIT_SECS=os.getenv("MENACE_BOOTSTRAP_WAIT_SECS"),
+            BOOTSTRAP_STEP_TIMEOUT=os.getenv("BOOTSTRAP_STEP_TIMEOUT"),
+        ),
+    )
     sandbox_restart_total.labels(service="start_autonomous", reason="launch").inc()
     logger.info("sandbox start", extra=log_record(event="start"))
 
