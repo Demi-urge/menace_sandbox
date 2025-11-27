@@ -19,7 +19,7 @@ The GUI intercepts preflight exceptions, pauses the workflow, and surfaces the f
 
 All GUI events stream into the on-screen log with severity-based colouring, and detailed tracebacks are written to `menace_gui_logs.txt` with log rotation so long sessions remain reviewable. Set `MENACE_GUI_LOG_PATH` to customise the log destination if you want the rotating files elsewhere. Toggle **Show Debug Details** to inspect the latest captured diagnostics when a step pauses; clearing the pause or resuming preflight hides the retry controls until the next failure while the elapsed-time banner continues counting until the run succeeds or is aborted.
 
-Preflight now includes a guard that aborts when another sandbox bootstrap is already running or when a broad filesystem watcher touches `sandbox_data`, checkpoints, or virtual environments. The launcher scripts and systemd units export `MENACE_BOOTSTRAP_STAGGER_SECS=30` and `MENACE_BOOTSTRAP_STAGGER_JITTER_SECS=15` by default so overlapping starts back off instead of piling on I/O contention; clear the conflict or narrow the watcher scope before retrying.
+Preflight now includes a guard that aborts when another sandbox bootstrap is already running or when a broad filesystem watcher touches `sandbox_data`, checkpoints, or virtual environments. The launcher scripts and systemd units export `MENACE_BOOTSTRAP_STAGGER_SECS=30` and `MENACE_BOOTSTRAP_STAGGER_JITTER_SECS=30` by default so overlapping starts back off instead of piling on I/O contention; clear the conflict or narrow the watcher scope before retrying.
 
 ### ModelAutomationPipeline bootstrap guards
 
