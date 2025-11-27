@@ -28,7 +28,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from bootstrap_timeout_policy import (
+    enforce_bootstrap_timeout_policy,
+    _BOOTSTRAP_TIMEOUT_MINIMUMS,
+)
 
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
@@ -51,6 +54,26 @@ for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
 
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "30")
+
+STEP_BUDGET_FLOOR = _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]
+VECTOR_STEP_BUDGET_FLOOR = max(360.0, _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"])
+
+
+def _derive_step_budget(
+    *, env_var: str | None, default: float, vector_heavy: bool = False
+) -> float:
+    """Return a step budget respecting shared timeout minimums."""
+
+    raw_value = os.getenv(env_var) if env_var else None
+    try:
+        parsed = float(raw_value) if raw_value is not None else None
+    except (TypeError, ValueError):
+        parsed = None
+
+    floor = VECTOR_STEP_BUDGET_FLOOR if vector_heavy else STEP_BUDGET_FLOOR
+    candidate = parsed if parsed is not None else default
+    return max(candidate, floor)
+
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
@@ -110,20 +133,46 @@ BOOTSTRAP_LOCK_PATH = Path(
     os.getenv("MENACE_BOOTSTRAP_LOCK_FILE", "/tmp/menace_bootstrap.lock")
 )
 BOOTSTRAP_LOCK_TIMEOUT = float(os.getenv("MENACE_BOOTSTRAP_LOCK_TIMEOUT", "300"))
-DEFAULT_STEP_BUDGET = float(os.getenv("BOOTSTRAP_STEP_BUDGET", "60"))
+VECTOR_HEAVY_STEPS: set[str] = {
+    "embedder_preload",
+    "prepare_pipeline",
+    "seed_final_context",
+    "push_final_context",
+    "promote_pipeline",
+}
+
+DEFAULT_STEP_BUDGET = _derive_step_budget(
+    env_var="BOOTSTRAP_STEP_BUDGET", default=STEP_BUDGET_FLOOR
+)
 BOOTSTRAP_STEP_BUDGETS: Mapping[str, float] = {
-    "embedder_preload": float(os.getenv("BOOTSTRAP_EMBEDDER_BUDGET", "45")),
-    "context_builder": 90.0,
-    "bot_registry": 60.0,
-    "data_bot": 60.0,
-    "self_coding_engine": 120.0,
-    "prepare_pipeline": 120.0,
-    "threshold_persistence": 90.0,
-    "internalize_coding_bot": 150.0,
-    "promote_pipeline": 120.0,
-    "seed_final_context": 120.0,
-    "push_final_context": 120.0,
-    "bootstrap_complete": 30.0,
+    "embedder_preload": _derive_step_budget(
+        env_var="BOOTSTRAP_EMBEDDER_BUDGET",
+        default=VECTOR_STEP_BUDGET_FLOOR,
+        vector_heavy=True,
+    ),
+    "context_builder": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "bot_registry": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "data_bot": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "self_coding_engine": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "prepare_pipeline": _derive_step_budget(
+        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+    ),
+    "threshold_persistence": _derive_step_budget(
+        env_var=None, default=STEP_BUDGET_FLOOR
+    ),
+    "internalize_coding_bot": _derive_step_budget(
+        env_var=None, default=STEP_BUDGET_FLOOR
+    ),
+    "promote_pipeline": _derive_step_budget(
+        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+    ),
+    "seed_final_context": _derive_step_budget(
+        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+    ),
+    "push_final_context": _derive_step_budget(
+        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+    ),
+    "bootstrap_complete": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
 }
 ADAPTIVE_LONG_STAGE_GRACE: Mapping[str, tuple[float, int]] = {
     "internalize_coding_bot": (30.0, 3),
@@ -499,6 +548,7 @@ def _monitor_bootstrap_thread(
     step_budgets: Mapping[str, float],
     adaptive_grace: Mapping[str, tuple[float, int]],
     completed_steps: set[str] | None = None,
+    vector_heavy_steps: set[str] | None = None,
 ) -> tuple[bool, str, float, float, set[str]]:
     """Track bootstrap progress and enforce per-step budgets.
 
@@ -521,6 +571,12 @@ def _monitor_bootstrap_thread(
 
         elapsed = time.monotonic() - step_start_times[current_step]
         budget = step_budgets.get(current_step, DEFAULT_STEP_BUDGET)
+        budget_floor = (
+            VECTOR_STEP_BUDGET_FLOOR
+            if vector_heavy_steps and current_step in vector_heavy_steps
+            else STEP_BUDGET_FLOOR
+        )
+        budget = max(budget, budget_floor)
         if current_step in completed:
             budget += 10.0
 
@@ -543,6 +599,10 @@ def _monitor_bootstrap_thread(
 
     elapsed = time.monotonic() - bootstrap_start
     budget = step_budgets.get(last_step, DEFAULT_STEP_BUDGET)
+    if vector_heavy_steps and last_step in vector_heavy_steps:
+        budget = max(budget, VECTOR_STEP_BUDGET_FLOOR)
+    else:
+        budget = max(budget, STEP_BUDGET_FLOOR)
     return False, last_step, elapsed, budget, set(step_start_times)
 
 
@@ -1654,7 +1714,11 @@ def main(argv: list[str] | None = None) -> None:
         "--bootstrap-timeout",
         type=float,
         default=bootstrap_timeout_default,
-        help="Maximum seconds to wait for initialize_bootstrap_context before failing",
+        help=(
+            "Maximum seconds to wait for initialize_bootstrap_context before failing; "
+            "per-step watchdogs now inherit shared timeout policy floors (>=240s or "
+            ">=360s for vector-heavy stages)"
+        ),
     )
     parser.add_argument(
         "--include-orphans",
@@ -1883,6 +1947,7 @@ def main(argv: list[str] | None = None) -> None:
                             step_budgets=BOOTSTRAP_STEP_BUDGETS,
                             adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
                             completed_steps=completed_steps,
+                            vector_heavy_steps=VECTOR_HEAVY_STEPS,
                         )
                         bootstrap_seen_steps.update(observed_steps)
 
