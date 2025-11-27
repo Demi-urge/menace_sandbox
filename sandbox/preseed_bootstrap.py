@@ -50,7 +50,10 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from bootstrap_timeout_policy import (
+    enforce_bootstrap_timeout_policy,
+    render_prepare_pipeline_timeout_hints,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -578,11 +581,7 @@ def _run_with_timeout(
         )
         remediation_hints = None
         if description == "prepare_pipeline_for_bootstrap":
-            remediation_hints = [
-                "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
-                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
-                "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
-            ]
+            remediation_hints = render_prepare_pipeline_timeout_hints()
         try:
             watchdog_timeline = list(
                 getattr(_coding_bot_interface, "_PREPARE_PIPELINE_WATCHDOG", {}).get(

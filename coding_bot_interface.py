@@ -39,7 +39,10 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from bootstrap_timeout_policy import (
+    enforce_bootstrap_timeout_policy,
+    render_prepare_pipeline_timeout_hints,
+)
 
 try:  # pragma: no cover - prefer package-relative import
     from menace_sandbox.shared.self_coding_import_guard import (
@@ -3833,16 +3836,12 @@ def _prepare_pipeline_for_bootstrap_impl(
     def _emit_timeout_diagnostics(stage: str, context: Mapping[str, Any]) -> None:
         vector_heavy = bool(context.get("vector_heavy", False))
         timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
-        remediation_tips = (
-            "increase MENACE_BOOTSTRAP_WAIT_SECS or BOOTSTRAP_STEP_TIMEOUT for heavy "
-            "pipelines; avoid running concurrent bootstraps or large directory "
-            "watchers during bootstrap"
-        )
+        remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
         logger.warning(
             (
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
                 "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
-                "env_vector_wait=%r timeline=%s remediation_tips=%s"
+                "env_vector_wait=%r timeline=%s remediation_hints=%s"
             ),
             stage,
             vector_heavy,
@@ -3851,7 +3850,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             context.get("env_menace_bootstrap_wait_secs"),
             context.get("env_menace_bootstrap_vector_wait_secs"),
             timeline,
-            remediation_tips,
+            remediation_hints,
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
@@ -3886,6 +3885,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_escalated": watchdog_escalated,
                 "watchdog_timeout_floor": timeout_floor,
             }
+            remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+            context["remediation_hints"] = remediation_hints
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap cancelled during %s via stop event "
@@ -3904,7 +3905,10 @@ def _prepare_pipeline_for_bootstrap_impl(
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
             raise TimeoutError(
-                f"prepare_pipeline_for_bootstrap cancelled via stop event during {stage}"
+                (
+                    "prepare_pipeline_for_bootstrap cancelled via stop event during "
+                    f"{stage}; remediation: {'; '.join(remediation_hints)}"
+                )
             )
         if effective_deadline is not None and time.perf_counter() > effective_deadline:
             elapsed = time.perf_counter() - start_time
@@ -3923,6 +3927,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_escalated": watchdog_escalated,
                 "watchdog_timeout_floor": timeout_floor,
             }
+            remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+            context["remediation_hints"] = remediation_hints
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
@@ -3944,7 +3950,10 @@ def _prepare_pipeline_for_bootstrap_impl(
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
             raise TimeoutError(
-                f"prepare_pipeline_for_bootstrap timed out during {stage}"
+                (
+                    "prepare_pipeline_for_bootstrap timed out during "
+                    f"{stage}; remediation: {'; '.join(remediation_hints)}"
+                )
             )
 
     def _typeerror_rejects_manager(exc: TypeError) -> bool:

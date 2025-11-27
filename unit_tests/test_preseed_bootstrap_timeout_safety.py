@@ -24,7 +24,15 @@ def _load_preseed_bootstrap_module():
     _install_stub_module("safe_repr", {"summarise_value": lambda value: f"summary:{value}"})
     _install_stub_module("security.secret_redactor", {"redact_dict": lambda data: data})
     _install_stub_module(
-        "bootstrap_timeout_policy", {"enforce_bootstrap_timeout_policy": lambda *_, **__: None}
+        "bootstrap_timeout_policy",
+        {
+            "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
+            "render_prepare_pipeline_timeout_hints": lambda *_args, **_kwargs: [
+                "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
+                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
+                "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
+            ],
+        },
     )
 
     _install_stub_module(
