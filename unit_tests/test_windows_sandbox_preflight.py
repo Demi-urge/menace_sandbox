@@ -508,6 +508,52 @@ class PreflightWorkerTests(unittest.TestCase):
             self.assertFalse(self.debug_queue.empty())
             self.assertIn("lock cleanup failed", self.debug_queue.get_nowait())
 
+    def test_conflict_detection_pauses_early(self) -> None:
+        with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as home_dir:
+            repo_path = Path(repo_dir)
+            (repo_path / "sandbox_data").mkdir()
+            home_path = Path(home_dir)
+            (home_path / ".cache" / "huggingface" / "transformers").mkdir(parents=True)
+
+            stack, _ = self._patch_worker_environment(repo_path, home_path)
+            stack.enter_context(
+                mock.patch(
+                    "tools.windows_sandbox_launcher_gui.bootstrap_conflict_check.detect_conflicts",
+                    return_value=(
+                        ["pid 999: python start_autonomous_sandbox.py"],
+                        ["pid 123: watchman sandbox_data"],
+                    ),
+                )
+            )
+
+            with stack:
+                thread = threading.Thread(
+                    target=gui.run_full_preflight,
+                    kwargs={
+                        "logger": self.logger,
+                        "pause_event": self.pause_event,
+                        "decision_queue": self.decision_queue,
+                        "abort_event": self.abort_event,
+                        "debug_queue": self.debug_queue,
+                    },
+                    daemon=True,
+                )
+                thread.start()
+
+                deadline = time.time() + 2
+                while not self.pause_event.is_set() and time.time() < deadline:
+                    time.sleep(0.01)
+
+                self.assertTrue(self.pause_event.is_set())
+                title, message, context = self.decision_queue.get_nowait()
+                self.assertIn("Conflicting bootstrap detected", title)
+                self.assertIn("watcher", message)
+                self.assertEqual(context.get("step"), "_check_conflicting_bootstraps")
+
+                self.pause_event.clear()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+
     def test_abort_event_short_circuits_execution(self) -> None:
         with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as home_dir:
             repo_path = Path(repo_dir)

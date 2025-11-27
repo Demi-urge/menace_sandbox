@@ -14,15 +14,20 @@ export REPO_ROOT="$repo_root"
 : "${MENACE_BOOTSTRAP_VECTOR_WAIT_SECS:=240}"
 : "${BOOTSTRAP_STEP_TIMEOUT:=240}"
 : "${BOOTSTRAP_VECTOR_STEP_TIMEOUT:=240}"
+: "${MENACE_BOOTSTRAP_STAGGER_SECS:=30}"
+: "${MENACE_BOOTSTRAP_STAGGER_JITTER_SECS:=15}"
 export MENACE_BOOTSTRAP_WAIT_SECS
 export MENACE_BOOTSTRAP_VECTOR_WAIT_SECS
 export BOOTSTRAP_STEP_TIMEOUT
 export BOOTSTRAP_VECTOR_STEP_TIMEOUT
+export MENACE_BOOTSTRAP_STAGGER_SECS
+export MENACE_BOOTSTRAP_STAGGER_JITTER_SECS
 
 # Execute run_autonomous after ensuring the environment is configured
 exec python - "$@" <<'PYCODE'
 import importlib
 import importlib.util
+import logging
 import os
 import pathlib
 import sys
@@ -37,6 +42,13 @@ spec.loader.exec_module(menace_pkg)
 
 auto_env_setup = importlib.import_module("menace.auto_env_setup")
 run_autonomous = importlib.import_module("run_autonomous")
+conflict_check = importlib.import_module("bootstrap_conflict_check")
+
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+conflict_check.enforce_conflict_free_environment(
+    logger=logging.getLogger("bootstrap.conflict-check")
+)
 
 auto_env_setup.ensure_env()
 run_autonomous.main(sys.argv[1:])

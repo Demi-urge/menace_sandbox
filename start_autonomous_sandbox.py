@@ -46,6 +46,9 @@ DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
     os.environ.setdefault(_timeout_env, _timeout_default)
 
+os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
+os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "15")
+
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
