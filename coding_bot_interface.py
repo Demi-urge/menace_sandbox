@@ -224,6 +224,29 @@ def _record_prepare_pipeline_stage(
             )
 
 
+def _normalize_watchdog_timeout(
+    deadline: float | None, *, start_time: float, vector_heavy: bool
+) -> tuple[float | None, float | None, bool]:
+    """Clamp watchdog timeout budgets to recommended floors.
+
+    Returns ``(normalized_deadline, normalized_timeout, escalated)`` where
+    ``normalized_timeout`` reflects the effective watchdog budget in seconds and
+    ``escalated`` indicates whether the computed timeout was auto-elevated above
+    the caller-provided deadline window.
+    """
+
+    if deadline is None:
+        return None, None, False
+
+    resolved_timeout = max(0.0, deadline - start_time)
+    timeout_floor = _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
+    normalized_timeout = max(resolved_timeout, timeout_floor)
+    escalated = normalized_timeout > resolved_timeout
+    normalized_deadline = start_time + normalized_timeout
+
+    return normalized_deadline, normalized_timeout, escalated
+
+
 def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
     """Return a bootstrap wait timeout tuned for the current workload."""
 
@@ -3818,12 +3841,13 @@ def _prepare_pipeline_for_bootstrap_impl(
         logger.warning(
             (
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
-                "resolved_timeout=%s env_wait=%r env_vector_wait=%r timeline=%s "
-                "remediation_tips=%s"
+                "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
+                "env_vector_wait=%r timeline=%s remediation_tips=%s"
             ),
             stage,
             vector_heavy,
             context.get("resolved_timeout"),
+            context.get("watchdog_timeout_escalated"),
             context.get("env_menace_bootstrap_wait_secs"),
             context.get("env_menace_bootstrap_vector_wait_secs"),
             timeline,
@@ -3831,15 +3855,21 @@ def _prepare_pipeline_for_bootstrap_impl(
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
-        resolved_timeout = None
-        if resolved_deadline is not None:
-            resolved_timeout = max(0.0, resolved_deadline - start_time)
         vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
         env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
         env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
         watchdog_timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
         resolved_env_bootstrap_wait = _resolve_bootstrap_wait_timeout(False)
         resolved_env_vector_wait = _resolve_bootstrap_wait_timeout(True)
+        normalized_deadline, resolved_timeout, watchdog_escalated = (
+            _normalize_watchdog_timeout(
+                resolved_deadline, start_time=start_time, vector_heavy=vector_heavy
+            )
+        )
+        effective_deadline = normalized_deadline if normalized_deadline else resolved_deadline
+        timeout_floor = (
+            _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
+        )
 
         if stop_event is not None and stop_event.is_set():
             context = {
@@ -3853,15 +3883,18 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_wait_timeout": resolved_wait_timeout,
                 "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
+                "watchdog_timeout_escalated": watchdog_escalated,
+                "watchdog_timeout_floor": timeout_floor,
             }
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap cancelled during %s via stop event "
-                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r "
-                    "resolved_env_wait=%s resolved_env_vector_wait=%s"
+                    "resolved_timeout=%s watchdog_escalated=%s vector_heavy=%s env_wait=%r "
+                    "env_vector_wait=%r resolved_env_wait=%s resolved_env_vector_wait=%s"
                 ),
                 stage,
                 resolved_timeout,
+                watchdog_escalated,
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
@@ -3873,7 +3906,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             raise TimeoutError(
                 f"prepare_pipeline_for_bootstrap cancelled via stop event during {stage}"
             )
-        if resolved_deadline is not None and time.perf_counter() > resolved_deadline:
+        if effective_deadline is not None and time.perf_counter() > effective_deadline:
             elapsed = time.perf_counter() - start_time
             context = {
                 "reason": "deadline",
@@ -3887,16 +3920,20 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_wait_timeout": resolved_wait_timeout,
                 "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
+                "watchdog_timeout_escalated": watchdog_escalated,
+                "watchdog_timeout_floor": timeout_floor,
             }
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
-                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r "
-                    "resolved_env_wait=%s resolved_env_vector_wait=%s timeline_entries=%s"
+                    "resolved_timeout=%s watchdog_escalated=%s vector_heavy=%s env_wait=%r "
+                    "env_vector_wait=%r resolved_env_wait=%s resolved_env_vector_wait=%s "
+                    "timeline_entries=%s"
                 ),
                 stage,
                 elapsed,
                 resolved_timeout,
+                watchdog_escalated,
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
