@@ -28,6 +28,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
         os.environ["SANDBOX_DEPENDENCY_MODE"] = "minimal"
@@ -39,9 +41,9 @@ if "--health-check" in sys.argv[1:]:
 
 DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": "240",
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "360",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
     "BOOTSTRAP_STEP_TIMEOUT": "240",
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "360",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
 }
 
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
@@ -49,6 +51,8 @@ for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
 
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "30")
+
+BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
 WATCHER_ROOTS_ENV = "MENACE_BOOTSTRAP_WATCH_ROOTS"
 WATCHER_EXCLUDES_ENV = "MENACE_BOOTSTRAP_WATCH_EXCLUDES"

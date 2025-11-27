@@ -7,9 +7,9 @@ Type=simple
 WorkingDirectory=/opt/menace
 ExecStart=/usr/bin/python -m menace.service_supervisor
 Environment="MENACE_BOOTSTRAP_WAIT_SECS=240"
-Environment="MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=360"
+Environment="MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240"
 Environment="BOOTSTRAP_STEP_TIMEOUT=240"
-Environment="BOOTSTRAP_VECTOR_STEP_TIMEOUT=360"
+Environment="BOOTSTRAP_VECTOR_STEP_TIMEOUT=240"
 Environment="MENACE_BOOTSTRAP_STAGGER_SECS=30"
 Environment="MENACE_BOOTSTRAP_STAGGER_JITTER_SECS=30"
 ExecStartPre=/usr/bin/python -m bootstrap_conflict_check
