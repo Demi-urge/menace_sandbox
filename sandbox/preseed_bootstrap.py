@@ -29,7 +29,7 @@ import faulthandler
 from time import perf_counter
 from typing import Any, Dict
 
-from lock_utils import SandboxLock
+from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
@@ -133,7 +133,12 @@ class _BootstrapStepScheduler:
             del window[0 : len(window) - 25]
 
     def allocate_timeout(
-        self, step_name: str, base_timeout: float | None, *, vector_heavy: bool = False
+        self,
+        step_name: str,
+        base_timeout: float | None,
+        *,
+        vector_heavy: bool = False,
+        contention_scale: float = 1.0,
     ) -> float | None:
         if base_timeout is None:
             base_timeout = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
@@ -149,6 +154,11 @@ class _BootstrapStepScheduler:
         if candidate < baseline:
             candidate = min(base_timeout, max(baseline, min_floor))
         else:
+            candidate = min(max(candidate, min_floor), upper_bound)
+
+        if contention_scale != 1.0:
+            candidate *= contention_scale
+            upper_bound *= contention_scale
             candidate = min(max(candidate, min_floor), upper_bound)
 
         self._latest_deadlines[step_name] = candidate
@@ -183,6 +193,60 @@ class _BootstrapStepScheduler:
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
+
+
+class _BootstrapContentionCoordinator:
+    """Coordinate bootstrap phases when another host bootstrap is in-flight."""
+
+    def __init__(self, lock_path: str) -> None:
+        self._lock_path = lock_path
+
+    def _lock_occupied(self) -> bool:
+        if not self._lock_path or not os.path.exists(self._lock_path):
+            return False
+        try:
+            lock = SandboxLock(self._lock_path)
+            return not lock.is_lock_stale(timeout=LOCK_TIMEOUT)
+        except Exception:  # pragma: no cover - contention hints are best effort
+            LOGGER.debug("unable to inspect bootstrap lock for contention", exc_info=True)
+            return True
+
+    def negotiate_step(self, step_name: str, *, vector_heavy: bool = False, heavy: bool = False) -> dict[str, Any]:
+        contention_active = self._lock_occupied()
+        gate: dict[str, Any] = {
+            "contention": contention_active,
+            "delay": 0.0,
+            "timeout_scale": 1.0,
+            "parallelism_scale": 1.0,
+            "step": step_name,
+            "vector_heavy": vector_heavy,
+            "heavy": heavy,
+        }
+
+        if not contention_active:
+            return gate
+
+        delay = 3.0 if (vector_heavy or heavy) else 1.5
+        timeout_scale = 1.2 if (vector_heavy or heavy) else 1.1
+        parallelism_scale = 0.6 if (vector_heavy or heavy) else 0.75
+        gate.update(
+            {
+                "delay": delay,
+                "timeout_scale": timeout_scale,
+                "parallelism_scale": parallelism_scale,
+            }
+        )
+        LOGGER.info(
+            "contention detected; staggering bootstrap step",
+            extra={"gate": gate, "lock_path": self._lock_path},
+        )
+        time.sleep(delay)
+        return gate
+
+
+_BOOTSTRAP_CONTENTION_COORDINATOR = _BootstrapContentionCoordinator(
+    _resolve_bootstrap_lock_path()
+)
 
 
 def _publish_online_state() -> None:
@@ -380,7 +444,10 @@ def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
 
 
 def _resolve_step_timeout(
-    vector_heavy: bool = False, step_name: str = "generic"
+    vector_heavy: bool = False,
+    step_name: str = "generic",
+    *,
+    contention_scale: float = 1.0,
 ) -> float | None:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
@@ -432,7 +499,10 @@ def _resolve_step_timeout(
         resolved_timeout = timeout_floor
 
     return _BOOTSTRAP_SCHEDULER.allocate_timeout(
-        step_name, resolved_timeout, vector_heavy=vector_heavy
+        step_name,
+        resolved_timeout,
+        vector_heavy=vector_heavy,
+        contention_scale=contention_scale,
     )
 
 
@@ -527,6 +597,7 @@ def _resolve_timeout(
     *,
     bootstrap_deadline: float | None,
     heavy_bootstrap: bool = False,
+    contention_scale: float = 1.0,
 ) -> tuple[float | None, dict[str, Any]]:
     """Resolve an effective timeout with deadline- and heavy-aware scaling."""
 
@@ -544,6 +615,10 @@ def _resolve_timeout(
         heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
         effective_timeout = max(effective_timeout, base_timeout * heavy_scale)
         metadata["heavy_scale"] = heavy_scale
+
+    if effective_timeout is not None and contention_scale != 1.0:
+        effective_timeout *= contention_scale
+        metadata["contention_scale"] = contention_scale
 
     if deadline_remaining is not None:
         buffered_remaining = max(deadline_remaining - BOOTSTRAP_DEADLINE_BUFFER, 0.0)
@@ -634,6 +709,7 @@ def _run_with_timeout(
     abort_on_timeout: bool = True,
     heavy_bootstrap: bool = False,
     resolved_timeout: tuple[float | None, dict[str, Any]] | None = None,
+    contention_scale: float = 1.0,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -642,7 +718,10 @@ def _run_with_timeout(
     start_wall = time.time()
     if resolved_timeout is None:
         effective_timeout, timeout_context = _resolve_timeout(
-            timeout, bootstrap_deadline=bootstrap_deadline, heavy_bootstrap=heavy_bootstrap
+            timeout,
+            bootstrap_deadline=bootstrap_deadline,
+            heavy_bootstrap=heavy_bootstrap,
+            contention_scale=contention_scale,
         )
         requested_timeout = timeout
     else:
@@ -1047,7 +1126,11 @@ def initialize_bootstrap_context(
     _ensure_not_stopped(stop_event)
 
     _mark_bootstrap_step("embedder_preload")
-    _bootstrap_embedder(BOOTSTRAP_EMBEDDER_TIMEOUT, stop_event=stop_event)
+    embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+        "embedder_preload", vector_heavy=True, heavy=True
+    )
+    embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
+    _bootstrap_embedder(embedder_timeout, stop_event=stop_event)
 
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
@@ -1251,8 +1334,15 @@ def initialize_bootstrap_context(
                 "before _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            placeholder_seed_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+                "_seed_research_aggregator_context_placeholder",
+                vector_heavy=True,
+                heavy=True,
+            )
             placeholder_seed_timeout = _resolve_step_timeout(
-                step_name="_seed_research_aggregator_context", vector_heavy=True
+                step_name="_seed_research_aggregator_context",
+                vector_heavy=True,
+                contention_scale=placeholder_seed_gate["timeout_scale"],
             )
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "vector_seeding", reason="placeholder_seed"
@@ -1264,6 +1354,7 @@ def initialize_bootstrap_context(
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
                 heavy_bootstrap=heavy_bootstrap,
+                contention_scale=placeholder_seed_gate["timeout_scale"],
                 func=_seed_research_aggregator_context,
                 label="_seed_research_aggregator_context placeholder",
                 registry=registry,
@@ -1281,12 +1372,21 @@ def initialize_bootstrap_context(
                 "starting prepare_pipeline_for_bootstrap (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            prepare_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+                "prepare_pipeline_for_bootstrap",
+                vector_heavy=vector_bootstrap_hint or vector_heavy,
+                heavy=True,
+            )
             vector_heavy = False
             vector_timeout = _resolve_step_timeout(
-                vector_heavy=True, step_name="prepare_pipeline_for_bootstrap"
+                vector_heavy=True,
+                step_name="prepare_pipeline_for_bootstrap",
+                contention_scale=prepare_gate["timeout_scale"],
             )
             standard_timeout = _resolve_step_timeout(
-                vector_heavy=False, step_name="prepare_pipeline_for_bootstrap"
+                vector_heavy=False,
+                step_name="prepare_pipeline_for_bootstrap",
+                contention_scale=prepare_gate["timeout_scale"],
             )
             try:
                 vector_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
@@ -1325,6 +1425,7 @@ def initialize_bootstrap_context(
                 prepare_timeout,
                 bootstrap_deadline=bootstrap_deadline,
                 heavy_bootstrap=heavy_prepare,
+                contention_scale=prepare_gate["timeout_scale"],
             )
             resolved_prepare_timeout = _enforce_prepare_timeout_floor(
                 resolved_prepare_timeout,
@@ -1388,6 +1489,7 @@ def initialize_bootstrap_context(
                         description="prepare_pipeline_for_bootstrap",
                         abort_on_timeout=True,
                         heavy_bootstrap=heavy_prepare,
+                        contention_scale=prepare_gate["timeout_scale"],
                         resolved_timeout=resolved_prepare_timeout,
                         func=prepare_pipeline_for_bootstrap,
                         label="prepare_pipeline_for_bootstrap",
@@ -1476,9 +1578,20 @@ def initialize_bootstrap_context(
             "after internalize_coding_bot (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
         )
         _log_step("internalize_coding_bot", internalize_start)
+        background_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "background_loops_start", heavy=False, vector_heavy=False
+        )
         _BOOTSTRAP_SCHEDULER.mark_partial(
             "background_loops", reason="manager_internalized"
         )
+        if background_gate.get("parallelism_scale", 1.0) < 1.0:
+            os.environ["MENACE_BOOTSTRAP_PARALLELISM_HINT"] = str(
+                background_gate["parallelism_scale"]
+            )
+            LOGGER.info(
+                "background loop start slowed due to concurrent bootstrap",
+                extra={"gate": background_gate},
+            )
         _publish_online_state()
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("promote_pipeline")
@@ -1547,8 +1660,13 @@ def initialize_bootstrap_context(
             "starting _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
+        final_seed_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "_seed_research_aggregator_context", vector_heavy=True, heavy=True
+        )
         final_seed_timeout = _resolve_step_timeout(
-            step_name="_seed_research_aggregator_context", vector_heavy=True
+            step_name="_seed_research_aggregator_context",
+            vector_heavy=True,
+            contention_scale=final_seed_gate["timeout_scale"],
         )
         _run_with_timeout(
             _seed_research_aggregator_context,
@@ -1557,6 +1675,7 @@ def initialize_bootstrap_context(
             description="_seed_research_aggregator_context final",
             abort_on_timeout=False,
             heavy_bootstrap=heavy_bootstrap,
+            contention_scale=final_seed_gate["timeout_scale"],
             registry=registry,
             data_bot=data_bot,
             context_builder=context_builder,
