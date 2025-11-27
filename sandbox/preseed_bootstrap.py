@@ -60,6 +60,7 @@ LOGGER = logging.getLogger(__name__)
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
+BOOTSTRAP_ONLINE_STATE: Dict[str, Any] = {"quorum": False, "components": {}}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
@@ -77,6 +78,115 @@ _PREPARE_VECTOR_TIMEOUT_FLOOR = 360.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
+
+
+class _BootstrapStepScheduler:
+    """Track bootstrap readiness and compute adaptive step budgets."""
+
+    _COMPONENTS = (
+        "vector_seeding",
+        "retriever_hydration",
+        "db_index_load",
+        "orchestrator_state",
+        "background_loops",
+    )
+
+    def __init__(self) -> None:
+        self._step_history: dict[str, list[float]] = {}
+        self._component_state: dict[str, str] = {
+            name: "pending" for name in self._COMPONENTS
+        }
+        self._latest_deadlines: dict[str, float] = {}
+
+    def _host_load_scale(self) -> float:
+        try:
+            load1, _, _ = os.getloadavg()
+            cpus = os.cpu_count() or 1
+            normalized = load1 / max(cpus, 1)
+        except OSError:
+            normalized = 0.0
+
+        # Keep a modest envelope: heavy hosts get extra slack, idle hosts tighten.
+        return min(1.6, max(0.8, 1.0 + (normalized - 1.0) * 0.35))
+
+    def _step_baseline(self, step_name: str, vector_heavy: bool) -> float:
+        baselines = {
+            "prepare_pipeline_for_bootstrap": _PREPARE_VECTOR_TIMEOUT_FLOOR
+            if vector_heavy
+            else _PREPARE_STANDARD_TIMEOUT_FLOOR,
+            "_seed_research_aggregator_context": _PREPARE_VECTOR_TIMEOUT_FLOOR,
+            "_push_bootstrap_context": _PREPARE_STANDARD_TIMEOUT_FLOOR,
+            "promote_pipeline": _PREPARE_STANDARD_TIMEOUT_FLOOR,
+        }
+        return baselines.get(step_name, _PREPARE_STANDARD_TIMEOUT_FLOOR)
+
+    def _historical_mean(self, step_name: str) -> float | None:
+        history = self._step_history.get(step_name)
+        if not history:
+            return None
+        return sum(history) / len(history)
+
+    def record_history(self, step_name: str, duration: float) -> None:
+        window = self._step_history.setdefault(step_name, [])
+        window.append(duration)
+        if len(window) > 25:
+            del window[0 : len(window) - 25]
+
+    def allocate_timeout(
+        self, step_name: str, base_timeout: float | None, *, vector_heavy: bool = False
+    ) -> float | None:
+        if base_timeout is None:
+            base_timeout = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+
+        historical = self._historical_mean(step_name)
+        baseline = max(base_timeout * 0.75, self._step_baseline(step_name, vector_heavy))
+        predicted = max(baseline, historical if historical is not None else 0.0)
+        load_scale = self._host_load_scale()
+        candidate = predicted * load_scale + BOOTSTRAP_DEADLINE_BUFFER
+        min_floor = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+        upper_bound = base_timeout * (1.6 if vector_heavy else 1.35)
+
+        if candidate < baseline:
+            candidate = min(base_timeout, max(baseline, min_floor))
+        else:
+            candidate = min(max(candidate, min_floor), upper_bound)
+
+        self._latest_deadlines[step_name] = candidate
+        return candidate
+
+    def mark_partial(self, component: str, *, reason: str | None = None) -> None:
+        if component not in self._component_state:
+            return
+        self._component_state[component] = "partial"
+        if reason:
+            LOGGER.debug("component marked partial", extra={"component": component, "reason": reason})
+
+    def mark_ready(self, component: str, *, reason: str | None = None) -> None:
+        if component not in self._component_state:
+            return
+        self._component_state[component] = "ready"
+        if reason:
+            LOGGER.debug("component marked ready", extra={"component": component, "reason": reason})
+
+    def quorum_met(self) -> bool:
+        ready_count = sum(1 for state in self._component_state.values() if state == "ready")
+        partial_count = sum(1 for state in self._component_state.values() if state == "partial")
+        quorum = (len(self._component_state) + 1) // 2 + 1
+        return ready_count >= quorum or (ready_count + partial_count >= quorum and ready_count >= quorum - 1)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "components": dict(self._component_state),
+            "quorum": self.quorum_met(),
+            "deadlines": dict(self._latest_deadlines),
+        }
+
+
+_BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
+
+
+def _publish_online_state() -> None:
+    BOOTSTRAP_ONLINE_STATE.update(_BOOTSTRAP_SCHEDULER.snapshot())
 
 
 def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
@@ -123,7 +233,7 @@ def _apply_timeout_policy_snapshot(policy_snapshot: dict[str, dict[str, Any]]) -
             env_var="BOOTSTRAP_VECTOR_STEP_TIMEOUT",
         ),
     )
-    BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout()
+    BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout(step_name="default")
 
 
 def _hydrate_vector_bootstrap_env(minimum: float = _VECTOR_ENV_MINIMUM) -> dict[str, float]:
@@ -269,7 +379,9 @@ def _is_vector_bootstrap_heavy(candidate: Any) -> bool:
     return any(token in text for token in heavy_tokens)
 
 
-def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
+def _resolve_step_timeout(
+    vector_heavy: bool = False, step_name: str = "generic"
+) -> float | None:
     """Resolve a bootstrap step timeout with backwards-compatible defaults."""
 
     resolved_timeout: float | None = None
@@ -319,11 +431,13 @@ def _resolve_step_timeout(vector_heavy: bool = False) -> float | None:
         )
         resolved_timeout = timeout_floor
 
-    return resolved_timeout
+    return _BOOTSTRAP_SCHEDULER.allocate_timeout(
+        step_name, resolved_timeout, vector_heavy=vector_heavy
+    )
 
 
 # Resolve the default timeout eagerly so legacy users retain a stable baseline.
-BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout()
+BOOTSTRAP_STEP_TIMEOUT = _resolve_step_timeout(step_name="default")
 
 
 def _mark_bootstrap_step(step_name: str) -> None:
@@ -339,6 +453,7 @@ def _mark_bootstrap_step(step_name: str) -> None:
         BOOTSTRAP_STEP_TIMELINE.append((step_name, now))
 
     BOOTSTRAP_PROGRESS["last_step"] = step_name
+    _publish_online_state()
 
 
 def _format_timestamp(epoch_seconds: float) -> str:
@@ -877,7 +992,10 @@ def initialize_bootstrap_context(
     global _BOOTSTRAP_CACHE
 
     def _log_step(step_name: str, start_time: float) -> None:
-        LOGGER.info("%s completed (elapsed=%.3fs)", step_name, perf_counter() - start_time)
+        elapsed = perf_counter() - start_time
+        LOGGER.info("%s completed (elapsed=%.3fs)", step_name, elapsed)
+        _BOOTSTRAP_SCHEDULER.record_history(step_name, elapsed)
+        _publish_online_state()
 
     def _timed_callable(func: Any, *, label: str, **func_kwargs: Any) -> Any:
         start = perf_counter()
@@ -952,6 +1070,9 @@ def initialize_bootstrap_context(
                 return cached_context
 
         _ensure_not_stopped(stop_event)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "db_index_load", reason="context_builder_start"
+        )
         _mark_bootstrap_step("context_builder")
         ctx_builder_start = perf_counter()
         try:
@@ -960,6 +1081,10 @@ def initialize_bootstrap_context(
             LOGGER.exception("context_builder creation failed (step=context_builder)")
             raise
         _log_step("context_builder", ctx_builder_start)
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "db_index_load", reason="context_builder_ready"
+        )
+        _publish_online_state()
 
         try:
             vector_bootstrap_hint = _is_vector_bootstrap_heavy(context_builder)
@@ -990,6 +1115,9 @@ def initialize_bootstrap_context(
         _log_step("bot_registry", registry_start)
 
         _ensure_not_stopped(stop_event)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "retriever_hydration", reason="data_bot_start"
+        )
         _mark_bootstrap_step("data_bot")
         data_bot_start = perf_counter()
         try:
@@ -998,6 +1126,10 @@ def initialize_bootstrap_context(
             LOGGER.exception("DataBot setup failed (step=data_bot)")
             raise
         _log_step("data_bot", data_bot_start)
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "retriever_hydration", reason="data_bot_ready"
+        )
+        _publish_online_state()
 
         remaining_budget = (
             bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
@@ -1013,9 +1145,13 @@ def initialize_bootstrap_context(
                 bot_registry=registry, data_bot=data_bot
             ) as bootstrap_manager:
                 _mark_bootstrap_step("push_final_context")
+                push_timeout = _resolve_step_timeout(
+                    step_name="push_final_context",
+                    vector_heavy=vector_bootstrap_hint,
+                )
                 _run_with_timeout(
                     _push_bootstrap_context,
-                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    timeout=push_timeout,
                     bootstrap_deadline=bootstrap_deadline,
                     description="_push_bootstrap_context final",
                     abort_on_timeout=True,
@@ -1026,9 +1162,13 @@ def initialize_bootstrap_context(
                     pipeline=bootstrap_manager,
                 )
                 _mark_bootstrap_step("seed_final_context")
+                seed_timeout = _resolve_step_timeout(
+                    step_name="seed_final_context",
+                    vector_heavy=True,
+                )
                 _run_with_timeout(
                     _seed_research_aggregator_context,
-                    timeout=BOOTSTRAP_STEP_TIMEOUT,
+                    timeout=seed_timeout,
                     bootstrap_deadline=bootstrap_deadline,
                     description="_seed_research_aggregator_context final",
                     abort_on_timeout=False,
@@ -1083,9 +1223,12 @@ def initialize_bootstrap_context(
                 "before _push_bootstrap_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            placeholder_push_timeout = _resolve_step_timeout(
+                step_name="_push_bootstrap_context", vector_heavy=vector_bootstrap_hint
+            )
             placeholder_context = _run_with_timeout(
                 _timed_callable,
-                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                timeout=placeholder_push_timeout,
                 bootstrap_deadline=bootstrap_deadline,
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
@@ -1108,9 +1251,15 @@ def initialize_bootstrap_context(
                 "before _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
             )
+            placeholder_seed_timeout = _resolve_step_timeout(
+                step_name="_seed_research_aggregator_context", vector_heavy=True
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vector_seeding", reason="placeholder_seed"
+            )
             _run_with_timeout(
                 _timed_callable,
-                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                timeout=placeholder_seed_timeout,
                 bootstrap_deadline=bootstrap_deadline,
                 description="_seed_research_aggregator_context placeholder",
                 abort_on_timeout=False,
@@ -1133,8 +1282,12 @@ def initialize_bootstrap_context(
                 BOOTSTRAP_PROGRESS["last_step"],
             )
             vector_heavy = False
-            vector_timeout = _resolve_step_timeout(vector_heavy=True)
-            standard_timeout = _resolve_step_timeout(vector_heavy=False)
+            vector_timeout = _resolve_step_timeout(
+                vector_heavy=True, step_name="prepare_pipeline_for_bootstrap"
+            )
+            standard_timeout = _resolve_step_timeout(
+                vector_heavy=False, step_name="prepare_pipeline_for_bootstrap"
+            )
             try:
                 vector_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
                 if vector_state is not None:
@@ -1207,6 +1360,10 @@ def initialize_bootstrap_context(
                 ),
                 flush=True,
             )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "orchestrator_state", reason="prepare_pipeline_start"
+            )
+            _publish_online_state()
             prepare_start = perf_counter()
             lock_path = _resolve_bootstrap_lock_path()
             bootstrap_lock = SandboxLock(lock_path)
@@ -1319,9 +1476,16 @@ def initialize_bootstrap_context(
             "after internalize_coding_bot (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
         )
         _log_step("internalize_coding_bot", internalize_start)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason="manager_internalized"
+        )
+        _publish_online_state()
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("promote_pipeline")
         promote_start = perf_counter()
+        promote_timeout = _resolve_step_timeout(
+            step_name="promote_pipeline", vector_heavy=vector_heavy
+        )
         try:
             LOGGER.info(
                 "starting promote_pipeline (last_step=%s)",
@@ -1329,7 +1493,7 @@ def initialize_bootstrap_context(
             )
             _run_with_timeout(
                 _timed_callable,
-                timeout=BOOTSTRAP_STEP_TIMEOUT,
+                timeout=promote_timeout,
                 bootstrap_deadline=bootstrap_deadline,
                 description="promote_pipeline",
                 abort_on_timeout=True,
@@ -1346,6 +1510,10 @@ def initialize_bootstrap_context(
             BOOTSTRAP_PROGRESS["last_step"],
         )
         _log_step("promote_pipeline", promote_start)
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "orchestrator_state", reason="pipeline_promoted"
+        )
+        _publish_online_state()
 
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("seed_final_context")
@@ -1353,9 +1521,12 @@ def initialize_bootstrap_context(
             "starting _push_bootstrap_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
+        final_push_timeout = _resolve_step_timeout(
+            step_name="_push_bootstrap_context", vector_heavy=vector_heavy
+        )
         _run_with_timeout(
             _push_bootstrap_context,
-            timeout=BOOTSTRAP_STEP_TIMEOUT,
+            timeout=final_push_timeout,
             bootstrap_deadline=bootstrap_deadline,
             description="_push_bootstrap_context final",
             abort_on_timeout=True,
@@ -1376,9 +1547,12 @@ def initialize_bootstrap_context(
             "starting _seed_research_aggregator_context (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
         )
+        final_seed_timeout = _resolve_step_timeout(
+            step_name="_seed_research_aggregator_context", vector_heavy=True
+        )
         _run_with_timeout(
             _seed_research_aggregator_context,
-            timeout=BOOTSTRAP_STEP_TIMEOUT,
+            timeout=final_seed_timeout,
             bootstrap_deadline=bootstrap_deadline,
             description="_seed_research_aggregator_context final",
             abort_on_timeout=False,
@@ -1395,6 +1569,10 @@ def initialize_bootstrap_context(
             BOOTSTRAP_PROGRESS["last_step"],
         )
         LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "vector_seeding", reason="seed_final_context"
+        )
+        _publish_online_state()
 
         bootstrap_context = {
             "registry": registry,
@@ -1404,9 +1582,19 @@ def initialize_bootstrap_context(
             "pipeline": pipeline,
             "manager": manager,
         }
+        online_snapshot = _BOOTSTRAP_SCHEDULER.snapshot()
+        bootstrap_context["online_state"] = online_snapshot
+        bootstrap_context["online"] = online_snapshot.get("quorum", False)
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
         _mark_bootstrap_step("bootstrap_complete")
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "background_loops", reason="bootstrap_complete"
+        )
+        _publish_online_state()
+        LOGGER.info(
+            "bootstrap online state", extra={"online_state": online_snapshot}
+        )
         LOGGER.info(
             "initialize_bootstrap_context completed successfully for %s (step=bootstrap_complete)",
             bot_name,
