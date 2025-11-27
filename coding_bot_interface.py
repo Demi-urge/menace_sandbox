@@ -145,8 +145,8 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "timeouts": 0,
 }
 
-_BOOTSTRAP_TIMEOUT_FLOOR = 120.0
-_MIN_STAGE_TIMEOUT = 180.0
+_BOOTSTRAP_TIMEOUT_FLOOR = 240.0
+_MIN_STAGE_TIMEOUT = 240.0
 _MIN_STAGE_TIMEOUT_VECTOR = 240.0
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 
@@ -159,11 +159,11 @@ def _get_bootstrap_wait_timeout() -> float | None:
     slower initialisation paths.  It can be tuned via
     ``MENACE_BOOTSTRAP_WAIT_SECS``; specify ``"none"`` to disable timeouts.
     Invalid overrides fall back to a sensible default while emitting a warning
-    for visibility. A hard minimum of 300 seconds is enforced to avoid overly
+    for visibility. A hard minimum of 240 seconds is enforced to avoid overly
     aggressive clamps.
     """
 
-    default_timeout = max(300.0, _BOOTSTRAP_TIMEOUT_FLOOR)
+    default_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     if not raw_timeout:
         return default_timeout
@@ -258,7 +258,10 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
         return _BOOTSTRAP_WAIT_TIMEOUT
 
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
-    default_timeout = max(900.0, _BOOTSTRAP_TIMEOUT_FLOOR)
+    default_timeout = max(
+        _BOOTSTRAP_TIMEOUT_FLOOR,
+        _BOOTSTRAP_WAIT_TIMEOUT if _BOOTSTRAP_WAIT_TIMEOUT is not None else 0,
+    )
     if raw_timeout:
         if raw_timeout.strip().lower() == "none":
             return None
@@ -276,7 +279,7 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
                         "effective_timeout": clamped_timeout,
                     },
                 )
-            return max(1.0, clamped_timeout)
+            return max(default_timeout, clamped_timeout)
         except ValueError:
             logger.warning(
                 "Invalid MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r; using default %ss",

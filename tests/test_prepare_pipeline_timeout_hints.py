@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-import menace_sandbox.coding_bot_interface as cbi
+import coding_bot_interface as cbi
 
 
 class _DummyPipeline:
@@ -17,8 +17,6 @@ def test_prepare_timeout_logs_standard_hints(monkeypatch, caplog):
     stop_event.set()
 
     monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "30")
-    monkeypatch.setattr(cbi, "_MIN_STAGE_TIMEOUT", 30.0, raising=False)
-    monkeypatch.setattr(cbi, "_MIN_STAGE_TIMEOUT_VECTOR", 30.0, raising=False)
     monkeypatch.setattr(cbi, "enforce_bootstrap_timeout_policy", lambda logger=None: {})
 
     with caplog.at_level(logging.WARNING, logger=cbi.logger.name):
