@@ -148,6 +148,7 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
 _BOOTSTRAP_TIMEOUT_FLOOR = 120.0
 _MIN_STAGE_TIMEOUT = 180.0
 _MIN_STAGE_TIMEOUT_VECTOR = 240.0
+_LEGACY_TIMEOUT_THRESHOLD = 45.0
 
 
 
@@ -313,6 +314,58 @@ def _log_bootstrap_env_snapshot() -> None:
 
 
 _log_bootstrap_env_snapshot()
+
+
+def _maybe_warn_legacy_timeout(
+    *,
+    source: str,
+    requested_timeout: float | None,
+    effective_timeout: float | None,
+    vector_heavy: bool,
+    env_bootstrap_wait: str | None,
+    env_vector_wait: str | None,
+) -> None:
+    """Emit a warning when timeouts hover around the legacy 30s budget."""
+
+    if requested_timeout is None and effective_timeout is None:
+        return
+
+    legacy_hit = False
+    if requested_timeout is not None and requested_timeout <= _LEGACY_TIMEOUT_THRESHOLD:
+        legacy_hit = True
+    if effective_timeout is not None and effective_timeout <= _LEGACY_TIMEOUT_THRESHOLD:
+        legacy_hit = True
+
+    if not legacy_hit:
+        return
+
+    remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+    logger.warning(
+        (
+            "prepare_pipeline timeout near legacy 30s floor source=%s "
+            "requested_timeout=%s effective_timeout=%s vector_heavy=%s env_wait=%r "
+            "env_vector_wait=%r remediation_hints=%s; adjust MENACE_BOOTSTRAP_WAIT_SECS "
+            "or BOOTSTRAP_STEP_TIMEOUT to raise the limit"
+        ),
+        source,
+        requested_timeout,
+        effective_timeout,
+        vector_heavy,
+        env_bootstrap_wait,
+        env_vector_wait,
+        remediation_hints,
+        extra={
+            "metric": "prepare_pipeline_legacy_timeout_floor",
+            "legacy_timeout_source": source,
+            "legacy_timeout_threshold": _LEGACY_TIMEOUT_THRESHOLD,
+            "legacy_requested_timeout": requested_timeout,
+            "legacy_effective_timeout": effective_timeout,
+            "vector_heavy": vector_heavy,
+            "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+            "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+            "remediation_hints": remediation_hints,
+        },
+    )
 
 
 @dataclass(eq=False)
@@ -4075,6 +4128,14 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     if resolved_wait_timeout is not None:
         clamped_wait_timeout = max(min_stage_timeout, resolved_wait_timeout)
+        _maybe_warn_legacy_timeout(
+            source="bootstrap_wait_timeout",
+            requested_timeout=resolved_wait_timeout,
+            effective_timeout=clamped_wait_timeout,
+            vector_heavy=vector_bootstrap_heavy,
+            env_bootstrap_wait=env_bootstrap_wait,
+            env_vector_wait=env_vector_wait,
+        )
         if clamped_wait_timeout > resolved_wait_timeout:
             logger.warning(
                 (
@@ -4110,6 +4171,14 @@ def _prepare_pipeline_for_bootstrap_impl(
     if timeout is not None:
         requested_timeout = max(0.0, float(timeout))
         requested_timeout, timeout_escalated = _clamp_to_timeout_floor(requested_timeout)
+        _maybe_warn_legacy_timeout(
+            source="caller_timeout",
+            requested_timeout=timeout,
+            effective_timeout=requested_timeout,
+            vector_heavy=vector_bootstrap_heavy,
+            env_bootstrap_wait=env_bootstrap_wait,
+            env_vector_wait=env_vector_wait,
+        )
         if timeout_escalated:
             logger.warning(
                 (
@@ -4134,6 +4203,14 @@ def _prepare_pipeline_for_bootstrap_impl(
     elif resolved_deadline is not None:
         deadline_budget = max(0.0, float(resolved_deadline - start_time))
         requested_timeout, timeout_escalated = _clamp_to_timeout_floor(deadline_budget)
+        _maybe_warn_legacy_timeout(
+            source="caller_deadline",
+            requested_timeout=deadline_budget,
+            effective_timeout=requested_timeout,
+            vector_heavy=vector_bootstrap_heavy,
+            env_bootstrap_wait=env_bootstrap_wait,
+            env_vector_wait=env_vector_wait,
+        )
         if timeout_escalated:
             resolved_deadline = start_time + requested_timeout
             logger.warning(
