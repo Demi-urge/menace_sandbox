@@ -143,6 +143,8 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
 }
 
 _BOOTSTRAP_TIMEOUT_FLOOR = 120.0
+_MIN_STAGE_TIMEOUT = 180.0
+_MIN_STAGE_TIMEOUT_VECTOR = 240.0
 
 
 
@@ -3848,6 +3850,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
                 "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
                 "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                "resolved_wait_timeout": resolved_wait_timeout,
+                "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
             }
             logger.warning(
@@ -3880,6 +3884,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "elapsed": elapsed,
                 "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
                 "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                "resolved_wait_timeout": resolved_wait_timeout,
+                "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
             }
             logger.warning(
@@ -3986,9 +3992,42 @@ def _prepare_pipeline_for_bootstrap_impl(
     env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
 
-    effective_timeout_floor = _BOOTSTRAP_TIMEOUT_FLOOR
-    if vector_bootstrap_heavy:
-        effective_timeout_floor = max(effective_timeout_floor, 900.0)
+    min_stage_timeout = (
+        _MIN_STAGE_TIMEOUT_VECTOR if vector_bootstrap_heavy else _MIN_STAGE_TIMEOUT
+    )
+    resolved_wait_timeout = bootstrap_wait_timeout
+    if resolved_wait_timeout is None:
+        resolved_wait_timeout = _resolve_bootstrap_wait_timeout(vector_bootstrap_heavy)
+
+    if resolved_wait_timeout is not None:
+        clamped_wait_timeout = max(min_stage_timeout, resolved_wait_timeout)
+        if clamped_wait_timeout > resolved_wait_timeout:
+            logger.warning(
+                (
+                    "prepare_pipeline caller bootstrap wait below minimum; clamping "
+                    "requested_timeout=%s clamped_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
+                resolved_wait_timeout,
+                clamped_wait_timeout,
+                vector_bootstrap_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
+                extra={
+                    "requested_timeout": resolved_wait_timeout,
+                    "timeout_floor": min_stage_timeout,
+                    "effective_timeout": clamped_wait_timeout,
+                    "vector_heavy": vector_bootstrap_heavy,
+                    "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                    "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                },
+            )
+        resolved_wait_timeout = clamped_wait_timeout
+
+    effective_timeout_floor = max(
+        min_stage_timeout,
+        resolved_wait_timeout if resolved_wait_timeout is not None else 0.0,
+        _BOOTSTRAP_TIMEOUT_FLOOR,
+    )
 
     def _clamp_to_timeout_floor(value: float) -> tuple[float, bool]:
         clamped_value = max(effective_timeout_floor, value)
@@ -4043,40 +4082,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 },
             )
 
-    resolved_wait_timeout = bootstrap_wait_timeout
-    if resolved_wait_timeout is None:
-        resolved_wait_timeout = _resolve_bootstrap_wait_timeout(vector_bootstrap_heavy)
-    else:
-        wait_floor = _BOOTSTRAP_TIMEOUT_FLOOR
-        vector_wait_floor = max(wait_floor, 900.0)
-        effective_floor = vector_wait_floor if vector_bootstrap_heavy else wait_floor
-        clamped_wait_timeout = max(effective_floor, resolved_wait_timeout)
-        if clamped_wait_timeout > resolved_wait_timeout:
-            logger.warning(
-                (
-                    "prepare_pipeline caller bootstrap wait below minimum; "
-                    "clamping requested_timeout=%s clamped_timeout=%s vector_heavy=%s "
-                    "env_wait=%r env_vector_wait=%r"
-                ),
-                resolved_wait_timeout,
-                clamped_wait_timeout,
-                vector_bootstrap_heavy,
-                env_bootstrap_wait,
-                env_vector_wait,
-                extra={
-                    "requested_timeout": resolved_wait_timeout,
-                    "timeout_floor": effective_floor,
-                    "effective_timeout": clamped_wait_timeout,
-                    "vector_heavy": vector_bootstrap_heavy,
-                    "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
-                    "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
-                },
-            )
-        resolved_wait_timeout = clamped_wait_timeout
+    if resolved_deadline is None and requested_timeout is None:
+        default_timeout = effective_timeout_floor
+        if resolved_wait_timeout is not None:
+            default_timeout = max(default_timeout, resolved_wait_timeout)
+        resolved_deadline = start_time + default_timeout
+        requested_timeout = default_timeout
 
     if resolved_deadline is not None:
         resolved_timeout_budget = max(0.0, resolved_deadline - start_time)
-        effective_min_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
+        effective_min_timeout = effective_timeout_floor
         if resolved_wait_timeout is not None:
             effective_min_timeout = max(effective_min_timeout, resolved_wait_timeout)
         clamped_timeout = max(resolved_timeout_budget, effective_min_timeout)

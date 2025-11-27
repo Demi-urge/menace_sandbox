@@ -541,3 +541,31 @@ def test_prepare_pipeline_timeout_emits_watchdog(monkeypatch, caplog):
     if hasattr(cbi._BOOTSTRAP_STATE, "vector_heavy"):
         delattr(cbi._BOOTSTRAP_STATE, "vector_heavy")
 
+
+def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=cbi.logger.name)
+    cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
+    cbi._PREPARE_PIPELINE_WATCHDOG["timeouts"] = 0
+
+    monkeypatch.setattr(cbi, "_BOOTSTRAP_WAIT_TIMEOUT", 30.0, raising=False)
+
+    perf_calls = iter([0.0, 200.0, 200.0])
+    monkeypatch.setattr(cbi.time, "perf_counter", lambda: next(perf_calls))
+
+    class _Pipeline:
+        def __init__(self, *_, **__):
+            pass
+
+    with pytest.raises(TimeoutError):
+        cbi._prepare_pipeline_for_bootstrap_impl(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=DummyRegistry(),
+            data_bot=DummyDataBot(),
+            timeout=30.0,
+        )
+
+    assert cbi._PREPARE_PIPELINE_WATCHDOG["stages"], "watchdog timeline should record timeout"
+    last_stage = cbi._PREPARE_PIPELINE_WATCHDOG["stages"][-1]
+    assert last_stage.get("resolved_timeout", 0) >= cbi._MIN_STAGE_TIMEOUT
+
