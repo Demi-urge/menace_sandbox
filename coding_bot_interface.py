@@ -147,7 +147,8 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
 
 _BOOTSTRAP_TIMEOUT_FLOOR = 240.0
 _MIN_STAGE_TIMEOUT = 240.0
-_MIN_STAGE_TIMEOUT_VECTOR = 240.0
+_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = 360.0
+_MIN_STAGE_TIMEOUT_VECTOR = 360.0
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 
 
@@ -268,6 +269,7 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
 
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
     default_timeout = max(
+        _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR,
         _BOOTSTRAP_TIMEOUT_FLOOR,
         _BOOTSTRAP_WAIT_TIMEOUT if _BOOTSTRAP_WAIT_TIMEOUT is not None else 0,
     )
@@ -276,7 +278,7 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
             return None
         try:
             parsed_timeout = float(raw_timeout)
-            clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
+            clamped_timeout = max(_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
             if clamped_timeout > parsed_timeout:
                 logger.warning(
                     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r below minimum; clamping to %ss",
@@ -284,7 +286,7 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
                     clamped_timeout,
                     extra={
                         "requested_timeout": parsed_timeout,
-                        "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
+                        "timeout_floor": _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR,
                         "effective_timeout": clamped_timeout,
                     },
                 )
