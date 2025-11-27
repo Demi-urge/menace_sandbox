@@ -40,6 +40,12 @@ If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 - For vector-heavy runs, use `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=240` to bypass the legacy ceiling.
 - Stagger concurrent bootstraps or trim watched directories (e.g., editors/sync tools) to cut I/O contention during startup.
 
+When timeouts persist, audit the host before retrying:
+
+- Check for overlapping sandbox launches and stop extras: `pgrep -af "bootstrap_self_coding|start_autonomous_sandbox|sandbox_runner"` should report **one** active bootstrap on a host at a time.
+- Inspect filesystem watchers from editors or sync tools and scope them to the active repository root only (e.g., VS Code workspace folders pointing at this repo with `files.watcherExclude` enabled for `sandbox_data`, checkpoints, and virtualenvs instead of watching `$HOME`).
+- If multiple operators share the host, set `MENACE_BOOTSTRAP_STAGGER_SECS=30` (optionally `MENACE_BOOTSTRAP_STAGGER_JITTER_SECS=30` for randomised spacing) in the startup environment so launches wait briefly instead of competing for disk/CPU.
+
 Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
 ### Testing checklist and smoke coverage

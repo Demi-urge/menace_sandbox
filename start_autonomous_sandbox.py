@@ -18,6 +18,7 @@ import argparse
 import faulthandler
 import json
 import logging
+import random
 import signal
 import threading
 import time
@@ -191,6 +192,16 @@ def _reset_bootstrap_sentinel() -> None:
             BOOTSTRAP_SENTINEL_PATH.unlink()
         except Exception:
             LOGGER.debug("failed to clear bootstrap sentinel", exc_info=True)
+
+
+def _determine_bootstrap_stagger() -> float:
+    """Return delay (seconds) applied to stagger bootstrap start times."""
+
+    base = float(os.getenv("MENACE_BOOTSTRAP_STAGGER_SECS", "0") or 0)
+    jitter = float(os.getenv("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "0") or 0)
+    if jitter > 0:
+        base += random.uniform(0, jitter)
+    return max(base, 0.0)
 
 
 def _record_bootstrap_timeout(
@@ -1402,6 +1413,18 @@ def main(argv: list[str] | None = None) -> None:
                             ),
                         )
                         time.sleep(sentinel_wait)
+
+                    stagger_delay = _determine_bootstrap_stagger()
+                    if stagger_delay > 0:
+                        logger.info(
+                            "applying bootstrap stagger to reduce host contention",
+                            extra=log_record(
+                                event="bootstrap-stagger",
+                                delay=round(stagger_delay, 2),
+                                guidance="close broad filesystem watchers or scope them to the active repo",
+                            ),
+                        )
+                        time.sleep(stagger_delay)
 
                     max_attempts = max(1, BOOTSTRAP_MAX_RETRIES + 1)
                     bootstrap_context: dict[str, Any] | None = None
