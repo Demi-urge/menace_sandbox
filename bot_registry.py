@@ -2181,8 +2181,19 @@ class BotRegistry:
             components.memory_manager_cls(),
             context_builder=ctx,
         )
-        pipeline = components.pipeline_cls(context_builder=ctx, bot_registry=self)
         db = data_bot or components.data_bot_cls(start_server=False)
+        try:
+            from .coding_bot_interface import prepare_pipeline_for_bootstrap
+        except Exception:  # pragma: no cover - maintain legacy bootstrap path
+            pipeline = components.pipeline_cls(context_builder=ctx, bot_registry=self)
+            promote_pipeline = None
+        else:
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=components.pipeline_cls,
+                context_builder=ctx,
+                bot_registry=self,
+                data_bot=db,
+            )
         if data_bot is None:
             try:
                 helper_name = type(db).__name__
@@ -2195,7 +2206,7 @@ class BotRegistry:
             )
         th = _load_self_coding_thresholds(name)
         try:
-            components.internalize_coding_bot(
+            manager_ref = components.internalize_coding_bot(
                 name,
                 engine,
                 pipeline,
@@ -2205,6 +2216,11 @@ class BotRegistry:
                 error_threshold=getattr(th, "error_increase", None),
                 test_failure_threshold=getattr(th, "test_failure_increase", None),
             )
+            if promote_pipeline is not None and manager_ref is not None:
+                try:
+                    promote_pipeline(manager_ref)
+                except Exception:  # pragma: no cover - promotion best effort
+                    logger.exception("failed to promote bootstrap pipeline for %s", name)
             manager_ref = self.graph.nodes.get(name, {}).get("selfcoding_manager")
             if manager_ref is not None:
                 try:

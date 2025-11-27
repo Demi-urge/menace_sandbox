@@ -208,9 +208,13 @@ def _bootstrap_self_coding() -> tuple[
             context_builder=context_builder,
         )
         pipeline_cls = _resolve_model_automation_pipeline()
-        pipeline = pipeline_cls(
+        if not hasattr(interface_mod, "prepare_pipeline_for_bootstrap"):
+            raise AttributeError("prepare_pipeline_for_bootstrap unavailable")
+        pipeline, promote_pipeline = interface_mod.prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
             context_builder=context_builder,
             bot_registry=registry_local,
+            data_bot=data_bot_local,
         )
         manager_local = manager_mod.SelfCodingManager(
             engine,
@@ -218,6 +222,7 @@ def _bootstrap_self_coding() -> tuple[
             data_bot=data_bot_local,
             bot_registry=registry_local,
         )
+        promote_pipeline(manager_local)
     except (ModuleNotFoundError, AttributeError) as exc:
         logger.warning(
             "ModelAutomationPipeline unavailable; future prediction bots will run without autonomous updates: %s",
