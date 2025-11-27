@@ -596,6 +596,7 @@ neo4j
 nltk
 node2vec
 openai
+packaging
 pinecone-client
 pycodestyle
 pydot
