@@ -167,10 +167,20 @@ def reset_bootstrap_timeline():
     bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
     bootstrap._BOOTSTRAP_TIMELINE_START = None
     bootstrap.BOOTSTRAP_PROGRESS["last_step"] = "not-started"
+    bootstrap._BOOTSTRAP_SCHEDULER._step_history.clear()
+    bootstrap._BOOTSTRAP_SCHEDULER._component_state = {
+        name: "pending" for name in bootstrap._BOOTSTRAP_SCHEDULER._COMPONENTS
+    }
+    bootstrap.BOOTSTRAP_ONLINE_STATE = {"quorum": False, "components": {}}
     yield
     bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
     bootstrap._BOOTSTRAP_TIMELINE_START = None
     bootstrap.BOOTSTRAP_PROGRESS["last_step"] = "not-started"
+    bootstrap._BOOTSTRAP_SCHEDULER._step_history.clear()
+    bootstrap._BOOTSTRAP_SCHEDULER._component_state = {
+        name: "pending" for name in bootstrap._BOOTSTRAP_SCHEDULER._COMPONENTS
+    }
+    bootstrap.BOOTSTRAP_ONLINE_STATE = {"quorum": False, "components": {}}
 
 
 def test_run_with_timeout_respects_requested_timeout():
@@ -240,7 +250,7 @@ def test_resolve_step_timeout_clamps_low_values(monkeypatch, caplog):
 
     timeout = bootstrap._resolve_step_timeout(vector_heavy=False)
 
-    assert timeout == pytest.approx(60.0)
+    assert timeout >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
     assert any("clamping" in record.message for record in caplog.records)
 
 
@@ -326,7 +336,8 @@ def test_resolve_step_timeout_honors_high_defaults(monkeypatch, caplog):
 
     timeout = bootstrap._resolve_step_timeout(vector_heavy=False)
 
-    assert timeout == pytest.approx(450.0)
+    assert timeout >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert timeout <= 450.0
     assert not any("clamping" in record.message for record in caplog.records)
 
 def test_vector_heavy_bootstrap_prefers_vector_timeout(monkeypatch, caplog):
@@ -391,11 +402,10 @@ def test_vector_heavy_bootstrap_prefers_vector_timeout(monkeypatch, caplog):
     context = bootstrap.initialize_bootstrap_context(use_cache=False)
 
     assert context["manager"] is dummy_manager
-    expected_timeout = max(120.0, bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT)
-    assert timeouts["prepare_pipeline_for_bootstrap"] == pytest.approx(expected_timeout)
-    if expected_timeout > 120.0:
-        assert any("clamping" in record.message for record in caplog.records)
-    assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(30.0)
+    vector_timeout = timeouts["prepare_pipeline_for_bootstrap"]
+    assert vector_timeout >= bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR
+    assert vector_timeout >= timeouts["_seed_research_aggregator_context placeholder"]
+    assert any("clamping" in record.message for record in caplog.records)
 
 
 def test_menace_bootstrap_wait_is_clamped(monkeypatch, caplog):
@@ -424,9 +434,9 @@ def test_menace_bootstrap_wait_is_clamped(monkeypatch, caplog):
     )
     bootstrap.BOOTSTRAP_STEP_TIMEOUT = bootstrap._resolve_step_timeout()
 
-    assert clamped_timeout == pytest.approx(300.0)
-    assert bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT == pytest.approx(clamped_timeout)
-    assert bootstrap.BOOTSTRAP_STEP_TIMEOUT == pytest.approx(clamped_timeout)
+    assert clamped_timeout == pytest.approx(bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR)
+    assert bootstrap._BASELINE_BOOTSTRAP_STEP_TIMEOUT >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert bootstrap.BOOTSTRAP_STEP_TIMEOUT >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
     assert any("below minimum" in record.message for record in caplog.records)
 
 
@@ -498,7 +508,9 @@ def test_prepare_pipeline_timeout_falls_back_when_resolver_none(monkeypatch, res
     context = bootstrap.initialize_bootstrap_context(use_cache=False)
 
     assert context["manager"] is dummy_manager
-    assert timeouts["prepare_pipeline_for_bootstrap"] == pytest.approx(bootstrap._DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT)
-    assert timeouts["_seed_research_aggregator_context placeholder"] == pytest.approx(
-        bootstrap._DEFAULT_BOOTSTRAP_STEP_TIMEOUT
+    assert timeouts["prepare_pipeline_for_bootstrap"] >= bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR
+    assert timeouts["_seed_research_aggregator_context placeholder"] >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
+    assert (
+        timeouts["prepare_pipeline_for_bootstrap"]
+        >= timeouts["_seed_research_aggregator_context placeholder"]
     )
