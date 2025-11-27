@@ -275,7 +275,7 @@ packaging==25.0
     #   matplotlib
     #   pytest
     #   transformers
-pandas==2.3.0
+pandas==2.2.3
     # via
     #   menace (pyproject.toml)
     #   datasets
