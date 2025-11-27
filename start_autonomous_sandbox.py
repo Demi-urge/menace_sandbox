@@ -36,6 +36,16 @@ if "--health-check" in sys.argv[1:]:
     os.environ.setdefault("MENACE_SANDBOX_MODE", "health_check")
     os.environ.setdefault("MENACE_DISABLE_MONITORING", "1")
 
+DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+}
+
+for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
+    os.environ.setdefault(_timeout_env, _timeout_default)
+
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
