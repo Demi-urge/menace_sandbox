@@ -13,30 +13,19 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
-def _apply_bootstrap_timeout_env(minimum: float = 240.0) -> dict[str, str]:
-    """Clamp bootstrap timeout env vars to at least ``minimum`` seconds."""
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
 
-    snapshot: dict[str, str] = {}
-    for env_var in (
-        "MENACE_BOOTSTRAP_WAIT_SECS",
-        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
-        "BOOTSTRAP_STEP_TIMEOUT",
-        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
-    ):
-        raw_value = os.getenv(env_var)
-        try:
-            parsed = float(raw_value) if raw_value is not None else minimum
-        except (TypeError, ValueError):
-            parsed = minimum
+_BOOTSTRAP_TIMEOUT_DEFAULTS = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+}
 
-        effective = parsed if parsed >= minimum else minimum
-        os.environ[env_var] = str(effective)
-        snapshot[env_var] = os.environ[env_var]
+for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
+    os.environ.setdefault(_env_var, _default_value)
 
-    return snapshot
-
-
-BOOTSTRAP_TIMEOUT_ENV = _apply_bootstrap_timeout_env()
+BOOTSTRAP_TIMEOUT_ENV = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
 from .db_router import GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - allow running as script

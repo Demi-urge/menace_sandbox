@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import MutableMapping, Sequence
 
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+
 # === BEGIN PATH SETUP ===
 
 def _ensure_package_on_path() -> Path:
@@ -52,28 +54,17 @@ _DisabledSelfCodingManager = getattr(
     _coding_bot_interface, "_DisabledSelfCodingManager", None
 )
 
+_BOOTSTRAP_TIMEOUT_DEFAULTS = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+}
 
-def _apply_bootstrap_timeout_env(minimum: float = 240.0) -> dict[str, str]:
-    """Clamp bootstrap timeout env vars to at least ``minimum`` seconds."""
+for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
+    os.environ.setdefault(_env_var, _default_value)
 
-    snapshot: dict[str, str] = {}
-    for env_var in (
-        "MENACE_BOOTSTRAP_WAIT_SECS",
-        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
-        "BOOTSTRAP_STEP_TIMEOUT",
-        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
-    ):
-        raw_value = os.getenv(env_var)
-        try:
-            parsed = float(raw_value) if raw_value is not None else minimum
-        except (TypeError, ValueError):
-            parsed = minimum
-
-        effective = parsed if parsed >= minimum else minimum
-        os.environ[env_var] = str(effective)
-        snapshot[env_var] = os.environ[env_var]
-
-    return snapshot
+BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
 # === END PATH SETUP ===
 
@@ -154,10 +145,12 @@ def _register_balolos_coder():
 def main(argv: Sequence[str] | None = None, env: MutableMapping[str, str] | None = None) -> int:
     args = _parse_args(argv)
     logger = _setup_logging(args.log_level)
-    timeout_snapshot = _apply_bootstrap_timeout_env()
     logger.info(
         "bootstrap timeout env applied",
-        extra={"bootstrap_env": timeout_snapshot, "event": "bootstrap-timeouts"},
+        extra={
+            "bootstrap_env": BOOTSTRAP_TIMEOUT_POLICY,
+            "event": "bootstrap-timeouts",
+        },
     )
     _configure_environment(_REPO_ROOT, env)
 

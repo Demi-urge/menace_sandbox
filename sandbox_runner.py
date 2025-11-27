@@ -23,6 +23,7 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
@@ -41,6 +42,19 @@ def kill_handler(sig, frame):
 signal.signal(signal.SIGINT, kill_handler)   # Handles Ctrl+C
 if hasattr(signal, "SIGBREAK"):
     signal.signal(signal.SIGBREAK, kill_handler) # Handles Ctrl+Break (Windows only)
+
+# Standardise bootstrap timeout environment variables before initialising services.
+_BOOTSTRAP_TIMEOUT_DEFAULTS = {
+    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "BOOTSTRAP_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+}
+
+for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
+    os.environ.setdefault(_env_var, _default_value)
+
+BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
