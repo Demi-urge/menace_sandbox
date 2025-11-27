@@ -81,8 +81,12 @@ _BOOTSTRAP_LOCK_ENV = "MENACE_BOOTSTRAP_LOCK_FILE"
 _BOOTSTRAP_LOCK_TIMEOUT_ENV = "MENACE_BOOTSTRAP_LOCK_TIMEOUT"
 _MINIMISE_WATCHERS_ENV = "MENACE_MINIMISE_BOOTSTRAP_WATCHERS"
 _WATCHER_ROOTS_ENV = "MENACE_BOOTSTRAP_WATCH_ROOTS"
+_WATCHER_EXCLUDES_ENV = "MENACE_BOOTSTRAP_WATCH_EXCLUDES"
 
 _DEFAULT_BOOTSTRAP_LOCK = Path("/tmp/menace_bootstrap.lock")
+
+os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
+os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "30")
 
 
 logger = get_logger(__name__)
@@ -361,6 +365,52 @@ def _serialize_bootstrap(label: str = "bootstrap") -> Iterable[None]:
         ) from exc
 
 
+def _build_watcher_scope(
+    settings: SandboxSettings | None,
+) -> tuple[Path | None, list[Path]]:
+    """Return the repo root and directories watchers should exclude."""
+
+    try:
+        root = repo_root()
+    except Exception:
+        try:
+            root = resolve_path(".")
+        except Exception:
+            root = None
+
+    exclusions: list[Path] = []
+    if root:
+        exclusions.extend(
+            [
+                root / "sandbox_data",
+                root / "checkpoints",
+                root / "checkpoint",
+                root / ".venv",
+                root / "venv",
+                root / ".virtualenv",
+                root / ".direnv",
+            ]
+        )
+
+    data_dir = getattr(settings, "sandbox_data_dir", None)
+    if data_dir:
+        try:
+            exclusions.append(resolve_path(str(data_dir)))
+        except Exception:
+            pass
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in exclusions:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+
+    return root, deduped
+
+
 @contextmanager
 def _limit_recursive_watchers(settings: SandboxSettings | None) -> Iterable[None]:
     """Temporarily minimise filesystem watchers during bootstrap.
@@ -374,23 +424,15 @@ def _limit_recursive_watchers(settings: SandboxSettings | None) -> Iterable[None
 
     previous_flag = os.environ.get(_MINIMISE_WATCHERS_ENV)
     previous_roots = os.environ.get(_WATCHER_ROOTS_ENV)
+    previous_excludes = os.environ.get(_WATCHER_EXCLUDES_ENV)
 
-    roots: set[str] = set()
-    for candidate in (
-        getattr(settings, "sandbox_repo_path", None),
-        getattr(settings, "sandbox_data_dir", None),
-    ):
-        if not candidate:
-            continue
-        try:
-            resolved = resolve_path(str(candidate))
-        except Exception:
-            continue
-        roots.add(str(resolved))
+    root, exclusions = _build_watcher_scope(settings)
 
     os.environ[_MINIMISE_WATCHERS_ENV] = "1"
-    if roots:
-        os.environ[_WATCHER_ROOTS_ENV] = os.pathsep.join(sorted(roots))
+    if root:
+        os.environ[_WATCHER_ROOTS_ENV] = str(root)
+    if exclusions:
+        os.environ[_WATCHER_EXCLUDES_ENV] = os.pathsep.join(str(path) for path in exclusions)
 
     try:
         yield
@@ -404,6 +446,11 @@ def _limit_recursive_watchers(settings: SandboxSettings | None) -> Iterable[None
             os.environ.pop(_WATCHER_ROOTS_ENV, None)
         else:
             os.environ[_WATCHER_ROOTS_ENV] = previous_roots
+
+        if previous_excludes is None:
+            os.environ.pop(_WATCHER_EXCLUDES_ENV, None)
+        else:
+            os.environ[_WATCHER_EXCLUDES_ENV] = previous_excludes
 
 
 def _activate_bootstrap_watchdog_flag() -> Callable[[], None]:
