@@ -19,6 +19,7 @@ import faulthandler
 import json
 import logging
 import random
+import subprocess
 import signal
 import threading
 import time
@@ -47,7 +48,7 @@ for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
     os.environ.setdefault(_timeout_env, _timeout_default)
 
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
-os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "15")
+os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "30")
 
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
@@ -249,19 +250,81 @@ def _log_watcher_scope_hint(logger: logging.Logger) -> None:
     """Advise operators to scope filesystem watchers to the repo root only."""
 
     repo_root = resolve_path(".")
-    excluded = ["sandbox_data", "checkpoints", ".venv", "venv", ".virtualenv"]
+    excluded = [
+        repo_root / "sandbox_data",
+        repo_root / "checkpoints",
+        repo_root / ".venv",
+        repo_root / "venv",
+        repo_root / ".virtualenv",
+        repo_root / ".direnv",
+    ]
     logger.info(
         "validate editor/sync watchers before bootstrap to avoid I/O storms",
         extra=log_record(
             event="bootstrap-watcher-scope",
             repo_root=str(repo_root),
-            excluded_paths=excluded,
+            excluded_paths=[str(path) for path in excluded],
             guidance=(
-                "restrict watchers to the active repository root and exclude sandbox_data, "
-                "checkpoint directories, and virtual environments"
+                "configure editor or sync watchers to only monitor the active repository root "
+                "and explicitly ignore sandbox_data, checkpoint directories, and any virtual "
+                "environment folders to reduce startup I/O"
             ),
         ),
     )
+
+
+def _scan_for_parallel_bootstraps(logger: logging.Logger) -> list[str]:
+    """Return any other bootstrap processes currently running on the host."""
+
+    conflicts: list[str] = []
+    try:
+        result = subprocess.run(
+            [
+                "pgrep",
+                "-af",
+                "bootstrap_self_coding|start_autonomous_sandbox|sandbox_runner",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        logger.warning(
+            "pgrep is unavailable; skipping parallel bootstrap detection",
+            exc_info=True,
+            extra=log_record(event="bootstrap-pgrep-scan-failed"),
+        )
+        return conflicts
+
+    for line in (result.stdout or "").splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+
+        if pid == os.getpid():
+            continue
+
+        desc = parts[1] if len(parts) > 1 else ""
+        conflicts.append(f"pid {pid}: {desc}".strip())
+
+    if conflicts:
+        logger.error(
+            "another bootstrap process is already active; aborting startup",
+            extra=log_record(
+                event="bootstrap-conflict-detected",
+                processes=conflicts,
+                resolution=(
+                    "stop the other bootstrap (pgrep -af "
+                    "'bootstrap_self_coding|start_autonomous_sandbox|sandbox_runner')"
+                ),
+            ),
+        )
+
+    return conflicts
 
 
 def _record_bootstrap_timeout(
@@ -1437,6 +1500,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     sandbox_restart_total.labels(service="start_autonomous", reason="launch").inc()
     logger.info("sandbox start", extra=log_record(event="start"))
+
+    if not args.health_check:
+        conflicts = _scan_for_parallel_bootstraps(logger)
+        if conflicts:
+            print(
+                "[ERROR] Another sandbox bootstrap appears to be running. "
+                "Please stop the other process before retrying.",
+                flush=True,
+            )
+            sys.exit(1)
 
     ready_to_launch = True
     roi_backoff_triggered = False
