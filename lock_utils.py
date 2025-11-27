@@ -2,8 +2,14 @@ import os
 import time
 import logging
 import errno
+import importlib.util
 from contextlib import suppress
-from filelock import FileLock, Timeout
+
+_filelock_spec = importlib.util.find_spec("filelock")
+if _filelock_spec is None:
+    from filelock_stub.filelock_stub import FileLock, Timeout
+else:
+    from filelock import FileLock, Timeout
 
 try:
     from .fcntl_compat import flock, LOCK_EX, LOCK_NB
