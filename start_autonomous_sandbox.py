@@ -50,6 +50,9 @@ for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_SECS", "30")
 os.environ.setdefault("MENACE_BOOTSTRAP_STAGGER_JITTER_SECS", "30")
 
+WATCHER_ROOTS_ENV = "MENACE_BOOTSTRAP_WATCH_ROOTS"
+WATCHER_EXCLUDES_ENV = "MENACE_BOOTSTRAP_WATCH_EXCLUDES"
+
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
@@ -99,7 +102,9 @@ SHUTDOWN_EVENT = threading.Event()
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
 BOOTSTRAP_SENTINEL_PATH = Path("maintenance-logs/bootstrap_status.json")
-BOOTSTRAP_LOCK_PATH = Path("maintenance-logs/bootstrap.lock")
+BOOTSTRAP_LOCK_PATH = Path(
+    os.getenv("MENACE_BOOTSTRAP_LOCK_FILE", "/tmp/menace_bootstrap.lock")
+)
 BOOTSTRAP_LOCK_TIMEOUT = float(os.getenv("MENACE_BOOTSTRAP_LOCK_TIMEOUT", "300"))
 DEFAULT_STEP_BUDGET = float(os.getenv("BOOTSTRAP_STEP_BUDGET", "60"))
 BOOTSTRAP_STEP_BUDGETS: Mapping[str, float] = {
@@ -246,18 +251,46 @@ def _acquire_bootstrap_lock(logger: logging.Logger) -> tuple[SandboxLock, Any]:
     return lock, guard
 
 
-def _log_watcher_scope_hint(logger: logging.Logger) -> None:
-    """Advise operators to scope filesystem watchers to the repo root only."""
-
+def _compute_watcher_scope() -> tuple[Path, list[Path]]:
     repo_root = resolve_path(".")
-    excluded = [
+    exclusions: list[Path] = [
         repo_root / "sandbox_data",
         repo_root / "checkpoints",
+        repo_root / "checkpoint",
         repo_root / ".venv",
         repo_root / "venv",
         repo_root / ".virtualenv",
         repo_root / ".direnv",
     ]
+
+    data_dir = os.getenv("SANDBOX_DATA_DIR")
+    if data_dir:
+        try:
+            exclusions.append(resolve_path(data_dir))
+        except Exception:
+            LOGGER.debug("unable to resolve SANDBOX_DATA_DIR=%s", data_dir, exc_info=True)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in exclusions:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+
+    return repo_root, deduped
+
+
+def _log_watcher_scope_hint(logger: logging.Logger) -> None:
+    """Advise operators to scope filesystem watchers to the repo root only."""
+
+    repo_root, excluded = _compute_watcher_scope()
+    os.environ.setdefault(WATCHER_ROOTS_ENV, str(repo_root))
+    if excluded:
+        os.environ.setdefault(
+            WATCHER_EXCLUDES_ENV, os.pathsep.join(str(path) for path in excluded)
+        )
     logger.info(
         "validate editor/sync watchers before bootstrap to avoid I/O storms",
         extra=log_record(
