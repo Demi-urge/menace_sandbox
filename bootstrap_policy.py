@@ -140,6 +140,7 @@ class DependencyPolicy:
     required_commands: tuple[str, ...] = ("git", "curl", "python3")
     windows_package_managers: tuple[str, ...] = ("winget", "choco")
     linux_package_managers: tuple[str, ...] = ("dpkg", "rpm")
+    phase_timeouts: Mapping[str, float | None] | None = None
 
     def derive(self, **overrides: object) -> "DependencyPolicy":
         """Return a copy of the policy with ``overrides`` applied."""
@@ -202,6 +203,17 @@ class DependencyPolicy:
         if not self.critical_dependencies:
             return {}
         return dict(self.critical_dependencies)
+
+    # ------------------------------------------------------------------
+    def resolved_phase_timeouts(
+        self, defaults: Mapping[str, float | None]
+    ) -> Mapping[str, float | None]:
+        """Return timeout budgets for bootstrap phases."""
+
+        resolved = dict(defaults)
+        for key, value in (self.phase_timeouts or {}).items():
+            resolved[str(key).lower()] = None if value is None else float(value)
+        return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +411,20 @@ class PolicyLoader:
                 overrides["windows_package_managers"] = _as_tuple(
                     payload.get("windows_package_managers")
                 )
+            if "phase_timeouts" in payload:
+                timeouts_payload = payload.get("phase_timeouts")
+                if isinstance(timeouts_payload, dict):
+                    timeouts: dict[str, float | None] = {}
+                    for phase, value in timeouts_payload.items():
+                        try:
+                            parsed = None if value is None else float(value)
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "bootstrap policy '%s' provided invalid timeout for phase '%s'", phase, name
+                            )
+                            continue
+                        timeouts[str(phase).lower()] = parsed
+                    overrides["phase_timeouts"] = timeouts
             if "linux_package_managers" in payload:
                 overrides["linux_package_managers"] = _as_tuple(
                     payload.get("linux_package_managers")
