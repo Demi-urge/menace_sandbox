@@ -24,6 +24,7 @@ from tkinter import ttk
 
 from dependency_health import DependencyMode, resolve_dependency_mode
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+import bootstrap_conflict_check
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_FILE_PATH = REPO_ROOT / "menace_gui_logs.txt"
@@ -37,6 +38,8 @@ _BOOTSTRAP_TIMEOUT_DEFAULTS = {
     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
     "BOOTSTRAP_STEP_TIMEOUT": "240",
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+    "MENACE_BOOTSTRAP_STAGGER_SECS": "30",
+    "MENACE_BOOTSTRAP_STAGGER_JITTER_SECS": "15",
 }
 for _env_key, _env_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
     os.environ.setdefault(_env_key, _env_value)
@@ -69,6 +72,23 @@ def _is_harmless_log(level: str, message: str) -> bool:
     # the matching logic resilient to formatting differences across versions.
     normalized = " ".join(message.lower().split())
     return any(snippet in normalized for snippet in _KNOWN_HARMLESS_LOG_SNIPPETS)
+
+
+def _check_conflicting_bootstraps(logger: logging.Logger) -> None:
+    """Abort preflight when another bootstrap or broad watcher is active."""
+
+    bootstraps, watchers = bootstrap_conflict_check.detect_conflicts(logger=logger)
+    if not bootstraps and not watchers:
+        logger.info("No conflicting bootstraps or wide filesystem watchers detected.")
+        return
+
+    details: list[str] = []
+    if bootstraps:
+        details.append("Active bootstrap detected: " + "; ".join(sorted(bootstraps)))
+    if watchers:
+        details.append("Broad watcher detected: " + "; ".join(sorted(watchers)))
+
+    raise RuntimeError("; ".join(details))
 
 
 def _path_exists(candidate: object) -> bool:
@@ -1666,6 +1686,17 @@ def _bootstrap_self_coding(logger: logging.Logger) -> None:
 
 
 _PREFLIGHT_STEPS: tuple[_PreflightStep, ...] = (
+    _PreflightStep(
+        name="_check_conflicting_bootstraps",
+        start_message="Checking for conflicting bootstraps and filesystem watchers.",
+        success_message="No conflicting bootstraps or unsafe watchers detected.",
+        failure_title="Conflicting bootstrap detected",
+        failure_message=(
+            "Another sandbox bootstrap or a wide file watcher is active. Stop the other launch or "
+            "narrow the watcher scope (sandbox_data/checkpoints/venv) before retrying."
+        ),
+        runner=_check_conflicting_bootstraps,
+    ),
     _PreflightStep(
         name="_git_sync",
         start_message="Synchronising repository with origin.",
