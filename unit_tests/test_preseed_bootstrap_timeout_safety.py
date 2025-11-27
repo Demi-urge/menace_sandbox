@@ -38,9 +38,9 @@ def _load_preseed_bootstrap_module():
     _install_stub_module(
         "menace_sandbox.coding_bot_interface",
         {
-            "_BOOTSTRAP_TIMEOUT_FLOOR": 120.0,
-            "_BOOTSTRAP_WAIT_TIMEOUT": 30.0,
-            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 30.0,
+            "_BOOTSTRAP_TIMEOUT_FLOOR": 240.0,
+            "_BOOTSTRAP_WAIT_TIMEOUT": 240.0,
+            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 240.0,
             "_PREPARE_PIPELINE_WATCHDOG": {"stages": []},
             "_pop_bootstrap_context": lambda *_, **__: None,
             "_push_bootstrap_context": lambda *_, **__: None,

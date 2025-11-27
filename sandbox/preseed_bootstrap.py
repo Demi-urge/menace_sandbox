@@ -6,13 +6,13 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 
 Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
-``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 300s
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 240s
 fallback derived from ``_get_bootstrap_wait_timeout`` (or
 ``BOOTSTRAP_STEP_TIMEOUT``) unless timeouts are explicitly disabled. Operators
 who hit the legacy 30s cap on ``prepare_pipeline_for_bootstrap`` should set
 ``MENACE_BOOTSTRAP_WAIT_SECS`` (standard paths) and
 ``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` (vector-heavy pipelines) to higher values
-like 120–300 seconds before running bootstrap, especially on slow disks or when
+like 240–360 seconds before running bootstrap, especially on slow disks or when
 vector DB migrations need extra breathing room.
 """
 
@@ -63,16 +63,16 @@ BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
-_BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 120.0)
+_BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 240.0)
 _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
     _BOOTSTRAP_TIMEOUT_FLOOR,
     (
         _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
         if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
-        else 300.0
+        else 240.0
     ),
 )
-_PREPARE_STANDARD_TIMEOUT_FLOOR = 180.0
+_PREPARE_STANDARD_TIMEOUT_FLOOR = 240.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 240.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
