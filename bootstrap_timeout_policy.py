@@ -113,3 +113,18 @@ def enforce_bootstrap_timeout_policy(
 
     results[_OVERRIDE_ENV] = {"requested": float(allow_unsafe), "effective": float(allow_unsafe)}
     return results
+
+
+def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> list[str]:
+    """Return standard remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts."""
+
+    hints = [
+        "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
+        "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
+        "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
+    ]
+
+    if vector_heavy:
+        return list(hints)
+
+    return hints
