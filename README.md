@@ -33,8 +33,9 @@ The bootstrap helpers respect several environment variables that govern how long
 
 - `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, keep this at the new **240 second default** so preflight does not race the first vector warm-up.
 - `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this between **240–360 seconds** (runtime default **240s**) ensures the vector warm-up watchdog inherits the longer window.
-- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. The default is now **240 seconds** to cover slow hosts under contention or tight CPU quotas.
-- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this between **240–360 seconds** (runtime default **240s**) so large vector stores finish batching before the watchdog fires.
+- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. The default is now **240 seconds** to cover slow hosts under contention or tight CPU quotas, and every stage budget is clamped to at least this floor even when `BOOTSTRAP_STEP_BUDGET` is unset.
+- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this between **240–360 seconds** (runtime default **240s**) so large vector stores finish batching before the watchdog fires; vector-heavy steps automatically inherit a **360s** floor via the shared timeout policy.
+- `BOOTSTRAP_STEP_BUDGET`/`BOOTSTRAP_EMBEDDER_BUDGET` – explicit per-step watchdog overrides. These now inherit the shared timeout policy and will never drop below the **240s** standard floor or the **360s** vector-heavy floor.
 
 If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 
