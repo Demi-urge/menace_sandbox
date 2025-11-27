@@ -52,6 +52,29 @@ _DisabledSelfCodingManager = getattr(
     _coding_bot_interface, "_DisabledSelfCodingManager", None
 )
 
+
+def _apply_bootstrap_timeout_env(minimum: float = 240.0) -> dict[str, str]:
+    """Clamp bootstrap timeout env vars to at least ``minimum`` seconds."""
+
+    snapshot: dict[str, str] = {}
+    for env_var in (
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        "BOOTSTRAP_STEP_TIMEOUT",
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    ):
+        raw_value = os.getenv(env_var)
+        try:
+            parsed = float(raw_value) if raw_value is not None else minimum
+        except (TypeError, ValueError):
+            parsed = minimum
+
+        effective = parsed if parsed >= minimum else minimum
+        os.environ[env_var] = str(effective)
+        snapshot[env_var] = os.environ[env_var]
+
+    return snapshot
+
 # === END PATH SETUP ===
 
 from menace_sandbox.environment_bootstrap import EnvironmentBootstrapper
@@ -131,6 +154,11 @@ def _register_balolos_coder():
 def main(argv: Sequence[str] | None = None, env: MutableMapping[str, str] | None = None) -> int:
     args = _parse_args(argv)
     logger = _setup_logging(args.log_level)
+    timeout_snapshot = _apply_bootstrap_timeout_env()
+    logger.info(
+        "bootstrap timeout env applied",
+        extra={"bootstrap_env": timeout_snapshot, "event": "bootstrap-timeouts"},
+    )
     _configure_environment(_REPO_ROOT, env)
 
     exit_code = 0
