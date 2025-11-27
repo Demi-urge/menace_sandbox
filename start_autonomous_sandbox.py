@@ -39,9 +39,9 @@ if "--health-check" in sys.argv[1:]:
 
 DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": "240",
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "360",
     "BOOTSTRAP_STEP_TIMEOUT": "240",
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "360",
 }
 
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():

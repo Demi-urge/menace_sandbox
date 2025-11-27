@@ -6,7 +6,7 @@ skip re-entrant ``prepare_pipeline_for_bootstrap`` calls.
 
 Timeouts are sourced from ``coding_bot_interface._resolve_bootstrap_wait_timeout``
 when available so they respect ``MENACE_BOOTSTRAP_WAIT_SECS`` and
-``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 240s
+``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` while retaining a generous 360s
 fallback derived from ``_get_bootstrap_wait_timeout`` (or
 ``BOOTSTRAP_STEP_TIMEOUT``) unless timeouts are explicitly disabled. Operators
 who hit the legacy 30s cap on ``prepare_pipeline_for_bootstrap`` should set
@@ -73,7 +73,7 @@ _BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
     ),
 )
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 240.0
-_PREPARE_VECTOR_TIMEOUT_FLOOR = 240.0
+_PREPARE_VECTOR_TIMEOUT_FLOOR = 360.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"

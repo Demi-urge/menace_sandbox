@@ -10,9 +10,9 @@ LOGGER = logging.getLogger(__name__)
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": 240.0,
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 240.0,
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 360.0,
     "BOOTSTRAP_STEP_TIMEOUT": 240.0,
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 240.0,
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 360.0,
 }
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
 
@@ -118,9 +118,20 @@ def enforce_bootstrap_timeout_policy(
 def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> list[str]:
     """Return standard remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts."""
 
+    vector_wait = _parse_float(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")) or _BOOTSTRAP_TIMEOUT_MINIMUMS[
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
+    ]
+    vector_step = _parse_float(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT")) or _BOOTSTRAP_TIMEOUT_MINIMUMS[
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT"
+    ]
+
     hints = [
         "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
-        "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
+        (
+            "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS="
+            f"{int(vector_wait)} or BOOTSTRAP_VECTOR_STEP_TIMEOUT={int(vector_step)} "
+            "to bypass the legacy 30s cap and give vector services time to warm up."
+        ),
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
 

@@ -29,7 +29,7 @@ def _load_preseed_bootstrap_module():
             "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
             "render_prepare_pipeline_timeout_hints": lambda *_args, **_kwargs: [
                 "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
-                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=240 to bypass the legacy 30s cap.",
+                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=360 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=360 to bypass the legacy 30s cap.",
                 "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
             ],
         },
@@ -100,5 +100,5 @@ def test_prepare_timeout_emits_remediation_guidance(capsys, caplog):
 
     assert result is None
     assert "MENACE_BOOTSTRAP_WAIT_SECS=240" in combined_output
-    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=240" in combined_output
+    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=360" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output

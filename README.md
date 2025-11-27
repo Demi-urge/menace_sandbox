@@ -32,14 +32,14 @@ When `_bootstrap_manager` falls back to building a sentinel pipeline, it also se
 The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
 
 - `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, keep this at the new **240 second default** so preflight does not race the first vector warm-up.
-- `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this at **240 seconds or higher** ensures the vector warm-up watchdog inherits the longer window.
+- `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this between **240–360 seconds** (runtime default **360s**) ensures the vector warm-up watchdog inherits the longer window.
 - `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. The default is now **240 seconds** to cover slow hosts under contention or tight CPU quotas.
-- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this at **240 seconds** or higher so large vector stores finish batching before the watchdog fires.
+- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this between **240–360 seconds** (runtime default **360s**) so large vector stores finish batching before the watchdog fires.
 
 If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 
 - Set `MENACE_BOOTSTRAP_WAIT_SECS=240` or `BOOTSTRAP_STEP_TIMEOUT=240` before rerunning bootstrap on slower hosts (these values are now the defaults).
-- For vector-heavy runs, use `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=240` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=240` to bypass the legacy ceiling.
+- For vector-heavy runs, use `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=360` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=360` to bypass the legacy ceiling.
 - Stagger concurrent bootstraps or trim watched directories (e.g., editors/sync tools) to cut I/O contention during startup.
 
 When timeouts persist, audit the host before retrying:

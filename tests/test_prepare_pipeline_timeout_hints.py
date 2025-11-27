@@ -35,7 +35,7 @@ def test_prepare_timeout_logs_standard_hints(monkeypatch, caplog):
     combined_output = caplog.text + str(excinfo.value)
 
     assert "MENACE_BOOTSTRAP_WAIT_SECS=240" in combined_output
-    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=240" in combined_output
+    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=360" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output
 
 
