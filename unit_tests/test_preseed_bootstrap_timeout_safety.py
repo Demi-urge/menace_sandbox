@@ -1,5 +1,6 @@
 import importlib
 import logging
+import logging
 import sys
 import time
 import types
@@ -20,7 +21,9 @@ def _load_preseed_bootstrap_module():
     sys.modules["menace_sandbox"] = menace_ns
 
     # Stubs for dependencies used during module import.
-    _install_stub_module("lock_utils", {"SandboxLock": type("SandboxLock", (), {})})
+    _install_stub_module(
+        "lock_utils", {"SandboxLock": type("SandboxLock", (), {}), "LOCK_TIMEOUT": 1.0}
+    )
     _install_stub_module("safe_repr", {"summarise_value": lambda value: f"summary:{value}"})
     _install_stub_module("security.secret_redactor", {"redact_dict": lambda data: data})
     _install_stub_module(
@@ -85,10 +88,12 @@ def test_prepare_timeout_emits_remediation_guidance(capsys, caplog):
     def slow_task():
         time.sleep(0.1)
 
+    deadline = time.monotonic() + 0.02
     with caplog.at_level(logging.WARNING, logger=preseed_bootstrap.LOGGER.name):
         result = preseed_bootstrap._run_with_timeout(
             slow_task,
             timeout=0.01,
+            bootstrap_deadline=deadline,
             description="prepare_pipeline_for_bootstrap",
             abort_on_timeout=False,
         )
@@ -101,4 +106,24 @@ def test_prepare_timeout_emits_remediation_guidance(capsys, caplog):
     assert result is None
     assert "MENACE_BOOTSTRAP_WAIT_SECS=240" in combined_output
     assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=360" in combined_output
+    assert "remaining_global_window" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output
+
+
+def test_adaptive_timeout_extends_when_slack_available():
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    def slow_task():
+        time.sleep(0.05)
+        return "done"
+
+    deadline = time.monotonic() + 1.0
+    result = preseed_bootstrap._run_with_timeout(
+        slow_task,
+        timeout=0.01,
+        bootstrap_deadline=deadline,
+        description="prepare_pipeline_for_bootstrap",
+        abort_on_timeout=False,
+    )
+
+    assert result == "done"

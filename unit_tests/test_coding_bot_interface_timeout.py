@@ -1,5 +1,7 @@
 import importlib
+import os
 import sys
+import time
 import types
 
 
@@ -14,33 +16,50 @@ def _load_coding_bot_interface_module():
     return importlib.import_module("coding_bot_interface")
 
 
-def test_watchdog_timeout_clamped_to_standard_floor():
+def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
     coding_bot_interface = _load_coding_bot_interface_module()
     start_time = 100.0
-    deadline = start_time + 30.0
+    deadline = start_time + 500.0
 
-    normalized_deadline, normalized_timeout, escalated = (
+    coding_bot_interface._PREPARE_PIPELINE_WATCHDOG["stages"] = [
+        {"label": "bootstrap", "elapsed": 5.0},
+        {"label": "prepare", "elapsed": 7.0},
+    ]
+
+    monkeypatch.setattr(os, "getloadavg", lambda: (4.0, 0.0, 0.0))
+    monkeypatch.setattr(os, "cpu_count", lambda: 2)
+
+    normalized_deadline, normalized_timeout, telemetry = (
         coding_bot_interface._normalize_watchdog_timeout(
             deadline, start_time=start_time, vector_heavy=False
         )
     )
 
-    assert escalated is True
-    assert normalized_timeout == coding_bot_interface._MIN_STAGE_TIMEOUT
-    assert normalized_deadline == start_time + coding_bot_interface._MIN_STAGE_TIMEOUT
+    assert telemetry["history_mean"] == 6.0
+    assert telemetry["host_scale"] != 1.0
+    assert normalized_timeout == telemetry["stage_budget"]
+    assert normalized_deadline == start_time + normalized_timeout
+    assert telemetry["staged_readiness"] is False
 
 
-def test_watchdog_timeout_clamped_to_vector_floor():
+def test_watchdog_timeout_enters_staged_readiness(monkeypatch):
     coding_bot_interface = _load_coding_bot_interface_module()
-    start_time = 200.0
-    deadline = start_time + 30.0
+    start_time = time.perf_counter()
+    deadline = start_time + 5.0
 
-    normalized_deadline, normalized_timeout, escalated = (
+    coding_bot_interface._PREPARE_PIPELINE_WATCHDOG["stages"] = [
+        {"label": "bootstrap", "elapsed": 120.0}
+    ]
+
+    monkeypatch.setattr(os, "getloadavg", lambda: (1.0, 0.0, 0.0))
+    monkeypatch.setattr(os, "cpu_count", lambda: 1)
+
+    normalized_deadline, normalized_timeout, telemetry = (
         coding_bot_interface._normalize_watchdog_timeout(
             deadline, start_time=start_time, vector_heavy=True
         )
     )
 
-    assert escalated is True
-    assert normalized_timeout == coding_bot_interface._MIN_STAGE_TIMEOUT_VECTOR
-    assert normalized_deadline == start_time + coding_bot_interface._MIN_STAGE_TIMEOUT_VECTOR
+    assert telemetry["staged_readiness"] is True
+    assert normalized_timeout == telemetry["remaining_window"]
+    assert normalized_deadline == start_time + normalized_timeout

@@ -240,25 +240,52 @@ def _record_prepare_pipeline_stage(
 
 def _normalize_watchdog_timeout(
     deadline: float | None, *, start_time: float, vector_heavy: bool
-) -> tuple[float | None, float | None, bool]:
-    """Clamp watchdog timeout budgets to recommended floors.
+) -> tuple[float | None, float | None, Mapping[str, Any]]:
+    """Derive adaptive watchdog budgets from host signals and stage history."""
 
-    Returns ``(normalized_deadline, normalized_timeout, escalated)`` where
-    ``normalized_timeout`` reflects the effective watchdog budget in seconds and
-    ``escalated`` indicates whether the computed timeout was auto-elevated above
-    the caller-provided deadline window.
-    """
+    history = [entry.get("elapsed", 0.0) for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", [])]
+    history_mean = sum(history[-5:]) / len(history[-5:]) if history[-5:] else None
+
+    try:
+        load1, _, _ = os.getloadavg()
+        cpus = os.cpu_count() or 1
+        host_scale = min(1.6, max(0.7, 1.0 + ((load1 / cpus) - 1.0) * 0.4))
+    except OSError:
+        host_scale = 1.0
+
+    timeout_floor = _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
+    baseline = timeout_floor * 0.85
+    scaled_history = history_mean * 1.25 if history_mean is not None else baseline
+    stage_budget = max(baseline, scaled_history) * host_scale
+    vector_scale = 1.1 if vector_heavy else 1.0
+    stage_budget *= vector_scale
+
+    telemetry = {
+        "history_mean": history_mean,
+        "host_scale": host_scale,
+        "vector_scale": vector_scale,
+        "stage_budget": stage_budget,
+        "timeout_floor": timeout_floor,
+    }
 
     if deadline is None:
-        return None, None, False
+        return None, stage_budget, telemetry
 
-    resolved_timeout = max(0.0, deadline - start_time)
-    timeout_floor = _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
-    normalized_timeout = max(resolved_timeout, timeout_floor)
-    escalated = normalized_timeout > resolved_timeout
+    remaining_window = max(0.0, deadline - start_time)
+    telemetry["remaining_window"] = remaining_window
+
+    staged_readiness = stage_budget > remaining_window and remaining_window > 0
+    telemetry["staged_readiness"] = staged_readiness
+
+    normalized_timeout = stage_budget
+    if staged_readiness:
+        normalized_timeout = remaining_window
+    escalated = normalized_timeout > remaining_window
+    telemetry["escalated"] = escalated
+
     normalized_deadline = start_time + normalized_timeout
 
-    return normalized_deadline, normalized_timeout, escalated
+    return normalized_deadline, normalized_timeout, telemetry
 
 
 def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
@@ -3956,10 +3983,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         watchdog_timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
         resolved_env_bootstrap_wait = _resolve_bootstrap_wait_timeout(False)
         resolved_env_vector_wait = _resolve_bootstrap_wait_timeout(True)
-        normalized_deadline, resolved_timeout, watchdog_escalated = (
-            _normalize_watchdog_timeout(
-                resolved_deadline, start_time=start_time, vector_heavy=vector_heavy
-            )
+        normalized_deadline, resolved_timeout, watchdog_telemetry = _normalize_watchdog_timeout(
+            resolved_deadline, start_time=start_time, vector_heavy=vector_heavy
         )
         effective_deadline = normalized_deadline if normalized_deadline else resolved_deadline
         timeout_floor = (
@@ -3978,8 +4003,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_wait_timeout": resolved_wait_timeout,
                 "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
-                "watchdog_timeout_escalated": watchdog_escalated,
+                "watchdog_timeout_escalated": watchdog_telemetry.get("escalated"),
                 "watchdog_timeout_floor": timeout_floor,
+                "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
+                "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
+                "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -3991,7 +4019,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 ),
                 stage,
                 resolved_timeout,
-                watchdog_escalated,
+                watchdog_telemetry.get("escalated"),
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
@@ -4020,8 +4048,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_wait_timeout": resolved_wait_timeout,
                 "effective_timeout_floor": effective_timeout_floor,
                 "prepare_watchdog_timeline": watchdog_timeline,
-                "watchdog_timeout_escalated": watchdog_escalated,
+                "watchdog_timeout_escalated": watchdog_telemetry.get("escalated"),
                 "watchdog_timeout_floor": timeout_floor,
+                "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
+                "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
+                "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4035,7 +4066,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 stage,
                 elapsed,
                 resolved_timeout,
-                watchdog_escalated,
+                watchdog_telemetry.get("escalated"),
                 vector_heavy,
                 env_bootstrap_wait,
                 env_vector_wait,
@@ -4044,13 +4075,19 @@ def _prepare_pipeline_for_bootstrap_impl(
                 len(watchdog_timeline),
             )
             _record_timeout(stage, context)
-            _emit_timeout_diagnostics(stage, context)
-            raise TimeoutError(
-                (
-                    "prepare_pipeline_for_bootstrap timed out during "
-                    f"{stage}; remediation: {'; '.join(remediation_hints)}"
+            if watchdog_telemetry.get("staged_readiness"):
+                logger.warning(
+                    "staged readiness enabled; continuing after deadline breach",
+                    extra={"stage": stage, "watchdog": watchdog_telemetry},
                 )
-            )
+            else:
+                _emit_timeout_diagnostics(stage, context)
+                raise TimeoutError(
+                    (
+                        "prepare_pipeline_for_bootstrap timed out during "
+                        f"{stage}; remediation: {'; '.join(remediation_hints)}"
+                    )
+                )
 
     def _typeerror_rejects_manager(exc: TypeError) -> bool:
         message = str(exc)
