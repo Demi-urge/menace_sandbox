@@ -1305,6 +1305,20 @@ class SelfImprovementEngine:
         self.aggregator = ResearchAggregatorBot(
             [bot_name], info_db=self.info_db, context_builder=context_builder
         )
+        try:
+            from sandbox.preseed_bootstrap import initialize_bootstrap_wait_env
+        except Exception:  # pragma: no cover - fallback for flat layout
+            try:
+                from preseed_bootstrap import initialize_bootstrap_wait_env
+            except Exception:  # pragma: no cover - defensive fallback
+                initialize_bootstrap_wait_env = None  # type: ignore[assignment]
+
+        if initialize_bootstrap_wait_env is not None:
+            bootstrap_waits = initialize_bootstrap_wait_env()
+            logger.info(
+                "bootstrap wait policy applied",
+                extra={"bootstrap_waits": bootstrap_waits},
+            )
         self.pipeline_promoter: Callable[[Any], None] | None = None
         if pipeline is None:
             bootstrap_registry = SimpleNamespace(__name__="self_improvement.registry")

@@ -155,6 +155,42 @@ def _hydrate_vector_bootstrap_env(minimum: float = _VECTOR_ENV_MINIMUM) -> dict[
     return resolved
 
 
+def initialize_bootstrap_wait_env(minimum: float = _VECTOR_ENV_MINIMUM) -> dict[str, float]:
+    """Clamp bootstrap wait env vars to at least ``minimum`` seconds."""
+
+    resolved: dict[str, float] = {}
+    for env_var in (
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+    ):
+        raw_value = os.getenv(env_var)
+        effective = minimum
+        update_env = False
+
+        if raw_value is None:
+            update_env = True
+        else:
+            try:
+                parsed = float(raw_value)
+            except (TypeError, ValueError):
+                update_env = True
+            else:
+                effective = parsed
+                if parsed < minimum:
+                    effective = minimum
+                    update_env = True
+
+        if update_env:
+            os.environ[env_var] = str(effective)
+        resolved[env_var] = float(os.getenv(env_var, str(effective)))
+
+    LOGGER.info(
+        "bootstrap wait env hydrated",
+        extra={"minimum": minimum, "bootstrap_waits": resolved},
+    )
+    return resolved
+
+
 def _render_timeout_policy(policy_snapshot: dict[str, dict[str, Any]]) -> str:
     parts = []
     for key in (

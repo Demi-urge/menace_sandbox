@@ -314,6 +314,7 @@ def handle_patch(args: argparse.Namespace) -> int:
             from menace_sandbox.data_bot import DataBot, persist_sc_thresholds  # type: ignore
             from menace_sandbox.self_coding_thresholds import get_thresholds  # type: ignore
             from menace_sandbox.threshold_service import ThresholdService  # type: ignore
+            from sandbox.preseed_bootstrap import initialize_bootstrap_wait_env  # type: ignore
             from menace_sandbox.coding_bot_interface import (  # type: ignore
                 fallback_helper_manager,
                 prepare_pipeline_for_bootstrap,
@@ -328,6 +329,7 @@ def handle_patch(args: argparse.Namespace) -> int:
             from data_bot import DataBot, persist_sc_thresholds
             from self_coding_thresholds import get_thresholds
             from threshold_service import ThresholdService
+            from preseed_bootstrap import initialize_bootstrap_wait_env
             from coding_bot_interface import (
                 fallback_helper_manager,
                 prepare_pipeline_for_bootstrap,
@@ -336,6 +338,11 @@ def handle_patch(args: argparse.Namespace) -> int:
         bot_name = Path(args.module).stem
         data_bot = DataBot(start_server=False)
         registry = BotRegistry()
+        bootstrap_waits = initialize_bootstrap_wait_env()
+        print(
+            f"bootstrap wait policy applied: {bootstrap_waits}",
+            flush=True,
+        )
         engine = SelfCodingEngine(
             CodeDB(),
             MenaceMemoryManager(),
