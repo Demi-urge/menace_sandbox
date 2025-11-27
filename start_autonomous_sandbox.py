@@ -47,11 +47,12 @@ from sandbox_runner.bootstrap import (
     sandbox_health,
     shutdown_autonomous_sandbox,
 )
+from lock_utils import SandboxLock, Timeout
 try:  # pragma: no cover - allow package relative import
     from metrics_exporter import (
         sandbox_restart_total,
         sandbox_crashes_total,
-    sandbox_last_failure_ts,
+        sandbox_last_failure_ts,
 )
 except Exception:  # pragma: no cover - fallback when run as a module
     from .metrics_exporter import (  # type: ignore
@@ -84,6 +85,8 @@ SHUTDOWN_EVENT = threading.Event()
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
 BOOTSTRAP_SENTINEL_PATH = Path("maintenance-logs/bootstrap_status.json")
+BOOTSTRAP_LOCK_PATH = Path("maintenance-logs/bootstrap.lock")
+BOOTSTRAP_LOCK_TIMEOUT = float(os.getenv("MENACE_BOOTSTRAP_LOCK_TIMEOUT", "300"))
 DEFAULT_STEP_BUDGET = float(os.getenv("BOOTSTRAP_STEP_BUDGET", "60"))
 BOOTSTRAP_STEP_BUDGETS: Mapping[str, float] = {
     "embedder_preload": float(os.getenv("BOOTSTRAP_EMBEDDER_BUDGET", "45")),
@@ -202,6 +205,50 @@ def _determine_bootstrap_stagger() -> float:
     if jitter > 0:
         base += random.uniform(0, jitter)
     return max(base, 0.0)
+
+
+def _acquire_bootstrap_lock(logger: logging.Logger) -> tuple[SandboxLock, Any]:
+    """Serialize bootstrap attempts across processes using a file lock."""
+
+    BOOTSTRAP_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock = SandboxLock(str(BOOTSTRAP_LOCK_PATH), timeout=BOOTSTRAP_LOCK_TIMEOUT)
+    logger.info(
+        "waiting for bootstrap lock before starting heavy initialization",
+        extra=log_record(
+            event="bootstrap-lock-wait",
+            lock_path=str(BOOTSTRAP_LOCK_PATH),
+            timeout=BOOTSTRAP_LOCK_TIMEOUT,
+        ),
+    )
+    guard = lock.acquire()
+    logger.info(
+        "bootstrap lock acquired",
+        extra=log_record(
+            event="bootstrap-lock-acquired",
+            lock_path=str(BOOTSTRAP_LOCK_PATH),
+            timeout=BOOTSTRAP_LOCK_TIMEOUT,
+        ),
+    )
+    return lock, guard
+
+
+def _log_watcher_scope_hint(logger: logging.Logger) -> None:
+    """Advise operators to scope filesystem watchers to the repo root only."""
+
+    repo_root = resolve_path(".")
+    excluded = ["sandbox_data", "checkpoints", ".venv", "venv", ".virtualenv"]
+    logger.info(
+        "validate editor/sync watchers before bootstrap to avoid I/O storms",
+        extra=log_record(
+            event="bootstrap-watcher-scope",
+            repo_root=str(repo_root),
+            excluded_paths=excluded,
+            guidance=(
+                "restrict watchers to the active repository root and exclude sandbox_data, "
+                "checkpoint directories, and virtual environments"
+            ),
+        ),
+    )
 
 
 def _record_bootstrap_timeout(
@@ -1373,12 +1420,15 @@ def main(argv: list[str] | None = None) -> None:
     ready_to_launch = True
     roi_backoff_triggered = False
     failure_reasons: list[str] = []
+    bootstrap_lock: SandboxLock | None = None
+    bootstrap_lock_guard: Any | None = None
 
     try:
         if not args.health_check:
             last_pre_meta_trace_step = "entering non-health-check bootstrap block"
             try:
                 try:
+                    _log_watcher_scope_hint(logger)
                     print(
                         "[DEBUG] About to call initialize_bootstrap_context()",
                         flush=True,
@@ -1425,6 +1475,33 @@ def main(argv: list[str] | None = None) -> None:
                             ),
                         )
                         time.sleep(stagger_delay)
+
+                    try:
+                        bootstrap_lock, bootstrap_lock_guard = _acquire_bootstrap_lock(logger)
+                    except Timeout:
+                        ready_to_launch = False
+                        failure_reasons.append("bootstrap lock acquisition timed out")
+                        logger.error(
+                            "bootstrap lock acquisition timed out",
+                            extra=log_record(
+                                event="bootstrap-lock-timeout",
+                                lock_path=str(BOOTSTRAP_LOCK_PATH),
+                                timeout=BOOTSTRAP_LOCK_TIMEOUT,
+                            ),
+                        )
+                        sys.exit(1)
+                    except Exception:
+                        ready_to_launch = False
+                        failure_reasons.append("bootstrap lock acquisition failed")
+                        logger.exception(
+                            "failed to acquire bootstrap lock",
+                            extra=log_record(
+                                event="bootstrap-lock-error",
+                                lock_path=str(BOOTSTRAP_LOCK_PATH),
+                                timeout=BOOTSTRAP_LOCK_TIMEOUT,
+                            ),
+                        )
+                        sys.exit(1)
 
                     max_attempts = max(1, BOOTSTRAP_MAX_RETRIES + 1)
                     bootstrap_context: dict[str, Any] | None = None
@@ -3146,6 +3223,28 @@ def main(argv: list[str] | None = None) -> None:
         logger.exception("Failed to launch sandbox", extra=log_record(event="failure"))
         sys.exit(1)
     finally:
+        if bootstrap_lock_guard is not None:
+            try:
+                bootstrap_lock_guard.__exit__(None, None, None)
+            except Exception:
+                logger.exception(
+                    "failed to release bootstrap lock",
+                    extra=log_record(
+                        event="bootstrap-lock-release-error",
+                        lock_path=str(BOOTSTRAP_LOCK_PATH),
+                    ),
+                )
+        elif bootstrap_lock is not None and getattr(bootstrap_lock, "is_locked", False):
+            try:
+                bootstrap_lock.release()
+            except Exception:
+                logger.exception(
+                    "failed to release bootstrap lock via fallback",
+                    extra=log_record(
+                        event="bootstrap-lock-release-fallback",
+                        lock_path=str(BOOTSTRAP_LOCK_PATH),
+                    ),
+                )
         try:
             shutdown_autonomous_sandbox()
         except Exception:
