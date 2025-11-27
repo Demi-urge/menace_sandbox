@@ -197,6 +197,15 @@ def _get_bootstrap_wait_timeout() -> float | None:
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
 
 
+def _refresh_bootstrap_wait_timeouts() -> None:
+    """Reload cached bootstrap wait timeouts from the environment."""
+
+    global _BOOTSTRAP_WAIT_TIMEOUT
+
+    _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
+    _log_bootstrap_env_snapshot()
+
+
 def _record_prepare_pipeline_stage(
     label: str,
     *,
@@ -3904,6 +3913,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     """
 
     enforce_bootstrap_timeout_policy(logger=logger)
+    _refresh_bootstrap_wait_timeouts()
 
     start_time = time.perf_counter()
     resolved_deadline = deadline
