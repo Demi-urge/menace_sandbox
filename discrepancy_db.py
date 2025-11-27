@@ -97,6 +97,9 @@ class DiscrepancyDB(EmbeddableDBMixin):
             """
         )
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(discrepancies)").fetchall()]
+        if "metadata" not in cols:
+            self.conn.execute("ALTER TABLE discrepancies ADD COLUMN metadata TEXT")
+            self.conn.execute("UPDATE discrepancies SET metadata='{}' WHERE metadata IS NULL")
         if "source_menace_id" not in cols:
             self.conn.execute(
                 "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
