@@ -287,6 +287,34 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
     return max(_BOOTSTRAP_WAIT_TIMEOUT, default_timeout)
 
 
+def _log_bootstrap_env_snapshot() -> None:
+    """Expose bootstrap timeout configuration to the prepare-pipeline watchdog."""
+
+    def _coerce_timeout(env_var: str) -> float | None:
+        raw_value = os.getenv(env_var)
+        if raw_value is None:
+            return None
+        if raw_value.strip().lower() == "none":
+            return None
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return None
+
+    snapshot = {
+        "MENACE_BOOTSTRAP_WAIT_SECS": _BOOTSTRAP_WAIT_TIMEOUT,
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": _resolve_bootstrap_wait_timeout(True),
+        "BOOTSTRAP_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_STEP_TIMEOUT"),
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_VECTOR_STEP_TIMEOUT"),
+    }
+
+    _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot
+    logger.info("prepare_pipeline bootstrap env resolved", extra={"bootstrap_env": snapshot})
+
+
+_log_bootstrap_env_snapshot()
+
+
 @dataclass(eq=False)
 class _BootstrapContext:
     """Thread-scoped context shared during nested helper bootstrap."""
