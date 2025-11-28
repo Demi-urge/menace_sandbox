@@ -114,6 +114,28 @@ def test_global_window_scales_with_component_complexity(monkeypatch, tmp_path):
     assert expanded_window > base_window
 
 
+def test_concurrent_component_budgets_extend_window(monkeypatch, tmp_path):
+    state_path = tmp_path / "timeout_state.json"
+    policy = _reload_policy(monkeypatch, state_path)
+
+    monkeypatch.setattr(policy, "_state_host_key", lambda: "test-host")
+    monkeypatch.setattr(policy, "_save_timeout_state", lambda state: state_path.write_text(json.dumps(state)))
+
+    host_telemetry = {"host_load": 2.0, "queue_depth": 2}
+    budgets = policy.compute_prepare_pipeline_component_budgets(
+        scheduled_component_budgets={"vectorizers": 420.0, "retrievers": 320.0},
+        host_telemetry=host_telemetry,
+    )
+
+    assert budgets
+
+    window, inputs = policy.load_last_global_bootstrap_window()
+
+    assert window is not None
+    assert window > sum(budgets.values()) * 0.9  # allow minor rounding differences
+    assert inputs.get("global_window_extension", {}).get("concurrency")
+
+
 def test_adaptive_component_floors_include_guard_and_peer_state(monkeypatch, tmp_path):
     state_path = tmp_path / "timeout_state.json"
     policy = _reload_policy(monkeypatch, state_path)

@@ -5202,6 +5202,11 @@ def _prepare_pipeline_for_bootstrap_impl(
     component_budget_overrides = {
         key: value for key, value in (component_timeouts or {}).items() if value is not None
     }
+    scheduled_component_budgets = {
+        key: value
+        for key, value in {**subsystem_budget_overrides, **component_budget_overrides}.items()
+        if value is not None
+    }
     pipeline_complexity = _summarize_pipeline_complexity(pipeline_cls, pipeline_kwargs)
     _PREPARE_PIPELINE_WATCHDOG["pipeline_complexity"] = pipeline_complexity
     derived_component_budgets: dict[str, float] | None = compute_prepare_pipeline_component_budgets(
@@ -5209,6 +5214,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         telemetry=_PREPARE_PIPELINE_WATCHDOG,
         pipeline_complexity=pipeline_complexity,
         host_telemetry=read_bootstrap_heartbeat(),
+        scheduled_component_budgets=scheduled_component_budgets,
     )
     adaptive_budget_context = get_adaptive_timeout_context()
     component_complexity_inputs = adaptive_budget_context.get("component_complexity")
