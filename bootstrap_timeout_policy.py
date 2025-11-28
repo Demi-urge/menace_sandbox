@@ -35,6 +35,7 @@ _COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
     "pipeline_config": _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"],
     "background_loops": _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
 }
+_LAST_BOOTSTRAP_GUARD: dict[str, object] | None = None
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
 _TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
 _TIMEOUT_STATE_PATH = Path(
@@ -149,6 +150,24 @@ def read_bootstrap_heartbeat(max_age: float | None = None) -> Mapping[str, Any] 
     return payload
 
 
+def _record_bootstrap_guard(delay: float, budget_scale: float, *, source: str) -> None:
+    """Persist guard telemetry for downstream budget scaling."""
+
+    global _LAST_BOOTSTRAP_GUARD
+    _LAST_BOOTSTRAP_GUARD = {
+        "delay": float(delay),
+        "budget_scale": float(budget_scale),
+        "source": source,
+        "ts": time.time(),
+    }
+
+
+def get_bootstrap_guard_context() -> Mapping[str, object]:
+    """Return the most recent guard metadata when available."""
+
+    return dict(_LAST_BOOTSTRAP_GUARD or {})
+
+
 def wait_for_bootstrap_quiet_period(
     logger: logging.Logger,
     *,
@@ -210,6 +229,7 @@ def wait_for_bootstrap_quiet_period(
         )
         time.sleep(sleep_for)
 
+    _record_bootstrap_guard(slept, budget_scale, source="bootstrap_guard")
     return slept, budget_scale
 
 
@@ -351,9 +371,13 @@ def compute_prepare_pipeline_component_budgets(
 
     telemetry = telemetry or {}
     complexity = pipeline_complexity or {}
+    guard_context = get_bootstrap_guard_context()
     host_state = _load_timeout_state()
     host_key = _state_host_key()
     floors = dict(component_floors or load_component_timeout_floors())
+    guard_scale = float(guard_context.get("budget_scale") or 1.0)
+    if guard_scale != 1.0:
+        floors = {key: value * guard_scale for key, value in floors.items()}
     host_telemetry = dict(host_telemetry or {})
     if isinstance(host_state, Mapping):
         host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
