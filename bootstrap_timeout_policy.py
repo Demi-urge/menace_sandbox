@@ -344,18 +344,78 @@ def compute_prepare_pipeline_component_budgets(
     component_floors: Mapping[str, float] | None = None,
     telemetry: Mapping[str, object] | None = None,
     load_average: float | None = None,
+    pipeline_complexity: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
 ) -> dict[str, float]:
     """Return proactive per-component budgets for prepare_pipeline gates."""
 
+    telemetry = telemetry or {}
+    complexity = pipeline_complexity or {}
+    host_state = _load_timeout_state()
+    host_key = _state_host_key()
     floors = dict(component_floors or load_component_timeout_floors())
-    scale = _host_load_scale(load_average)
-    budgets = {key: value * scale for key, value in floors.items()}
+    host_telemetry = dict(host_telemetry or {})
+    if isinstance(host_state, Mapping):
+        host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
+        previous_budgets = (host_state.get(host_key, {}) or {}).get(
+            "last_component_budgets", {}
+        )
+        for key, value in (host_floors or {}).items():
+            try:
+                floors[key] = max(floors.get(key, 0.0), float(value))
+            except (TypeError, ValueError):
+                continue
+        for key, value in (previous_budgets or {}).items():
+            try:
+                floors[key] = max(floors.get(key, 0.0), float(value))
+            except (TypeError, ValueError):
+                continue
 
-    state = _load_timeout_state()
+    if load_average is None:
+        load_average = _parse_float(str(host_telemetry.get("host_load")))
+    scale = _host_load_scale(load_average)
+
+    def _count(value: object) -> int:
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return len(value)
+        if isinstance(value, Mapping):
+            return len(value)
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _size_scale(bytes_size: object) -> float:
+        try:
+            value = float(bytes_size)
+        except (TypeError, ValueError):
+            return 1.0
+        gigabytes = max(value, 0.0) / (1024**3)
+        return 1.0 + min(gigabytes / 5.0, 0.75)
+
+    component_complexity: dict[str, float] = {}
+    component_complexity["vectorizers"] = 1.0 + max(0, _count(complexity.get("vectorizers")) - 1) * 0.35
+    component_complexity["retrievers"] = 1.0 + max(0, _count(complexity.get("retrievers")) - 1) * 0.25
+    component_complexity["db_indexes"] = 1.0 + max(0, _count(complexity.get("db_indexes")) - 1) * 0.2
+    if "db_index_bytes" in complexity:
+        component_complexity["db_indexes"] *= _size_scale(complexity.get("db_index_bytes"))
+    component_complexity["background_loops"] = 1.0 + max(0, _count(complexity.get("background_loops"))) * 0.15
+    component_complexity["pipeline_config"] = 1.0 + max(
+        0, _count(complexity.get("pipeline_config_sections")) - 1
+    ) * 0.1
+    component_complexity["orchestrator_state"] = 1.0 + max(
+        0, _count(complexity.get("orchestrator_components")) - 1
+    ) * 0.1
+
+    budgets = {
+        key: value * scale * component_complexity.get(key, 1.0)
+        for key, value in floors.items()
+    }
+
     host_overruns = {}
-    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     if isinstance(host_state, dict):
-        host_overruns = host_state.get("component_overruns", {}) or {}
+        host_overruns = host_state_details.get("component_overruns", {}) or {}
 
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
@@ -379,6 +439,44 @@ def compute_prepare_pipeline_component_budgets(
     _apply_overruns(telemetry_overruns)
     if isinstance(host_overruns, Mapping):
         _apply_overruns(host_overruns)  # type: ignore[arg-type]
+
+    adaptive_inputs = {
+        "host": host_key,
+        "load_scale": scale,
+        "load_average": load_average,
+        "component_complexity": component_complexity,
+        "telemetry_overruns": telemetry_overruns,
+        "floors": floors,
+    }
+    _record_adaptive_context(adaptive_inputs)
+
+    host_state_details = host_state_details if isinstance(host_state_details, dict) else {}
+    host_state_details.update(
+        {
+            "last_component_budgets": budgets,
+            "last_component_budget_inputs": adaptive_inputs,
+            "updated_at": time.time(),
+        }
+    )
+    if isinstance(host_state, dict):
+        host_state[host_key] = host_state_details
+    else:  # pragma: no cover - defensive against corrupted state
+        host_state = {host_key: host_state_details}
+    _save_timeout_state(host_state)
+
+    LOGGER.info(
+        "prepared adaptive component budgets",
+        extra={
+            "event": "adaptive-component-budgets",
+            "budgets": budgets,
+            "component_complexity": component_complexity,
+            "load_scale": scale,
+            "host_load": load_average,
+            "host_overruns": host_overruns,
+            "telemetry_overruns": telemetry_overruns,
+            "state_path": str(_TIMEOUT_STATE_PATH),
+        },
+    )
 
     return budgets
 
