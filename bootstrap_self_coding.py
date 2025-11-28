@@ -360,6 +360,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         "Promoted bootstrap pipeline manager for %s (%s)",
         bot_name,
         type(manager).__name__,
+        extra={"stage_policy": stage_policy},
     )
     _persist_pipeline_durations(step_durations)
 
