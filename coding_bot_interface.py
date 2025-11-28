@@ -4534,6 +4534,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         watchdog_telemetry["stage_gates"] = tuple(stage_gates)
         if shared_timeout_coordinator is not None:
             watchdog_telemetry["shared_timeout"] = shared_timeout_coordinator.snapshot()
+            watchdog_telemetry["shared_component_budgets"] = watchdog_telemetry[
+                "shared_timeout"
+            ].get("component_remaining")
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
@@ -4966,6 +4969,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             effective_timeout_floor,
             max(_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in normalized_gates),
         )
+        start = time.perf_counter()
         with shared_timeout_coordinator.consume(
             label,
             requested=requested,
@@ -4982,8 +4986,41 @@ def _prepare_pipeline_for_bootstrap_impl(
                 _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
                     shared_timeout_coordinator.snapshot()
                 )
+                _PREPARE_PIPELINE_WATCHDOG["component_budgets"] = (
+                    _PREPARE_PIPELINE_WATCHDOG["shared_timeout"].get(
+                        "component_remaining", {}
+                    )
+                )
+                logger.info(
+                    "prepare_pipeline.shared_timeout.reserve",
+                    extra={
+                        "shared_timeout": {
+                            "label": label,
+                            "budget": budget,
+                            "gates": tuple(normalized_gates),
+                            "meta": dict(meta),
+                        }
+                    },
+                )
                 yield budget, meta
             finally:
+                logger.info(
+                    "prepare_pipeline.shared_timeout.release",
+                    extra={
+                        "shared_timeout": {
+                            "label": label,
+                            "elapsed": time.perf_counter() - start,
+                            "gates": tuple(normalized_gates),
+                            "remaining": (
+                                shared_timeout_coordinator.snapshot().get(
+                                    "component_remaining", {}
+                                )
+                                if shared_timeout_coordinator is not None
+                                else None
+                            ),
+                        }
+                    },
+                )
                 active_shared_budget = None
                 active_shared_label = previous_label
                 active_stage_gates = previous_gates
@@ -5524,22 +5561,21 @@ def _prepare_pipeline_for_bootstrap_impl(
                 },
             )
 
-        with _shared_budget_reservation(
-            "pipeline_component_warmup",
-            ("vectorizers", "retrievers", "db_indexes"),
-            requested=max(
-                (
-                    budget
-                    for budget in (
-                        phase_budgets.get("vectorizers"),
-                        phase_budgets.get("retrievers"),
-                        phase_budgets.get("db_indexes"),
-                    )
-                    if budget is not None
-                ),
-                default=resolved_wait_timeout,
-            ),
-        ):
+    with contextlib.ExitStack() as _component_budget_stack:
+        component_labels = (
+            ("vectorizer_warmup", ("vectorizers",)),
+            ("retriever_warmup", ("retrievers",)),
+            ("db_index_warmup", ("db_indexes",)),
+        )
+        for _component_label, _component_gates in component_labels:
+            requested_budget = phase_budgets.get(_component_gates[0], resolved_wait_timeout)
+            _component_budget_stack.enter_context(
+                _shared_budget_reservation(
+                    _component_label,
+                    _component_gates,
+                    requested=requested_budget,
+                )
+            )
 
             def _vector_excursion_triggered(exc: BaseException) -> bool:
                 message = f"{type(exc).__name__}:{exc}"

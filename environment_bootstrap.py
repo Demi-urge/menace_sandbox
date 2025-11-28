@@ -176,6 +176,8 @@ class EnvironmentBootstrapper:
         vault: VaultSecretProvider | None = None,
         cluster_supervisor: "ClusterServiceSupervisor" | None = None,
         policy: DependencyPolicy | None = None,
+        shared_timeout_coordinator: bootstrap_timeout_policy.SharedTimeoutCoordinator
+        | None = None,
     ) -> None:
         self._clock = time.monotonic
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -222,6 +224,7 @@ class EnvironmentBootstrapper:
             logger=self.logger,
             readiness_tracker=self._track_background_task,
         )
+        self.shared_timeout_coordinator = shared_timeout_coordinator
         interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
         if interval:
             try:
@@ -565,7 +568,10 @@ class EnvironmentBootstrapper:
             budgets[phase] = effective_override
 
         shared_snapshot: dict[str, object] | None = None
-        if timeout is not None:
+        coordinator = self.shared_timeout_coordinator
+        if coordinator is not None:
+            shared_snapshot = coordinator.snapshot()
+        if timeout is not None and coordinator is None:
             coordinator = bootstrap_timeout_policy.SharedTimeoutCoordinator(
                 timeout,
                 logger=self.logger,
