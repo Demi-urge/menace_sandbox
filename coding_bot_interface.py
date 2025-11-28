@@ -150,6 +150,82 @@ _MIN_STAGE_TIMEOUT = 240.0
 _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = 360.0
 _MIN_STAGE_TIMEOUT_VECTOR = 360.0
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
+_VECTOR_STAGED_GRACE_FALLBACK = 90.0
+
+_PREPARE_STAGE_BUDGETS: dict[str, float] = {}
+_PREPARE_VECTOR_STAGE_BUDGETS: dict[str, float] = {}
+_VECTOR_STAGE_GRACE_PERIOD: float | None = None
+
+
+def _parse_stage_budget_env(env_var: str) -> dict[str, float]:
+    raw_value = os.getenv(env_var)
+    if not raw_value:
+        return {}
+
+    budgets: dict[str, float] = {}
+    for chunk in raw_value.split(","):
+        cleaned = chunk.strip()
+        if not cleaned:
+            continue
+        separator = ":" if ":" in cleaned else "=" if "=" in cleaned else None
+        if separator is None:
+            logger.warning(
+                "invalid prepare_pipeline stage budget entry %r in %s", cleaned, env_var
+            )
+            continue
+
+        stage, _, value = cleaned.partition(separator)
+        try:
+            budget = float(value)
+            if budget <= 0:
+                raise ValueError
+            budgets[stage.strip().lower()] = budget
+        except ValueError:
+            logger.warning(
+                "invalid prepare_pipeline stage budget value %r for %s", cleaned, env_var
+            )
+
+    return budgets
+
+
+def _resolve_vector_stage_grace() -> float | None:
+    raw_value = os.getenv("PREPARE_PIPELINE_VECTOR_GRACE_SECS")
+    if raw_value is None:
+        return _VECTOR_STAGED_GRACE_FALLBACK
+    normalized = raw_value.strip().lower()
+    if normalized == "none":
+        return None
+    try:
+        grace = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "invalid PREPARE_PIPELINE_VECTOR_GRACE_SECS=%r; using fallback %ss",
+            raw_value,
+            _VECTOR_STAGED_GRACE_FALLBACK,
+        )
+        return _VECTOR_STAGED_GRACE_FALLBACK
+    return grace if grace >= 0 else _VECTOR_STAGED_GRACE_FALLBACK
+
+
+def _refresh_prepare_watchdog_budgets() -> None:
+    global _PREPARE_STAGE_BUDGETS, _PREPARE_VECTOR_STAGE_BUDGETS, _VECTOR_STAGE_GRACE_PERIOD
+
+    _PREPARE_STAGE_BUDGETS = _parse_stage_budget_env("PREPARE_PIPELINE_STAGE_BUDGETS")
+    _PREPARE_VECTOR_STAGE_BUDGETS = _parse_stage_budget_env(
+        "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS"
+    )
+    _VECTOR_STAGE_GRACE_PERIOD = _resolve_vector_stage_grace()
+
+
+def _get_stage_budget_override(stage: str | None, *, vector_heavy: bool) -> float | None:
+    budgets = _PREPARE_VECTOR_STAGE_BUDGETS if vector_heavy else _PREPARE_STAGE_BUDGETS
+    if not budgets:
+        return None
+
+    normalized_stage = (stage or "").strip().lower()
+    if normalized_stage and normalized_stage in budgets:
+        return budgets[normalized_stage]
+    return budgets.get("default")
 
 
 
@@ -196,6 +272,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
 
 
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
+_refresh_prepare_watchdog_budgets()
 
 
 def _refresh_bootstrap_wait_timeouts() -> None:
@@ -204,6 +281,7 @@ def _refresh_bootstrap_wait_timeouts() -> None:
     global _BOOTSTRAP_WAIT_TIMEOUT
 
     _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
+    _refresh_prepare_watchdog_budgets()
     _log_bootstrap_env_snapshot()
 
 
@@ -239,12 +317,18 @@ def _record_prepare_pipeline_stage(
 
 
 def _normalize_watchdog_timeout(
-    deadline: float | None, *, start_time: float, vector_heavy: bool
+    deadline: float | None,
+    *,
+    start_time: float,
+    vector_heavy: bool,
+    stage_label: str | None = None,
 ) -> tuple[float | None, float | None, Mapping[str, Any]]:
     """Derive adaptive watchdog budgets from host signals and stage history."""
 
     history = [entry.get("elapsed", 0.0) for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", [])]
     history_mean = sum(history[-5:]) / len(history[-5:]) if history[-5:] else None
+
+    configured_budget = _get_stage_budget_override(stage_label, vector_heavy=vector_heavy)
 
     try:
         load1, _, _ = os.getloadavg()
@@ -260,12 +344,16 @@ def _normalize_watchdog_timeout(
     vector_scale = 1.1 if vector_heavy else 1.0
     stage_budget *= vector_scale
 
+    if configured_budget is not None:
+        stage_budget = max(stage_budget, configured_budget)
+
     telemetry = {
         "history_mean": history_mean,
         "host_scale": host_scale,
         "vector_scale": vector_scale,
         "stage_budget": stage_budget,
         "timeout_floor": timeout_floor,
+        "configured_stage_budget": configured_budget,
     }
 
     if deadline is None:
@@ -278,12 +366,39 @@ def _normalize_watchdog_timeout(
     telemetry["staged_readiness"] = staged_readiness
 
     normalized_timeout = stage_budget
+    grace_applied: float | None = None
     if staged_readiness:
-        normalized_timeout = remaining_window
+        grace_applied = _VECTOR_STAGE_GRACE_PERIOD if vector_heavy else 0.0
+        if vector_heavy and grace_applied is None:
+            telemetry["deadline_override"] = "drop"
+            telemetry["escalated"] = True
+            telemetry["vector_grace"] = None
+            return None, normalized_timeout, telemetry
+        grace_applied = grace_applied or 0.0
+        normalized_timeout = stage_budget + grace_applied
+
     escalated = normalized_timeout > remaining_window
     telemetry["escalated"] = escalated
+    telemetry["vector_grace"] = grace_applied
 
     normalized_deadline = start_time + normalized_timeout
+
+    extension_seconds = normalized_timeout - remaining_window
+    if staged_readiness and escalated:
+        telemetry["deadline_extended"] = True
+        telemetry["extension_seconds"] = extension_seconds
+        logger.info(
+            "prepare_pipeline watchdog window extended",
+            extra={
+                "stage": stage_label,
+                "vector_heavy": vector_heavy,
+                "previous_window": remaining_window,
+                "extended_window": normalized_timeout,
+                "extension_seconds": extension_seconds,
+                "configured_stage_budget": configured_budget,
+                "vector_grace_applied": grace_applied,
+            },
+        )
 
     return normalized_deadline, normalized_timeout, telemetry
 
@@ -3977,6 +4092,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
+        nonlocal resolved_deadline
         vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
         env_bootstrap_wait = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
         env_vector_wait = os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")
@@ -3984,9 +4100,17 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_env_bootstrap_wait = _resolve_bootstrap_wait_timeout(False)
         resolved_env_vector_wait = _resolve_bootstrap_wait_timeout(True)
         normalized_deadline, resolved_timeout, watchdog_telemetry = _normalize_watchdog_timeout(
-            resolved_deadline, start_time=start_time, vector_heavy=vector_heavy
+            resolved_deadline,
+            start_time=start_time,
+            vector_heavy=vector_heavy,
+            stage_label=stage,
         )
-        effective_deadline = normalized_deadline if normalized_deadline else resolved_deadline
+        if watchdog_telemetry.get("deadline_override") == "drop":
+            resolved_deadline = None
+        elif normalized_deadline is not None:
+            resolved_deadline = normalized_deadline
+
+        effective_deadline = resolved_deadline
         timeout_floor = (
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
         )
@@ -4008,6 +4132,10 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
                 "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
                 "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
+                "watchdog_deadline_extended": watchdog_telemetry.get("deadline_extended"),
+                "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
+                "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
+                "watchdog_deadline_override": watchdog_telemetry.get("deadline_override"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4053,6 +4181,10 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
                 "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
                 "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
+                "watchdog_deadline_extended": watchdog_telemetry.get("deadline_extended"),
+                "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
+                "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
+                "watchdog_deadline_override": watchdog_telemetry.get("deadline_override"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
