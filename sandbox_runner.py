@@ -21,12 +21,13 @@ import os
 import shutil
 import uuid
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from bootstrap_readiness import build_stage_deadlines, minimal_online
 
 from bootstrap_timeout_policy import (
     broadcast_timeout_floors,
+    emit_bootstrap_heartbeat,
     enforce_bootstrap_timeout_policy,
     get_bootstrap_guard_context,
     load_component_timeout_floors,
@@ -63,6 +64,81 @@ for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
     os.environ.setdefault(_env_var, _default_value)
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
+
+
+class _BootstrapOnlineTracker:
+    """Emit a core-online heartbeat once quorum is reached."""
+
+    def __init__(self, logger: logging.Logger, stage_policy: Mapping[str, object] | None = None):
+        self.logger = logger
+        self.stage_policy = stage_policy or {}
+        self.online_state: dict[str, object] = {"components": {}}
+        self._core_emitted = False
+
+    def _soft_deadline(self, component: str) -> float | None:
+        entry = self.stage_policy.get(component, {})
+        if isinstance(entry, Mapping):
+            deadline = entry.get("deadline") or entry.get("scaled_budget")
+            try:
+                return float(deadline) if deadline is not None else None
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @contextlib.contextmanager
+    def soft_watchdog(self, component: str):
+        start = time.monotonic()
+        deadline = self._soft_deadline(component)
+        yield
+        elapsed = time.monotonic() - start
+        if deadline is not None and elapsed > deadline:
+            self.logger.warning(
+                "optional bootstrap component exceeded soft deadline",
+                extra=log_record(
+                    event="bootstrap-soft-deadline",
+                    component=component,
+                    elapsed=round(elapsed, 2),
+                    deadline=round(deadline, 2),
+                ),
+            )
+
+    def mark_component(self, component: str, state: str = "ready") -> None:
+        components = self.online_state.setdefault("components", {})
+        if isinstance(components, Mapping):
+            components = dict(components)
+        components[str(component)] = state
+        self.online_state["components"] = components
+        self._maybe_emit_core_signal()
+
+    def _maybe_emit_core_signal(self) -> None:
+        if self._core_emitted:
+            return
+        core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
+            self.online_state
+        )
+        snapshot = {
+            "core_ready": core_ready,
+            "core_lagging": sorted(lagging_core),
+            "core_degraded": sorted(degraded_core),
+            "core_degraded_online": degraded_online,
+        }
+        self.online_state.update(snapshot)
+        if not core_ready:
+            return
+        self._core_emitted = True
+        payload = {
+            "event": "core-online",
+            "online_state": dict(self.online_state),
+        }
+        try:
+            emit_bootstrap_heartbeat({"signal": "core-online", **payload})
+        except Exception:
+            self.logger.debug("failed to emit core-online heartbeat", exc_info=True)
+        self.logger.info(
+            "core bootstrap quorum reached; optional stages warming",
+            extra=log_record(**payload),
+        )
+        print("[SANDBOX] core-online; continuing optional warmup", flush=True)
 
 
 def _announce_staged_readiness(logger: logging.Logger) -> None:
@@ -231,6 +307,7 @@ else:
     _verify_required_dependencies()
 
 import json
+import contextlib
 import os
 import re
 import subprocess
@@ -916,6 +993,7 @@ def _bootstrap_sandbox_manager(
     registry: "BotRegistry",
     event_bus: UnifiedEventBus,
     suggestion_db: "PatchSuggestionDB | None" = None,
+    online_tracker: _BootstrapOnlineTracker | None = None,
 ) -> tuple["SelfCodingEngine", "SelfCodingManager"]:
     """Build the sandbox SelfCodingManager using the bootstrap sentinel."""
 
@@ -939,6 +1017,8 @@ def _bootstrap_sandbox_manager(
         bot_registry=registry,
         data_bot=data_bot,
     )
+    if online_tracker is not None:
+        online_tracker.mark_component("vector_seeding")
     thresholds = get_thresholds("menace")
     persist_sc_thresholds(
         "menace",
@@ -959,6 +1039,8 @@ def _bootstrap_sandbox_manager(
         test_failure_threshold=thresholds.test_failure_increase,
     )
     promote_pipeline(manager)
+    if online_tracker is not None:
+        online_tracker.mark_component("orchestrator_state")
     return engine, manager
 
 
@@ -966,11 +1048,15 @@ def _sandbox_init(
     preset: Dict[str, Any],
     args: argparse.Namespace,
     context_builder: ContextBuilder,
+    online_tracker: _BootstrapOnlineTracker | None = None,
 ) -> SandboxContext:
     import sandbox_runner.environment as env
 
     if not isinstance(context_builder, ContextBuilder):
         raise ValueError("context_builder must be a ContextBuilder")
+
+    if online_tracker is not None:
+        online_tracker.mark_component("db_index_load")
 
     env._cleanup_pools()
 
@@ -1058,6 +1144,8 @@ def _sandbox_init(
     metrics_db = MetricsDB(data_dir / "metrics.db")
     pathway_db = PathwayDB(data_dir / "pathways.db")
     data_bot = DataBot(metrics_db)
+    if online_tracker is not None:
+        online_tracker.mark_component("retriever_hydration")
     dd_bot = DiscrepancyDetectionBot()
     module_counts: Dict[str, int] = {}
     patch_db_path = patch_file
@@ -1165,6 +1253,7 @@ def _sandbox_init(
         registry=registry,
         event_bus=bus,
         suggestion_db=suggestion_db,
+        online_tracker=online_tracker,
     )
     quick_fix_engine = QuickFixEngine(
         telem_db,
@@ -1474,7 +1563,12 @@ def _sandbox_init(
         meta_cycle=None,
     )
 
-    ctx.meta_cycle = _start_meta_planning_cycle(ctx)
+    if online_tracker is not None:
+        with online_tracker.soft_watchdog("background_loops"):
+            ctx.meta_cycle = _start_meta_planning_cycle(ctx)
+            online_tracker.mark_component("background_loops")
+    else:
+        ctx.meta_cycle = _start_meta_planning_cycle(ctx)
     return ctx
 
 
@@ -1553,11 +1647,14 @@ def _sandbox_main(
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
+    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+    stage_policy = build_stage_deadlines(baseline_timeout, soft_deadline=True)
+    online_tracker = _BootstrapOnlineTracker(logger, stage_policy)
     try:
         context_builder.refresh_db_weights()
     except Exception:
         pass
-    ctx = _sandbox_init(preset, args, context_builder)
+    ctx = _sandbox_init(preset, args, context_builder, online_tracker=online_tracker)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
     err_logger = getattr(
         ctx.sandbox,
