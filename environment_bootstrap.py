@@ -428,6 +428,13 @@ class EnvironmentBootstrapper:
     def _resolve_phase_budgets(
         self, timeout: float | None
     ) -> dict[str, dict[str, float | None]]:
+        enforcement = bootstrap_timeout_policy.enforce_bootstrap_timeout_policy(
+            logger=self.logger
+        )
+        floors = bootstrap_timeout_policy.load_escalated_timeout_floors()
+        base_floor = max(120.0, floors.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
+        component_floors = enforcement.get("component_floors", {})
+
         budgets = {phase: None for phase in self.PHASES}
         budgets = self.policy.resolved_phase_timeouts(budgets)
 
@@ -447,16 +454,64 @@ class EnvironmentBootstrapper:
             "optional": parse_env("MENACE_BOOTSTRAP_OPTIONAL_BUDGET"),
         }
         for phase, override in overrides.items():
-            if override is not None:
-                budgets[phase] = override
+            if override is None:
+                continue
+            effective_override = max(base_floor, override)
+            if effective_override != override:
+                self.logger.warning(
+                    "%s override below persisted floor; clamping", phase,
+                    extra={
+                        "requested_budget": override,
+                        "effective_budget": effective_override,
+                        "floor": base_floor,
+                    },
+                )
+            os.environ[
+                f"MENACE_BOOTSTRAP_{phase.upper()}_BUDGET"
+            ] = str(effective_override)
+            budgets[phase] = effective_override
 
+        shared_snapshot: dict[str, object] | None = None
         if timeout is not None:
-            budgets = {phase: budgets.get(phase) or timeout for phase in self.PHASES}
+            coordinator = bootstrap_timeout_policy.SharedTimeoutCoordinator(
+                timeout,
+                logger=self.logger,
+                namespace="bootstrap_phases",
+                component_floors=component_floors,
+            )
+            phase_minimums = {
+                "critical": base_floor,
+                "provisioning": base_floor,
+                "optional": max(60.0, min(base_floor, 180.0)),
+            }
+            for phase in self.PHASES:
+                requested = budgets.get(phase)
+                minimum = phase_minimums.get(phase, base_floor)
+                effective, _ = coordinator._reserve(  # type: ignore[attr-defined]
+                    phase,
+                    requested,
+                    minimum,
+                    {"source": "global_timeout"},
+                )
+                budgets[phase] = effective
+            shared_snapshot = coordinator.snapshot()
 
         telemetry = bootstrap_timeout_policy.collect_timeout_telemetry()
-        return bootstrap_timeout_policy.derive_phase_soft_budgets(
+        soft_budgets = bootstrap_timeout_policy.derive_phase_soft_budgets(
             budgets, telemetry=telemetry
         )
+
+        self.logger.info(
+            "resolved bootstrap phase budgets",
+            extra={
+                "phase_budgets": budgets,
+                "soft_budgets": soft_budgets,
+                "timeout_enforcement": enforcement,
+                "shared_timeout": shared_snapshot,
+            },
+        )
+
+        return soft_budgets
 
     def shutdown(self, *, timeout: float | None = 5.0) -> None:
         """Stop background bootstrap threads started by the instance."""
