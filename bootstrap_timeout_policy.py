@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-from typing import Callable, Dict
+import threading
+import time
+from typing import Callable, Dict, Iterator, Mapping, MutableMapping
 
 LOGGER = logging.getLogger(__name__)
 
@@ -139,3 +142,99 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
         return list(hints)
 
     return hints
+
+
+class SharedTimeoutCoordinator:
+    """Coordinate shared timeout budgets across related bootstrap tasks.
+
+    The coordinator exposes a lightweight API that allows modules to reserve a
+    time slice from a shared budget before starting heavy work (for example
+    vectorizer warm-ups, retriever hydration, database bootstrap, or
+    orchestrator state loads). Reservations are serialized to prevent unrelated
+    helpers from racing the same global deadline, and detailed consumption
+    metadata is logged to aid debugging.
+    """
+
+    def __init__(
+        self,
+        total_budget: float | None,
+        *,
+        logger: logging.Logger | None = None,
+        namespace: str = "bootstrap",
+    ) -> None:
+        self.total_budget = total_budget
+        self.remaining_budget = total_budget
+        self.namespace = namespace
+        self.logger = logger or LOGGER
+        self._lock = threading.Lock()
+        self._timeline: list[dict[str, float | str | None]] = []
+
+    def _reserve(
+        self,
+        label: str,
+        requested: float | None,
+        minimum: float,
+        metadata: Mapping[str, object] | None,
+    ) -> tuple[float | None, MutableMapping[str, object]]:
+        with self._lock:
+            effective = requested if requested is not None else minimum
+            effective = max(minimum, effective)
+            remaining_before = self.remaining_budget
+            if self.remaining_budget is not None:
+                effective = min(effective, max(self.remaining_budget, 0.0))
+                self.remaining_budget = max(self.remaining_budget - effective, 0.0)
+
+            record: MutableMapping[str, object] = {
+                "label": label,
+                "requested": requested,
+                "minimum": minimum,
+                "effective": effective,
+                "remaining_before": remaining_before,
+                "remaining_after": self.remaining_budget,
+                "namespace": self.namespace,
+            }
+            if metadata:
+                record.update({f"meta.{k}": v for k, v in metadata.items()})
+
+        self.logger.info(
+            "shared timeout budget reserved",
+            extra={"shared_timeout": dict(record)},
+        )
+        return effective, record
+
+    @contextlib.contextmanager
+    def consume(
+        self,
+        label: str,
+        *,
+        requested: float | None,
+        minimum: float = 0.0,
+        metadata: Mapping[str, object] | None = None,
+    ) -> Iterator[tuple[float | None, Mapping[str, object]]]:
+        """Reserve a time slice and log consumption when complete."""
+
+        start = time.monotonic()
+        effective, record = self._reserve(label, requested, minimum, metadata)
+        try:
+            yield effective, record
+        finally:
+            elapsed = time.monotonic() - start
+            record = dict(record)
+            record.update({"elapsed": elapsed, "namespace": self.namespace})
+            with self._lock:
+                self._timeline.append(record)
+            self.logger.info(
+                "shared timeout budget consumed",
+                extra={"shared_timeout": record},
+            )
+
+    def snapshot(self) -> Mapping[str, object]:
+        """Return a shallow snapshot of coordinator state."""
+
+        with self._lock:
+            return {
+                "namespace": self.namespace,
+                "total_budget": self.total_budget,
+                "remaining_budget": self.remaining_budget,
+                "timeline": list(self._timeline),
+            }
