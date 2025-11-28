@@ -41,6 +41,7 @@ import time
 
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
+    load_component_timeout_floors,
     load_escalated_timeout_floors,
     render_prepare_pipeline_timeout_hints,
 )
@@ -165,14 +166,7 @@ _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
     _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
 )
 _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
-_SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = {
-    "vectorizers": max(300.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS", 0.0)),
-    "retrievers": max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS", 0.0)),
-    "db_indexes": max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS", 0.0)),
-    "orchestrator_state": max(
-        240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS", 0.0)
-    ),
-}
+_SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = load_component_timeout_floors()
 _ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
 _VECTOR_BUDGET_BIAS = 1.35
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
@@ -549,7 +543,7 @@ def _refresh_bootstrap_wait_timeouts(
     """Reload cached bootstrap wait timeouts from the environment."""
 
     global _BOOTSTRAP_WAIT_TIMEOUT, _BOOTSTRAP_TIMEOUT_FLOOR, _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR
-    global _MIN_STAGE_TIMEOUT, _MIN_STAGE_TIMEOUT_VECTOR, _ESCALATED_TIMEOUT_FLOORS
+    global _MIN_STAGE_TIMEOUT, _MIN_STAGE_TIMEOUT_VECTOR, _ESCALATED_TIMEOUT_FLOORS, _SUBSYSTEM_BUDGET_FLOORS
 
     _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
     _BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
@@ -560,6 +554,7 @@ def _refresh_bootstrap_wait_timeouts(
     )
     _MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
     _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
+    _SUBSYSTEM_BUDGET_FLOORS = load_component_timeout_floors()
     _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
     _refresh_prepare_watchdog_budgets(
         stage_budgets=stage_budgets, vector_stage_budgets=vector_stage_budgets

@@ -55,6 +55,7 @@ from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
+    load_component_timeout_floors,
     render_prepare_pipeline_timeout_hints,
 )
 
@@ -1330,6 +1331,7 @@ def initialize_bootstrap_context(
         extra={"timeout_policy": timeout_policy},
     )
     print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
+    component_timeout_floors = timeout_policy.get("component_floors", load_component_timeout_floors())
 
     resolved_bootstrap_window = None
     try:
@@ -1348,7 +1350,10 @@ def initialize_bootstrap_context(
             resolved_bootstrap_window = min(resolved_bootstrap_window, deadline_remaining)
 
     shared_timeout_coordinator = SharedTimeoutCoordinator(
-        resolved_bootstrap_window, logger=LOGGER, namespace="bootstrap_shared"
+        resolved_bootstrap_window,
+        logger=LOGGER,
+        namespace="bootstrap_shared",
+        component_floors=component_timeout_floors,
     )
 
     set_audit_bootstrap_safe_default(True)
@@ -1559,7 +1564,7 @@ def initialize_bootstrap_context(
                     abort_on_timeout=True,
                     heavy_bootstrap=heavy_bootstrap,
                     budget=shared_timeout_coordinator,
-                    budget_label="db_bootstrap",
+                    budget_label="db_indexes",
                     registry=registry,
                     data_bot=data_bot,
                     manager=bootstrap_manager,
@@ -1640,7 +1645,7 @@ def initialize_bootstrap_context(
                 abort_on_timeout=True,
                 heavy_bootstrap=heavy_bootstrap,
                 budget=shared_timeout_coordinator,
-                budget_label="db_bootstrap",
+                budget_label="db_indexes",
                 func=_push_bootstrap_context,
                 label="_push_bootstrap_context placeholder",
                 registry=registry,
@@ -1819,7 +1824,7 @@ def initialize_bootstrap_context(
                         contention_scale=prepare_gate["timeout_scale"],
                         resolved_timeout=resolved_prepare_timeout,
                         budget=shared_timeout_coordinator,
-                        budget_label="retriever_hydration",
+                        budget_label="retrievers",
                         func=prepare_pipeline_for_bootstrap,
                         label="prepare_pipeline_for_bootstrap",
                         stop_event=stop_event,
@@ -1941,7 +1946,7 @@ def initialize_bootstrap_context(
                 abort_on_timeout=True,
                 heavy_bootstrap=heavy_bootstrap,
                 budget=shared_timeout_coordinator,
-                budget_label="db_bootstrap",
+                budget_label="db_indexes",
                 func=promote_pipeline,
                 label="promote_pipeline",
                 manager=manager,
@@ -1977,7 +1982,7 @@ def initialize_bootstrap_context(
             abort_on_timeout=True,
             heavy_bootstrap=heavy_bootstrap,
             budget=shared_timeout_coordinator,
-            budget_label="db_bootstrap",
+            budget_label="db_indexes",
             registry=registry,
             data_bot=data_bot,
             manager=manager,

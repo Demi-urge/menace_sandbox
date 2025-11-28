@@ -24,6 +24,12 @@ _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": 240.0,
     "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS": 240.0,
 }
+_COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
+    "vectorizers": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS"],
+    "retrievers": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS"],
+    "db_indexes": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS"],
+    "orchestrator_state": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS"],
+}
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
 _TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
 _TIMEOUT_STATE_PATH = Path(
@@ -84,6 +90,26 @@ def load_escalated_timeout_floors() -> dict[str, float]:
     return minimums
 
 
+def load_component_timeout_floors() -> dict[str, float]:
+    """Return per-component timeout floors with host-level overrides applied."""
+
+    component_floors = dict(_COMPONENT_TIMEOUT_MINIMUMS)
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    host_component_floors = (
+        host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
+    )
+
+    for component, default_minimum in list(component_floors.items()):
+        try:
+            host_value = float(host_component_floors.get(component, default_minimum))
+        except (TypeError, ValueError):
+            host_value = default_minimum
+        component_floors[component] = max(default_minimum, host_value)
+
+    return component_floors
+
+
 def _collect_timeout_telemetry() -> Mapping[str, object]:
     try:
         from coding_bot_interface import _PREPARE_PIPELINE_WATCHDOG
@@ -96,8 +122,22 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
         return {}
 
 
+def _categorize_stage(entry: Mapping[str, object]) -> str | None:
+    label = str(entry.get("label", "")).lower()
+    if "vector" in label:
+        return "vectorizers"
+    if "retriev" in label:
+        return "retrievers"
+    if "db" in label or "index" in label:
+        return "db_indexes"
+    if "orchestrator" in label:
+        return "orchestrator_state"
+    return None
+
+
 def _maybe_escalate_timeout_floors(
     minimums: MutableMapping[str, float],
+    component_floors: MutableMapping[str, float],
     *,
     telemetry: Mapping[str, object],
     logger: logging.Logger,
@@ -128,6 +168,18 @@ def _maybe_escalate_timeout_floors(
         vector_longest + 90.0 if vector_longest else suggested_general,
     )
 
+    component_updates: dict[str, float] = {}
+    for entry in stages:
+        component = _categorize_stage(entry)
+        if component is None:
+            continue
+        elapsed = float(entry.get("elapsed", 0.0) or 0.0)
+        baseline = component_floors.get(component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0))
+        suggested = max(baseline, elapsed + 45.0) if elapsed else baseline
+        if suggested > component_floors.get(component, baseline):
+            component_floors[component] = suggested
+            component_updates[component] = suggested
+
     escalated = False
     if suggested_general > general_floor:
         minimums["MENACE_BOOTSTRAP_WAIT_SECS"] = suggested_general
@@ -143,7 +195,7 @@ def _maybe_escalate_timeout_floors(
         )
         escalated = True
 
-    if not escalated:
+    if not escalated and not component_updates:
         return None
 
     details = {
@@ -152,6 +204,7 @@ def _maybe_escalate_timeout_floors(
         "vector_longest": vector_longest,
         "suggested_general": suggested_general,
         "suggested_vector": suggested_vector,
+        "component_updates": component_updates,
     }
 
     logger.info(
@@ -171,13 +224,17 @@ def enforce_bootstrap_timeout_policy(
 
     active_logger = logger or LOGGER
     minimums: dict[str, float] = load_escalated_timeout_floors()
+    component_floors: dict[str, float] = load_component_timeout_floors()
     telemetry = _collect_timeout_telemetry()
-    escalation_meta = _maybe_escalate_timeout_floors(minimums, telemetry=telemetry, logger=active_logger)
+    escalation_meta = _maybe_escalate_timeout_floors(
+        minimums, component_floors, telemetry=telemetry, logger=active_logger
+    )
     if escalation_meta:
         state = _load_timeout_state()
         host_key = _state_host_key()
         host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
         host_state.update({k: minimums.get(k, v) for k, v in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()})
+        host_state["component_floors"] = dict(component_floors)
         host_state["updated_at"] = time.time()
         state = state if isinstance(state, dict) else {}
         state[host_key] = host_state
@@ -189,6 +246,7 @@ def enforce_bootstrap_timeout_policy(
                 "host": host_key,
                 "escalation": escalation_meta,
                 "floors": minimums,
+                "component_floors": component_floors,
                 "state_file": str(_TIMEOUT_STATE_PATH),
             },
         )
@@ -264,6 +322,7 @@ def enforce_bootstrap_timeout_policy(
         }
 
     results[_OVERRIDE_ENV] = {"requested": float(allow_unsafe), "effective": float(allow_unsafe)}
+    results["component_floors"] = component_floors
     return results
 
 
@@ -311,6 +370,7 @@ class SharedTimeoutCoordinator:
         *,
         logger: logging.Logger | None = None,
         namespace: str = "bootstrap",
+        component_floors: Mapping[str, float] | None = None,
     ) -> None:
         self.total_budget = total_budget
         self.remaining_budget = total_budget
@@ -318,6 +378,7 @@ class SharedTimeoutCoordinator:
         self.logger = logger or LOGGER
         self._lock = threading.Lock()
         self._timeline: list[dict[str, float | str | None]] = []
+        self.component_floors = dict(component_floors or {})
 
     def _reserve(
         self,
@@ -327,8 +388,10 @@ class SharedTimeoutCoordinator:
         metadata: Mapping[str, object] | None,
     ) -> tuple[float | None, MutableMapping[str, object]]:
         with self._lock:
-            effective = requested if requested is not None else minimum
-            effective = max(minimum, effective)
+            component_floor = self.component_floors.get(label, 0.0)
+            effective_floor = max(minimum, component_floor)
+            effective = requested if requested is not None else effective_floor
+            effective = max(effective_floor, effective)
             remaining_before = self.remaining_budget
             if self.remaining_budget is not None:
                 effective = min(effective, max(self.remaining_budget, 0.0))
@@ -338,6 +401,7 @@ class SharedTimeoutCoordinator:
                 "label": label,
                 "requested": requested,
                 "minimum": minimum,
+                "component_floor": component_floor,
                 "effective": effective,
                 "remaining_before": remaining_before,
                 "remaining_after": self.remaining_budget,
@@ -387,4 +451,5 @@ class SharedTimeoutCoordinator:
                 "total_budget": self.total_budget,
                 "remaining_budget": self.remaining_budget,
                 "timeline": list(self._timeline),
+                "component_floors": dict(self.component_floors),
             }
