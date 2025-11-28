@@ -179,7 +179,12 @@ def bootstrap_self_coding(bot_name: str) -> None:
     )
     LOGGER.info(
         "bootstrap readiness policy applied",
-        extra={"stage_policy": stage_policy, "baseline_timeout": baseline_timeout},
+        extra={
+            "stage_policy": stage_policy,
+            "baseline_timeout": baseline_timeout,
+            "component_budgets": component_budgets,
+            "component_floors": component_floors,
+        },
     )
     if guard_delay > 0:
         LOGGER.info(
