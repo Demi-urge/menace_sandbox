@@ -39,6 +39,8 @@ The bootstrap helpers respect several environment variables that govern how long
 
 Callers that need component-level control over bootstrap pacing can supply structured budgets (for example via `bootstrap_timeout_policy.load_component_timeout_floors()`) to `prepare_pipeline_for_bootstrap` through the `component_timeouts` argument. The shared timeout coordinator will track vectorizer, retriever, DB index, and orchestrator slices independently and persist the per-stage consumption in the watchdog telemetry so future runs can raise the appropriate floors automatically.
 
+When previous runs overrun their watchdog slices (or when the host is already under load), bootstrap entrypoints now call `bootstrap_timeout_policy.compute_prepare_pipeline_component_budgets()` before bootstrapping. The helper pulls persisted overrun telemetry, scales it for the current host load, and feeds those proactive budgets into the shared timeout coordinator so vectorizers, retrievers, DB warm-up, and orchestrator state recovery get room to finish without waiting for another timeout cycle.
+
 If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 
 - Set `MENACE_BOOTSTRAP_WAIT_SECS=240` or `BOOTSTRAP_STEP_TIMEOUT=240` before rerunning bootstrap on slower hosts (these values are now the defaults).

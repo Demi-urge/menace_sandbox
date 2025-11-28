@@ -176,6 +176,50 @@ def load_component_timeout_floors() -> dict[str, float]:
     return component_floors
 
 
+def compute_prepare_pipeline_component_budgets(
+    *,
+    component_floors: Mapping[str, float] | None = None,
+    telemetry: Mapping[str, object] | None = None,
+    load_average: float | None = None,
+) -> dict[str, float]:
+    """Return proactive per-component budgets for prepare_pipeline gates."""
+
+    floors = dict(component_floors or load_component_timeout_floors())
+    scale = _host_load_scale(load_average)
+    budgets = {key: value * scale for key, value in floors.items()}
+
+    state = _load_timeout_state()
+    host_overruns = {}
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    if isinstance(host_state, dict):
+        host_overruns = host_state.get("component_overruns", {}) or {}
+
+    def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
+        for component, meta in overruns.items():
+            base = budgets.get(component, floors.get(component, 0.0))
+            max_elapsed = float(meta.get("max_elapsed", 0.0) or 0.0)
+            expected_floor = float(meta.get("expected_floor", 0.0) or 0.0)
+            suggested_floor = _parse_float(str(meta.get("suggested_floor")))
+            streak = int(meta.get("overruns", 0) or 0)
+
+            candidates = [base, expected_floor * scale]
+            if max_elapsed:
+                candidates.append(max_elapsed * scale + 30.0)
+            if suggested_floor is not None:
+                candidates.append(suggested_floor * scale)
+            if streak >= _OVERRUN_STREAK_THRESHOLD and expected_floor:
+                candidates.append(expected_floor * scale * 1.1)
+
+            budgets[component] = max(c for c in candidates if c is not None)
+
+    telemetry_overruns = _summarize_component_overruns(telemetry or {})
+    _apply_overruns(telemetry_overruns)
+    if isinstance(host_overruns, Mapping):
+        _apply_overruns(host_overruns)  # type: ignore[arg-type]
+
+    return budgets
+
+
 def _collect_timeout_telemetry() -> Mapping[str, object]:
     try:
         from coding_bot_interface import _PREPARE_PIPELINE_WATCHDOG
@@ -500,6 +544,9 @@ def enforce_bootstrap_timeout_policy(
     minimums: dict[str, float] = load_escalated_timeout_floors()
     component_floors: dict[str, float] = load_component_timeout_floors()
     telemetry = _collect_timeout_telemetry()
+    component_budgets = compute_prepare_pipeline_component_budgets(
+        component_floors=component_floors, telemetry=telemetry
+    )
     overrun_meta = _summarize_component_overruns(telemetry)
     success_run = (telemetry.get("timeouts") or 0) == 0 and not overrun_meta
     state = _load_timeout_state()
@@ -617,6 +664,7 @@ def enforce_bootstrap_timeout_policy(
 
     results[_OVERRIDE_ENV] = {"requested": float(allow_unsafe), "effective": float(allow_unsafe)}
     results["component_floors"] = component_floors
+    results["component_budgets"] = component_budgets
     soft_budget_inputs = {k: v.get("effective") for k, v in results.items() if k in minimums}
     results["soft_budgets"] = derive_phase_soft_budgets(
         soft_budget_inputs, telemetry=telemetry
