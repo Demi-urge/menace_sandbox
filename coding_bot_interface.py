@@ -40,6 +40,8 @@ from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
 from bootstrap_timeout_policy import (
+    MENACE_BOOTSTRAP_WAIT_SECS,
+    SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
@@ -4500,6 +4502,19 @@ def _prepare_pipeline_for_bootstrap_impl(
             vector_heavy=vector_heavy,
             stage_label=stage,
         )
+        stage_gates = _derive_readiness_gates(stage, None)
+        if shared_timeout_coordinator is not None:
+            watchdog_telemetry["shared_timeout"] = shared_timeout_coordinator.snapshot()
+        if active_shared_budget is not None and stage_gates & {
+            "vectorizers",
+            "retrievers",
+            "db_indexes",
+            "orchestrator_state",
+        }:
+            if resolved_timeout is None:
+                resolved_timeout = active_shared_budget
+            else:
+                resolved_timeout = min(resolved_timeout, active_shared_budget)
         if watchdog_telemetry.get("deadline_override") == "drop":
             resolved_deadline = None
         elif normalized_deadline is not None:
@@ -4508,6 +4523,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         adaptive_deadline = normalized_deadline
         if adaptive_deadline is None and resolved_timeout is not None:
             adaptive_deadline = start_time + resolved_timeout
+        elif adaptive_deadline is not None and resolved_timeout is not None:
+            adaptive_deadline = min(adaptive_deadline, start_time + resolved_timeout)
         effective_deadline = adaptive_deadline or resolved_deadline
         timeout_floor = (
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
@@ -4554,6 +4571,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_readiness_ratio": readiness_ratio,
                 "watchdog_dominant_gate": watchdog_telemetry.get("dominant_gate"),
                 "watchdog_stage_gates": watchdog_telemetry.get("stage_gates"),
+                "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
+                    "shared_timeout"
+                ),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4614,6 +4634,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_readiness_ratio": readiness_ratio,
                 "watchdog_dominant_gate": watchdog_telemetry.get("dominant_gate"),
                 "watchdog_stage_gates": watchdog_telemetry.get("stage_gates"),
+                "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
+                    "shared_timeout"
+                ),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4729,6 +4752,47 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         return _guard()
 
+    @contextlib.contextmanager
+    def _shared_budget_reservation(
+        label: str,
+        gates: Iterable[str],
+        *,
+        requested: float | None,
+    ) -> Iterator[tuple[float | None, Mapping[str, object]]]:
+        nonlocal active_shared_budget
+
+        normalized_gates = _derive_readiness_gates(label, gates)
+        if (
+            shared_timeout_coordinator is None
+            or not normalized_gates
+            or not normalized_gates
+            & {"vectorizers", "retrievers", "db_indexes", "orchestrator_state"}
+        ):
+            yield None, {}
+            return
+
+        minimum = max(
+            effective_timeout_floor,
+            max(_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in normalized_gates),
+        )
+        with shared_timeout_coordinator.consume(
+            label,
+            requested=requested,
+            minimum=minimum,
+            metadata={
+                "gates": tuple(normalized_gates),
+                "vector_heavy": bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False)),
+            },
+        ) as (budget, meta):
+            active_shared_budget = budget
+            try:
+                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+                    shared_timeout_coordinator.snapshot()
+                )
+                yield budget, meta
+            finally:
+                active_shared_budget = None
+
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
     vector_bootstrap_heavy = _vector_service_heavy(context_builder) or _vector_service_heavy(
@@ -4785,6 +4849,26 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_wait_timeout if resolved_wait_timeout is not None else 0.0,
         _BOOTSTRAP_TIMEOUT_FLOOR,
     )
+    shared_timeout_budget = resolved_wait_timeout
+    if shared_timeout_budget is None:
+        shared_timeout_budget = _parse_float(os.getenv(MENACE_BOOTSTRAP_WAIT_SECS))
+    if resolved_deadline is not None:
+        shared_timeout_budget = min(
+            shared_timeout_budget or resolved_deadline - start_time,
+            max(resolved_deadline - start_time, 0.0),
+        )
+    shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
+    if shared_timeout_budget is not None:
+        shared_timeout_coordinator = SharedTimeoutCoordinator(
+            max(shared_timeout_budget, 0.0),
+            logger=logger,
+            namespace="prepare_pipeline",
+            component_floors=_SUBSYSTEM_BUDGET_FLOORS,
+        )
+        _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+            shared_timeout_coordinator.snapshot()
+        )
+    active_shared_budget: float | None = None
 
     def _clamp_to_timeout_floor(value: float) -> tuple[float, bool]:
         clamped_value = max(effective_timeout_floor, value)
@@ -5005,95 +5089,100 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     manager_kwarg_value = pipeline_kwargs.get("manager")
     manager_kwarg_placeholder = manager_kwarg_value
-    sentinel_selection_start = time.perf_counter()
-    sentinel_manager = _select_placeholder(
-        manager_override,
-        manager_sentinel,
-        bootstrap_manager,
-        manager_kwarg_placeholder,
-    )
-    if sentinel_manager is None and sentinel_factory is not None:
-        candidate = sentinel_factory()
-        if _is_bootstrap_placeholder(candidate):
-            sentinel_manager = candidate
-    if sentinel_manager is None:
-        sentinel_manager = _create_bootstrap_manager_sentinel(
-            bot_registry=bot_registry,
-            data_bot=data_bot,
-            bootstrap_fast=bootstrap_fast,
-        )
-    _log_timing(
-        "sentinel selection",
-        sentinel_selection_start,
-        manager_kwarg_supplied=manager_kwarg_value is not None,
-        manager_override=bool(manager_override),
-        sentinel_factory=bool(sentinel_factory),
-    )
-    _record_prepare_pipeline_stage(
-        "sentinel selection",
-        elapsed=time.perf_counter() - sentinel_selection_start,
-        extra={
-            "manager_kwarg_supplied": manager_kwarg_value is not None,
-            "manager_override": bool(manager_override),
-        },
-    )
-    manager_placeholder = sentinel_manager
-    shim_manager_placeholder = _select_placeholder(
-        manager_override,
-        manager_sentinel,
-        bootstrap_manager,
-        manager_placeholder,
-    )
-    if not _is_bootstrap_placeholder(shim_manager_placeholder):
-        owner_candidate = _spawn_nested_bootstrap_owner(
-            bot_registry=bot_registry,
-            data_bot=data_bot,
-        )
-        if _is_bootstrap_placeholder(owner_candidate):
-            shim_manager_placeholder = owner_candidate
-        else:
-            shim_manager_placeholder = manager_placeholder
-    extra_candidates: list[Any] = []
-    if extra_manager_sentinels:
-        for candidate in extra_manager_sentinels:
-            if candidate is None:
-                continue
-            extra_candidates.append(candidate)
-    if (
-        shim_manager_placeholder is not None
-        and shim_manager_placeholder is not manager_placeholder
+    with _shared_budget_reservation(
+        "orchestrator_state_warmup",
+        ("orchestrator_state",),
+        requested=resolved_wait_timeout,
     ):
-        extra_candidates.append(shim_manager_placeholder)
-    managed_extra_manager_sentinels: tuple[Any, ...] | None = None
-    sentinel_activation_start = time.perf_counter()
-    restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
-    _log_timing(
-        "activate bootstrap sentinel",
-        sentinel_activation_start,
-        placeholder_attached=_is_bootstrap_placeholder(sentinel_manager),
-    )
-    _record_prepare_pipeline_stage(
-        "activate bootstrap sentinel",
-        elapsed=time.perf_counter() - sentinel_activation_start,
-        extra={"placeholder": _is_bootstrap_placeholder(sentinel_manager)},
-        readiness_gates=("orchestrator_state",),
-    )
-    owner_guard_start = time.perf_counter()
-    (
-        owner_guard_attached,
-        release_owner_guard,
-    ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
-    _log_timing(
-        "claim bootstrap owner guard",
-        owner_guard_start,
-        owner_guard_attached=owner_guard_attached,
-    )
-    _record_prepare_pipeline_stage(
-        "claim bootstrap owner guard",
-        elapsed=time.perf_counter() - owner_guard_start,
-        extra={"attached": owner_guard_attached},
-        readiness_gates=("orchestrator_state",),
-    )
+        sentinel_selection_start = time.perf_counter()
+        sentinel_manager = _select_placeholder(
+            manager_override,
+            manager_sentinel,
+            bootstrap_manager,
+            manager_kwarg_placeholder,
+        )
+        if sentinel_manager is None and sentinel_factory is not None:
+            candidate = sentinel_factory()
+            if _is_bootstrap_placeholder(candidate):
+                sentinel_manager = candidate
+        if sentinel_manager is None:
+            sentinel_manager = _create_bootstrap_manager_sentinel(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+                bootstrap_fast=bootstrap_fast,
+            )
+        _log_timing(
+            "sentinel selection",
+            sentinel_selection_start,
+            manager_kwarg_supplied=manager_kwarg_value is not None,
+            manager_override=bool(manager_override),
+            sentinel_factory=bool(sentinel_factory),
+        )
+        _record_prepare_pipeline_stage(
+            "sentinel selection",
+            elapsed=time.perf_counter() - sentinel_selection_start,
+            extra={
+                "manager_kwarg_supplied": manager_kwarg_value is not None,
+                "manager_override": bool(manager_override),
+            },
+        )
+        manager_placeholder = sentinel_manager
+        shim_manager_placeholder = _select_placeholder(
+            manager_override,
+            manager_sentinel,
+            bootstrap_manager,
+            manager_placeholder,
+        )
+        if not _is_bootstrap_placeholder(shim_manager_placeholder):
+            owner_candidate = _spawn_nested_bootstrap_owner(
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
+            if _is_bootstrap_placeholder(owner_candidate):
+                shim_manager_placeholder = owner_candidate
+            else:
+                shim_manager_placeholder = manager_placeholder
+        extra_candidates: list[Any] = []
+        if extra_manager_sentinels:
+            for candidate in extra_manager_sentinels:
+                if candidate is None:
+                    continue
+                extra_candidates.append(candidate)
+        if (
+            shim_manager_placeholder is not None
+            and shim_manager_placeholder is not manager_placeholder
+        ):
+            extra_candidates.append(shim_manager_placeholder)
+        managed_extra_manager_sentinels: tuple[Any, ...] | None = None
+        sentinel_activation_start = time.perf_counter()
+        restore_sentinel_state = _activate_bootstrap_sentinel(sentinel_manager)
+        _log_timing(
+            "activate bootstrap sentinel",
+            sentinel_activation_start,
+            placeholder_attached=_is_bootstrap_placeholder(sentinel_manager),
+        )
+        _record_prepare_pipeline_stage(
+            "activate bootstrap sentinel",
+            elapsed=time.perf_counter() - sentinel_activation_start,
+            extra={"placeholder": _is_bootstrap_placeholder(sentinel_manager)},
+            readiness_gates=("orchestrator_state",),
+        )
+        owner_guard_start = time.perf_counter()
+        (
+            owner_guard_attached,
+            release_owner_guard,
+        ) = _claim_bootstrap_owner_guard(sentinel_manager, restore_sentinel_state)
+        _log_timing(
+            "claim bootstrap owner guard",
+            owner_guard_start,
+            owner_guard_attached=owner_guard_attached,
+        )
+        _record_prepare_pipeline_stage(
+            "claim bootstrap owner guard",
+            elapsed=time.perf_counter() - owner_guard_start,
+            extra={"attached": owner_guard_attached},
+            readiness_gates=("orchestrator_state",),
+        )
     manual_restore_pending = not owner_guard_attached
     sentinel_state_released = False
     shim_release_callback: Callable[[], None] | None = None
@@ -5235,12 +5324,18 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "bootstrap_fast": bool(bootstrap_fast),
                 },
             )
-    
+
+        with _shared_budget_reservation(
+            "pipeline_component_warmup",
+            ("vectorizers", "retrievers", "db_indexes"),
+            requested=resolved_wait_timeout,
+        ):
+
             def _vector_excursion_triggered(exc: BaseException) -> bool:
                 message = f"{type(exc).__name__}:{exc}"
                 lowered = message.lower()
                 return "vector_service" in lowered or isinstance(exc, TimeoutError)
-    
+
             def _attempt_constructor(keys: tuple[str, ...]) -> bool:
                 nonlocal pipeline, last_error, manager_rejected, vector_lazy_enabled
                 _check_stop_or_timeout("pipeline constructor attempt")
