@@ -112,3 +112,29 @@ def test_global_window_scales_with_component_complexity(monkeypatch, tmp_path):
     assert expanded_budgets
     assert expanded_window is not None
     assert expanded_window > base_window
+
+
+def test_adaptive_component_floors_include_guard_and_peer_state(monkeypatch, tmp_path):
+    state_path = tmp_path / "timeout_state.json"
+    policy = _reload_policy(monkeypatch, state_path)
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP_LOAD_THRESHOLD", "1.0")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_COMPONENT_FLOOR_MAX_SCALE", "2.0")
+
+    peer_state = {
+        "peer-host": {
+            "component_floors": {"retrievers": 900.0},
+            "updated_at": 0,
+        }
+    }
+    state_path.write_text(json.dumps(peer_state))
+
+    policy._record_bootstrap_guard(30.0, 2.0, source="test", host_load=2.5)  # type: ignore[attr-defined]
+    floors = policy.load_component_timeout_floors()
+
+    assert floors["vectorizers"] >= policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
+        "vectorizers"
+    ] * 2.0
+    assert floors["retrievers"] == policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
+        "retrievers"
+    ] * 2.0

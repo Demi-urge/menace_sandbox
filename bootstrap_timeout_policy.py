@@ -56,6 +56,10 @@ _DEFAULT_HEARTBEAT_MAX_AGE = 120.0
 _DEFAULT_LOAD_THRESHOLD = 1.35
 _DEFAULT_GUARD_MAX_DELAY = 90.0
 _DEFAULT_GUARD_INTERVAL = 5.0
+_COMPONENT_FLOOR_MAX_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_FLOOR_MAX_SCALE"
+_COMPONENT_STALENESS_PAD_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_STALENESS_PAD"
+_DEFAULT_COMPONENT_FLOOR_MAX_SCALE = 3.5
+_DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
 _BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"
 _BOOTSTRAP_LOAD_THRESHOLD_ENV = "MENACE_BOOTSTRAP_LOAD_THRESHOLD"
@@ -441,6 +445,83 @@ def _record_adaptive_context(context: Mapping[str, object]) -> None:
     _ADAPTIVE_TIMEOUT_CONTEXT.update(context)
 
 
+def _derive_component_floor_scale(
+    *,
+    guard_context: Mapping[str, object] | None = None,
+    host_state: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+) -> tuple[float, Mapping[str, object]]:
+    """Return a scaling factor for component floors based on guard telemetry."""
+
+    threshold = _parse_float(os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)) or _DEFAULT_LOAD_THRESHOLD
+    max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
+    telemetry_load = None
+    heartbeat_ts = None
+    if isinstance(host_telemetry, Mapping):
+        telemetry_load = _parse_float(str(host_telemetry.get("host_load")))
+        heartbeat_ts = _parse_float(str(host_telemetry.get("ts")))
+
+    guard_load = None
+    if isinstance(guard_context, Mapping):
+        guard_load = _parse_float(str(guard_context.get("host_load")))
+
+    load_average = guard_load if guard_load is not None else telemetry_load
+    if load_average is None:
+        load_average = _host_load_average()
+
+    load_scale = 1.0
+    if load_average is not None and threshold:
+        load_scale = max(1.0, min(load_average / threshold, max_scale))
+
+    guard_scale = 1.0
+    if isinstance(guard_context, Mapping):
+        try:
+            guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+        except (TypeError, ValueError):
+            guard_scale = 1.0
+
+    overrun_streak = 0
+    component_overruns = None
+    if isinstance(host_state, Mapping):
+        host_key = _state_host_key()
+        host_meta = host_state.get(host_key, {}) if host_key in host_state else host_state
+        if isinstance(host_meta, Mapping):
+            component_overruns = host_meta.get("component_overruns")
+    if isinstance(component_overruns, Mapping):
+        overrun_streak = max(
+            (int(meta.get("overruns", 0) or 0) for meta in component_overruns.values()), default=0
+        )
+    overrun_scale = 1.0 + min(overrun_streak, 6) * 0.08
+
+    now = time.time()
+    heartbeat_age = now - heartbeat_ts if heartbeat_ts is not None else None
+    heartbeat_max_age = _parse_float(os.getenv(_BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV)) or _DEFAULT_HEARTBEAT_MAX_AGE
+    staleness_ratio = 0.0
+    if heartbeat_age is None:
+        staleness_ratio = 1.0
+    elif heartbeat_max_age:
+        staleness_ratio = max(heartbeat_age - heartbeat_max_age, 0.0) / heartbeat_max_age
+    staleness_pad_cap = _parse_float(os.getenv(_COMPONENT_STALENESS_PAD_ENV)) or _DEFAULT_STALENESS_PAD
+    staleness_scale = 1.0 + min(max(staleness_ratio, 0.0), 1.0) * staleness_pad_cap
+
+    scale = max(load_scale, guard_scale, overrun_scale) * staleness_scale
+    scale = min(scale, max_scale)
+
+    context = {
+        "load_scale": load_scale,
+        "guard_scale": guard_scale,
+        "overrun_scale": overrun_scale,
+        "overrun_streak": overrun_streak,
+        "staleness_scale": staleness_scale,
+        "staleness_ratio": staleness_ratio,
+        "heartbeat_age": heartbeat_age,
+        "heartbeat_max_age": heartbeat_max_age,
+        "host_load": load_average,
+        "max_scale": max_scale,
+    }
+    return scale, context
+
+
 def _cluster_budget_scale(
     *,
     host_state: Mapping[str, object] | None = None,
@@ -574,9 +655,18 @@ def load_component_timeout_floors() -> dict[str, float]:
     """Return per-component timeout floors with host-level overrides applied."""
 
     state = _load_timeout_state()
-    scale, scale_context = _cluster_budget_scale(host_state=state)
-    component_floors = {key: value * scale for key, value in _COMPONENT_TIMEOUT_MINIMUMS.items()}
-    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    guard_context = get_bootstrap_guard_context()
+    host_telemetry = read_bootstrap_heartbeat()
+    scale, scale_context = _derive_component_floor_scale(
+        guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
+    )
+    max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
+    component_floors = {
+        key: min(value * scale, value * max_scale)
+        for key, value in _COMPONENT_TIMEOUT_MINIMUMS.items()
+    }
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
     host_component_floors = (
         host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
     )
@@ -586,9 +676,40 @@ def load_component_timeout_floors() -> dict[str, float]:
             host_value = float(host_component_floors.get(component, default_minimum))
         except (TypeError, ValueError):
             host_value = default_minimum
-        component_floors[component] = max(default_minimum, host_value)
+        component_floors[component] = max(default_minimum, host_value, component_floors[component])
 
-    _record_adaptive_context({"component_cluster_scale": scale_context | {"scale": scale}})
+    if isinstance(state, Mapping):
+        for peer_state in state.values():
+            peer_floors = peer_state.get("component_floors", {}) if isinstance(peer_state, Mapping) else {}
+            if not isinstance(peer_floors, Mapping):
+                continue
+            for component, value in peer_floors.items():
+                try:
+                    peer_floor = float(value)
+                except (TypeError, ValueError):
+                    continue
+                base = _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+                ceiling = base * max_scale if base else peer_floor
+                component_floors[component] = max(
+                    component_floors.get(component, base), min(peer_floor, ceiling)
+                )
+
+    _record_adaptive_context(
+        {"component_cluster_scale": scale_context | {"scale": scale, "max_scale": max_scale}}
+    )
+
+    if isinstance(host_state, dict):
+        host_state["component_floors"] = dict(component_floors)
+        host_state["component_floor_inputs"] = {
+            "guard": guard_context,
+            "telemetry": host_telemetry,
+            "scale_context": scale_context,
+            "scale": scale,
+            "max_scale": max_scale,
+        }
+        if isinstance(state, dict):
+            state[host_key] = host_state
+            _save_timeout_state(state)
 
     return component_floors
 
@@ -960,15 +1081,18 @@ def compute_prepare_pipeline_component_budgets(
     _record_adaptive_context(adaptive_inputs)
 
     host_state_details = host_state_details if isinstance(host_state_details, dict) else {}
-    if adaptive_floors:
-        persisted_floors = (
-            host_state_details.get("component_floors", {}) if isinstance(host_state_details, Mapping) else {}
-        )
-        persisted_floors = dict(persisted_floors) if isinstance(persisted_floors, Mapping) else {}
-        for component, meta in adaptive_floors.items():
-            persisted_floors[component] = float(
-                meta.get("floor", floors.get(component, 0.0))
-            )
+    persisted_floors = (
+        host_state_details.get("component_floors", {}) if isinstance(host_state_details, Mapping) else {}
+    )
+    persisted_floors = dict(persisted_floors) if isinstance(persisted_floors, Mapping) else {}
+    for component, floor in floors.items():
+        try:
+            persisted_floors[component] = max(float(floor), float(persisted_floors.get(component, 0.0) or 0.0))
+        except (TypeError, ValueError):
+            persisted_floors[component] = float(floor)
+    for component, meta in adaptive_floors.items():
+        persisted_floors[component] = float(meta.get("floor", floors.get(component, 0.0)))
+    if persisted_floors:
         host_state_details["component_floors"] = persisted_floors
     host_state_details.update(
         {
