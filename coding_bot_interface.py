@@ -150,6 +150,7 @@ _COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "stages": deque(maxlen=32),
     "timeouts": 0,
+    "extensions": [],
 }
 
 _STAGED_READY_TOPIC = "prepare_pipeline.staged_ready"
@@ -180,6 +181,8 @@ _ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
 _VECTOR_BUDGET_BIAS = 1.35
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
+_GATE_EXTENSION_LIMIT = 3
+_GATE_EXTENSION_BACKOFF_CAP = 1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * 3
 
 _PREPARE_STAGE_BUDGETS: dict[str, float] = {}
 _PREPARE_VECTOR_STAGE_BUDGETS: dict[str, float] = {}
@@ -384,6 +387,124 @@ def _mark_partial_readiness(
         vector_heavy=vector_heavy,
     )
     _PREPARE_PIPELINE_WATCHDOG.setdefault("partial_ready", []).append(payload)
+
+
+def _mark_deferred_gates(
+    *,
+    gates: Iterable[str],
+    stage: str,
+    pending_gates: Iterable[str],
+    readiness_ratio: float,
+    vector_heavy: bool,
+    reason: str,
+    stage_budget: float = 0.0,
+    remaining_window: float = 0.0,
+) -> Mapping[str, Any]:
+    """Record a degraded-but-online state for optional gates."""
+
+    readiness = _initialize_prepare_readiness()
+    timestamp = time.time()
+    pending_gates = tuple(pending_gates)
+    for gate in gates:
+        if gate not in readiness:
+            continue
+        readiness[gate].update(
+            {
+                "ready": False,
+                "timestamp": readiness[gate].get("timestamp") or timestamp,
+                "elapsed": readiness[gate].get("elapsed"),
+                "stage": stage,
+                "status": "deferred",
+                "reason": reason,
+            }
+        )
+
+    _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
+    payload = _mark_staged_readiness(
+        stage,
+        ready_gates=[gate for gate, meta in readiness.items() if meta.get("ready")],
+        pending_gates=pending_gates,
+        readiness_ratio=readiness_ratio,
+        remaining_window=remaining_window,
+        stage_budget=stage_budget,
+        vector_heavy=vector_heavy,
+    )
+    degraded_payload = dict(payload)
+    degraded_payload.update({"degraded_reason": reason, "deferred_gates": tuple(gates)})
+    _PREPARE_PIPELINE_WATCHDOG["degraded"] = degraded_payload
+    _PREPARE_PIPELINE_WATCHDOG.setdefault("deferred", []).append(degraded_payload)
+    return degraded_payload
+
+
+def _extend_component_windows(
+    gate_windows: Mapping[str, dict[str, Any]],
+    *,
+    timeout_floor: float,
+    resolved_timeout: float | None,
+    progress_signal: Mapping[str, Any],
+    shared_timeout_coordinator: SharedTimeoutCoordinator | None,
+    stage: str,
+    readiness_pending: Iterable[str],
+    vector_heavy: bool,
+    backoff_cap: float = _GATE_EXTENSION_BACKOFF_CAP,
+    extension_limit: int = _GATE_EXTENSION_LIMIT,
+    time_fn: Callable[[], float] = time.perf_counter,
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    """Extend component windows when forward progress is detected."""
+
+    extended: list[str] = []
+    exhausted: list[str] = []
+    extension_meta: list[dict[str, Any]] = []
+    progressing = bool(progress_signal.get("progressing"))
+
+    for gate, window in gate_windows.items():
+        remaining = window.get("remaining")
+        if remaining is None or remaining > 0:
+            continue
+
+        extensions = int(window.get("extensions", 0) or 0)
+        if progressing and extensions < extension_limit:
+            base_budget = window.get("budget") or resolved_timeout or timeout_floor
+            backoff_factor = min(
+                1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * (extensions + 1), backoff_cap
+            )
+            extension_budget = max(timeout_floor, base_budget * backoff_factor)
+            previous_remaining = window.get("remaining") or 0.0
+            window["remaining"] = extension_budget
+            window["deadline"] = time_fn() + extension_budget
+            window["extensions"] = extensions + 1
+            window["last_extension"] = time_fn()
+            extended.append(gate)
+
+            meta = {
+                "gate": gate,
+                "stage": stage,
+                "vector_heavy": vector_heavy,
+                "extension_budget": extension_budget,
+                "extension_seconds": extension_budget - max(previous_remaining, 0.0),
+                "extension_factor": backoff_factor,
+                "extensions_used": extensions + 1,
+                "progress_signal": dict(progress_signal),
+            }
+            extension_meta.append(meta)
+
+            if shared_timeout_coordinator is not None:
+                shared_timeout_coordinator.record_progress(
+                    gate,
+                    elapsed=0.0,
+                    remaining=extension_budget,
+                    metadata={
+                        "stage": stage,
+                        "pending_gates": tuple(readiness_pending),
+                        "extension": True,
+                        "extension_factor": backoff_factor,
+                        "extensions_used": extensions + 1,
+                    },
+                )
+        else:
+            exhausted.append(gate)
+
+    return extended, exhausted, extension_meta
 
 
 _initialize_prepare_readiness()
@@ -4706,24 +4827,6 @@ def _prepare_pipeline_for_bootstrap_impl(
             }
             _PREPARE_PIPELINE_WATCHDOG.setdefault("phase_windows", {})[key] = window
 
-        def _mark_degraded(reason: str, *, state: Mapping[str, Any]) -> None:
-            payload = _mark_staged_readiness(
-                stage,
-                ready_gates=readiness_ready,
-                pending_gates=readiness_pending,
-                readiness_ratio=readiness_ratio,
-                remaining_window=0.0,
-                stage_budget=state.get("budget") or 0.0,
-                vector_heavy=vector_heavy,
-            )
-            degraded_payload = dict(payload)
-            degraded_payload["degraded_reason"] = reason
-            _PREPARE_PIPELINE_WATCHDOG["degraded"] = degraded_payload
-            if shared_timeout_coordinator is not None:
-                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
-                    shared_timeout_coordinator.snapshot()
-                )
-
         def _select_phase(gates: set[str]) -> str | None:
             for candidate in (
                 "vectorizers",
@@ -4797,29 +4900,36 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         progressing = pending_delta > 0 or ratio_delta > 0 or staged_ready_signal
 
-        if gate_windows:
-            exhausted_gates = []
-            for gate, window in gate_windows.items():
-                if window.get("remaining") is not None and window["remaining"] <= 0:
-                    exhausted_gates.append(gate)
+        progress_signal = {
+            "pending_delta": pending_delta,
+            "ratio_delta": ratio_delta,
+            "staged_ready": staged_ready_signal,
+            "progressing": progressing,
+        }
 
-            if progressing:
-                extension = watchdog_telemetry.get("extension_seconds")
-                if extension is None:
-                    extension = max(timeout_floor, resolved_timeout or timeout_floor)
-                for gate, window in gate_windows.items():
-                    if window.get("remaining") is not None and window["remaining"] <= 0:
-                        window["remaining"] = max(timeout_floor, extension)
-                        if shared_timeout_coordinator is not None:
-                            shared_timeout_coordinator.record_progress(
-                                gate,
-                                elapsed=0.0,
-                                remaining=window.get("remaining"),
-                                metadata={"stage": stage, "staged_readiness": True},
-                            )
+        if gate_windows:
+            extended, exhausted_gates, extension_meta = _extend_component_windows(
+                gate_windows,
+                timeout_floor=timeout_floor,
+                resolved_timeout=resolved_timeout,
+                progress_signal=progress_signal,
+                shared_timeout_coordinator=shared_timeout_coordinator,
+                stage=stage,
+                readiness_pending=readiness_pending,
+                vector_heavy=vector_heavy,
+            )
+            if extension_meta:
+                _PREPARE_PIPELINE_WATCHDOG.setdefault("extensions", []).extend(
+                    extension_meta
+                )
                 _PREPARE_PIPELINE_WATCHDOG["component_windows"] = component_windows
-                if exhausted_gates:
-                    return
+                if shared_timeout_coordinator is not None:
+                    _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+                        shared_timeout_coordinator.snapshot()
+                    )
+
+            if extended and not exhausted_gates:
+                return
 
             if exhausted_gates:
                 optional_overrun = set(exhausted_gates) and not (
@@ -4842,7 +4952,25 @@ def _prepare_pipeline_for_bootstrap_impl(
                             "watchdog_component_windows": gate_windows,
                         },
                     )
-                    _mark_degraded("optional_phase_overrun", state={"budget": None, "remaining": None})
+                    reason = "optional_phase_overrun"
+                    _mark_deferred_gates(
+                        gates=exhausted_gates,
+                        stage=stage,
+                        pending_gates=readiness_pending,
+                        readiness_ratio=readiness_ratio,
+                        vector_heavy=vector_heavy,
+                        reason=reason,
+                        stage_budget=watchdog_telemetry.get("stage_budget", 0.0),
+                        remaining_window=0.0,
+                    )
+                    remediation_hints = render_prepare_pipeline_timeout_hints(
+                        vector_heavy
+                    )
+                    logger.warning(
+                        "prepare_pipeline entering degraded mode; deferred optional gates=%s hints=%s",
+                        exhausted_gates,
+                        remediation_hints,
+                    )
                     return
                 elapsed = time.perf_counter() - start_time
                 context = {
@@ -4941,7 +5069,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 _CRITICAL_READINESS_GATES & set(readiness_pending)
             )
             if optional_overrun:
-                _mark_degraded("optional_window_exhausted", state=phase_state)
+                _mark_deferred_gates(
+                    gates=readiness_pending,
+                    stage=stage,
+                    pending_gates=readiness_pending,
+                    readiness_ratio=readiness_ratio,
+                    vector_heavy=vector_heavy,
+                    reason="optional_window_exhausted",
+                    stage_budget=phase_state.get("budget") or 0.0,
+                    remaining_window=phase_state.get("remaining") or 0.0,
+                )
                 return
             elapsed = time.perf_counter() - start_time
             context = {
