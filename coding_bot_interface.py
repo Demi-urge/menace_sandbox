@@ -41,6 +41,7 @@ import time
 
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
+    load_escalated_timeout_floors,
     render_prepare_pipeline_timeout_hints,
 )
 
@@ -153,10 +154,15 @@ _READINESS_GATE_WEIGHTS: dict[str, float] = {
     "orchestrator_state": 1.0,
 }
 
-_BOOTSTRAP_TIMEOUT_FLOOR = 240.0
-_MIN_STAGE_TIMEOUT = 240.0
-_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = 360.0
-_MIN_STAGE_TIMEOUT_VECTOR = 360.0
+_ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
+_BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
+_MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
+_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
+    360.0,
+    _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", 0.0),
+    _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
+)
+_MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
 
@@ -321,8 +327,18 @@ _refresh_prepare_watchdog_budgets()
 def _refresh_bootstrap_wait_timeouts() -> None:
     """Reload cached bootstrap wait timeouts from the environment."""
 
-    global _BOOTSTRAP_WAIT_TIMEOUT
+    global _BOOTSTRAP_WAIT_TIMEOUT, _BOOTSTRAP_TIMEOUT_FLOOR, _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR
+    global _MIN_STAGE_TIMEOUT, _MIN_STAGE_TIMEOUT_VECTOR, _ESCALATED_TIMEOUT_FLOORS
 
+    _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
+    _BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
+    _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
+        360.0,
+        _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", 0.0),
+        _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
+    )
+    _MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
+    _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
     _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
     _refresh_prepare_watchdog_budgets()
     _log_bootstrap_env_snapshot()
