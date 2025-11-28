@@ -43,6 +43,7 @@ from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     get_adaptive_timeout_context,
+    get_bootstrap_guard_context,
     compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
@@ -273,6 +274,24 @@ def _summarize_pipeline_complexity(
         "pipeline_config_sections": pipeline_config_sections,
         "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
     }
+
+
+def _derive_component_work_units(
+    component_complexity: Mapping[str, object] | None,
+) -> dict[str, int]:
+    """Return a per-gate work unit hint derived from complexity metadata."""
+
+    complexity = component_complexity or {}
+    return {
+        "vectorizers": max(int(complexity.get("vectorizers", 0) or 1), 1),
+        "retrievers": max(int(complexity.get("retrievers", 0) or 1), 1),
+        "db_indexes": max(int(complexity.get("db_indexes", 0) or 1), 1),
+        "orchestrator_state": max(int(complexity.get("db_index_bytes", 0) or 1), 1),
+        "pipeline_config": max(
+            int(complexity.get("pipeline_config_sections", 0) or 1), 1
+        ),
+        "background_loops": max(int(complexity.get("background_loops", 0) or 1), 1),
+    }
     try:
         value = float(raw_value)
     except (TypeError, ValueError):
@@ -462,6 +481,17 @@ def _extend_component_windows(
     exhausted: list[str] = []
     extension_meta: list[dict[str, Any]] = []
     progressing = bool(progress_signal.get("progressing"))
+    host_load = progress_signal.get("host_load")
+    work_remaining_ratio = 0.0
+    if progress_signal.get("work_total"):
+        remaining_units = max(
+            float(progress_signal.get("work_total", 0.0) or 0.0)
+            - float(progress_signal.get("work_completed", 0.0) or 0.0),
+            0.0,
+        )
+        total_units = float(progress_signal.get("work_total", 0.0) or 0.0)
+        if total_units:
+            work_remaining_ratio = min(remaining_units / total_units, 1.0)
 
     for gate, window in gate_windows.items():
         remaining = window.get("remaining")
@@ -474,7 +504,16 @@ def _extend_component_windows(
             backoff_factor = min(
                 1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * (extensions + 1), backoff_cap
             )
-            extension_budget = max(timeout_floor, base_budget * backoff_factor)
+            work_factor = 1.0 + (work_remaining_ratio * 0.35)
+            load_factor = (
+                1.0
+                + min(max(float(host_load or 0.0) - 1.0, 0.0), 1.5) * 0.25
+                if host_load is not None
+                else 1.0
+            )
+            extension_budget = max(
+                timeout_floor, base_budget * backoff_factor * work_factor * load_factor
+            )
             previous_remaining = window.get("remaining") or 0.0
             window["remaining"] = extension_budget
             window["deadline"] = time_fn() + extension_budget
@@ -489,10 +528,13 @@ def _extend_component_windows(
                 "extension_budget": extension_budget,
                 "extension_seconds": extension_budget - max(previous_remaining, 0.0),
                 "extension_factor": backoff_factor,
+                "work_factor": work_factor,
+                "load_factor": load_factor,
                 "extensions_used": extensions + 1,
                 "progress_signal": dict(progress_signal),
                 "component_budget": window.get("budget"),
                 "component_deadline": window.get("deadline"),
+                "work_remaining_ratio": work_remaining_ratio,
             }
             extension_meta.append(meta)
 
@@ -506,6 +548,8 @@ def _extend_component_windows(
                         "pending_gates": tuple(readiness_pending),
                         "extension": True,
                         "extension_factor": backoff_factor,
+                        "work_factor": work_factor,
+                        "load_factor": load_factor,
                         "extensions_used": extensions + 1,
                     },
                 )
@@ -5071,6 +5115,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             "explicit_overrides": bool(component_timeouts),
         },
     )
+    guard_context = get_bootstrap_guard_context()
+    _PREPARE_PIPELINE_WATCHDOG["guard_context"] = dict(guard_context)
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
     guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
         "1",
@@ -5129,6 +5175,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     _refresh_bootstrap_wait_timeouts(
         stage_budgets=subsystem_budget_overrides,
         vector_stage_budgets=subsystem_budget_overrides,
+    )
+
+    component_work_units = (
+        adaptive_budget_context.get("component_work_units")
+        or _derive_component_work_units(component_complexity_inputs)
+    )
+    _PREPARE_PIPELINE_WATCHDOG["component_work_units"] = component_work_units
+    _PREPARE_PIPELINE_WATCHDOG.setdefault(
+        "component_work_progress", {gate: 0.0 for gate in component_work_units}
     )
 
     start_time = time.perf_counter()
@@ -5244,6 +5299,28 @@ def _prepare_pipeline_for_bootstrap_impl(
             if not isinstance(adaptive_overruns, Mapping):
                 adaptive_overruns = {}
             adaptive_component_floors = adaptive_context.get("floors") or {}
+        guard_context_meta = _PREPARE_PIPELINE_WATCHDOG.get("guard_context", {})
+        component_work_units = (
+            _PREPARE_PIPELINE_WATCHDOG.get("component_work_units") or {}
+        )
+        component_work_progress = _PREPARE_PIPELINE_WATCHDOG.get(
+            "component_work_progress", {}
+        ) or {}
+        host_load_signal = None
+        if isinstance(guard_context_meta, Mapping):
+            host_load_signal = guard_context_meta.get("host_load")
+        if host_load_signal is None and isinstance(adaptive_context, Mapping):
+            host_load_signal = adaptive_context.get("load_average")
+        if host_load_signal is None:
+            try:
+                load1, _, _ = os.getloadavg()
+                cpus = os.cpu_count() or 1
+                host_load_signal = load1 / max(float(cpus), 1.0)
+            except OSError:
+                host_load_signal = None
+        previous_work_completed = float(
+            _PREPARE_PIPELINE_WATCHDOG.get("component_work_completed_total", 0.0) or 0.0
+        )
         watchdog_telemetry["component_overruns"] = adaptive_overruns
         if adaptive_component_floors:
             watchdog_telemetry["component_floors"] = adaptive_component_floors
@@ -5302,6 +5379,36 @@ def _prepare_pipeline_for_bootstrap_impl(
                     return candidate
             return None
 
+        def _record_work_heartbeat(gate: str, progressing: bool) -> dict[str, Any]:
+            total_units = max(int(component_work_units.get(gate, 1) or 1), 1)
+            prior_completed = float(component_work_progress.get(gate, 0.0) or 0.0)
+            completed = prior_completed
+            if gate not in readiness_pending:
+                completed = total_units
+            else:
+                completed = max(
+                    prior_completed,
+                    min(total_units, total_units * max(readiness_ratio, 0.0)),
+                )
+                if progressing:
+                    completed = max(completed, min(total_units, prior_completed + 1.0))
+
+            component_work_progress[gate] = completed
+            heartbeat = {
+                "gate": gate,
+                "work_completed": completed,
+                "work_total": total_units,
+                "host_load": host_load_signal,
+                "progressing": progressing,
+            }
+            _PREPARE_PIPELINE_WATCHDOG["component_work_progress"] = (
+                component_work_progress
+            )
+            _PREPARE_PIPELINE_WATCHDOG.setdefault("component_heartbeats", {})[
+                gate
+            ] = heartbeat
+            return heartbeat
+
         timeout_floor = (
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
         )
@@ -5339,12 +5446,19 @@ def _prepare_pipeline_for_bootstrap_impl(
             window["last_check"] = now_ts
             if window.get("remaining") is not None:
                 window["remaining"] = max(0.0, (window.get("remaining") or 0.0) - elapsed_local)
+            heartbeat = _record_work_heartbeat(
+                gate, bool(readiness_ready or staged_ready_signal)
+            )
             if shared_timeout_coordinator is not None:
                 shared_timeout_coordinator.record_progress(
                     gate,
                     elapsed=elapsed_local,
                     remaining=window.get("remaining"),
-                    metadata={"stage": stage, "pending_gates": tuple(readiness_pending)},
+                    metadata={
+                        "stage": stage,
+                        "pending_gates": tuple(readiness_pending),
+                        **{f"heartbeat.{k}": v for k, v in heartbeat.items()},
+                    },
                 )
                 _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
                     shared_timeout_coordinator.snapshot()
@@ -5371,6 +5485,29 @@ def _prepare_pipeline_for_bootstrap_impl(
         progress_signal["progressing"] = bool(
             staged_ready_signal or readiness_ready
         )
+
+        heartbeat_state = (
+            _PREPARE_PIPELINE_WATCHDOG.get("component_heartbeats", {}) or {}
+        )
+        total_units = sum(
+            float(meta.get("work_total", 0.0) or 0.0) for meta in heartbeat_state.values()
+        )
+        completed_units = sum(
+            float(meta.get("work_completed", 0.0) or 0.0)
+            for meta in heartbeat_state.values()
+        )
+        work_ratio = completed_units / total_units if total_units else 0.0
+        progress_signal.update(
+            {
+                "work_total": total_units,
+                "work_completed": completed_units,
+                "work_ratio": work_ratio,
+                "host_load": host_load_signal,
+            }
+        )
+        if completed_units > previous_work_completed:
+            progress_signal["progressing"] = True
+        _PREPARE_PIPELINE_WATCHDOG["component_work_completed_total"] = completed_units
 
         watchdog_telemetry["progress_signal"] = dict(progress_signal)
 
@@ -5578,6 +5715,27 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
+            if progress_signal.get("progressing"):
+                _mark_deferred_gates(
+                    gates=exhausted_critical,
+                    stage=stage,
+                    pending_gates=readiness_pending,
+                    readiness_ratio=readiness_ratio,
+                    vector_heavy=vector_heavy,
+                    reason="critical_overrun_progressing",
+                    stage_budget=watchdog_telemetry.get("stage_budget", 0.0),
+                    remaining_window=watchdog_telemetry.get("remaining_window", 0.0),
+                )
+                logger.warning(
+                    "prepare_pipeline continuing after critical gate overrun with progress",
+                    extra={
+                        "event": "prepare-pipeline-critical-progress",
+                        "gates": sorted(exhausted_critical),
+                        "pending_gates": readiness_pending,
+                        "progress_signal": progress_signal,
+                    },
+                )
+                return
             remediation_hints = render_prepare_pipeline_timeout_hints(
                 vector_heavy, components=exhausted_critical or pending_critical
             )

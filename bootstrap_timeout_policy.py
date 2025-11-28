@@ -150,7 +150,13 @@ def read_bootstrap_heartbeat(max_age: float | None = None) -> Mapping[str, Any] 
     return payload
 
 
-def _record_bootstrap_guard(delay: float, budget_scale: float, *, source: str) -> None:
+def _record_bootstrap_guard(
+    delay: float,
+    budget_scale: float,
+    *,
+    source: str,
+    host_load: float | None = None,
+) -> None:
     """Persist guard telemetry for downstream budget scaling."""
 
     global _LAST_BOOTSTRAP_GUARD
@@ -159,6 +165,7 @@ def _record_bootstrap_guard(delay: float, budget_scale: float, *, source: str) -
         "budget_scale": float(budget_scale),
         "source": source,
         "ts": time.time(),
+        "host_load": host_load,
     }
 
 
@@ -243,9 +250,9 @@ def wait_for_bootstrap_quiet_period(
     slept = 0.0
     budget_scale = 1.0
 
+    normalized_load = _host_load_average()
     while time.monotonic() < deadline:
         heartbeat = read_bootstrap_heartbeat()
-        normalized_load = _host_load_average()
         peer_active = False
         if heartbeat:
             peer_active = int(heartbeat.get("pid", -1)) != int(ignore_pid)
@@ -274,7 +281,9 @@ def wait_for_bootstrap_quiet_period(
         )
         time.sleep(sleep_for)
 
-    _record_bootstrap_guard(slept, budget_scale, source="bootstrap_guard")
+    _record_bootstrap_guard(
+        slept, budget_scale, source="bootstrap_guard", host_load=normalized_load
+    )
     return slept, budget_scale
 
 
@@ -766,6 +775,15 @@ def compute_prepare_pipeline_component_budgets(
     if isinstance(host_overruns, Mapping):
         _apply_overruns(host_overruns)  # type: ignore[arg-type]
 
+    component_work_units = {
+        "vectorizers": max(int(complexity.get("vectorizers", 0) or 1), 1),
+        "retrievers": max(int(complexity.get("retrievers", 0) or 1), 1),
+        "db_indexes": max(int(complexity.get("db_indexes", 0) or 1), 1),
+        "orchestrator_state": max(int(complexity.get("db_index_bytes", 0) or 1), 1),
+        "pipeline_config": max(int(complexity.get("pipeline_config_sections", 0) or 1), 1),
+        "background_loops": max(int(complexity.get("background_loops", 0) or 1), 1),
+    }
+
     adaptive_inputs = {
         "host": host_key,
         "load_scale": scale,
@@ -773,6 +791,7 @@ def compute_prepare_pipeline_component_budgets(
         "cluster_scale": cluster_context | {"scale": cluster_scale},
         "load_average": load_average,
         "component_complexity": component_complexity,
+        "component_work_units": component_work_units,
         "telemetry_overruns": telemetry_overruns,
         "floors": floors,
         "adaptive_floors": adaptive_floors,
@@ -806,6 +825,7 @@ def compute_prepare_pipeline_component_budgets(
                 "component_complexity": component_complexity,
                 "guard_scale": guard_scale,
             },
+            "component_work_units": component_work_units,
             "updated_at": time.time(),
         }
     )
