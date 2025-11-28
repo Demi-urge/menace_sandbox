@@ -5133,6 +5133,8 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     if guard_enabled:
         guard_delay, budget_scale = wait_for_bootstrap_quiet_period(logger)
+        guard_context = get_bootstrap_guard_context()
+        _PREPARE_PIPELINE_WATCHDOG["guard_context"] = dict(guard_context)
     if budget_scale != 1.0:
         timeout = _scale_budget(timeout)
         if deadline is not None:
@@ -5171,6 +5173,10 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "opt_out_env": guard_env,
             },
         )
+
+    _PREPARE_PIPELINE_WATCHDOG["guard_context"] = get_bootstrap_guard_context()
+    _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
+    _PREPARE_PIPELINE_WATCHDOG["component_budget_overrides"] = component_budget_overrides
 
     _refresh_bootstrap_wait_timeouts(
         stage_budgets=subsystem_budget_overrides,
@@ -6115,6 +6121,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_wait_timeout if resolved_wait_timeout is not None else 0.0,
         _BOOTSTRAP_TIMEOUT_FLOOR,
     )
+    component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
+    component_budget_total = sum(component_budget_payload.values()) if component_budget_payload else None
     shared_timeout_budget = resolved_wait_timeout
     if shared_timeout_budget is None:
         shared_timeout_budget = _parse_float(os.getenv(MENACE_BOOTSTRAP_WAIT_SECS))
@@ -6129,8 +6137,6 @@ def _prepare_pipeline_for_bootstrap_impl(
     progress_signal = build_progress_signal_hook(
         namespace="prepare_pipeline", run_id=f"prepare-{os.getpid()}"
     )
-    component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
-    component_budget_total = sum(component_budget_payload.values()) if component_budget_payload else None
     if component_budget_payload:
         persist_bootstrap_wait_window(
             shared_timeout_budget,
