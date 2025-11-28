@@ -31,6 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
+    wait_for_bootstrap_quiet_period,
 )
 from bootstrap_readiness import (
     CORE_COMPONENTS,
@@ -353,6 +354,18 @@ def _determine_bootstrap_stagger() -> float:
     if jitter > 0:
         base += random.uniform(0, jitter)
     return max(base, 0.0)
+
+
+def _apply_bootstrap_guard(logger: logging.Logger) -> tuple[float, float]:
+    """Pause when another bootstrap is active or host load is elevated."""
+
+    guard_delay, budget_scale = wait_for_bootstrap_quiet_period(logger)
+    if budget_scale > 1.0:
+        os.environ["BOOTSTRAP_STEP_TIMEOUT"] = str(
+            float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240) * budget_scale
+        )
+        os.environ["MENACE_BOOTSTRAP_WAIT_SECS"] = os.environ["BOOTSTRAP_STEP_TIMEOUT"]
+    return guard_delay, budget_scale
 
 
 def _acquire_bootstrap_lock(logger: logging.Logger) -> tuple[SandboxLock, Any]:
@@ -2018,6 +2031,22 @@ def main(argv: list[str] | None = None) -> None:
         calibrated_budgets=calibrated_step_budgets,
         max_scale=BUDGET_MAX_SCALE,
     )
+    guard_delay, guard_scale = _apply_bootstrap_guard(logger)
+    if guard_scale > 1.0:
+        calibrated_step_budgets = {
+            step: value * guard_scale for step, value in calibrated_step_budgets.items()
+        }
+        calibrated_bootstrap_timeout *= guard_scale
+    if guard_delay > 0:
+        logger.info(
+            "bootstrap guard delay applied",
+            extra=log_record(
+                event="bootstrap-guard-applied",
+                delay=round(guard_delay, 2),
+                adjusted_step_timeout=os.getenv("BOOTSTRAP_STEP_TIMEOUT"),
+                budget_scale=guard_scale,
+            ),
+        )
     logger.info(
         "calibrated bootstrap budgets applied",
         extra=log_record(

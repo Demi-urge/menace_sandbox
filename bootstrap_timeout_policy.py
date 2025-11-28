@@ -10,7 +10,9 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterator, Mapping, MutableMapping
+from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any
+
+_SHARED_EVENT_BUS = None
 
 LOGGER = logging.getLogger(__name__)
 _ADAPTIVE_TIMEOUT_CONTEXT: dict[str, object] = {}
@@ -49,6 +51,16 @@ _COMPONENT_ENV_MAPPING = {
 _OVERRUN_TOLERANCE = 1.05
 _OVERRUN_STREAK_THRESHOLD = 2
 _DECAY_RATIO = 0.9
+_DEFAULT_HEARTBEAT_MAX_AGE = 120.0
+_DEFAULT_LOAD_THRESHOLD = 1.35
+_DEFAULT_GUARD_MAX_DELAY = 90.0
+_DEFAULT_GUARD_INTERVAL = 5.0
+_BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
+_BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"
+_BOOTSTRAP_LOAD_THRESHOLD_ENV = "MENACE_BOOTSTRAP_LOAD_THRESHOLD"
+_BOOTSTRAP_HEARTBEAT_PATH = Path(
+    os.getenv(_BOOTSTRAP_HEARTBEAT_ENV, "/tmp/menace_bootstrap_watchdog.json")
+)
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -64,6 +76,157 @@ def _parse_float(value: str | None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _host_load_average() -> float | None:
+    """Return the normalized 1-minute load average when available."""
+
+    try:
+        load = os.getloadavg()[0]
+    except (AttributeError, OSError):
+        return None
+    cpus = os.cpu_count() or 1
+    return load / max(float(cpus), 1.0)
+
+
+def _heartbeat_path() -> Path:
+    override = os.getenv(_BOOTSTRAP_HEARTBEAT_ENV)
+    if override:
+        return Path(override)
+    return _BOOTSTRAP_HEARTBEAT_PATH
+
+
+def emit_bootstrap_heartbeat(payload: Mapping[str, Any]) -> None:
+    """Persist and broadcast a bootstrap watchdog heartbeat."""
+
+    timestamp = time.time()
+    enriched = dict(payload)
+    enriched.setdefault("ts", timestamp)
+    enriched.setdefault("pid", os.getpid())
+    enriched.setdefault("host", socket.gethostname())
+    enriched.setdefault("host_load", _host_load_average())
+
+    try:
+        path = _heartbeat_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(enriched, indent=2, sort_keys=True))
+    except Exception:
+        LOGGER.debug("failed to persist bootstrap heartbeat", exc_info=True)
+
+    global _SHARED_EVENT_BUS
+    if _SHARED_EVENT_BUS is None:
+        try:  # pragma: no cover - optional runtime import
+            from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
+        except Exception:
+            _SHARED_EVENT_BUS = None
+    if _SHARED_EVENT_BUS is not None:
+        try:
+            _SHARED_EVENT_BUS.publish("bootstrap.watchdog", dict(enriched))
+        except Exception:
+            LOGGER.debug("failed to broadcast bootstrap heartbeat", exc_info=True)
+
+
+def read_bootstrap_heartbeat(max_age: float | None = None) -> Mapping[str, Any] | None:
+    """Return the most recent heartbeat when it is fresh."""
+
+    max_age = max_age if max_age is not None else _parse_float(
+        os.getenv(_BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV)
+    )
+    if not max_age:
+        max_age = _DEFAULT_HEARTBEAT_MAX_AGE
+    try:
+        payload = json.loads(_heartbeat_path().read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return None
+
+    ts = payload.get("ts")
+    if not isinstance(ts, (float, int)):
+        return None
+    if time.time() - float(ts) > max_age:
+        return None
+    return payload
+
+
+def wait_for_bootstrap_quiet_period(
+    logger: logging.Logger,
+    *,
+    max_delay: float | None = None,
+    load_threshold: float | None = None,
+    poll_interval: float = _DEFAULT_GUARD_INTERVAL,
+    ignore_pid: int | None = None,
+) -> tuple[float, float]:
+    """Delay heavy bootstrap stages when peers are active or host load is high.
+
+    Returns a tuple of ``(sleep_seconds, budget_scale)`` where ``budget_scale``
+    can be applied to stage budgets to proactively extend deadlines when the
+    guard was forced to wait.
+    """
+
+    target_delay = max_delay if max_delay is not None else _parse_float(
+        os.getenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY")
+    )
+    if not target_delay:
+        target_delay = _DEFAULT_GUARD_MAX_DELAY
+    threshold = load_threshold if load_threshold is not None else _parse_float(
+        os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)
+    )
+    if threshold is None:
+        threshold = _DEFAULT_LOAD_THRESHOLD
+    ignore_pid = os.getpid() if ignore_pid is None else ignore_pid
+    deadline = time.monotonic() + target_delay
+    slept = 0.0
+    budget_scale = 1.0
+
+    while time.monotonic() < deadline:
+        heartbeat = read_bootstrap_heartbeat()
+        normalized_load = _host_load_average()
+        peer_active = False
+        if heartbeat:
+            peer_active = int(heartbeat.get("pid", -1)) != int(ignore_pid)
+            normalized_load = heartbeat.get("host_load", normalized_load)
+        overloaded = normalized_load is not None and normalized_load > threshold
+
+        if not peer_active and not overloaded:
+            break
+
+        remaining_window = max(deadline - time.monotonic(), 0.0)
+        sleep_for = min(poll_interval, remaining_window)
+        slept += sleep_for
+        if normalized_load and threshold:
+            budget_scale = max(budget_scale, min(normalized_load / threshold, 2.0))
+
+        logger.info(
+            "delaying bootstrap to avoid contention",
+            extra={
+                "event": "bootstrap-guard-delay",
+                "sleep_for": round(sleep_for, 2),
+                "peer_active": peer_active,
+                "normalized_load": normalized_load,
+                "threshold": threshold,
+                "budget_scale": round(budget_scale, 3),
+            },
+        )
+        time.sleep(sleep_for)
+
+    return slept, budget_scale
+
+
+def build_progress_signal_hook(
+    *, namespace: str, run_id: str | None = None
+) -> Callable[[Mapping[str, object]], None]:
+    """Return a hook that broadcasts SharedTimeoutCoordinator progress."""
+
+    def _signal(record: Mapping[str, object]) -> None:
+        enriched: dict[str, Any] = {
+            "namespace": namespace,
+            "run_id": run_id or f"{namespace}-{os.getpid()}",
+            **record,
+        }
+        emit_bootstrap_heartbeat(enriched)
+
+    return _signal
 
 
 def _load_timeout_state() -> dict:
@@ -743,6 +906,7 @@ class SharedTimeoutCoordinator:
         namespace: str = "bootstrap",
         component_floors: Mapping[str, float] | None = None,
         component_budgets: Mapping[str, float] | None = None,
+        signal_hook: Callable[[Mapping[str, object]], None] | None = None,
     ) -> None:
         self.total_budget = total_budget
         self.remaining_budget = total_budget
@@ -754,6 +918,7 @@ class SharedTimeoutCoordinator:
         self.component_budgets = dict(component_budgets or {})
         self.remaining_components = dict(self.component_budgets)
         self._component_windows: dict[str, dict[str, float | None]] = {}
+        self._signal_hook = signal_hook
 
     def _reserve(
         self,
@@ -889,6 +1054,8 @@ class SharedTimeoutCoordinator:
             "elapsed": elapsed,
             "remaining_budget": remaining,
             "namespace": self.namespace,
+            "host_load": _host_load_average(),
+            "ts": time.time(),
         }
         if metadata:
             record.update({f"meta.{k}": v for k, v in metadata.items()})
@@ -898,6 +1065,11 @@ class SharedTimeoutCoordinator:
             "shared timeout budget progress",
             extra={"shared_timeout": record},
         )
+        if self._signal_hook:
+            try:
+                self._signal_hook(dict(record))
+            except Exception:
+                self.logger.debug("progress signal hook failed", exc_info=True)
 
     def snapshot(self) -> Mapping[str, object]:
         """Return a shallow snapshot of coordinator state."""
