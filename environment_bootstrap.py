@@ -15,7 +15,7 @@ import subprocess
 import shutil
 import importlib.util
 from pathlib import Path
-from typing import Callable, Iterable, TYPE_CHECKING
+from typing import Callable, Iterable, Mapping, TYPE_CHECKING
 import threading
 import json
 import sys
@@ -624,6 +624,12 @@ class EnvironmentBootstrapper:
         )
         floors = bootstrap_timeout_policy.load_escalated_timeout_floors()
         base_wait_floor = float(floors.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0) or 0.0)
+        persisted_wait = bootstrap_timeout_policy.load_persisted_bootstrap_wait()
+        if persisted_wait is not None:
+            try:
+                base_wait_floor = max(base_wait_floor, float(persisted_wait))
+            except (TypeError, ValueError):
+                pass
         phase_floors = {
             phase: max(base_wait_floor, 0.0) * guard_scale for phase in self.PHASES
         }
@@ -669,6 +675,73 @@ class EnvironmentBootstrapper:
             telemetry=telemetry,
             host_telemetry=host_telemetry,
         )
+        component_budget_total = float(sum(component_timeouts.values())) if component_timeouts else 0.0
+        persisted_window, persisted_window_inputs = (
+            bootstrap_timeout_policy.load_last_global_bootstrap_window()
+        )
+
+        def _component_remaining_budget() -> float:
+            windows = telemetry.get("component_windows", {}) if isinstance(telemetry, dict) else {}
+            remaining = 0.0
+            for meta in windows.values() if isinstance(windows, dict) else ():
+                try:
+                    remaining += max(float(meta.get("remaining", 0.0) or 0.0), 0.0)
+                except Exception:
+                    continue
+            return remaining
+
+        component_windows = (
+            telemetry.get("component_windows", {}) if isinstance(telemetry, dict) else {}
+        )
+        component_remaining = _component_remaining_budget()
+        progress_signal = (
+            telemetry.get("progress_signal", {}) if isinstance(telemetry, dict) else {}
+        )
+        progressing_components = {
+            key
+            for key, meta in (component_windows or {}).items()
+            if isinstance(meta, dict)
+            and (meta.get("remaining", 0.0) or 0.0) > 0
+            and (progress_signal.get("progressing") or progress_signal.get("recent_heartbeats"))
+        }
+        heartbeat_hint = dict(host_telemetry or {})
+        if component_remaining:
+            heartbeat_hint["remaining_budget"] = component_remaining
+        if persisted_window is not None and heartbeat_hint.get("global_window") is None:
+            heartbeat_hint["global_window"] = persisted_window
+        if progress_signal:
+            heartbeat_hint.setdefault("progressing", bool(progress_signal.get("progressing")))
+
+        rolling_base = max(
+            [
+                component_budget_total,
+                max(base_phase_budgets.values() or [0.0]),
+                base_wait_floor,
+                persisted_window or 0.0,
+            ]
+        )
+        rolling_window, rolling_meta = bootstrap_timeout_policy._derive_rolling_global_window(  # type: ignore[attr-defined]
+            base_window=rolling_base,
+            component_budget_total=component_budget_total,
+            host_telemetry=heartbeat_hint,
+        )
+        if rolling_window is not None:
+            for phase in self.PHASES:
+                floor = phase_floors.get(phase, base_wait_floor)
+                phase_floors[phase] = max(floor, rolling_window)
+                current = budgets.get(phase)
+                if current is None or current < rolling_window:
+                    budgets[phase] = rolling_window
+        rolling_meta = {
+            **(rolling_meta or {}),
+            "component_budget_total": component_budget_total,
+            "component_remaining": component_remaining,
+            "progress_signal": progress_signal,
+            "progressing_components": sorted(progressing_components),
+            "persisted_window": persisted_window,
+            "persisted_window_inputs": persisted_window_inputs,
+            "heartbeat_hint": heartbeat_hint,
+        }
 
         def parse_env(name: str) -> float | None:
             raw = os.getenv(name)
@@ -744,6 +817,40 @@ class EnvironmentBootstrapper:
             coordinator.component_budgets.update(component_timeouts)
             shared_snapshot = coordinator.snapshot()
 
+        def _max_budget_value(values: Mapping[str, float | None]) -> float | None:
+            finite = [v for v in values.values() if isinstance(v, (int, float))]
+            return max(finite) if finite else None
+
+        adaptive_window = rolling_window
+        if adaptive_window is None:
+            adaptive_window = _max_budget_value(budgets)
+
+        bootstrap_timeout_policy.persist_bootstrap_wait_window(
+            adaptive_window,
+            vector_heavy=False,
+            source="environment_bootstrap",
+            metadata={
+                "component_budget_total": component_budget_total,
+                "component_budgets": component_timeouts,
+                "phase_budgets": budgets,
+                "rolling_meta": rolling_meta,
+                "shared_timeout": shared_snapshot,
+            },
+        )
+
+        self.logger.info(
+            "adaptive bootstrap window resolved",
+            extra=log_record(
+                event="bootstrap-window",
+                global_window=adaptive_window,
+                component_budget_total=component_budget_total,
+                component_budgets=component_timeouts,
+                progress_signal=progress_signal,
+                component_windows=component_windows,
+                rolling_meta=rolling_meta,
+            ),
+        )
+
         guard_context = bootstrap_timeout_policy.get_bootstrap_guard_context()
 
         self._budget_snapshot = {
@@ -753,6 +860,8 @@ class EnvironmentBootstrapper:
             "shared_timeout": shared_snapshot,
             "component_timeouts": component_timeouts,
             "cluster_load": host_telemetry,
+            "global_window": adaptive_window,
+            "global_window_meta": rolling_meta,
             "bootstrap_guard": guard_context
             | {"enabled": guard_enabled, "delay": guard_delay, "scale": guard_scale},
             "phase_stats": phase_stats,
