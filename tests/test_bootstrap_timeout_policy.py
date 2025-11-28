@@ -114,13 +114,16 @@ def test_vector_heavy_budgets_extend_bootstrap_wait(monkeypatch, tmp_path):
 
     aggregated_timeout = cbi._BOOTSTRAP_WAIT_TIMEOUT
     assert aggregated_timeout is not None
-    assert aggregated_timeout >= sum(budgets.values())
+    assert aggregated_timeout >= sum(
+        value for key, value in budgets.items() if key not in btp.DEFERRED_COMPONENTS
+    )
 
     state = json.loads(state_path.read_text())
     host_state = state.get(btp._state_host_key(), {})  # type: ignore[attr-defined]
     window_state = host_state.get("bootstrap_wait_windows", {}).get("general", {})
 
-    assert window_state.get("component_total") >= sum(budgets.values())
+    core_total = sum(value for key, value in budgets.items() if key not in btp.DEFERRED_COMPONENTS)
+    assert window_state.get("component_total") >= core_total
 
     monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "60")
     monkeypatch.setattr(cbi, "compute_prepare_pipeline_component_budgets", lambda **_: {})
@@ -183,6 +186,66 @@ def test_component_overruns_cover_all_taxonomy():
         assert overruns[gate]["expected_floor"] >= effective
 
 
+def test_guard_scale_only_inflates_overrun_components(monkeypatch):
+    floors = {
+        "vectorizers": 120.0,
+        "retrievers": 90.0,
+    }
+
+    monkeypatch.setattr(btp, "_state_host_key", lambda: "test-host")
+    monkeypatch.setattr(btp, "_save_timeout_state", lambda state: None)
+    monkeypatch.setattr(btp, "_load_timeout_state", lambda: {})
+    monkeypatch.setattr(btp, "_recent_peer_activity", lambda max_age=900.0: [])
+    monkeypatch.setattr(btp, "get_bootstrap_guard_context", lambda: {"budget_scale": 2.0})
+
+    telemetry = {
+        "shared_timeout": {
+            "timeline": [
+                {"label": "vectorizer warmup", "elapsed": 180.0, "effective": 90.0},
+            ]
+        }
+    }
+
+    budgets = btp.compute_prepare_pipeline_component_budgets(
+        component_floors=floors,
+        telemetry=telemetry,
+        load_average=0.0,
+        host_telemetry={},
+    )
+
+    assert budgets["vectorizers"] >= floors["vectorizers"] * 2
+    assert floors["retrievers"] <= budgets["retrievers"] < floors["retrievers"] * 1.5
+
+
+def test_bootstrap_wait_persists_component_pools(monkeypatch, tmp_path):
+    state_path = tmp_path / "timeout_state.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(state_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED", "1")
+    monkeypatch.setattr(os, "getloadavg", lambda: (0.0, 0.0, 0.0))
+
+    importlib.reload(btp)
+    importlib.reload(cbi)
+
+    pools = {
+        "vectorizers": 400.0,
+        "retrievers": 160.0,
+        "background_loops": 600.0,
+    }
+
+    monkeypatch.setattr(cbi, "compute_prepare_pipeline_component_budgets", lambda: {})
+    monkeypatch.setattr(cbi, "load_component_budget_pools", lambda: dict(pools))
+
+    cbi._refresh_bootstrap_wait_timeouts()
+
+    state = json.loads(state_path.read_text())
+    host_state = state.get(btp._state_host_key(), {})  # type: ignore[attr-defined]
+    window_state = host_state.get("bootstrap_wait_windows", {}).get("general", {})
+    deadlines = window_state.get("meta.per_component_deadlines") or {}
+
+    assert cbi._BOOTSTRAP_WAIT_TIMEOUT is not None
+    assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= pools["vectorizers"]
+    assert deadlines.get("background_loops") is None
+    assert deadlines.get("vectorizers") >= pools["vectorizers"]
 def test_timeout_hints_include_budget_clauses():
     components = {
         "vectorizers": {"budget": 60.0, "remaining": -5.0},

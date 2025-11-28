@@ -50,12 +50,15 @@ from bootstrap_timeout_policy import (
     load_escalated_timeout_floors,
     load_persisted_bootstrap_wait,
     load_last_component_budgets,
+    load_component_budget_pools,
     build_progress_signal_hook,
     persist_bootstrap_wait_window,
     read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
     wait_for_bootstrap_quiet_period,
     emit_bootstrap_heartbeat,
+    _BACKGROUND_UNLIMITED_ENV,
+    _truthy_env,
 )
 
 try:  # pragma: no cover - prefer package-relative import
@@ -988,6 +991,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
     deferred_component_budget_total: float | None = None
     component_budget_source = "computed"
     component_budgets: dict[str, float] = {}
+    budget_pools: dict[str, float] = load_component_budget_pools()
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     adaptive_context = get_adaptive_timeout_context()
     adaptive_overruns = 0
@@ -999,24 +1003,28 @@ def _get_bootstrap_wait_timeout() -> float | None:
     except Exception:
         component_budget_source = "persisted"
         component_budgets = {}
-    if not component_budgets:
+    if component_budgets:
+        budget_pools.update(component_budgets)
+        component_budget_source = "computed"
+
+    if not budget_pools:
         persisted_budgets = load_last_component_budgets()
         component_budget_total = persisted_budgets.pop("__total__", None)
         deferred_component_budget_total = persisted_budgets.pop("__deferred_total__", None)
-        component_budgets.update(persisted_budgets)
+        budget_pools.update(persisted_budgets)
         component_budget_source = "persisted" if persisted_budgets else component_budget_source
 
-    if component_budget_total is None and component_budgets:
+    if component_budget_total is None and budget_pools:
         component_budget_total = sum(
-            value for key, value in component_budgets.items() if key not in DEFERRED_COMPONENTS
+            value for key, value in budget_pools.items() if key not in DEFERRED_COMPONENTS
         )
         deferred_component_budget_total = sum(
-            value for key, value in component_budgets.items() if key in DEFERRED_COMPONENTS
+            value for key, value in budget_pools.items() if key in DEFERRED_COMPONENTS
         )
 
-    if deferred_component_budget_total is None and component_budgets:
+    if deferred_component_budget_total is None and budget_pools:
         deferred_component_budget_total = sum(
-            value for key, value in component_budgets.items() if key in DEFERRED_COMPONENTS
+            value for key, value in budget_pools.items() if key in DEFERRED_COMPONENTS
         )
 
     if isinstance(adaptive_context, Mapping):
@@ -1036,6 +1044,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
             host_load = None
 
     disable_timeout = False
+    background_unlimited = _truthy_env(os.getenv(_BACKGROUND_UNLIMITED_ENV))
     if not raw_timeout:
         requested_timeout = None
     elif raw_timeout.lower() == "none":
@@ -1052,7 +1061,8 @@ def _get_bootstrap_wait_timeout() -> float | None:
             )
             requested_timeout = None
 
-    base_timeout = default_timeout
+    base_timeout = max(default_timeout, component_budget_total or 0.0)
+    requested_cap = None
     if requested_timeout is not None:
         clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, requested_timeout)
         if clamped_timeout > requested_timeout:
@@ -1066,7 +1076,8 @@ def _get_bootstrap_wait_timeout() -> float | None:
                     "effective_timeout": clamped_timeout,
                 },
             )
-        base_timeout = max(default_timeout, clamped_timeout)
+        base_timeout = max(base_timeout, clamped_timeout)
+        requested_cap = clamped_timeout
 
     contention_scale = 1.0
     if host_load and host_load > 1.0:
@@ -1077,18 +1088,28 @@ def _get_bootstrap_wait_timeout() -> float | None:
             1.0 + min(adaptive_overruns * 0.1, _BOOTSTRAP_WAIT_GROWTH_CAP),
         )
 
-    adaptive_timeout = base_timeout * contention_scale
-    adaptive_cap = base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
-    adaptive_timeout = min(adaptive_timeout, adaptive_cap)
+    adaptive_timeout = min(
+        base_timeout * contention_scale,
+        base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
+    )
 
-    composed_timeout = None
-    core_budget_total = component_budget_total or 0.0
-    background_budget = component_budgets.get("background_loops", 0.0)
-    background_headroom = background_budget * _READINESS_GATE_WEIGHTS.get("background_loops", 0.35)
-    if component_budget_total or background_budget:
-        composed_timeout = (core_budget_total + background_headroom) * contention_scale
-        composed_cap = max(base_timeout, core_budget_total or base_timeout) * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
-        composed_timeout = min(composed_timeout, composed_cap)
+    per_component_deadlines: dict[str, float | None] = {}
+    for component, pool in budget_pools.items():
+        scaled_pool = pool * contention_scale if pool else 0.0
+        deadline = max(pool, scaled_pool)
+        if component in DEFERRED_COMPONENTS and background_unlimited:
+            deadline = None
+        per_component_deadlines[component] = deadline
+
+    max_component_deadline = max(
+        (value for value in per_component_deadlines.values() if value is not None),
+        default=0.0,
+    )
+    background_budget = budget_pools.get("background_loops", 0.0)
+    composed_timeout = max(component_budget_total or 0.0, max_component_deadline)
+    if composed_timeout:
+        composed_cap = max(base_timeout, component_budget_total or base_timeout) * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
+        composed_timeout = min(composed_timeout * contention_scale, composed_cap)
     else:
         composed_cap = None
 
@@ -1108,13 +1129,17 @@ def _get_bootstrap_wait_timeout() -> float | None:
             "host_load": host_load,
             "adaptive_overruns": adaptive_overruns,
             "contention_scale": contention_scale,
-            "adaptive_cap": adaptive_cap,
+            "adaptive_cap": base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
             "persisted_timeout": persisted_timeout,
             "component_budget_total": component_budget_total,
-            "component_budgets": component_budgets,
+            "component_budgets": budget_pools,
             "component_budget_source": component_budget_source,
             "composed_timeout": composed_timeout,
             "composed_cap": composed_cap,
+            "per_component_deadlines": per_component_deadlines,
+            "background_unlimited": background_unlimited,
+            "requested_cap": requested_cap,
+            "background_budget": background_budget,
         },
     )
     logger.info(
@@ -1129,12 +1154,14 @@ def _get_bootstrap_wait_timeout() -> float | None:
             "host_load": host_load,
             "adaptive_overruns": adaptive_overruns,
             "contention_scale": round(contention_scale, 3),
-            "adaptive_cap": adaptive_cap,
+            "adaptive_cap": base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
             "component_budget_total": component_budget_total,
-            "component_budgets": component_budgets,
+            "component_budgets": budget_pools,
             "component_budget_source": component_budget_source,
             "composed_timeout": composed_timeout,
             "composed_cap": composed_cap,
+            "per_component_deadlines": per_component_deadlines,
+            "background_unlimited": background_unlimited,
         },
     )
 

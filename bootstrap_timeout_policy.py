@@ -72,6 +72,7 @@ _BOOTSTRAP_LOAD_THRESHOLD_ENV = "MENACE_BOOTSTRAP_LOAD_THRESHOLD"
 _BOOTSTRAP_HEARTBEAT_PATH = Path(
     os.getenv(_BOOTSTRAP_HEARTBEAT_ENV, "/tmp/menace_bootstrap_watchdog.json")
 )
+_BACKGROUND_UNLIMITED_ENV = "MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED"
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -612,6 +613,52 @@ def _derive_component_floor_scale(
     return scale, context
 
 
+def _derive_component_pool_scales(
+    *,
+    guard_context: Mapping[str, object] | None = None,
+    telemetry_overruns: Mapping[str, Mapping[str, float | int]] | None = None,
+    host_overruns: Mapping[str, Mapping[str, float | int]] | None = None,
+    components: Iterable[str] | None = None,
+) -> dict[str, float]:
+    """Return per-component pool multipliers based on overruns and guard waits."""
+
+    guard_scale = 1.0
+    if isinstance(guard_context, Mapping):
+        try:
+            guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            guard_scale = 1.0
+
+    components = set(components or ())
+    overruns: dict[str, Mapping[str, float | int]] = {}
+    for source in (telemetry_overruns, host_overruns):
+        if not isinstance(source, Mapping):
+            continue
+        for component, meta in source.items():
+            overruns[component] = meta
+            components.add(component)
+
+    if not components:
+        return {}
+
+    pools: dict[str, float] = {component: 1.0 for component in components}
+    for component in components:
+        meta = overruns.get(component, {}) if isinstance(overruns, Mapping) else {}
+        try:
+            streak = max(int(meta.get("overruns", 0) or 0), 0)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            streak = 0
+
+        overrun_scale = 1.0 + min(streak, 6) * 0.12
+        guard_allocation = 1.0
+        if guard_scale > 1.0:
+            guard_allocation = guard_scale if streak else 1.0 + (guard_scale - 1.0) * 0.2
+
+        pools[component] = max(overrun_scale, guard_allocation)
+
+    return pools
+
+
 def _cluster_budget_scale(
     *,
     host_state: Mapping[str, object] | None = None,
@@ -970,6 +1017,26 @@ def load_last_component_budgets() -> dict[str, float]:
     return budgets
 
 
+def load_component_budget_pools() -> dict[str, float]:
+    """Return persisted per-component budget pools when available."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    pools = host_state.get("component_budget_pools", {}) if isinstance(host_state, Mapping) else {}
+    if not pools and isinstance(host_state, Mapping):
+        pools = host_state.get("last_component_budgets", {})
+
+    resolved: dict[str, float] = {}
+    if isinstance(pools, Mapping):
+        for key, value in pools.items():
+            try:
+                resolved[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    return resolved
+
+
 def load_last_global_bootstrap_window() -> tuple[float | None, Mapping[str, object]]:
     """Return the last persisted global bootstrap window and inputs."""
 
@@ -1050,6 +1117,10 @@ def compute_prepare_pipeline_component_budgets(
     telemetry = telemetry or {}
     complexity = pipeline_complexity or {}
     guard_context = get_bootstrap_guard_context()
+    try:
+        guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+    except Exception:
+        guard_scale = 1.0
     host_state = _load_timeout_state()
     host_key = _state_host_key()
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
@@ -1057,9 +1128,6 @@ def compute_prepare_pipeline_component_budgets(
     deferred_floors = dict(deferred_component_floors or load_deferred_component_timeout_floors())
     deferred_components = set(deferred_floors)
     floors.update(deferred_floors)
-    guard_scale = float(guard_context.get("budget_scale") or 1.0)
-    if guard_scale != 1.0:
-        floors = {key: value * guard_scale for key, value in floors.items()}
     host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
     if isinstance(host_state, Mapping):
         host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
@@ -1173,6 +1241,15 @@ def compute_prepare_pipeline_component_budgets(
     if isinstance(host_state, dict):
         host_overruns = host_state_details.get("component_overruns", {}) or {}
 
+    telemetry_overruns = _summarize_component_overruns(telemetry or {})
+
+    component_pool_scales = _derive_component_pool_scales(
+        guard_context=guard_context,
+        telemetry_overruns=telemetry_overruns,
+        host_overruns=host_overruns,
+        components=floors.keys(),
+    )
+
     if isinstance(host_overruns, Mapping):
         for component, meta in host_overruns.items():
             streak = int(meta.get("overruns", 0) or 0)
@@ -1186,7 +1263,11 @@ def compute_prepare_pipeline_component_budgets(
                 )
 
     budgets = {
-        key: value * scale * backlog_scale * component_complexity.get(key, 1.0)
+        key: value
+        * scale
+        * backlog_scale
+        * component_complexity.get(key, 1.0)
+        * component_pool_scales.get(key, 1.0)
         for key, value in floors.items()
     }
     component_budget_total = sum(
@@ -1239,7 +1320,6 @@ def compute_prepare_pipeline_component_budgets(
                     )
             budgets[component] = max(c for c in candidates if c is not None)
 
-    telemetry_overruns = _summarize_component_overruns(telemetry or {})
     _apply_overruns(telemetry_overruns)
     if isinstance(host_overruns, Mapping):
         _apply_overruns(host_overruns)  # type: ignore[arg-type]
@@ -1272,8 +1352,10 @@ def compute_prepare_pipeline_component_budgets(
         "cluster_scale": cluster_context | {"scale": cluster_scale},
         "load_average": load_average,
         "component_complexity": component_complexity,
+        "component_pool_scales": component_pool_scales,
         "component_work_units": component_work_units,
         "telemetry_overruns": telemetry_overruns,
+        "component_budget_pools": {key: budgets.get(key, floors.get(key, 0.0)) for key in floors},
         "floors": floors,
         "adaptive_floors": adaptive_floors,
         "component_budget_total": component_budget_total,
@@ -1332,6 +1414,8 @@ def compute_prepare_pipeline_component_budgets(
             },
             "last_global_window_extension": global_window_extension,
             "component_work_units": component_work_units,
+            "component_budget_pools": adaptive_inputs.get("component_budget_pools", {}),
+            "component_pool_scales": component_pool_scales,
             "updated_at": time.time(),
         }
     )
@@ -1356,6 +1440,8 @@ def compute_prepare_pipeline_component_budgets(
         extra={
             "event": "adaptive-component-budgets",
             "budgets": budgets,
+            "component_budget_pools": adaptive_inputs.get("component_budget_pools"),
+            "component_pool_scales": component_pool_scales,
             "component_complexity": component_complexity,
             "load_scale": scale,
             "host_load": load_average,
