@@ -35,6 +35,7 @@ from bootstrap_timeout_policy import (
     load_escalated_timeout_floors,
     broadcast_timeout_floors,
     get_bootstrap_guard_context,
+    read_bootstrap_heartbeat,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
 )
@@ -918,6 +919,62 @@ def _detect_heavy_bootstrap_hints(args: argparse.Namespace | None = None) -> tup
     return bool(hints), hints
 
 
+def _derive_pipeline_complexity(settings: SandboxSettings) -> dict[str, object]:
+    """Best-effort pipeline complexity signals for adaptive budgets."""
+
+    complexity: dict[str, object] = {}
+
+    def _maybe_assign(key: str, value: object) -> None:
+        if value:
+            complexity[key] = value
+
+    _maybe_assign(
+        "vectorizers",
+        getattr(settings, "vectorizers", None)
+        or getattr(settings, "vectorizer_configs", None)
+        or getattr(settings, "vectorizer_endpoints", None),
+    )
+    _maybe_assign(
+        "retrievers",
+        getattr(settings, "retrievers", None)
+        or getattr(settings, "retriever_configs", None)
+        or getattr(settings, "retriever_endpoints", None),
+    )
+
+    index_candidates = getattr(settings, "db_indexes", None) or getattr(settings, "index_paths", None)
+    if index_candidates:
+        _maybe_assign("db_indexes", index_candidates)
+        total_bytes = 0
+        for candidate in (
+            index_candidates
+            if isinstance(index_candidates, (list, tuple, set, frozenset))
+            else [index_candidates]
+        ):
+            try:
+                total_bytes += Path(candidate).stat().st_size
+            except Exception:
+                continue
+        if total_bytes:
+            complexity["db_index_bytes"] = total_bytes
+
+    _maybe_assign(
+        "background_loops",
+        getattr(settings, "background_loops", None)
+        or getattr(settings, "monitoring_loops", None)
+        or getattr(settings, "background_tasks", None),
+    )
+
+    pipeline_config = getattr(settings, "pipeline_config", None)
+    if isinstance(pipeline_config, Mapping):
+        complexity["pipeline_config_sections"] = list(pipeline_config)
+
+    orchestrator_components = getattr(settings, "orchestrator_components", None)
+    if orchestrator_components:
+        complexity["orchestrator_components"] = orchestrator_components
+
+    return complexity
+
+
 def _resolve_soft_deadline_flag(args: argparse.Namespace | None = None) -> bool:
     env_soft = os.getenv("BOOTSTRAP_SOFT_DEADLINE", "").lower()
     soft_env = env_soft in {"1", "true", "yes"}
@@ -956,13 +1013,19 @@ def _resolve_bootstrap_deadline_policy(
     heavy_detected: bool,
     soft_deadline: bool,
     hints: Mapping[str, Any],
+    pipeline_complexity: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+    load_average: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Determine the effective bootstrap deadline policy."""
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
     component_floors = load_component_timeout_floors()
     component_budgets = compute_prepare_pipeline_component_budgets(
-        component_floors=component_floors
+        component_floors=component_floors,
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=host_telemetry,
+        load_average=load_average,
     )
     stage_deadlines = build_stage_deadlines(
         baseline_timeout,
@@ -999,6 +1062,9 @@ def _resolve_bootstrap_deadline_policy(
         "deadline_buffer": aggregate_buffer,
         "max_stage_deadline": max_stage_deadline,
         "adjusted_timeout": aggregate_deadline,
+        "pipeline_complexity": pipeline_complexity,
+        "host_telemetry": host_telemetry,
+        "load_average": load_average,
     }
 
     if soft_deadline and heavy_detected:
@@ -2162,11 +2228,20 @@ def main(argv: list[str] | None = None) -> None:
 
     heavy_bootstrap_detected, deadline_hints = _detect_heavy_bootstrap_hints(args)
     soft_bootstrap_deadline = _resolve_soft_deadline_flag(args)
+    pipeline_complexity = _derive_pipeline_complexity(settings)
+    host_telemetry = read_bootstrap_heartbeat() or {}
+    try:
+        load_average = os.getloadavg()[0]
+    except (AttributeError, OSError):
+        load_average = None
     stage_deadline_policy, bootstrap_deadline_policy = _resolve_bootstrap_deadline_policy(
         baseline_timeout=calibrated_bootstrap_timeout,
         heavy_detected=heavy_bootstrap_detected,
         soft_deadline=soft_bootstrap_deadline,
         hints=deadline_hints,
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=host_telemetry,
+        load_average=load_average,
     )
     effective_bootstrap_timeout = bootstrap_deadline_policy.get("adjusted_timeout")
     logger.info(
