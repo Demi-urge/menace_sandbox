@@ -1091,6 +1091,8 @@ def _normalize_watchdog_timeout(
 ) -> tuple[float | None, float | None, Mapping[str, Any]]:
     """Derive adaptive watchdog budgets from host signals and stage history."""
 
+    adaptive_context = get_adaptive_timeout_context()
+
     history = [entry.get("elapsed", 0.0) for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", [])]
     history_mean = sum(history[-5:]) / len(history[-5:]) if history[-5:] else None
 
@@ -1111,12 +1113,19 @@ def _normalize_watchdog_timeout(
         float(len(ready_gates)) / float(len(readiness)) if readiness else 0.0
     )
 
+    guard_scale = float(adaptive_context.get("guard_scale") or 1.0)
+    cluster_scale = float(
+        (adaptive_context.get("cluster_scale") or {}).get("scale", 1.0)  # type: ignore[arg-type]
+    )
+    peer_scale = float(adaptive_context.get("overrun_scale") or 1.0)
     try:
         load1, _, _ = os.getloadavg()
         cpus = os.cpu_count() or 1
-        host_scale = min(1.6, max(0.7, 1.0 + ((load1 / cpus) - 1.0) * 0.4))
+        host_scale = max(1.0, 1.0 + ((load1 / cpus) - 1.0) * 0.4)
     except OSError:
         host_scale = 1.0
+    host_scale = max(host_scale, float(adaptive_context.get("load_scale") or 1.0))
+    host_scale = max(host_scale, guard_scale, cluster_scale, peer_scale)
 
     gate_floor, gate_floor_meta = _compute_dynamic_gate_floor(stage_gates)
     timeout_floor = max(
@@ -1138,7 +1147,18 @@ def _normalize_watchdog_timeout(
         stage_budget = max(stage_budget, configured_budget)
 
     dominant_gate = next(iter(stage_gates), None)
-    remaining_window = max(0.0, deadline - start_time) if deadline is not None else stage_budget
+    adaptive_window = adaptive_context.get("component_budget_total") or adaptive_context.get(
+        "global_window"
+    )
+    try:
+        adaptive_window = float(adaptive_window) if adaptive_window is not None else None
+    except (TypeError, ValueError):
+        adaptive_window = None
+    remaining_window = stage_budget
+    if adaptive_window is not None:
+        remaining_window = max(stage_budget, adaptive_window)
+    elif deadline is not None:
+        remaining_window = max(stage_budget, max(0.0, deadline - start_time))
     stage_budget, rebalance_meta = _rebalance_gate_budgets(
         pending_gates=pending_gates,
         stage_gates=stage_gates,
@@ -1161,15 +1181,20 @@ def _normalize_watchdog_timeout(
         "readiness_ratio": readiness_ratio,
         "pending_gate_weight": pending_weight,
         "adaptive_scale": adaptive_scale,
+        "guard_scale": guard_scale,
+        "cluster_scale": cluster_scale,
+        "peer_scale": peer_scale,
         "dominant_gate": dominant_gate,
         "stage_gates": tuple(stage_gates),
         "rebalance": rebalance_meta,
+        "budget_window": remaining_window,
+        "adaptive_window": adaptive_window,
     }
 
     if deadline is None:
         return None, stage_budget, telemetry
 
-    remaining_window = max(0.0, deadline - start_time)
+    remaining_window = max(remaining_window, 0.0)
     telemetry["remaining_window"] = remaining_window
 
     staged_readiness = (stage_budget > remaining_window and remaining_window > 0) or (
@@ -5209,12 +5234,29 @@ def _prepare_pipeline_for_bootstrap_impl(
         if active_stage_gates:
             stage_gates |= set(active_stage_gates)
         watchdog_telemetry["stage_gates"] = tuple(stage_gates)
+        adaptive_overruns = {}
+        adaptive_component_floors = {}
+        adaptive_context = watchdog_telemetry.get("adaptive_timeout_context") or {}
+        if isinstance(adaptive_context, Mapping):
+            adaptive_overruns = adaptive_context.get("component_overruns") or adaptive_context.get(
+                "telemetry_overruns", {}
+            )
+            if not isinstance(adaptive_overruns, Mapping):
+                adaptive_overruns = {}
+            adaptive_component_floors = adaptive_context.get("floors") or {}
+        watchdog_telemetry["component_overruns"] = adaptive_overruns
+        if adaptive_component_floors:
+            watchdog_telemetry["component_floors"] = adaptive_component_floors
         if shared_timeout_coordinator is not None:
             watchdog_telemetry["shared_timeout"] = shared_timeout_coordinator.snapshot()
             watchdog_telemetry["shared_component_budgets"] = watchdog_telemetry[
                 "shared_timeout"
             ].get("component_remaining")
             watchdog_telemetry["shared_component_budget_payload"] = component_budget_payload
+        if adaptive_overruns:
+            _PREPARE_PIPELINE_WATCHDOG["component_overruns"] = adaptive_overruns
+        if adaptive_component_floors:
+            _PREPARE_PIPELINE_WATCHDOG["component_floors"] = adaptive_component_floors
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
@@ -5236,6 +5278,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "vector_heavy": vector_heavy,
             }
             _PREPARE_PIPELINE_WATCHDOG.setdefault("phase_windows", {})[key] = window
+
+        def _component_overrun_floor(gate: str) -> float | None:
+            meta = adaptive_overruns.get(gate, {}) if isinstance(adaptive_overruns, Mapping) else {}
+            for key in ("suggested_floor", "expected_floor", "floor"):
+                candidate = meta.get(key)
+                try:
+                    return float(candidate) if candidate is not None else None
+                except (TypeError, ValueError):
+                    continue
+            return None
 
         def _select_phase(gates: set[str]) -> str | None:
             for candidate in (
@@ -5261,6 +5313,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 budget = phase_budgets.get(gate)
                 if budget is None:
                     return None
+                overrun_floor = _component_overrun_floor(gate)
+                if overrun_floor is not None:
+                    budget = max(budget or 0.0, overrun_floor)
                 started = time.perf_counter()
                 component_windows[gate] = {
                     "budget": budget,
@@ -5268,8 +5323,17 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "started": started,
                     "last_check": started,
                     "deadline": (started + budget) if budget is not None else None,
+                    "overrun_floor": overrun_floor,
                 }
             window = component_windows[gate]
+            overrun_floor = _component_overrun_floor(gate)
+            if overrun_floor is not None:
+                budget = window.get("budget") or phase_budgets.get(gate)
+                if budget is None or overrun_floor > budget:
+                    window["budget"] = overrun_floor
+                    window["remaining"] = overrun_floor
+                    window["deadline"] = time.perf_counter() + overrun_floor
+                window["overrun_floor"] = overrun_floor
             now_ts = time.perf_counter()
             elapsed_local = now_ts - window.get("last_check", window.get("started", now_ts))
             window["last_check"] = now_ts
@@ -5388,7 +5452,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                         remaining_window=0.0,
                     )
                     remediation_hints = render_prepare_pipeline_timeout_hints(
-                        vector_heavy
+                        vector_heavy, components=exhausted_gates
                     )
                     logger.warning(
                         "prepare_pipeline entering degraded mode; deferred optional gates=%s hints=%s",
@@ -5514,9 +5578,11 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
-            remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+            remediation_hints = render_prepare_pipeline_timeout_hints(
+                vector_heavy, components=exhausted_critical or pending_critical
+            )
             context = {
-                "reason": "deadline",
+                "reason": "component_window",
                 "resolved_timeout": resolved_timeout,
                 "vector_heavy": vector_heavy,
                 "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
@@ -5536,6 +5602,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
                     "shared_timeout"
                 ),
+                "watchdog_component_overruns": adaptive_overruns,
+                "watchdog_component_floors": adaptive_component_floors,
                 "watchdog_progress_signal": progress_signal,
                 "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
                     "component_windows"
@@ -5608,7 +5676,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 ),
                 "watchdog_component_budgets": component_budget_payload,
             }
-            remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+            remediation_hints = render_prepare_pipeline_timeout_hints(
+                vector_heavy, components=readiness_pending or readiness_ready
+            )
             context["remediation_hints"] = remediation_hints
             logger.warning(
                 (
@@ -5853,9 +5923,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         if phase_budgets.get(gate) is None:
             phase_budgets[gate] = budget
     if resolved_deadline is not None and not component_budget_active:
-        shared_timeout_budget = min(
-            shared_timeout_budget or resolved_deadline - start_time,
-            max(resolved_deadline - start_time, 0.0),
+        shared_timeout_budget = max(
+            shared_timeout_budget or 0.0, max(resolved_deadline - start_time, 0.0)
         )
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
     progress_signal = build_progress_signal_hook(

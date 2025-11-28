@@ -10,7 +10,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any
+from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any, Iterable
 
 _SHARED_EVENT_BUS = None
 
@@ -1315,8 +1315,17 @@ def enforce_bootstrap_timeout_policy(
     return results
 
 
-def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> list[str]:
-    """Return standard remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts."""
+def render_prepare_pipeline_timeout_hints(
+    vector_heavy: bool | None = None,
+    *,
+    components: Iterable[str] | None = None,
+) -> list[str]:
+    """Return remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts.
+
+    ``components`` allows callers to highlight the specific gates that overran so
+    the suggested knobs include the relevant environment variables instead of a
+    single global deadline.
+    """
 
     minimums = load_escalated_timeout_floors()
     component_floors = load_component_timeout_floors()
@@ -1344,6 +1353,21 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
         ),
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
+
+    if components:
+        for component in sorted(set(components)):
+            env_var = _COMPONENT_ENV_MAPPING.get(component)
+            if env_var:
+                floor = component_floors.get(component) or _COMPONENT_TIMEOUT_MINIMUMS.get(
+                    component, 0.0
+                )
+                hints.append(
+                    (
+                        f"Repeated {component} overruns detected; increase {env_var}"
+                        f" to at least {int(floor)}s to grant that gate more room without"
+                        " stretching the global deadline."
+                    )
+                )
 
     recent_peers = _recent_peer_activity()
     active_peers = [peer for peer in recent_peers if peer.get("pid") not in (None, os.getpid())]
