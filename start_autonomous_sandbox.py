@@ -587,7 +587,12 @@ def _preflight_bootstrap_conflicts(logger: logging.Logger) -> None:
 
 
 def _record_bootstrap_timeout(
-    *, last_step: str, elapsed: float, attempt: int, step_budget: float
+    *,
+    last_step: str,
+    elapsed: float,
+    attempt: int,
+    step_budget: float,
+    stage_timeout: Mapping[str, Any] | None = None,
 ) -> float:
     backoff = min(BOOTSTRAP_BACKOFF_BASE * (2 ** max(attempt - 1, 0)), BOOTSTRAP_BACKOFF_MAX)
     payload = {
@@ -599,6 +604,8 @@ def _record_bootstrap_timeout(
         "next_allowed": time.time() + backoff,
         "step_budget": step_budget,
     }
+    if stage_timeout:
+        payload["stage_timeout"] = dict(stage_timeout)
     BOOTSTRAP_SENTINEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         BOOTSTRAP_SENTINEL_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -626,10 +633,19 @@ def _monitor_bootstrap_thread(
     completed_steps: set[str] | None = None,
     vector_heavy_steps: set[str] | None = None,
     stage_policy: Mapping[str, Any] | None = None,
-) -> tuple[bool, str, float, float, set[str], set[str], dict[str, float]]:
+) -> tuple[
+    bool,
+    str,
+    float,
+    float,
+    set[str],
+    set[str],
+    dict[str, float],
+    dict[str, Any] | None,
+]:
     """Track bootstrap progress and enforce per-step budgets.
 
-    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps, lagging_optional, step_durations)``.
+    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps, lagging_optional, step_durations, stage_timeout_context)``.
     """
 
     completed = completed_steps or set()
@@ -638,6 +654,9 @@ def _monitor_bootstrap_thread(
     step_durations: dict[str, float] = {}
     grace_extensions: dict[str, int] = {}
     optional_lagging: set[str] = set()
+    stage_start_times: dict[str, float] = {}
+    stage_overruns: set[str] = set()
+    stage_timeout_context: dict[str, Any] | None = None
     core_online_announced = False
 
     while bootstrap_thread.is_alive():
@@ -675,6 +694,9 @@ def _monitor_bootstrap_thread(
             )
 
         stage = stage_for_step(current_step) or "unknown"
+        if stage not in stage_start_times:
+            stage_start_times[stage] = time.monotonic()
+        stage_elapsed = time.monotonic() - stage_start_times[stage]
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
         if not core_online_announced and minimal_online(online_state_snapshot):
             LOGGER.info(
@@ -691,6 +713,52 @@ def _monitor_bootstrap_thread(
             core_online_announced = True
 
         stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
+        stage_deadline = stage_entry.get("deadline") if isinstance(stage_entry, Mapping) else None
+        stage_enforced = bool(stage_entry.get("enforced")) if isinstance(stage_entry, Mapping) else False
+        stage_optional = bool(stage_entry.get("optional")) if isinstance(stage_entry, Mapping) else False
+        if (
+            stage_deadline is not None
+            and stage_elapsed > stage_deadline
+            and stage_enforced
+        ):
+            stage_timeout_context = {
+                "stage": stage,
+                "elapsed": round(stage_elapsed, 2),
+                "deadline": stage_deadline,
+                "optional": stage_optional,
+                "enforced": stage_enforced,
+            }
+        elif (
+            stage_deadline is not None
+            and stage_elapsed > stage_deadline
+            and stage_optional
+            and core_online_announced
+        ):
+            if stage not in stage_overruns:
+                stage_overruns.add(stage)
+                LOGGER.warning(
+                    "optional stage exceeded soft deadline after core readiness",
+                    extra=log_record(
+                        event="bootstrap-optional-stage-overrun",
+                        stage=stage,
+                        elapsed=round(stage_elapsed, 2),
+                        deadline=stage_deadline,
+                    ),
+                )
+
+        if stage_timeout_context and stage_enforced:
+            step_durations.setdefault(current_step, elapsed)
+            return (
+                True,
+                current_step,
+                elapsed,
+                budget,
+                set(step_start_times),
+                optional_lagging,
+                dict(step_durations),
+                stage_timeout_context,
+            )
+ 
         if elapsed > budget:
             if stage_entry.get("optional"):
                 if stage not in optional_lagging:
@@ -710,6 +778,13 @@ def _monitor_bootstrap_thread(
                     )
                 budget += 30.0
             else:
+                stage_timeout_context = stage_timeout_context or {
+                    "stage": stage,
+                    "elapsed": round(stage_elapsed, 2),
+                    "deadline": stage_deadline,
+                    "optional": stage_optional,
+                    "enforced": stage_enforced,
+                }
                 step_durations.setdefault(current_step, elapsed)
                 return (
                     True,
@@ -719,6 +794,7 @@ def _monitor_bootstrap_thread(
                     set(step_start_times),
                     optional_lagging,
                     dict(step_durations),
+                    stage_timeout_context,
                 )
 
         bootstrap_thread.join(1.0)
@@ -738,6 +814,7 @@ def _monitor_bootstrap_thread(
         set(step_start_times),
         optional_lagging,
         dict(step_durations),
+        stage_timeout_context,
     )
 
 
@@ -778,7 +855,7 @@ def _resolve_bootstrap_deadline_policy(
     heavy_detected: bool,
     soft_deadline: bool,
     hints: Mapping[str, Any],
-) -> tuple[float | None, dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Determine the effective bootstrap deadline policy."""
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
@@ -804,6 +881,7 @@ def _resolve_bootstrap_deadline_policy(
         "hints": dict(hints),
         "heavy_scale": heavy_scale,
         "stage_deadlines": stage_deadlines,
+        "adjusted_timeout": adjusted_timeout,
     }
 
     if soft_deadline and heavy_detected:
@@ -815,8 +893,7 @@ def _resolve_bootstrap_deadline_policy(
     else:
         policy["mode"] = "baseline"
 
-    policy["adjusted_timeout"] = adjusted_timeout
-    return adjusted_timeout, policy
+    return stage_deadlines, policy
 
 
 def _emit_meta_trace(logger: logging.Logger, message: str, **details: Any) -> None:
@@ -1948,12 +2025,13 @@ def main(argv: list[str] | None = None) -> None:
 
     heavy_bootstrap_detected, deadline_hints = _detect_heavy_bootstrap_hints(args)
     soft_bootstrap_deadline = _resolve_soft_deadline_flag(args)
-    effective_bootstrap_timeout, bootstrap_deadline_policy = _resolve_bootstrap_deadline_policy(
+    stage_deadline_policy, bootstrap_deadline_policy = _resolve_bootstrap_deadline_policy(
         baseline_timeout=calibrated_bootstrap_timeout,
         heavy_detected=heavy_bootstrap_detected,
         soft_deadline=soft_bootstrap_deadline,
         hints=deadline_hints,
     )
+    effective_bootstrap_timeout = bootstrap_deadline_policy.get("adjusted_timeout")
     logger.info(
         "bootstrap deadline policy resolved",
         extra=log_record(
@@ -2111,6 +2189,7 @@ def main(argv: list[str] | None = None) -> None:
                             observed_steps,
                             lagging_optional,
                             step_durations,
+                            stage_timeout_context,
                         ) = _monitor_bootstrap_thread(
                             bootstrap_thread=bootstrap_thread,
                             bootstrap_stop_event=bootstrap_stop_event,
@@ -2119,7 +2198,7 @@ def main(argv: list[str] | None = None) -> None:
                             adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
                             completed_steps=completed_steps,
                             vector_heavy_steps=VECTOR_HEAVY_STEPS,
-                            stage_policy=bootstrap_deadline_policy.get("stage_deadlines", {}),
+                            stage_policy=stage_deadline_policy,
                         )
                         lagging_optional_stages.update(lagging_optional)
                         bootstrap_seen_steps.update(observed_steps)
@@ -2188,6 +2267,7 @@ def main(argv: list[str] | None = None) -> None:
                                     budget_used=budget_used,
                                     attempt=attempt,
                                     policy=bootstrap_deadline_policy,
+                                    stage_timeout=stage_timeout_context,
                                 ),
                             )
                             backoff = _record_bootstrap_timeout(
@@ -2195,6 +2275,7 @@ def main(argv: list[str] | None = None) -> None:
                                 elapsed=elapsed,
                                 attempt=attempt,
                                 step_budget=budget_used,
+                                stage_timeout=stage_timeout_context,
                             )
                             try:
                                 shutdown_autonomous_sandbox(timeout=5)
