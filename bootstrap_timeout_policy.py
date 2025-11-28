@@ -33,8 +33,11 @@ _COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
     "db_indexes": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS"],
     "orchestrator_state": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS"],
     "pipeline_config": _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"],
-    "background_loops": _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
 }
+_DEFERRED_COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
+    "background_loops": _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"] * 1.25,
+}
+DEFERRED_COMPONENTS = frozenset(_DEFERRED_COMPONENT_TIMEOUT_MINIMUMS)
 _LAST_BOOTSTRAP_GUARD: dict[str, object] | None = None
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
 _TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
@@ -47,8 +50,11 @@ _COMPONENT_ENV_MAPPING = {
     "db_indexes": "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS",
     "orchestrator_state": "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
     "pipeline_config": "BOOTSTRAP_STEP_TIMEOUT",
+}
+_DEFERRED_COMPONENT_ENV_MAPPING = {
     "background_loops": "MENACE_BOOTSTRAP_WAIT_SECS",
 }
+_ALL_COMPONENT_ENV_MAPPING = {**_COMPONENT_ENV_MAPPING, **_DEFERRED_COMPONENT_ENV_MAPPING}
 _OVERRUN_TOLERANCE = 1.05
 _OVERRUN_STREAK_THRESHOLD = 2
 _DECAY_RATIO = 0.9
@@ -606,7 +612,7 @@ def load_escalated_timeout_floors() -> dict[str, float]:
             host_value = default_minimum
         minimums[env_var] = max(default_minimum, host_value)
 
-    for component, env_var in _COMPONENT_ENV_MAPPING.items():
+    for component, env_var in _ALL_COMPONENT_ENV_MAPPING.items():
         overrun_state = component_overruns.get(component, {}) if isinstance(component_overruns, dict) else {}
         overruns = int(overrun_state.get("overruns", 0) or 0)
         suggested_floor = _parse_float(str(overrun_state.get("suggested_floor")))
@@ -714,6 +720,63 @@ def load_component_timeout_floors() -> dict[str, float]:
     return component_floors
 
 
+def load_deferred_component_timeout_floors() -> dict[str, float]:
+    """Return timeout floors for deferred bootstrap work such as background loops."""
+
+    state = _load_timeout_state()
+    guard_context = get_bootstrap_guard_context()
+    host_telemetry = read_bootstrap_heartbeat()
+    scale, scale_context = _derive_component_floor_scale(
+        guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
+    )
+    max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
+    component_floors = {
+        key: min(value * scale, value * max_scale)
+        for key, value in _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.items()
+    }
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    host_component_floors = (
+        host_state.get("deferred_component_floors", {}) if isinstance(host_state, dict) else {}
+    )
+    if not host_component_floors:
+        host_component_floors = host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
+
+    for component, default_minimum in list(component_floors.items()):
+        try:
+            host_value = float(host_component_floors.get(component, default_minimum))
+        except (TypeError, ValueError):
+            host_value = default_minimum
+        component_floors[component] = max(default_minimum, host_value, component_floors[component])
+
+    if isinstance(state, Mapping):
+        for peer_state in state.values():
+            peer_floors = peer_state.get("deferred_component_floors", {}) if isinstance(peer_state, Mapping) else {}
+            if not peer_floors and isinstance(peer_state, Mapping):
+                peer_floors = peer_state.get("component_floors", {})
+            if not isinstance(peer_floors, Mapping):
+                continue
+            for component, value in peer_floors.items():
+                try:
+                    peer_floor = float(value)
+                except (TypeError, ValueError):
+                    continue
+                base = _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+                ceiling = base * max_scale if base else peer_floor
+                component_floors[component] = max(
+                    component_floors.get(component, base), min(peer_floor, ceiling)
+                )
+
+    _record_adaptive_context(
+        {
+            "deferred_component_cluster_scale": scale_context
+            | {"scale": scale, "max_scale": max_scale},
+        }
+    )
+
+    return component_floors
+
+
 def _recent_peer_activity(max_age: float = 900.0) -> list[Mapping[str, object]]:
     state = _load_timeout_state()
     if not isinstance(state, Mapping):
@@ -784,6 +847,21 @@ def load_last_component_budgets() -> dict[str, float]:
         budgets["__total__"] = float(total)  # type: ignore[assignment]
     except (TypeError, ValueError):
         pass
+
+    deferred_total = (
+        host_state.get("last_deferred_component_budget_total") if isinstance(host_state, Mapping) else None
+    )
+    try:
+        budgets["__deferred_total__"] = float(deferred_total)  # type: ignore[assignment]
+    except (TypeError, ValueError):
+        pass
+    deferred_budgets = host_state.get("last_deferred_component_budgets", {}) if isinstance(host_state, Mapping) else {}
+    if isinstance(deferred_budgets, Mapping):
+        for key, value in deferred_budgets.items():
+            try:
+                budgets[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
 
     return budgets
 
@@ -856,6 +934,7 @@ def persist_bootstrap_wait_window(
 def compute_prepare_pipeline_component_budgets(
     *,
     component_floors: Mapping[str, float] | None = None,
+    deferred_component_floors: Mapping[str, float] | None = None,
     telemetry: Mapping[str, object] | None = None,
     load_average: float | None = None,
     pipeline_complexity: Mapping[str, object] | None = None,
@@ -870,6 +949,9 @@ def compute_prepare_pipeline_component_budgets(
     host_key = _state_host_key()
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     floors = dict(component_floors or load_component_timeout_floors())
+    deferred_floors = dict(deferred_component_floors or load_deferred_component_timeout_floors())
+    deferred_components = set(deferred_floors)
+    floors.update(deferred_floors)
     guard_scale = float(guard_context.get("budget_scale") or 1.0)
     if guard_scale != 1.0:
         floors = {key: value * guard_scale for key, value in floors.items()}
@@ -1002,7 +1084,12 @@ def compute_prepare_pipeline_component_budgets(
         key: value * scale * backlog_scale * component_complexity.get(key, 1.0)
         for key, value in floors.items()
     }
-    component_budget_total = sum(budgets.values()) if budgets else 0.0
+    component_budget_total = sum(
+        value for key, value in budgets.items() if key not in deferred_components
+    ) if budgets else 0.0
+    deferred_component_budget_total = sum(
+        value for key, value in budgets.items() if key in deferred_components
+    ) if budgets else 0.0
     global_window = component_budget_total or None
     global_window_extension: Mapping[str, object] | None = None
 
@@ -1040,6 +1127,10 @@ def compute_prepare_pipeline_component_budgets(
     if isinstance(host_overruns, Mapping):
         _apply_overruns(host_overruns)  # type: ignore[arg-type]
 
+    deferred_component_budgets = {
+        key: value for key, value in budgets.items() if key in deferred_components
+    }
+
     component_work_units = {
         "vectorizers": max(int(complexity.get("vectorizers", 0) or 1), 1),
         "retrievers": max(int(complexity.get("retrievers", 0) or 1), 1),
@@ -1069,6 +1160,8 @@ def compute_prepare_pipeline_component_budgets(
         "floors": floors,
         "adaptive_floors": adaptive_floors,
         "component_budget_total": component_budget_total,
+        "deferred_component_budget_total": deferred_component_budget_total,
+        "deferred_component_budgets": deferred_component_budgets,
         "global_window": global_window,
         "global_window_extension": global_window_extension,
         "backlog": {
@@ -1094,11 +1187,20 @@ def compute_prepare_pipeline_component_budgets(
         persisted_floors[component] = float(meta.get("floor", floors.get(component, 0.0)))
     if persisted_floors:
         host_state_details["component_floors"] = persisted_floors
+    deferred_persisted_floors = {
+        key: persisted_floors.get(key, deferred_floors.get(key, 0.0))
+        for key in deferred_components
+        if key in persisted_floors or key in deferred_floors
+    }
+    if deferred_persisted_floors:
+        host_state_details["deferred_component_floors"] = deferred_persisted_floors
     host_state_details.update(
         {
             "last_component_budgets": budgets,
+            "last_deferred_component_budgets": deferred_component_budgets,
             "last_component_budget_inputs": adaptive_inputs,
-            "last_component_budget_total": sum(budgets.values()),
+            "last_component_budget_total": component_budget_total,
+            "last_deferred_component_budget_total": deferred_component_budget_total,
             "last_global_bootstrap_window": global_window,
             "last_global_window_inputs": {
                 "component_total": component_budget_total,
@@ -1395,8 +1497,10 @@ def _merge_consumption_overruns(
             "suggested_floor": suggested_floor,
             "last_seen": time.time(),
         }
-        if streak >= _OVERRUN_STREAK_THRESHOLD and component in _COMPONENT_ENV_MAPPING:
-            baseline = _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+        if streak >= _OVERRUN_STREAK_THRESHOLD and component in _ALL_COMPONENT_ENV_MAPPING:
+            baseline = _COMPONENT_TIMEOUT_MINIMUMS.get(
+                component, _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+            )
             previous_floor = component_floors.get(component, baseline)
             component_floors[component] = max(previous_floor, suggested_floor, baseline)
         state_changed = True
@@ -1685,10 +1789,10 @@ def render_prepare_pipeline_timeout_hints(
 
     if component_labels:
         for component in sorted(set(component_labels)):
-            env_var = _COMPONENT_ENV_MAPPING.get(component)
+            env_var = _ALL_COMPONENT_ENV_MAPPING.get(component)
             if env_var:
                 floor = component_floors.get(component) or _COMPONENT_TIMEOUT_MINIMUMS.get(
-                    component, 0.0
+                    component, _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
                 )
                 budget = component_map.get(component, {}) if component_map else {}
                 budget_clause = ""
