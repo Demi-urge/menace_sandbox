@@ -6517,7 +6517,9 @@ def _prepare_pipeline_for_bootstrap_impl(
     if global_bootstrap_window is not None:
         shared_timeout_budget = max(shared_timeout_budget or 0.0, global_bootstrap_window)
     component_budget_active = bool(component_budget_payload)
-    if resolved_deadline is not None and not component_budget_active:
+    if component_budget_active:
+        shared_timeout_budget = None
+    elif resolved_deadline is not None:
         shared_timeout_budget = max(
             shared_timeout_budget or 0.0, max(resolved_deadline - start_time, 0.0)
         )
