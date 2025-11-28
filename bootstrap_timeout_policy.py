@@ -548,6 +548,53 @@ class SharedTimeoutCoordinator:
                 extra={"shared_timeout": record},
             )
 
+    def reserve_phase(
+        self,
+        label: str,
+        *,
+        requested: float | None,
+        minimum: float = 0.0,
+        metadata: Mapping[str, object] | None = None,
+    ) -> tuple[float | None, Mapping[str, object]]:
+        """Reserve a slice for a named phase without managing a context."""
+
+        effective, record = self._reserve(label, requested, minimum, metadata)
+        with self._lock:
+            self._timeline.append(
+                {
+                    **record,
+                    "elapsed": 0.0,
+                    "namespace": self.namespace,
+                    "phase": label,
+                }
+            )
+        return effective, record
+
+    def record_progress(
+        self,
+        label: str,
+        *,
+        elapsed: float,
+        remaining: float | None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        """Log incremental phase consumption on the shared timeline."""
+
+        record: MutableMapping[str, object] = {
+            "label": label,
+            "elapsed": elapsed,
+            "remaining_budget": remaining,
+            "namespace": self.namespace,
+        }
+        if metadata:
+            record.update({f"meta.{k}": v for k, v in metadata.items()})
+        with self._lock:
+            self._timeline.append(dict(record))
+        self.logger.info(
+            "shared timeout budget progress",
+            extra={"shared_timeout": record},
+        )
+
     def snapshot(self) -> Mapping[str, object]:
         """Return a shallow snapshot of coordinator state."""
 
