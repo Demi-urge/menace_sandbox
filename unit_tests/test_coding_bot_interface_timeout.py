@@ -17,6 +17,9 @@ def _load_coding_bot_interface_module():
 
 
 def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
+    monkeypatch.delenv("PREPARE_PIPELINE_STAGE_BUDGETS", raising=False)
+    monkeypatch.delenv("PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS", raising=False)
+    monkeypatch.delenv("PREPARE_PIPELINE_VECTOR_GRACE_SECS", raising=False)
     coding_bot_interface = _load_coding_bot_interface_module()
     start_time = 100.0
     deadline = start_time + 500.0
@@ -31,7 +34,7 @@ def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
 
     normalized_deadline, normalized_timeout, telemetry = (
         coding_bot_interface._normalize_watchdog_timeout(
-            deadline, start_time=start_time, vector_heavy=False
+            deadline, start_time=start_time, vector_heavy=False, stage_label="prepare"
         )
     )
 
@@ -43,23 +46,30 @@ def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
 
 
 def test_watchdog_timeout_enters_staged_readiness(monkeypatch):
+    monkeypatch.setenv("PREPARE_PIPELINE_VECTOR_GRACE_SECS", "2")
     coding_bot_interface = _load_coding_bot_interface_module()
     start_time = time.perf_counter()
     deadline = start_time + 5.0
 
     coding_bot_interface._PREPARE_PIPELINE_WATCHDOG["stages"] = [
-        {"label": "bootstrap", "elapsed": 120.0}
+        {"label": "bootstrap", "elapsed": 10.0}
     ]
 
+    monkeypatch.setattr(coding_bot_interface, "_MIN_STAGE_TIMEOUT_VECTOR", 5.0)
+    monkeypatch.setattr(coding_bot_interface, "_VECTOR_STAGE_GRACE_PERIOD", 2.0)
     monkeypatch.setattr(os, "getloadavg", lambda: (1.0, 0.0, 0.0))
     monkeypatch.setattr(os, "cpu_count", lambda: 1)
 
     normalized_deadline, normalized_timeout, telemetry = (
         coding_bot_interface._normalize_watchdog_timeout(
-            deadline, start_time=start_time, vector_heavy=True
+            deadline,
+            start_time=start_time,
+            vector_heavy=True,
+            stage_label="vector_warmup",
         )
     )
 
     assert telemetry["staged_readiness"] is True
-    assert normalized_timeout == telemetry["remaining_window"]
+    assert telemetry["deadline_extended"] is True
+    assert telemetry["extension_seconds"] > 0
     assert normalized_deadline == start_time + normalized_timeout
