@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import time
 from pathlib import Path
 
 
@@ -160,3 +161,30 @@ def test_adaptive_component_floors_include_guard_and_peer_state(monkeypatch, tmp
     assert floors["retrievers"] == policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
         "retrievers"
     ] * 2.0
+
+
+def test_heartbeat_load_scales_component_floors(monkeypatch, tmp_path):
+    state_path = tmp_path / "timeout_state.json"
+    policy = _reload_policy(monkeypatch, state_path)
+
+    heartbeat = {
+        "ts": time.time(),
+        "host_load": 3.5,
+        "vector_heavy": True,
+        "vector_longest": 420.0,
+        "active_clusters": 3,
+    }
+
+    monkeypatch.setattr(policy, "read_bootstrap_heartbeat", lambda max_age=None: dict(heartbeat))
+
+    floors = policy.load_component_timeout_floors()
+
+    assert floors["vectorizers"] > policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
+        "vectorizers"
+    ]
+    assert floors["retrievers"] > policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
+        "retrievers"
+    ]
+
+    adaptive_context = policy.get_adaptive_timeout_context()
+    assert adaptive_context.get("component_floors", {}).get("vectorizers") == floors["vectorizers"]
