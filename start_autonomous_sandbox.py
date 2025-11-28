@@ -40,6 +40,16 @@ from bootstrap_readiness import (
     minimal_online,
     stage_for_step,
 )
+from bootstrap_metrics import (
+    BOOTSTRAP_DURATION_STORE,
+    BUDGET_MAX_SCALE,
+    BUDGET_BUFFER_MULTIPLIER,
+    calibrate_overall_timeout,
+    calibrate_step_budgets,
+    compute_stats,
+    load_duration_store,
+    record_durations,
+)
 
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
@@ -194,6 +204,60 @@ ADAPTIVE_LONG_STAGE_GRACE: Mapping[str, tuple[float, int]] = {
 BOOTSTRAP_BACKOFF_BASE = float(os.getenv("BOOTSTRAP_BACKOFF_BASE", "20"))
 BOOTSTRAP_BACKOFF_MAX = float(os.getenv("BOOTSTRAP_BACKOFF_MAX", "300"))
 BOOTSTRAP_MAX_RETRIES = int(os.getenv("BOOTSTRAP_MAX_RETRIES", "2"))
+
+
+def _step_budget_floors(step_budgets: Mapping[str, float]) -> dict[str, float]:
+    floors = {step: STEP_BUDGET_FLOOR for step in step_budgets}
+    for step in VECTOR_HEAVY_STEPS:
+        floors[step] = max(VECTOR_STEP_BUDGET_FLOOR, floors.get(step, 0.0))
+    return floors
+
+
+def _calibrate_bootstrap_step_budgets(logger: logging.Logger) -> tuple[dict[str, float], dict[str, Any]]:
+    """Load persisted metrics and scale step budgets accordingly."""
+
+    store = load_duration_store()
+    stats = compute_stats(store.get("bootstrap_steps", {}))
+    floors = _step_budget_floors(BOOTSTRAP_STEP_BUDGETS)
+    calibrated, debug = calibrate_step_budgets(
+        base_budgets=BOOTSTRAP_STEP_BUDGETS,
+        stats=stats,
+        floors=floors,
+    )
+    if debug.get("adjusted"):
+        logger.info(
+            "bootstrap step budgets calibrated from historical timings",
+            extra=log_record(
+                event="bootstrap-step-budgets-calibrated",
+                adjustments=debug.get("adjusted"),
+                buffer=debug.get("buffer", BUDGET_BUFFER_MULTIPLIER),
+                scale_cap=debug.get("scale_cap", BUDGET_MAX_SCALE),
+                source=str(BOOTSTRAP_DURATION_STORE),
+            ),
+        )
+    else:
+        logger.info(
+            "bootstrap step budgets unchanged; insufficient historical timings",
+            extra=log_record(event="bootstrap-step-budgets-default", source=str(BOOTSTRAP_DURATION_STORE)),
+        )
+    return calibrated, debug
+
+
+def _persist_step_durations(step_durations: Mapping[str, float], logger: logging.Logger) -> None:
+    if not step_durations:
+        return
+
+    store = record_durations(durations=step_durations, category="bootstrap_steps", logger=logger)
+    stats = compute_stats(store.get("bootstrap_steps", {}))
+    logger.info(
+        "bootstrap step durations persisted",
+        extra=log_record(
+            event="bootstrap-step-durations-persisted",
+            steps=list(sorted(step_durations)),
+            stats={key: {k: round(v, 2) for k, v in value.items()} for key, value in stats.items()},
+            store=str(BOOTSTRAP_DURATION_STORE),
+        ),
+    )
 
 
 def _normalize_log_level(value: str | int | None) -> int:
@@ -562,15 +626,16 @@ def _monitor_bootstrap_thread(
     completed_steps: set[str] | None = None,
     vector_heavy_steps: set[str] | None = None,
     stage_policy: Mapping[str, Any] | None = None,
-) -> tuple[bool, str, float, float, set[str], set[str]]:
+) -> tuple[bool, str, float, float, set[str], set[str], dict[str, float]]:
     """Track bootstrap progress and enforce per-step budgets.
 
-    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps, lagging_optional)``.
+    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps, lagging_optional, step_durations)``.
     """
 
     completed = completed_steps or set()
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
     step_start_times: dict[str, float] = {last_step: bootstrap_start}
+    step_durations: dict[str, float] = {}
     grace_extensions: dict[str, int] = {}
     optional_lagging: set[str] = set()
     core_online_announced = False
@@ -582,6 +647,8 @@ def _monitor_bootstrap_thread(
         current_step = BOOTSTRAP_PROGRESS.get("last_step", last_step)
         if current_step not in step_start_times:
             step_start_times[current_step] = time.monotonic()
+            if last_step not in step_durations:
+                step_durations[last_step] = step_start_times[current_step] - step_start_times[last_step]
         last_step = current_step
 
         elapsed = time.monotonic() - step_start_times[current_step]
@@ -643,7 +710,16 @@ def _monitor_bootstrap_thread(
                     )
                 budget += 30.0
             else:
-                return True, current_step, elapsed, budget, set(step_start_times), optional_lagging
+                step_durations.setdefault(current_step, elapsed)
+                return (
+                    True,
+                    current_step,
+                    elapsed,
+                    budget,
+                    set(step_start_times),
+                    optional_lagging,
+                    dict(step_durations),
+                )
 
         bootstrap_thread.join(1.0)
 
@@ -653,7 +729,16 @@ def _monitor_bootstrap_thread(
         budget = max(budget, VECTOR_STEP_BUDGET_FLOOR)
     else:
         budget = max(budget, STEP_BUDGET_FLOOR)
-    return False, last_step, elapsed, budget, set(step_start_times), optional_lagging
+    step_durations.setdefault(last_step, elapsed)
+    return (
+        False,
+        last_step,
+        elapsed,
+        budget,
+        set(step_start_times),
+        optional_lagging,
+        dict(step_durations),
+    )
 
 
 def _detect_heavy_bootstrap_hints(args: argparse.Namespace | None = None) -> tuple[bool, dict[str, Any]]:
@@ -1840,10 +1925,31 @@ def main(argv: list[str] | None = None) -> None:
     if not args.health_check:
         _preflight_bootstrap_conflicts(logger)
 
+    calibrated_step_budgets, budget_debug = _calibrate_bootstrap_step_budgets(logger)
+    calibrated_bootstrap_timeout, timeout_debug = calibrate_overall_timeout(
+        base_timeout=args.bootstrap_timeout,
+        calibrated_budgets=calibrated_step_budgets,
+        max_scale=BUDGET_MAX_SCALE,
+    )
+    logger.info(
+        "calibrated bootstrap budgets applied",
+        extra=log_record(
+            event="bootstrap-calibrated-budgets",
+            budgets={step: round(value, 2) for step, value in calibrated_step_budgets.items()},
+            adjustments=budget_debug.get("adjusted"),
+            timeout_baseline=args.bootstrap_timeout,
+            timeout_adjusted=calibrated_bootstrap_timeout,
+            timeout_context=timeout_debug,
+            buffer=BUDGET_BUFFER_MULTIPLIER,
+            scale_cap=BUDGET_MAX_SCALE,
+            store=str(BOOTSTRAP_DURATION_STORE),
+        ),
+    )
+
     heavy_bootstrap_detected, deadline_hints = _detect_heavy_bootstrap_hints(args)
     soft_bootstrap_deadline = _resolve_soft_deadline_flag(args)
     effective_bootstrap_timeout, bootstrap_deadline_policy = _resolve_bootstrap_deadline_policy(
-        baseline_timeout=args.bootstrap_timeout,
+        baseline_timeout=calibrated_bootstrap_timeout,
         heavy_detected=heavy_bootstrap_detected,
         soft_deadline=soft_bootstrap_deadline,
         hints=deadline_hints,
@@ -1964,14 +2070,14 @@ def main(argv: list[str] | None = None) -> None:
 
                         logger.info(
                             "initialize_bootstrap_context deadline configured",
-                            extra=log_record(
-                                event="bootstrap-deadline-configured",
-                                deadline=bootstrap_deadline,
-                                deadline_timeout=deadline_timeout,
-                                baseline_timeout=args.bootstrap_timeout,
-                                policy=bootstrap_deadline_policy,
-                            ),
-                        )
+                                extra=log_record(
+                                    event="bootstrap-deadline-configured",
+                                    deadline=bootstrap_deadline,
+                                    deadline_timeout=deadline_timeout,
+                                    baseline_timeout=calibrated_bootstrap_timeout,
+                                    policy=bootstrap_deadline_policy,
+                                ),
+                            )
 
                         def _run_bootstrap() -> None:
                             nonlocal bootstrap_context_result, bootstrap_error
@@ -2004,11 +2110,12 @@ def main(argv: list[str] | None = None) -> None:
                             budget_used,
                             observed_steps,
                             lagging_optional,
+                            step_durations,
                         ) = _monitor_bootstrap_thread(
                             bootstrap_thread=bootstrap_thread,
                             bootstrap_stop_event=bootstrap_stop_event,
                             bootstrap_start=bootstrap_start,
-                            step_budgets=BOOTSTRAP_STEP_BUDGETS,
+                            step_budgets=calibrated_step_budgets,
                             adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
                             completed_steps=completed_steps,
                             vector_heavy_steps=VECTOR_HEAVY_STEPS,
@@ -2016,6 +2123,7 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         lagging_optional_stages.update(lagging_optional)
                         bootstrap_seen_steps.update(observed_steps)
+                        _persist_step_durations(step_durations, logger)
 
                         if timed_out:
                             bootstrap_stop_event.set()

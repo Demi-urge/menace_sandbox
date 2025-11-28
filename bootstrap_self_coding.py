@@ -20,12 +20,14 @@ import io
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from textwrap import shorten
-from typing import Iterable, Iterator, Mapping, Any
+from typing import Iterable, Iterator, Mapping, Any, Callable
 
 from bootstrap_readiness import build_stage_deadlines
+from bootstrap_metrics import BOOTSTRAP_DURATION_STORE, compute_stats, record_durations
 
 
 LOGGER = logging.getLogger(__name__)
@@ -125,6 +127,25 @@ def _monitor_disabled_manager_stream() -> Iterator[list[Mapping[str, Any]]]:
         _cbi._emit_disabled_manager_metric = original_emit  # type: ignore[attr-defined]
 
 
+def _persist_pipeline_durations(durations: Mapping[str, float]) -> None:
+    if not durations:
+        return
+
+    store = record_durations(
+        durations=durations, category="self_coding_pipeline", logger=LOGGER
+    )
+    stats = compute_stats(store.get("self_coding_pipeline", {}))
+    LOGGER.info(
+        "self-coding bootstrap timings persisted",
+        extra={
+            "event": "self-coding-bootstrap-durations",
+            "steps": {key: round(value, 2) for key, value in durations.items()},
+            "stats": {k: {m: round(v, 2) for m, v in vstats.items()} for k, v in stats.items()},
+            "store": str(BOOTSTRAP_DURATION_STORE),
+        },
+    )
+
+
 def bootstrap_self_coding(bot_name: str) -> None:
     """Trigger :func:`internalize_coding_bot` for *bot_name*."""
 
@@ -156,26 +177,42 @@ def bootstrap_self_coding(bot_name: str) -> None:
     from menace_sandbox.self_coding_thresholds import get_thresholds
 
     LOGGER.info("Bootstrapping self-coding manager for bot %s", bot_name)
-    builder = create_context_builder()
-    registry = BotRegistry()
-    data_bot = DataBot(start_server=False)
-    engine = SelfCodingEngine(
-        CodeDB(),
-        MenaceMemoryManager(),
-        context_builder=builder,
-    )
-    with fallback_helper_manager(
-        bot_registry=registry,
-        data_bot=data_bot,
-    ) as fallback_manager:
-        pipeline, promote_manager = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
+    step_durations: dict[str, float] = {}
+
+    def _record_step(name: str, action: Callable[[], Any]) -> Any:
+        start = time.monotonic()
+        try:
+            return action()
+        finally:
+            step_durations[name] = time.monotonic() - start
+
+    builder = _record_step("context_builder", create_context_builder)
+    registry = _record_step("bot_registry", BotRegistry)
+    data_bot = _record_step("data_bot", lambda: DataBot(start_server=False))
+    engine = _record_step(
+        "self_coding_engine",
+        lambda: SelfCodingEngine(
+            CodeDB(),
+            MenaceMemoryManager(),
             context_builder=builder,
+        ),
+    )
+
+    def _build_pipeline() -> tuple[Any, Any]:
+        with fallback_helper_manager(
             bot_registry=registry,
             data_bot=data_bot,
-            bootstrap_runtime_manager=fallback_manager,
-            manager=fallback_manager,
-        )
+        ) as fallback_manager:
+            return prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+                bootstrap_runtime_manager=fallback_manager,
+                manager=fallback_manager,
+            )
+
+    pipeline, promote_manager = _record_step("prepare_pipeline", _build_pipeline)
 
     roi_threshold = error_threshold = test_failure_threshold = None
     try:
@@ -217,15 +254,18 @@ def bootstrap_self_coding(bot_name: str) -> None:
         with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
             stderr_buffer
         ):
-            manager = internalize_coding_bot(
-                bot_name=bot_name,
-                engine=engine,
-                pipeline=pipeline,
-                data_bot=data_bot,
-                bot_registry=registry,
-                roi_threshold=roi_threshold,
-                error_threshold=error_threshold,
-                test_failure_threshold=test_failure_threshold,
+            manager = _record_step(
+                "internalize_coding_bot",
+                lambda: internalize_coding_bot(
+                    bot_name=bot_name,
+                    engine=engine,
+                    pipeline=pipeline,
+                    data_bot=data_bot,
+                    bot_registry=registry,
+                    roi_threshold=roi_threshold,
+                    error_threshold=error_threshold,
+                    test_failure_threshold=test_failure_threshold,
+                ),
             )
 
     captured_stdout = stdout_buffer.getvalue().strip()
@@ -321,6 +361,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         bot_name,
         type(manager).__name__,
     )
+    _persist_pipeline_durations(step_durations)
 
 
 def _parse_args() -> argparse.Namespace:
