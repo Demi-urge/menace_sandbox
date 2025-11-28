@@ -84,3 +84,31 @@ def test_persisted_floors_feed_component_coordinator(monkeypatch, tmp_path):
     )
 
     assert windows["retrievers"]["budget"] >= 360.0
+
+
+def test_global_window_scales_with_component_complexity(monkeypatch, tmp_path):
+    state_path = tmp_path / "timeout_state.json"
+    policy = _reload_policy(monkeypatch, state_path)
+
+    monkeypatch.setattr(policy, "_cluster_budget_scale", lambda **_: (1.0, {}))
+    monkeypatch.setattr(policy, "_host_load_scale", lambda _load=None: 1.0)
+    monkeypatch.setattr(policy, "_state_host_key", lambda: "test-host")
+    monkeypatch.setattr(policy, "_save_timeout_state", lambda state: state_path.write_text(json.dumps(state)))
+
+    base_budgets = policy.compute_prepare_pipeline_component_budgets(
+        pipeline_complexity={"vectorizers": ["a"], "retrievers": 1}
+    )
+    base_window, base_inputs = policy.load_last_global_bootstrap_window()
+
+    assert base_budgets
+    assert base_window is not None
+    assert base_inputs.get("component_complexity")
+
+    expanded_budgets = policy.compute_prepare_pipeline_component_budgets(
+        pipeline_complexity={"vectorizers": ["a", "b", "c"], "db_indexes": [1, 2]},
+    )
+    expanded_window, _ = policy.load_last_global_bootstrap_window()
+
+    assert expanded_budgets
+    assert expanded_window is not None
+    assert expanded_window > base_window

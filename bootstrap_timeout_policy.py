@@ -546,6 +546,23 @@ def load_last_component_budgets() -> dict[str, float]:
     return budgets
 
 
+def load_last_global_bootstrap_window() -> tuple[float | None, Mapping[str, object]]:
+    """Return the last persisted global bootstrap window and inputs."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    window = None
+    try:
+        window_val = host_state.get("last_global_bootstrap_window")
+        window = float(window_val) if window_val is not None else None
+    except (TypeError, ValueError):
+        window = None
+
+    inputs = host_state.get("last_global_window_inputs", {}) if isinstance(host_state, Mapping) else {}
+    inputs = dict(inputs) if isinstance(inputs, Mapping) else {}
+    return window, inputs
+
+
 def persist_bootstrap_wait_window(
     timeout: float | None,
     *,
@@ -635,7 +652,8 @@ def compute_prepare_pipeline_component_budgets(
     cluster_scale, cluster_context = _cluster_budget_scale(
         host_state=host_state, host_telemetry=host_telemetry, load_average=load_average
     )
-    scale = max(_host_load_scale(load_average), cluster_scale)
+    host_scale = _host_load_scale(load_average)
+    scale = max(host_scale, cluster_scale)
 
     adaptive_floors: dict[str, dict[str, float | int | str]] = {}
 
@@ -711,6 +729,8 @@ def compute_prepare_pipeline_component_budgets(
         key: value * scale * component_complexity.get(key, 1.0)
         for key, value in floors.items()
     }
+    component_budget_total = sum(budgets.values()) if budgets else 0.0
+    global_window = component_budget_total or None
 
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
@@ -749,12 +769,15 @@ def compute_prepare_pipeline_component_budgets(
     adaptive_inputs = {
         "host": host_key,
         "load_scale": scale,
+        "host_scale": host_scale,
         "cluster_scale": cluster_context | {"scale": cluster_scale},
         "load_average": load_average,
         "component_complexity": component_complexity,
         "telemetry_overruns": telemetry_overruns,
         "floors": floors,
         "adaptive_floors": adaptive_floors,
+        "component_budget_total": component_budget_total,
+        "global_window": global_window,
     }
     _record_adaptive_context(adaptive_inputs)
 
@@ -774,6 +797,15 @@ def compute_prepare_pipeline_component_budgets(
             "last_component_budgets": budgets,
             "last_component_budget_inputs": adaptive_inputs,
             "last_component_budget_total": sum(budgets.values()),
+            "last_global_bootstrap_window": global_window,
+            "last_global_window_inputs": {
+                "component_total": component_budget_total,
+                "host_scale": host_scale,
+                "cluster_scale": cluster_scale,
+                "load_average": load_average,
+                "component_complexity": component_complexity,
+                "guard_scale": guard_scale,
+            },
             "updated_at": time.time(),
         }
     )
@@ -820,6 +852,8 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
             "shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get("shared_timeout"),
             "extensions": list(_PREPARE_PIPELINE_WATCHDOG.get("extensions", ())),
             "component_windows": _PREPARE_PIPELINE_WATCHDOG.get("component_windows"),
+            "global_window": _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_window"),
+            "component_complexity": _PREPARE_PIPELINE_WATCHDOG.get("component_complexity"),
         }
     except Exception:
         return {}
@@ -1374,6 +1408,8 @@ class SharedTimeoutCoordinator:
         component_floors: Mapping[str, float] | None = None,
         component_budgets: Mapping[str, float] | None = None,
         signal_hook: Callable[[Mapping[str, object]], None] | None = None,
+        global_window: float | None = None,
+        complexity_inputs: Mapping[str, object] | None = None,
     ) -> None:
         self.total_budget = total_budget
         self.remaining_budget = total_budget
@@ -1386,6 +1422,8 @@ class SharedTimeoutCoordinator:
         self.remaining_components = dict(self.component_budgets)
         self._component_windows: dict[str, dict[str, float | None]] = {}
         self._signal_hook = signal_hook
+        self.global_window = global_window
+        self.complexity_inputs = dict(complexity_inputs or {})
 
     def _reserve(
         self,
@@ -1523,7 +1561,10 @@ class SharedTimeoutCoordinator:
             "namespace": self.namespace,
             "host_load": _host_load_average(),
             "ts": time.time(),
+            "global_window": self.global_window,
         }
+        if self.complexity_inputs:
+            record["component_complexity"] = dict(self.complexity_inputs)
         if metadata:
             record.update({f"meta.{k}": v for k, v in metadata.items()})
         with self._lock:
@@ -1562,4 +1603,6 @@ class SharedTimeoutCoordinator:
                 "component_budgets": dict(self.component_budgets),
                 "component_remaining": dict(self.remaining_components),
                 "component_windows": dict(self._component_windows),
+                "global_window": self.global_window,
+                "complexity_inputs": dict(self.complexity_inputs),
             }
