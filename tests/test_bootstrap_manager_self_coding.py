@@ -4754,3 +4754,49 @@ def test_bootstrap_manager_forwards_fallback_runtime_manager_kwarg(
     fallback_runtime_manager = RecordingDisabledManager.instances[0]
     assert observed[0] is fallback_runtime_manager
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_shared_timeout_extends_progressing_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    import menace.coding_bot_interface as cbi
+    from bootstrap_timeout_policy import SharedTimeoutCoordinator, build_progress_signal_hook
+
+    coordinator = SharedTimeoutCoordinator(
+        3.0,
+        component_budgets={"vectorizers": 1.0, "retrievers": 0.5},
+        signal_hook=build_progress_signal_hook(namespace="test", run_id="component-progress"),
+    )
+
+    gate_windows = dict(
+        coordinator.start_component_timers(
+            {"vectorizers": 1.0, "retrievers": 0.5}, minimum=0.2
+        )
+    )
+
+    for window in gate_windows.values():
+        window["remaining"] = 0.0
+        window["last_check"] = time.perf_counter()
+
+    progress_signal = {
+        "progressing": True,
+        "pending_delta": 1,
+        "ratio_delta": 0.1,
+        "staged_ready": False,
+    }
+
+    extended, exhausted, meta = cbi._extend_component_windows(
+        gate_windows,
+        timeout_floor=0.2,
+        resolved_timeout=None,
+        progress_signal=progress_signal,
+        shared_timeout_coordinator=coordinator,
+        stage="vectorizer warmup",
+        readiness_pending=["vectorizers"],
+        vector_heavy=True,
+    )
+
+    assert "vectorizers" in extended
+    assert not exhausted
+    assert any(entry.get("extension_budget") for entry in meta)
+    snapshot = coordinator.snapshot()
+    component_windows = snapshot.get("component_windows", {})
+    assert component_windows.get("vectorizers", {}).get("remaining", 0) > 0
