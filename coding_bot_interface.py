@@ -173,12 +173,41 @@ _SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = {
         240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS", 0.0)
     ),
 }
+_ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
+_VECTOR_BUDGET_BIAS = 1.35
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
 
 _PREPARE_STAGE_BUDGETS: dict[str, float] = {}
 _PREPARE_VECTOR_STAGE_BUDGETS: dict[str, float] = {}
 _VECTOR_STAGE_GRACE_PERIOD: float | None = None
+
+
+def _coerce_float_env_var(
+    env_var: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Return a clamped float from *env_var* with logging on invalid values."""
+
+    raw_value = os.getenv(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s is not a valid float (%r); using default %s", env_var, raw_value, default
+        )
+        return default
+
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
 
 
 def _initialize_prepare_readiness(*, reset: bool = False) -> dict[str, dict[str, Any]]:
@@ -320,6 +349,14 @@ def _refresh_prepare_watchdog_budgets(
     vector_stage_budgets: Mapping[str, float | None] | None = None,
 ) -> None:
     global _PREPARE_STAGE_BUDGETS, _PREPARE_VECTOR_STAGE_BUDGETS, _VECTOR_STAGE_GRACE_PERIOD
+    global _ADAPTIVE_BUDGET_GROWTH_CAP, _VECTOR_BUDGET_BIAS
+
+    _ADAPTIVE_BUDGET_GROWTH_CAP = _coerce_float_env_var(
+        "PREPARE_PIPELINE_BUDGET_GROWTH_CAP", _ADAPTIVE_BUDGET_GROWTH_CAP, minimum=0.0, maximum=1.0
+    )
+    _VECTOR_BUDGET_BIAS = _coerce_float_env_var(
+        "PREPARE_PIPELINE_VECTOR_BIAS", _VECTOR_BUDGET_BIAS, minimum=1.0
+    )
 
     base = {**_SUBSYSTEM_BUDGET_FLOORS}
     _PREPARE_STAGE_BUDGETS = _merge_stage_budgets(
@@ -363,6 +400,98 @@ def _get_stage_budget_override(stage: str | None, *, vector_heavy: bool) -> floa
     if normalized_stage and normalized_stage in budgets:
         return budgets[normalized_stage]
     return budgets.get("default")
+
+
+def _gate_history_stats(stage_gates: set[str]) -> tuple[float | None, float]:
+    """Return recent elapsed time for gates and the strictest floor."""
+
+    if not stage_gates:
+        return None, 0.0
+
+    elapsed_samples: list[float] = []
+    for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", []):
+        gates = _derive_readiness_gates(entry.get("label"), None)
+        if gates & stage_gates:
+            try:
+                elapsed_samples.append(float(entry.get("elapsed", 0.0)))
+            except (TypeError, ValueError):
+                continue
+
+    gate_floor = max([_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in stage_gates])
+    history_peak = max(elapsed_samples) if elapsed_samples else None
+    return history_peak, gate_floor
+
+
+def _compute_dynamic_gate_floor(stage_gates: set[str]) -> tuple[float, Mapping[str, Any]]:
+    """Calculate per-gate floors that grow adaptively within a capped window."""
+
+    history_peak, base_floor = _gate_history_stats(stage_gates)
+    floor = base_floor
+    adaptive_growth = 0.0
+    trigger_threshold = base_floor * 0.82 if base_floor else 0.0
+    if history_peak is not None and base_floor:
+        if history_peak >= trigger_threshold:
+            adaptive_growth = min(
+                base_floor * _ADAPTIVE_BUDGET_GROWTH_CAP,
+                max(0.0, history_peak - trigger_threshold),
+            )
+            floor = base_floor + adaptive_growth
+
+    telemetry = {
+        "gate_history_peak": history_peak,
+        "gate_floor_base": base_floor,
+        "gate_floor_adaptive": floor,
+        "adaptive_growth": adaptive_growth,
+        "adaptive_growth_cap": _ADAPTIVE_BUDGET_GROWTH_CAP,
+    }
+    return floor, telemetry
+
+
+def _rebalance_gate_budgets(
+    *,
+    pending_gates: Iterable[str],
+    stage_gates: set[str],
+    remaining_window: float,
+    vector_heavy: bool,
+    current_budget: float,
+) -> tuple[float, Mapping[str, Any]]:
+    """Redistribute remaining budget across gates when one runs long."""
+
+    gates = set(pending_gates) | stage_gates
+    if not gates or remaining_window <= 0:
+        return current_budget, {}
+
+    gate_weights = {gate: _READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in gates}
+    if vector_heavy and "vectorizers" in gates:
+        gate_weights["vectorizers"] = gate_weights.get("vectorizers", 1.0) * _VECTOR_BUDGET_BIAS
+
+    budget_floors: dict[str, float] = {}
+    total_floor = 0.0
+    for gate in gates:
+        gate_floor, _ = _compute_dynamic_gate_floor({gate})
+        budget_floors[gate] = gate_floor
+        total_floor += gate_floor
+
+    remaining_pool = max(remaining_window, total_floor)
+    total_weight = sum(gate_weights.values()) or 1.0
+    rebalance: dict[str, float] = {}
+    for gate, weight in gate_weights.items():
+        slice_budget = max(
+            budget_floors.get(gate, 0.0),
+            remaining_pool * (weight / total_weight),
+        )
+        rebalance[gate] = slice_budget
+
+    dominant_gate = next(iter(stage_gates), None)
+    new_budget = max(current_budget, rebalance.get(dominant_gate, current_budget))
+
+    telemetry = {
+        "rebalance_budgets": rebalance,
+        "rebalance_total_weight": total_weight,
+        "rebalance_remaining_pool": remaining_pool,
+        "rebalance_gate_weights": gate_weights,
+    }
+    return new_budget, telemetry
 
 
 
@@ -516,10 +645,7 @@ def _normalize_watchdog_timeout(
     except OSError:
         host_scale = 1.0
 
-    gate_floor = max(
-        [_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in stage_gates]
-        or [0.0]
-    )
+    gate_floor, gate_floor_meta = _compute_dynamic_gate_floor(stage_gates)
     timeout_floor = max(
         gate_floor, _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
     )
@@ -527,7 +653,7 @@ def _normalize_watchdog_timeout(
     scaled_history = history_mean * 1.25 if history_mean is not None else baseline
     scaled_gate_history = gate_history_mean * 1.35 if gate_history_mean is not None else baseline
     stage_budget = max(baseline, scaled_history, scaled_gate_history) * host_scale
-    vector_scale = 1.1 if vector_heavy else 1.0
+    vector_scale = _VECTOR_BUDGET_BIAS if vector_heavy else 1.0
     stage_budget *= vector_scale
 
     adaptive_scale = 1.0 + pending_weight * 0.15
@@ -539,6 +665,14 @@ def _normalize_watchdog_timeout(
         stage_budget = max(stage_budget, configured_budget)
 
     dominant_gate = next(iter(stage_gates), None)
+    remaining_window = max(0.0, deadline - start_time) if deadline is not None else stage_budget
+    stage_budget, rebalance_meta = _rebalance_gate_budgets(
+        pending_gates=pending_gates,
+        stage_gates=stage_gates,
+        remaining_window=remaining_window,
+        vector_heavy=vector_heavy,
+        current_budget=stage_budget,
+    )
     telemetry = {
         "history_mean": history_mean,
         "gate_history_mean": gate_history_mean,
@@ -547,6 +681,7 @@ def _normalize_watchdog_timeout(
         "stage_budget": stage_budget,
         "timeout_floor": timeout_floor,
         "gate_floor": gate_floor,
+        "gate_floor_meta": gate_floor_meta,
         "configured_stage_budget": configured_budget,
         "pending_gates": pending_gates,
         "ready_gates": ready_gates,
@@ -555,6 +690,7 @@ def _normalize_watchdog_timeout(
         "adaptive_scale": adaptive_scale,
         "dominant_gate": dominant_gate,
         "stage_gates": tuple(stage_gates),
+        "rebalance": rebalance_meta,
     }
 
     if deadline is None:
@@ -695,6 +831,8 @@ def _log_bootstrap_env_snapshot() -> None:
         ),
         "PREPARE_PIPELINE_STAGE_BUDGETS": dict(_PREPARE_STAGE_BUDGETS),
         "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS": dict(_PREPARE_VECTOR_STAGE_BUDGETS),
+        "PREPARE_PIPELINE_BUDGET_GROWTH_CAP": _ADAPTIVE_BUDGET_GROWTH_CAP,
+        "PREPARE_PIPELINE_VECTOR_BIAS": _VECTOR_BUDGET_BIAS,
     }
 
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot
