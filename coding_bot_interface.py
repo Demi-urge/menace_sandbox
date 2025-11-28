@@ -4952,26 +4952,22 @@ def _prepare_pipeline_for_bootstrap_impl(
     }
     pipeline_complexity = _summarize_pipeline_complexity(pipeline_cls, pipeline_kwargs)
     _PREPARE_PIPELINE_WATCHDOG["pipeline_complexity"] = pipeline_complexity
-    derived_component_budgets: dict[str, float] | None = None
-    if not component_budget_overrides:
-        derived_component_budgets = compute_prepare_pipeline_component_budgets(
-            component_floors=_SUBSYSTEM_BUDGET_FLOORS,
-            telemetry=_PREPARE_PIPELINE_WATCHDOG,
-            pipeline_complexity=pipeline_complexity,
-            host_telemetry=read_bootstrap_heartbeat(),
-        )
-        _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = (
-            derived_component_budgets
-        )
-        logger.info(
-            "adaptive component budgets prepared for bootstrap",
-            extra={
-                "event": "prepare-pipeline-budgets",
-                "pipeline_complexity": pipeline_complexity,
-                "component_budgets": derived_component_budgets,
-                "explicit_overrides": bool(component_timeouts),
-            },
-        )
+    derived_component_budgets: dict[str, float] | None = compute_prepare_pipeline_component_budgets(
+        component_floors=_SUBSYSTEM_BUDGET_FLOORS,
+        telemetry=_PREPARE_PIPELINE_WATCHDOG,
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=read_bootstrap_heartbeat(),
+    )
+    _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
+    logger.info(
+        "adaptive component budgets prepared for bootstrap",
+        extra={
+            "event": "prepare-pipeline-budgets",
+            "pipeline_complexity": pipeline_complexity,
+            "component_budgets": derived_component_budgets,
+            "explicit_overrides": bool(component_timeouts),
+        },
+    )
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
     guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
         "1",
@@ -5787,6 +5783,18 @@ def _prepare_pipeline_for_bootstrap_impl(
                     component_budget_payload, minimum=effective_timeout_floor
                 ).items()
             }
+            for gate, meta in component_windows.items():
+                logger.info(
+                    "prepare_pipeline.shared_timeout.component_timer",
+                    extra={
+                        "shared_timeout": {
+                            "component": gate,
+                            "budget": meta.get("budget"),
+                            "deadline": meta.get("deadline"),
+                            "minimum": effective_timeout_floor,
+                        }
+                    },
+                )
             _PREPARE_PIPELINE_WATCHDOG["component_budgets"] = (
                 _PREPARE_PIPELINE_WATCHDOG["shared_timeout"].get(
                     "component_budgets", {}
@@ -6551,12 +6559,17 @@ def _prepare_pipeline_for_bootstrap_impl(
                 runtime_extra=len(extra_sentinel_candidates),
             )
             promotion_apply_start = time.perf_counter()
-            _promote_pipeline_manager(
-                pipeline,
-                manager,
-                manager_placeholder,
-                extra_sentinels=placeholder_extras or None,
-            )
+            with _shared_budget_reservation(
+                "orchestrator_promotion",
+                ("orchestrator_state",),
+                requested=phase_budgets.get("orchestrator_state", resolved_wait_timeout),
+            ):
+                _promote_pipeline_manager(
+                    pipeline,
+                    manager,
+                    manager_placeholder,
+                    extra_sentinels=placeholder_extras or None,
+                )
             _log_timing(
                 "pipeline promotion application",
                 promotion_apply_start,
@@ -6590,6 +6603,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     )
     if register_callback:
         _register_bootstrap_helper_callback(_promote)
+
+    if shared_timeout_coordinator is not None:
+        try:
+            _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+                shared_timeout_coordinator.snapshot()
+            )
+            enforce_bootstrap_timeout_policy(logger=logger)
+        except Exception:  # pragma: no cover - telemetry persistence must be best-effort
+            logger.debug("shared timeout telemetry persistence failed", exc_info=True)
 
     return pipeline, _promote
 
