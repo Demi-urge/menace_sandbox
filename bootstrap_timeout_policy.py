@@ -162,6 +162,51 @@ def _record_bootstrap_guard(delay: float, budget_scale: float, *, source: str) -
     }
 
 
+def broadcast_timeout_floors(
+    *,
+    source: str,
+    component_floors: Mapping[str, float] | None = None,
+    timeout_floors: Mapping[str, float] | None = None,
+    guard_context: Mapping[str, object] | None = None,
+) -> Mapping[str, object]:
+    """Persist the latest timeout floors so peers can inherit escalations."""
+
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    if not isinstance(host_state, dict):  # pragma: no cover - defensive
+        host_state = {}
+
+    timeout_floors = dict(timeout_floors or load_escalated_timeout_floors())
+    component_floors = dict(component_floors or load_component_timeout_floors())
+    guard_context = dict(guard_context or get_bootstrap_guard_context())
+    snapshot = {
+        "host": host_key,
+        "pid": os.getpid(),
+        "ts": time.time(),
+        "source": source,
+        "guard_delay": guard_context.get("delay") or guard_context.get("guard_delay"),
+        "guard_budget_scale": guard_context.get("budget_scale"),
+        "floors": timeout_floors,
+        "component_floors": component_floors,
+    }
+
+    host_state.update(timeout_floors)
+    host_state["component_floors"] = component_floors
+    host_state["last_broadcast"] = snapshot
+    host_state["updated_at"] = snapshot["ts"]
+    state = state if isinstance(state, dict) else {}
+    state[host_key] = host_state
+    _save_timeout_state(state)
+
+    LOGGER.info(
+        "shared bootstrap timeout floors broadcast",
+        extra={"broadcast": snapshot, "state_path": str(_TIMEOUT_STATE_PATH)},
+    )
+
+    return snapshot
+
+
 def get_bootstrap_guard_context() -> Mapping[str, object]:
     """Return the most recent guard metadata when available."""
 
@@ -357,6 +402,38 @@ def load_component_timeout_floors() -> dict[str, float]:
         component_floors[component] = max(default_minimum, host_value)
 
     return component_floors
+
+
+def _recent_peer_activity(max_age: float = 900.0) -> list[Mapping[str, object]]:
+    state = _load_timeout_state()
+    if not isinstance(state, Mapping):
+        return []
+
+    now = time.time()
+    peers: list[Mapping[str, object]] = []
+    for host, meta in state.items():
+        if not isinstance(meta, Mapping):
+            continue
+        broadcast = meta.get("last_broadcast") if isinstance(meta, Mapping) else {}
+        if not isinstance(broadcast, Mapping):
+            broadcast = {}
+        ts = broadcast.get("ts") or meta.get("updated_at")
+        try:
+            ts_val = float(ts) if ts is not None else None
+        except (TypeError, ValueError):
+            ts_val = None
+        if ts_val is None or now - ts_val > max_age:
+            continue
+        peers.append({
+            "host": host,
+            "pid": broadcast.get("pid"),
+            "ts": ts_val,
+            "guard_delay": broadcast.get("guard_delay"),
+            "budget_scale": broadcast.get("guard_budget_scale"),
+            "source": broadcast.get("source"),
+        })
+
+    return peers
 
 
 def load_persisted_bootstrap_wait(vector_heavy: bool = False) -> float | None:
@@ -1059,6 +1136,27 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
         ),
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
+
+    recent_peers = _recent_peer_activity()
+    active_peers = [peer for peer in recent_peers if peer.get("pid") not in (None, os.getpid())]
+    if len(active_peers) >= 1:
+        peer_hosts = sorted({str(peer.get("host")) for peer in active_peers})
+        hints.append(
+            (
+                "Shared timeout telemetry shows recent bootstrap activity from "
+                f"{', '.join(peer_hosts)}; budgets are being staggered automatically. "
+                "Consider staggering new launches or honouring MENACE_BOOTSTRAP_STAGGER_SECS to avoid contention."
+            )
+        )
+        peer_contenders = [peer for peer in active_peers if peer.get("guard_delay") or (peer.get("budget_scale") and peer.get("budget_scale") != 1.0)]
+        if peer_contenders:
+            hints.append(
+                (
+                    "Recent coordinator telemetry persisted at "
+                    f"{_TIMEOUT_STATE_PATH} shows contention-driven guard delays; "
+                    "timeouts have been elevated so peers inherit the scaled budgets."
+                )
+            )
 
     if adaptive_applied:
         adaptive_floors = adaptive_context.get("adaptive_floors", {}) if isinstance(adaptive_context, dict) else {}

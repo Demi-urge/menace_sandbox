@@ -32,6 +32,9 @@ from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
     compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
+    load_escalated_timeout_floors,
+    broadcast_timeout_floors,
+    get_bootstrap_guard_context,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
 )
@@ -2105,6 +2108,10 @@ def main(argv: list[str] | None = None) -> None:
                 budget_scale=guard_scale,
             ),
         )
+        print(
+            "[BOOTSTRAP] contention detected; bootstrap start staggered and budgets scaled for peers",
+            flush=True,
+        )
     logger.info(
         "calibrated bootstrap budgets applied",
         extra=log_record(
@@ -4005,6 +4012,17 @@ def main(argv: list[str] | None = None) -> None:
         logger.exception("Failed to launch sandbox", extra=log_record(event="failure"))
         sys.exit(1)
     finally:
+        try:
+            broadcast_timeout_floors(
+                source="start_autonomous_sandbox",
+                timeout_floors=load_escalated_timeout_floors(),
+                component_floors=load_component_timeout_floors(),
+                guard_context=get_bootstrap_guard_context(),
+            )
+        except Exception:
+            logger.debug(
+                "failed to broadcast timeout floors", exc_info=True
+            )
         if bootstrap_lock_guard is not None:
             try:
                 bootstrap_lock_guard.__exit__(None, None, None)
