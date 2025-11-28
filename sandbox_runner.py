@@ -23,6 +23,8 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+from bootstrap_readiness import build_stage_deadlines, minimal_online
+
 from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -55,6 +57,25 @@ for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
     os.environ.setdefault(_env_var, _default_value)
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
+
+
+def _announce_staged_readiness(logger: logging.Logger) -> None:
+    """Log the staged readiness policy and initial expectations."""
+
+    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+    stage_policy = build_stage_deadlines(baseline_timeout, soft_deadline=True)
+    core_ready, lagging_core, degraded_core = minimal_online({"components": {}})
+    logger.info(
+        "staged readiness model initialised for sandbox runner",
+        extra={
+            "event": "sandbox-staged-readiness",
+            "baseline_timeout": baseline_timeout,
+            "stage_policy": stage_policy,
+            "core_ready": core_ready,
+            "lagging_core": sorted(lagging_core),
+            "degraded_core": sorted(degraded_core),
+        },
+    )
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
@@ -2033,6 +2054,7 @@ __all__ = [
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     setup_logging()
+    _announce_staged_readiness(logging.getLogger(__name__))
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--radar-scan",
