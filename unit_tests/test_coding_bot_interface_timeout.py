@@ -5,6 +5,13 @@ import time
 import types
 
 
+def _reset_watchdog_state(module):
+    module._PREPARE_PIPELINE_WATCHDOG["stages"] = []
+    module._PREPARE_PIPELINE_WATCHDOG["timeouts"] = 0
+    module._PREPARE_PIPELINE_WATCHDOG.pop("staged_ready", None)
+    module._PREPARE_PIPELINE_WATCHDOG["staged_ready_event"] = module.threading.Event()
+
+
 def _load_coding_bot_interface_module():
     sys.modules.pop("coding_bot_interface", None)
     sys.modules.pop("menace_sandbox.coding_bot_interface", None)
@@ -13,7 +20,9 @@ def _load_coding_bot_interface_module():
     menace_stub.__path__ = []  # type: ignore[attr-defined]
     sys.modules["menace_sandbox"] = menace_stub
 
-    return importlib.import_module("coding_bot_interface")
+    module = importlib.import_module("coding_bot_interface")
+    _reset_watchdog_state(module)
+    return module
 
 
 def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
@@ -43,6 +52,10 @@ def test_watchdog_timeout_uses_history_and_host_scale(monkeypatch):
     assert normalized_timeout == telemetry["stage_budget"]
     assert normalized_deadline == start_time + normalized_timeout
     assert telemetry["staged_readiness"] is False
+    assert coding_bot_interface._PREPARE_PIPELINE_WATCHDOG.get("staged_ready") is None
+    assert not coding_bot_interface._PREPARE_PIPELINE_WATCHDOG[
+        "staged_ready_event"
+    ].is_set()
 
 
 def test_watchdog_timeout_enters_staged_readiness(monkeypatch):
@@ -73,3 +86,7 @@ def test_watchdog_timeout_enters_staged_readiness(monkeypatch):
     assert telemetry["deadline_extended"] is True
     assert telemetry["extension_seconds"] > 0
     assert normalized_deadline == start_time + normalized_timeout
+    assert coding_bot_interface._PREPARE_PIPELINE_WATCHDOG["staged_ready"][
+        "stage"
+    ] == "vector_warmup"
+    assert coding_bot_interface._PREPARE_PIPELINE_WATCHDOG["staged_ready_event"].is_set()
