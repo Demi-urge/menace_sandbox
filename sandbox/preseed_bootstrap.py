@@ -56,6 +56,7 @@ from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
+    compute_prepare_pipeline_component_budgets,
     render_prepare_pipeline_timeout_hints,
 )
 
@@ -1332,7 +1333,12 @@ def initialize_bootstrap_context(
         extra={"timeout_policy": timeout_policy},
     )
     print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
-    component_timeout_floors = timeout_policy.get("component_floors", load_component_timeout_floors())
+    component_timeout_floors = timeout_policy.get(
+        "component_floors", load_component_timeout_floors()
+    )
+    component_budgets = compute_prepare_pipeline_component_budgets(
+        component_floors=component_timeout_floors
+    )
 
     resolved_bootstrap_window = None
     try:
@@ -1356,6 +1362,7 @@ def initialize_bootstrap_context(
             logger=LOGGER,
             namespace="bootstrap_shared",
             component_floors=component_timeout_floors,
+            component_budgets=component_budgets,
         )
     else:
         LOGGER.info(
@@ -1843,6 +1850,7 @@ def initialize_bootstrap_context(
                         manager=bootstrap_manager,
                         bootstrap_safe=True,
                         bootstrap_fast=True,
+                        component_timeouts=component_budgets,
                     )
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")

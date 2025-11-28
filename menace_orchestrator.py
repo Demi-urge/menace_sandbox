@@ -32,6 +32,7 @@ from .oversight_bots import (
 )
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .coding_bot_interface import prepare_pipeline_for_bootstrap
+from bootstrap_timeout_policy import compute_prepare_pipeline_component_budgets
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
@@ -170,6 +171,7 @@ class MenaceOrchestrator:
         self.pipeline_promoter: Callable[[Any], None] | None = None
         placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
         placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
+        component_budgets = compute_prepare_pipeline_component_budgets()
         pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
             pipeline_cls=ModelAutomationPipeline,
             context_builder=self.context_builder,
@@ -177,6 +179,7 @@ class MenaceOrchestrator:
             data_bot=placeholder_data_bot,
             pathway_db=pathway_db,
             myelination_threshold=myelination_threshold,
+            component_timeouts=component_budgets,
         )
         self.pipeline = pipeline
         self.pipeline_promoter = promote_pipeline

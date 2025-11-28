@@ -27,6 +27,7 @@ from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
 from bootstrap_readiness import build_stage_deadlines
+from bootstrap_timeout_policy import compute_prepare_pipeline_component_budgets
 from bootstrap_metrics import BOOTSTRAP_DURATION_STORE, compute_stats, record_durations
 
 
@@ -198,6 +199,8 @@ def bootstrap_self_coding(bot_name: str) -> None:
         ),
     )
 
+    component_budgets = compute_prepare_pipeline_component_budgets()
+
     def _build_pipeline() -> tuple[Any, Any]:
         with fallback_helper_manager(
             bot_registry=registry,
@@ -210,6 +213,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
                 data_bot=data_bot,
                 bootstrap_runtime_manager=fallback_manager,
                 manager=fallback_manager,
+                component_timeouts=component_budgets,
             )
 
     pipeline, promote_manager = _record_step("prepare_pipeline", _build_pipeline)
