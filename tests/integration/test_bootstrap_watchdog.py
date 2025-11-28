@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import time
 
+import pytest
+
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     build_progress_signal_hook,
@@ -65,3 +67,37 @@ def test_bootstrap_guard_waits_for_peer_activity(tmp_path, monkeypatch):
     assert delay > 0
     assert elapsed >= delay
     assert budget_scale >= 1.0
+
+
+def test_shared_timeout_tracks_gate_windows(monkeypatch):
+    coordinator = SharedTimeoutCoordinator(
+        5.0,
+        component_budgets={"vectorizers": 2.0, "retrievers": 1.0},
+        signal_hook=build_progress_signal_hook(
+            namespace="integration-test", run_id="window-test"
+        ),
+    )
+
+    coordinator.start_component_timers(
+        {"vectorizers": 2.0, "retrievers": 1.0}, minimum=0.5
+    )
+
+    coordinator.record_progress(
+        "vectorizers",
+        elapsed=0.5,
+        remaining=1.25,
+        metadata={"stage": "prepare_pipeline"},
+    )
+    coordinator.record_progress(
+        "retrievers",
+        elapsed=0.2,
+        remaining=0.5,
+        metadata={"stage": "prepare_pipeline"},
+    )
+
+    snapshot = coordinator.snapshot()
+    component_windows = snapshot.get("component_windows", {})
+
+    assert set(component_windows) >= {"vectorizers", "retrievers"}
+    assert component_windows["vectorizers"].get("remaining") == pytest.approx(1.25, rel=0.01)
+    assert component_windows["retrievers"].get("remaining") == pytest.approx(0.5, rel=0.01)

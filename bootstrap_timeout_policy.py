@@ -1255,6 +1255,17 @@ class SharedTimeoutCoordinator:
         if metadata:
             record.update({f"meta.{k}": v for k, v in metadata.items()})
         with self._lock:
+            window = self._component_windows.get(label)
+            if window is not None:
+                window = dict(window)
+                now = time.monotonic()
+                window.update({
+                    "remaining": remaining,
+                    "last_progress": now,
+                })
+                if remaining is not None:
+                    window["deadline"] = now + remaining
+                self._component_windows[label] = window
             self._timeline.append(dict(record))
         self.logger.info(
             "shared timeout budget progress",
