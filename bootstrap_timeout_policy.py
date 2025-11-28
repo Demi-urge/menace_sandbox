@@ -839,16 +839,59 @@ def load_component_timeout_floors() -> dict[str, float]:
     scale, scale_context = _derive_component_floor_scale(
         guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
+
+    heartbeat_scale = 1.0
+    heartbeat_meta: dict[str, object] = {}
+    threshold = _parse_float(os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)) or _DEFAULT_LOAD_THRESHOLD
+    if isinstance(host_telemetry, Mapping):
+        heartbeat_meta = dict(host_telemetry)
+        heartbeat_load = _parse_float(str(host_telemetry.get("host_load")))
+        if heartbeat_load is not None and threshold:
+            heartbeat_scale = max(heartbeat_scale, 1.0 + max(heartbeat_load / threshold - 1.0, 0.0))
+        active_clusters = 0
+        for key in ("active_clusters", "clusters_bootstrapping", "cluster_backlog"):
+            try:
+                active_clusters = max(active_clusters, int(host_telemetry.get(key) or 0))
+            except (TypeError, ValueError):
+                continue
+        if not active_clusters:
+            peers = _recent_peer_activity(max_age=_DEFAULT_HEARTBEAT_MAX_AGE * 2)
+            active_clusters = len({str(peer.get("host")) for peer in peers})
+        if active_clusters > 1:
+            heartbeat_scale = max(heartbeat_scale, 1.0 + min(active_clusters - 1, 4) * 0.08)
+
+    vector_heavy = False
+    vector_hint = None
+    if isinstance(host_telemetry, Mapping):
+        vector_heavy = bool(host_telemetry.get("vector_heavy"))
+        vector_hint = _parse_float(str(host_telemetry.get("vector_longest")))
+        if vector_hint is None:
+            vector_hint = _parse_float(str(host_telemetry.get("vector_backlog")))
+    heartbeat_scale = max(heartbeat_scale, 1.0)
     max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
     component_floors = {
-        key: min(value * scale, value * max_scale)
+        key: min(value * max(scale, heartbeat_scale), value * max_scale)
         for key, value in base_defaults.items()
     }
+
+    if vector_heavy or (vector_hint and vector_hint > 0):
+        vector_scale = 1.0 + min(max(vector_hint or 1.0, 1.0) / 200.0, 0.5)
+        component_floors["vectorizers"] = min(
+            component_floors.get("vectorizers", base_defaults.get("vectorizers", 0.0))
+            * vector_scale,
+            base_defaults.get("vectorizers", 0.0) * max_scale,
+        )
+        component_floors["retrievers"] = min(
+            component_floors.get("retrievers", base_defaults.get("retrievers", 0.0))
+            * max(vector_scale, 1.1),
+            base_defaults.get("retrievers", 0.0) * max_scale,
+        )
     host_key = _state_host_key()
     host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
     host_component_floors = (
         host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
     )
+    host_overruns = host_state.get("component_overruns", {}) if isinstance(host_state, Mapping) else {}
 
     for component, default_minimum in list(component_floors.items()):
         try:
@@ -856,6 +899,20 @@ def load_component_timeout_floors() -> dict[str, float]:
         except (TypeError, ValueError):
             host_value = default_minimum
         component_floors[component] = max(default_minimum, host_value, component_floors[component])
+
+        if isinstance(host_overruns, Mapping):
+            overrun_meta = host_overruns.get(component, {}) if isinstance(host_overruns, Mapping) else {}
+            suggested = _parse_float(str(overrun_meta.get("suggested_floor")))
+            max_elapsed = _parse_float(str(overrun_meta.get("max_elapsed")))
+            expected_floor = _parse_float(str(overrun_meta.get("expected_floor")))
+            candidates = [component_floors[component]]
+            if suggested is not None:
+                candidates.append(suggested)
+            if max_elapsed:
+                candidates.append(float(max_elapsed) + 30.0)
+            if expected_floor:
+                candidates.append(float(expected_floor) * 1.1)
+            component_floors[component] = max(candidates)
 
     if isinstance(state, Mapping):
         for peer_state in state.values():
@@ -873,9 +930,19 @@ def load_component_timeout_floors() -> dict[str, float]:
                     component_floors.get(component, base), min(peer_floor, ceiling)
                 )
 
-    _record_adaptive_context(
-        {"component_cluster_scale": scale_context | {"scale": scale, "max_scale": max_scale}}
-    )
+    floor_context = {
+        "component_cluster_scale": scale_context | {"scale": scale, "max_scale": max_scale},
+        "component_floor_inputs": {
+            "heartbeat": heartbeat_meta,
+            "vector_hint": vector_hint,
+            "vector_heavy": vector_heavy,
+            "max_scale": max_scale,
+            "heartbeat_scale": heartbeat_scale,
+        },
+        "component_floors": dict(component_floors),
+    }
+
+    _record_adaptive_context(floor_context)
 
     if isinstance(host_state, dict):
         host_state["component_floors"] = dict(component_floors)
@@ -2184,6 +2251,20 @@ def render_prepare_pipeline_timeout_hints(
         )
         if adaptive_reasons:
             hints.append(f"Recent coordinator overruns: {adaptive_reasons}.")
+
+        component_floor_inputs = {}
+        if isinstance(adaptive_context, Mapping):
+            component_floor_inputs = adaptive_context.get("component_floor_inputs", {})
+        if component_floor_inputs:
+            heartbeat_meta = component_floor_inputs.get("heartbeat", {}) if isinstance(component_floor_inputs, Mapping) else {}
+            heartbeat_load = heartbeat_meta.get("host_load") if isinstance(heartbeat_meta, Mapping) else None
+            hints.append(
+                (
+                    "Component floors are being elevated using persisted heartbeat telemetry"
+                    f" (host_load={heartbeat_load}, vector_hint={component_floor_inputs.get('vector_hint')});"
+                    f" override with {_OVERRIDE_ENV}=1 to bypass clamping."
+                )
+            )
 
     if vector_heavy:
         return list(hints)
