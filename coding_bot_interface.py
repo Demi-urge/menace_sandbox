@@ -54,6 +54,7 @@ from bootstrap_timeout_policy import (
     read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
     wait_for_bootstrap_quiet_period,
+    emit_bootstrap_heartbeat,
 )
 
 try:  # pragma: no cover - prefer package-relative import
@@ -187,6 +188,7 @@ _BOOTSTRAP_WAIT_GROWTH_CAP = 0.65
 _VECTOR_BUDGET_BIAS = 1.35
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
+_COMPONENT_HEARTBEAT_GRACE = 30.0
 _GATE_EXTENSION_LIMIT = 3
 _GATE_EXTENSION_BACKOFF_CAP = 1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * 3
 
@@ -481,6 +483,9 @@ def _extend_component_windows(
     exhausted: list[str] = []
     extension_meta: list[dict[str, Any]] = []
     progressing = bool(progress_signal.get("progressing"))
+    recent_heartbeats: set[str] = set(progress_signal.get("recent_heartbeats", ()))
+    stalled_heartbeats: set[str] = set(progress_signal.get("stalled_heartbeats", ()))
+    heartbeat_grace = float(progress_signal.get("heartbeat_grace_window") or 0.0)
     host_load = progress_signal.get("host_load")
     work_remaining_ratio = 0.0
     if progress_signal.get("work_total"):
@@ -498,8 +503,26 @@ def _extend_component_windows(
         if remaining is None or remaining > 0:
             continue
 
+        heartbeat_recent = gate in recent_heartbeats
+        gate_progressing = progressing or heartbeat_recent
+        if heartbeat_recent and heartbeat_grace > 0:
+            grace_budget = max(heartbeat_grace, timeout_floor * 0.25)
+            window["remaining"] = grace_budget
+            window["deadline"] = time_fn() + grace_budget
+            window["heartbeat_grace"] = grace_budget
+            extension_meta.append(
+                {
+                    "event": "component-heartbeat-grace",
+                    "gate": gate,
+                    "grace_budget": grace_budget,
+                    "vector_heavy": vector_heavy,
+                }
+            )
+            extended.append(gate)
+            continue
+
         extensions = int(window.get("extensions", 0) or 0)
-        if progressing and extensions < extension_limit:
+        if gate_progressing and extensions < extension_limit:
             base_budget = window.get("budget") or resolved_timeout or timeout_floor
             backoff_factor = min(
                 1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * (extensions + 1), backoff_cap
@@ -552,8 +575,28 @@ def _extend_component_windows(
                         "load_factor": load_factor,
                         "extensions_used": extensions + 1,
                     },
-                )
+            )
         else:
+            if not gate_progressing and gate in stalled_heartbeats:
+                logger.warning(
+                    "prepare_pipeline heartbeat stalled for %s", gate,
+                    extra={
+                        "event": "prepare-pipeline-heartbeat-stalled",
+                        "gate": gate,
+                        "stage": stage,
+                        "pending": tuple(readiness_pending),
+                        "vector_heavy": vector_heavy,
+                    },
+                )
+                extension_meta.append(
+                    {
+                        "event": "component-heartbeat-stalled",
+                        "gate": gate,
+                        "stage": stage,
+                        "pending": tuple(readiness_pending),
+                        "vector_heavy": vector_heavy,
+                    }
+                )
             exhausted.append(gate)
 
     return extended, exhausted, extension_meta
@@ -5462,12 +5505,14 @@ def _prepare_pipeline_for_bootstrap_impl(
                     completed = max(completed, min(total_units, prior_completed + 1.0))
 
             component_work_progress[gate] = completed
+            heartbeat_ts = time.time()
             heartbeat = {
                 "gate": gate,
                 "work_completed": completed,
                 "work_total": total_units,
                 "host_load": host_load_signal,
                 "progressing": progressing,
+                "ts": heartbeat_ts,
             }
             _PREPARE_PIPELINE_WATCHDOG["component_work_progress"] = (
                 component_work_progress
@@ -5475,6 +5520,17 @@ def _prepare_pipeline_for_bootstrap_impl(
             _PREPARE_PIPELINE_WATCHDOG.setdefault("component_heartbeats", {})[
                 gate
             ] = heartbeat
+            emit_bootstrap_heartbeat(
+                {
+                    "event": "prepare-pipeline-component",
+                    "component": gate,
+                    "progressing": progressing,
+                    "work_completed": completed,
+                    "work_total": total_units,
+                    "stage": stage,
+                    "heartbeat_ts": heartbeat_ts,
+                }
+            )
             return heartbeat
 
         timeout_floor = (
@@ -5557,6 +5613,16 @@ def _prepare_pipeline_for_bootstrap_impl(
         heartbeat_state = (
             _PREPARE_PIPELINE_WATCHDOG.get("component_heartbeats", {}) or {}
         )
+        now_ts = time.time()
+        recent_heartbeats = {
+            gate: meta
+            for gate, meta in heartbeat_state.items()
+            if now_ts - float(meta.get("ts", 0.0) or 0.0)
+            <= _COMPONENT_HEARTBEAT_GRACE
+        }
+        stalled_heartbeats = [
+            gate for gate in heartbeat_state.keys() if gate not in recent_heartbeats
+        ]
         total_units = sum(
             float(meta.get("work_total", 0.0) or 0.0) for meta in heartbeat_state.values()
         )
@@ -5571,9 +5637,15 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "work_completed": completed_units,
                 "work_ratio": work_ratio,
                 "host_load": host_load_signal,
+                "heartbeat_recent": bool(recent_heartbeats),
+                "recent_heartbeats": tuple(sorted(recent_heartbeats)),
+                "stalled_heartbeats": tuple(sorted(stalled_heartbeats)),
+                "heartbeat_grace_window": _COMPONENT_HEARTBEAT_GRACE,
             }
         )
         if completed_units > previous_work_completed:
+            progress_signal["progressing"] = True
+        elif recent_heartbeats:
             progress_signal["progressing"] = True
         _PREPARE_PIPELINE_WATCHDOG["component_work_completed_total"] = completed_units
 
