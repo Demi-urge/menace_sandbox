@@ -5191,22 +5191,31 @@ def _prepare_pipeline_for_bootstrap_impl(
     requested_timeout = None
     phase_windows: dict[str, dict[str, Any]] = {}
 
+    readiness_gate_order: tuple[str, ...] = tuple(_READINESS_GATE_WEIGHTS)
+    readiness_gates = set(readiness_gate_order)
+    readiness_gates |= {
+        gate
+        for gate in component_budget_overrides
+        if gate in _READINESS_GATE_WEIGHTS or gate in _SUBSYSTEM_BUDGET_FLOORS
+    }
+    if derived_component_budgets:
+        readiness_gates |= set(derived_component_budgets)
+    readiness_gate_order = tuple(
+        [gate for gate in readiness_gate_order if gate in readiness_gates]
+        + sorted(readiness_gates - set(readiness_gate_order))
+    )
+
     def _calibrate_component_budgets(
         total_budget: float | None,
+        *,
+        gates: Iterable[str] = readiness_gate_order,
     ) -> dict[str, float]:
         """Spread the shared timeout across known component gates."""
 
         if total_budget is None or total_budget <= 0:
             return {}
 
-        gates = (
-            "vectorizers",
-            "retrievers",
-            "db_indexes",
-            "orchestrator_state",
-            "pipeline_config",
-            "background_loops",
-        )
+        gates = tuple(gates)
         weights = {gate: _READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in gates}
         weight_sum = sum(weights.values()) or 1.0
         calibrated: dict[str, float] = {}
@@ -5226,13 +5235,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         return None
 
     phase_budgets = {
-        "vectorizers": _select_phase_budget("vectorizers"),
-        "retrievers": _select_phase_budget("retrievers"),
-        "db_indexes": _select_phase_budget("db_indexes"),
-        "orchestrator_state": _select_phase_budget("orchestrator_state"),
-        "pipeline_config": _select_phase_budget("pipeline_config"),
-        "background_loops": _select_phase_budget("background_loops"),
+        gate: _select_phase_budget(gate) for gate in readiness_gate_order
     }
+    _PREPARE_PIPELINE_WATCHDOG["component_budgets_resolved"] = dict(phase_budgets)
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
@@ -5367,15 +5372,11 @@ def _prepare_pipeline_for_bootstrap_impl(
             return None
 
         def _select_phase(gates: set[str]) -> str | None:
-            for candidate in (
-                "vectorizers",
-                "retrievers",
-                "db_indexes",
-                "orchestrator_state",
-                "pipeline_config",
-                "background_loops",
-            ):
+            for candidate in readiness_gate_order:
                 if candidate in gates:
+                    return candidate
+            for candidate in sorted(gates):
+                if candidate in phase_budgets:
                     return candidate
             return None
 
