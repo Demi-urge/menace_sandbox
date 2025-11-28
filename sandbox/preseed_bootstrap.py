@@ -27,8 +27,9 @@ import threading
 import time
 import traceback
 import faulthandler
+from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Iterable
 
 from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
@@ -195,6 +196,101 @@ class _BootstrapStepScheduler:
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
+
+
+def _set_component_state(component: str, state: str) -> None:
+    BOOTSTRAP_ONLINE_STATE.setdefault("components", {})[component] = state
+    BOOTSTRAP_ONLINE_STATE["warming"] = [
+        name for name, status in BOOTSTRAP_ONLINE_STATE["components"].items() if status != "ready"
+    ]
+    _publish_online_state()
+
+
+@dataclass
+class _BootstrapTask:
+    """Represents a bootstrap action within a dependency DAG."""
+
+    name: str
+    fn: Callable[[dict[str, Any]], Any]
+    requires: tuple[str, ...] = ()
+    critical: bool = True
+    background: bool = False
+    component: str | None = None
+    description: str | None = None
+
+
+class _BootstrapDagRunner:
+    """Simple DAG scheduler that allows background warming while gating critical steps."""
+
+    def __init__(self, *, logger: logging.Logger) -> None:
+        self.logger = logger
+        self._tasks: dict[str, _BootstrapTask] = {}
+        self._results: dict[str, Any] = {}
+        self._threads: list[threading.Thread] = []
+        self._component_state: dict[str, str] = {}
+
+    def add(self, task: _BootstrapTask) -> None:
+        if task.name in self._tasks:
+            raise ValueError(f"duplicate bootstrap task {task.name}")
+        self._tasks[task.name] = task
+        if task.component:
+            self._component_state.setdefault(task.component, "pending")
+
+    def _mark_component(self, component: str, state: str) -> None:
+        previous = self._component_state.get(component)
+        self._component_state[component] = state
+        _set_component_state(component, state)
+        if previous != state:
+            self.logger.info("component state changed", extra={"component": component, "state": state})
+        _BOOTSTRAP_SCHEDULER.mark_ready(component) if state == "ready" else _BOOTSTRAP_SCHEDULER.mark_partial(component)
+
+    def _execute_task(self, task: _BootstrapTask) -> None:
+        try:
+            if task.component:
+                self._mark_component(task.component, "warming")
+            self._results[task.name] = task.fn(self._results)
+            if task.component:
+                self._mark_component(task.component, "ready")
+        except Exception:
+            if task.component:
+                self._mark_component(task.component, "partial")
+            self.logger.exception("bootstrap task failed", extra={"task": task.name})
+            if task.critical:
+                raise
+
+    def _start_background(self, task: _BootstrapTask) -> None:
+        thread = threading.Thread(target=self._execute_task, args=(task,), daemon=True)
+        thread.start()
+        self._threads.append(thread)
+
+    def run(self, *, critical_gate: Iterable[str]) -> dict[str, Any]:
+        pending = dict(self._tasks)
+        completed: set[str] = set()
+        critical_remaining = set(critical_gate)
+
+        while pending:
+            progress_made = False
+            for name, task in list(pending.items()):
+                if not set(task.requires).issubset(completed):
+                    continue
+                progress_made = True
+                pending.pop(name)
+                if task.background and task.name not in critical_remaining:
+                    self.logger.info("launching background bootstrap task", extra={"task": name})
+                    self._start_background(task)
+                    completed.add(name)
+                    continue
+                self._execute_task(task)
+                completed.add(name)
+                critical_remaining.discard(name)
+            if not progress_made:
+                raise RuntimeError(f"unable to resolve bootstrap DAG; remaining tasks: {sorted(pending)}")
+            if not critical_remaining:
+                break
+
+        BOOTSTRAP_ONLINE_STATE["quorum"] = not critical_remaining
+        _publish_online_state()
+        return self._results
 
 
 class _BootstrapContentionCoordinator:
@@ -1258,20 +1354,150 @@ def initialize_bootstrap_context(
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
 
-    _mark_bootstrap_step("embedder_preload")
-    embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
-        "embedder_preload", vector_heavy=True, heavy=True
+    runner = _BootstrapDagRunner(logger=LOGGER)
+    vector_bootstrap_hint_holder = {"vector": vector_bootstrap_hint}
+
+    def _task_embedder(_: dict[str, Any]) -> None:
+        _mark_bootstrap_step("embedder_preload")
+        embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "embedder_preload", vector_heavy=True, heavy=True
+        )
+        embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
+        _run_with_timeout(
+            _bootstrap_embedder,
+            timeout=embedder_timeout,
+            bootstrap_deadline=bootstrap_deadline,
+            description="bootstrap_embedder_preload",
+            heavy_bootstrap=True,
+            budget=None,
+            stop_event=stop_event,
+        )
+
+    def _task_context_builder(_: dict[str, Any]) -> Any:
+        _ensure_not_stopped(stop_event)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "db_index_load", reason="context_builder_start"
+        )
+        _mark_bootstrap_step("context_builder")
+        ctx_builder_start = perf_counter()
+        try:
+            builder = create_context_builder(bootstrap_safe=True)
+        except Exception:
+            LOGGER.exception("context_builder creation failed (step=context_builder)")
+            raise
+        _log_step("context_builder", ctx_builder_start)
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "db_index_load", reason="context_builder_ready"
+        )
+        try:
+            vector_bootstrap_hint_holder["vector"] = _is_vector_bootstrap_heavy(builder)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("failed to inspect context builder for vector-heavy hint", exc_info=True)
+        if vector_bootstrap_hint_holder["vector"]:
+            vector_env_snapshot.update(_apply_vector_env("context_builder_hint"))
+            try:
+                _coding_bot_interface._BOOTSTRAP_STATE.vector_heavy = True
+            except Exception:  # pragma: no cover - defensive
+                LOGGER.debug("unable to propagate vector-heavy bootstrap flag", exc_info=True)
+            timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
+            _apply_timeout_policy_snapshot(timeout_policy)
+            timeout_policy_summary = _render_timeout_policy(timeout_policy)
+            print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
+        return builder
+
+    def _task_registry(_: dict[str, Any]) -> BotRegistry:
+        _ensure_not_stopped(stop_event)
+        _mark_bootstrap_step("bot_registry")
+        registry_start = perf_counter()
+        try:
+            reg = BotRegistry()
+        except Exception:
+            LOGGER.exception("BotRegistry initialization failed (step=bot_registry)")
+            raise
+        _log_step("bot_registry", registry_start)
+        return reg
+
+    def _task_data_bot(results: dict[str, Any]) -> DataBot:
+        _ensure_not_stopped(stop_event)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "retriever_hydration", reason="data_bot_start"
+        )
+        _mark_bootstrap_step("data_bot")
+        data_bot_start = perf_counter()
+        try:
+            data_bot_instance = DataBot(start_server=False)
+        except Exception:
+            LOGGER.exception("DataBot setup failed (step=data_bot)")
+            raise
+        _log_step("data_bot", data_bot_start)
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "retriever_hydration", reason="data_bot_ready"
+        )
+        return data_bot_instance
+
+    def _task_engine(results: dict[str, Any]) -> SelfCodingEngine:
+        _ensure_not_stopped(stop_event)
+        _mark_bootstrap_step("self_coding_engine")
+        engine_start = perf_counter()
+        try:
+            engine_instance = SelfCodingEngine(
+                CodeDB(),
+                MenaceMemoryManager(),
+                context_builder=results["context_builder"],
+            )
+        except Exception:
+            LOGGER.exception("SelfCodingEngine instantiation failed (step=self_coding_engine)")
+            raise
+        _log_step("self_coding_engine", engine_start)
+        return engine_instance
+
+    if use_cache:
+        cached_context = _BOOTSTRAP_CACHE.get(bot_name)
+        if cached_context:
+            LOGGER.info(
+                "reusing preseeded bootstrap context for %s; pipeline/manager already available",
+                bot_name,
+            )
+            return cached_context
+
+    runner.add(
+        _BootstrapTask(
+            name="vectorizer_preload",
+            fn=_task_embedder,
+            component="vectorizer_preload",
+            critical=False,
+            background=True,
+        )
     )
-    embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
-    _run_with_timeout(
-        _bootstrap_embedder,
-        timeout=embedder_timeout,
-        bootstrap_deadline=bootstrap_deadline,
-        description="bootstrap_embedder_preload",
-        heavy_bootstrap=True,
-        budget=shared_timeout_coordinator,
-        budget_label="vectorizer_preload",
-        stop_event=stop_event,
+    runner.add(
+        _BootstrapTask(
+            name="context_builder",
+            fn=_task_context_builder,
+            component="db_index_load",
+            requires=(),
+        )
+    )
+    runner.add(
+        _BootstrapTask(
+            name="bot_registry",
+            fn=_task_registry,
+            requires=("context_builder",),
+        )
+    )
+    runner.add(
+        _BootstrapTask(
+            name="data_bot",
+            fn=_task_data_bot,
+            requires=("bot_registry",),
+            component="retriever_hydration",
+        )
+    )
+    runner.add(
+        _BootstrapTask(
+            name="self_coding_engine",
+            fn=_task_engine,
+            requires=("context_builder",),
+        )
     )
 
     if use_cache:
@@ -1295,65 +1521,16 @@ def initialize_bootstrap_context(
                 return cached_context
 
         _ensure_not_stopped(stop_event)
-        _BOOTSTRAP_SCHEDULER.mark_partial(
-            "db_index_load", reason="context_builder_start"
+
+        dag_results = runner.run(
+            critical_gate=("context_builder", "bot_registry", "data_bot", "self_coding_engine"),
         )
-        _mark_bootstrap_step("context_builder")
-        ctx_builder_start = perf_counter()
-        try:
-            context_builder = create_context_builder(bootstrap_safe=True)
-        except Exception:
-            LOGGER.exception("context_builder creation failed (step=context_builder)")
-            raise
-        _log_step("context_builder", ctx_builder_start)
-        _BOOTSTRAP_SCHEDULER.mark_ready(
-            "db_index_load", reason="context_builder_ready"
-        )
-        _publish_online_state()
-
-        try:
-            vector_bootstrap_hint = _is_vector_bootstrap_heavy(context_builder)
-        except Exception:  # pragma: no cover - advisory only
-            LOGGER.debug("failed to inspect context builder for vector-heavy hint", exc_info=True)
-            vector_bootstrap_hint = False
-
-        if vector_bootstrap_hint:
-            vector_env_snapshot = _apply_vector_env("context_builder_hint")
-            try:
-                _coding_bot_interface._BOOTSTRAP_STATE.vector_heavy = True
-            except Exception:  # pragma: no cover - defensive
-                LOGGER.debug("unable to propagate vector-heavy bootstrap flag", exc_info=True)
-
-            timeout_policy = enforce_bootstrap_timeout_policy(logger=LOGGER)
-            _apply_timeout_policy_snapshot(timeout_policy)
-            timeout_policy_summary = _render_timeout_policy(timeout_policy)
-            print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
-
-        _ensure_not_stopped(stop_event)
-        _mark_bootstrap_step("bot_registry")
-        registry_start = perf_counter()
-        try:
-            registry = BotRegistry()
-        except Exception:
-            LOGGER.exception("BotRegistry initialization failed (step=bot_registry)")
-            raise
-        _log_step("bot_registry", registry_start)
-
-        _ensure_not_stopped(stop_event)
-        _BOOTSTRAP_SCHEDULER.mark_partial(
-            "retriever_hydration", reason="data_bot_start"
-        )
-        _mark_bootstrap_step("data_bot")
-        data_bot_start = perf_counter()
-        try:
-            data_bot = DataBot(start_server=False)
-        except Exception:
-            LOGGER.exception("DataBot setup failed (step=data_bot)")
-            raise
-        _log_step("data_bot", data_bot_start)
-        _BOOTSTRAP_SCHEDULER.mark_ready(
-            "retriever_hydration", reason="data_bot_ready"
-        )
+        context_builder = dag_results["context_builder"]
+        registry = dag_results["bot_registry"]
+        data_bot = dag_results["data_bot"]
+        engine = dag_results["self_coding_engine"]
+        vector_bootstrap_hint = vector_bootstrap_hint_holder["vector"]
+        BOOTSTRAP_ONLINE_STATE["critical_ready"] = True
         _publish_online_state()
 
         remaining_budget = (
@@ -1614,7 +1791,7 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "orchestrator_state", reason="prepare_pipeline_start"
             )
-            _publish_online_state()
+            _set_component_state("orchestrator_state", "warming")
             prepare_start = perf_counter()
             lock_path = _resolve_bootstrap_lock_path()
             bootstrap_lock = SandboxLock(lock_path)
@@ -1780,6 +1957,7 @@ def initialize_bootstrap_context(
         _BOOTSTRAP_SCHEDULER.mark_ready(
             "orchestrator_state", reason="pipeline_promoted"
         )
+        _set_component_state("orchestrator_state", "ready")
         _publish_online_state()
 
         _ensure_not_stopped(stop_event)
@@ -1862,6 +2040,7 @@ def initialize_bootstrap_context(
         online_snapshot = _BOOTSTRAP_SCHEDULER.snapshot()
         bootstrap_context["online_state"] = online_snapshot
         bootstrap_context["online"] = online_snapshot.get("quorum", False)
+        bootstrap_context["warming_components"] = BOOTSTRAP_ONLINE_STATE.get("warming", [])
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
         _mark_bootstrap_step("bootstrap_complete")
