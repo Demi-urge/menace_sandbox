@@ -188,6 +188,7 @@ _GATE_EXTENSION_BACKOFF_CAP = 1.0 + _ADAPTIVE_BUDGET_GROWTH_CAP * 3
 _PREPARE_STAGE_BUDGETS: dict[str, float] = {}
 _PREPARE_VECTOR_STAGE_BUDGETS: dict[str, float] = {}
 _VECTOR_STAGE_GRACE_PERIOD: float | None = None
+_MIN_CORE_READINESS_RATIO = 0.6
 
 
 def _coerce_float_env_var(
@@ -506,6 +507,107 @@ def _extend_component_windows(
             exhausted.append(gate)
 
     return extended, exhausted, extension_meta
+
+
+def _apply_component_window_policy(
+    *,
+    stage: str,
+    gate_windows: Mapping[str, dict[str, Any]],
+    exhausted_gates: Iterable[str],
+    readiness_pending: Iterable[str],
+    readiness_ratio: float,
+    progress_signal: Mapping[str, Any],
+    vector_heavy: bool,
+    timeout_floor: float,
+    shared_timeout_coordinator: SharedTimeoutCoordinator | None,
+    time_fn: Callable[[], float] = time.perf_counter,
+) -> tuple[bool, Mapping[str, Any]]:
+    """Apply a soft-fail/extension policy when gates linger after progress."""
+
+    core_ready = not (_CRITICAL_READINESS_GATES & set(readiness_pending))
+    minimal_ready = core_ready and readiness_ratio >= _MIN_CORE_READINESS_RATIO
+    progressing = bool(progress_signal.get("progressing"))
+    lingering = [gate for gate in exhausted_gates if gate in gate_windows]
+
+    policy_meta: dict[str, Any] = {
+        "stage": stage,
+        "vector_heavy": vector_heavy,
+        "progress_signal": dict(progress_signal),
+        "lingering_gates": tuple(lingering),
+        "core_ready": core_ready,
+        "minimal_ready": minimal_ready,
+        "readiness_ratio": readiness_ratio,
+    }
+
+    if not (minimal_ready and progressing and lingering):
+        return False, policy_meta
+
+    extended: list[str] = []
+    soft_failed: list[str] = []
+    extension_budget = max(timeout_floor, timeout_floor * 0.5)
+
+    for gate in lingering:
+        window = gate_windows.get(gate)
+        if window is None:
+            continue
+        policy_extensions = int(window.get("policy_extensions", 0) or 0)
+        if policy_extensions < 1:
+            extension = max(extension_budget, window.get("budget") or timeout_floor)
+            window["remaining"] = extension
+            window["deadline"] = time_fn() + extension
+            window["policy_extensions"] = policy_extensions + 1
+            window["last_extension"] = time_fn()
+            extended.append(gate)
+            if shared_timeout_coordinator is not None:
+                shared_timeout_coordinator.record_progress(
+                    gate,
+                    elapsed=0.0,
+                    remaining=extension,
+                    metadata={
+                        "stage": stage,
+                        "policy_extension": True,
+                        "pending_gates": tuple(readiness_pending),
+                    },
+                )
+        else:
+            soft_failed.append(gate)
+
+    policy_meta.update({"extended_gates": tuple(extended), "soft_failed_gates": tuple(soft_failed)})
+
+    if extended or soft_failed:
+        _PREPARE_PIPELINE_WATCHDOG.setdefault("lingering_components", []).append(policy_meta)
+
+    if soft_failed:
+        _mark_partial_readiness(
+            gates=soft_failed,
+            stage=stage,
+            reason="component_window_lingering",
+            pending_gates=readiness_pending,
+            readiness_ratio=readiness_ratio,
+            vector_heavy=vector_heavy,
+        )
+        _mark_deferred_gates(
+            gates=soft_failed,
+            stage=stage,
+            pending_gates=readiness_pending,
+            readiness_ratio=readiness_ratio,
+            vector_heavy=vector_heavy,
+            reason="component_window_lingering",
+            stage_budget=timeout_floor,
+            remaining_window=0.0,
+        )
+        logger.info(
+            "prepare_pipeline continuing after lingering gate soft-fail", extra={"event": "prepare-pipeline-lingering", **policy_meta}
+        )
+        return True, policy_meta
+
+    if extended:
+        logger.info(
+            "prepare_pipeline component windows extended after partial readiness", extra={"event": "prepare-pipeline-lingering", **policy_meta}
+        )
+        return True, policy_meta
+
+    return False, policy_meta
 
 
 _initialize_prepare_readiness()
@@ -4995,6 +5097,27 @@ def _prepare_pipeline_for_bootstrap_impl(
                 return
 
             if exhausted_gates:
+                policy_handled, policy_meta = _apply_component_window_policy(
+                    stage=stage,
+                    gate_windows=gate_windows,
+                    exhausted_gates=exhausted_gates,
+                    readiness_pending=readiness_pending,
+                    readiness_ratio=readiness_ratio,
+                    progress_signal=progress_signal,
+                    vector_heavy=vector_heavy,
+                    timeout_floor=timeout_floor,
+                    shared_timeout_coordinator=shared_timeout_coordinator,
+                )
+                if policy_meta:
+                    _PREPARE_PIPELINE_WATCHDOG.setdefault(
+                        "component_policy", []
+                    ).append(policy_meta)
+                    _PREPARE_PIPELINE_WATCHDOG["component_windows"] = (
+                        component_windows
+                    )
+                if policy_handled:
+                    return
+
                 optional_overrun = set(exhausted_gates) and not (
                     _CRITICAL_READINESS_GATES & set(readiness_pending)
                 )
