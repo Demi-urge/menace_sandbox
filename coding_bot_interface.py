@@ -43,9 +43,11 @@ from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     get_adaptive_timeout_context,
+    compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
     build_progress_signal_hook,
+    read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
 )
 
@@ -195,7 +197,73 @@ def _coerce_float_env_var(
 
     raw_value = os.getenv(env_var)
     if raw_value is None:
-        return default
+    return default
+
+
+def _summarize_pipeline_complexity(
+    pipeline_cls: type[Any], pipeline_kwargs: Mapping[str, object]
+) -> dict[str, object]:
+    """Derive a lightweight complexity profile for adaptive budgets."""
+
+    def _extract_config_value(name: str) -> object:
+        config = pipeline_kwargs.get("pipeline_config")
+        if isinstance(config, Mapping) and name in config:
+            return config[name]
+        if hasattr(config, name):
+            try:
+                return getattr(config, name)
+            except Exception:  # pragma: no cover - best effort attribute lookup
+                return None
+        return pipeline_kwargs.get(name)
+
+    def _coerce_count(value: object) -> int:
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return len(value)
+        if isinstance(value, Mapping):
+            return len(value)
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _sum_numeric(value: object) -> float:
+        if isinstance(value, Mapping):
+            return sum(_sum_numeric(v) for v in value.values())
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return sum(_sum_numeric(v) for v in value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    vectorizers = _coerce_count(
+        _extract_config_value("vectorizers") or _extract_config_value("vectorizer_configs")
+    )
+    retrievers = _coerce_count(_extract_config_value("retrievers"))
+    db_indexes = _coerce_count(
+        _extract_config_value("db_indexes") or _extract_config_value("indexes")
+    )
+    background_loops = _coerce_count(_extract_config_value("background_loops") or [])
+    index_bytes = _sum_numeric(
+        _extract_config_value("index_sizes")
+        or _extract_config_value("db_index_sizes")
+        or _extract_config_value("db_index_bytes")
+    )
+    pipeline_config_sections = (
+        len(pipeline_kwargs.get("pipeline_config", {}) or {})
+        if isinstance(pipeline_kwargs.get("pipeline_config"), Mapping)
+        else 0
+    )
+
+    return {
+        "vectorizers": vectorizers,
+        "retrievers": retrievers,
+        "db_indexes": db_indexes,
+        "db_index_bytes": index_bytes,
+        "background_loops": background_loops,
+        "pipeline_config_sections": pipeline_config_sections,
+        "pipeline_cls": getattr(pipeline_cls, "__name__", str(pipeline_cls)),
+    }
     try:
         value = float(raw_value)
     except (TypeError, ValueError):
@@ -4510,6 +4578,28 @@ def _prepare_pipeline_for_bootstrap_impl(
     component_budget_overrides = {
         key: value for key, value in (component_timeouts or {}).items() if value is not None
     }
+    pipeline_complexity = _summarize_pipeline_complexity(pipeline_cls, pipeline_kwargs)
+    _PREPARE_PIPELINE_WATCHDOG["pipeline_complexity"] = pipeline_complexity
+    derived_component_budgets: dict[str, float] | None = None
+    if not component_budget_overrides:
+        derived_component_budgets = compute_prepare_pipeline_component_budgets(
+            component_floors=_SUBSYSTEM_BUDGET_FLOORS,
+            telemetry=_PREPARE_PIPELINE_WATCHDOG,
+            pipeline_complexity=pipeline_complexity,
+            host_telemetry=read_bootstrap_heartbeat(),
+        )
+        _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = (
+            derived_component_budgets
+        )
+        logger.info(
+            "adaptive component budgets prepared for bootstrap",
+            extra={
+                "event": "prepare-pipeline-budgets",
+                "pipeline_complexity": pipeline_complexity,
+                "component_budgets": derived_component_budgets,
+                "explicit_overrides": bool(component_timeouts),
+            },
+        )
     _refresh_bootstrap_wait_timeouts(
         stage_budgets=subsystem_budget_overrides,
         vector_stage_budgets=subsystem_budget_overrides,
@@ -4519,23 +4609,22 @@ def _prepare_pipeline_for_bootstrap_impl(
     resolved_deadline = deadline
     requested_timeout = None
     phase_windows: dict[str, dict[str, Any]] = {}
+    def _select_phase_budget(component: str) -> float | None:
+        if component in component_budget_overrides:
+            return component_budget_overrides[component]
+        if component in subsystem_budget_overrides and subsystem_budget_overrides[component] is not None:
+            return subsystem_budget_overrides[component]
+        if derived_component_budgets:
+            return derived_component_budgets.get(component)
+        return None
+
     phase_budgets = {
-        "vectorizers": component_budget_overrides.get(
-            "vectorizers", subsystem_budget_overrides.get("vectorizers")
-        ),
-        "retrievers": component_budget_overrides.get(
-            "retrievers", subsystem_budget_overrides.get("retrievers")
-        ),
-        "db_indexes": component_budget_overrides.get(
-            "db_indexes", subsystem_budget_overrides.get("db_indexes")
-        ),
-        "orchestrator_state": component_budget_overrides.get(
-            "orchestrator_state", subsystem_budget_overrides.get("orchestrator_state")
-        ),
-        "pipeline_config": component_budget_overrides.get(
-            "pipeline_config", subsystem_budget_overrides.get("pipeline_config")
-        ),
-        "background_loops": component_budget_overrides.get("background_loops"),
+        "vectorizers": _select_phase_budget("vectorizers"),
+        "retrievers": _select_phase_budget("retrievers"),
+        "db_indexes": _select_phase_budget("db_indexes"),
+        "orchestrator_state": _select_phase_budget("orchestrator_state"),
+        "pipeline_config": _select_phase_budget("pipeline_config"),
+        "background_loops": _select_phase_budget("background_loops"),
     }
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:

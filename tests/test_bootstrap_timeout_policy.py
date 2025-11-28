@@ -15,6 +15,7 @@ def test_component_budgets_expand_with_overruns(monkeypatch):
 
     monkeypatch.setattr(btp, "_state_host_key", lambda: "test-host")
     monkeypatch.setattr(os, "cpu_count", lambda: 2)
+    monkeypatch.setattr(btp, "_save_timeout_state", lambda state: None)
     monkeypatch.setattr(
         btp,
         "_load_timeout_state",
