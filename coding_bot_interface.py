@@ -165,6 +165,14 @@ _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
     _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
 )
 _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
+_SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = {
+    "vectorizers": max(300.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS", 0.0)),
+    "retrievers": max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS", 0.0)),
+    "db_indexes": max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS", 0.0)),
+    "orchestrator_state": max(
+        240.0, _ESCALATED_TIMEOUT_FLOORS.get("PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS", 0.0)
+    ),
+}
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
 
@@ -286,12 +294,43 @@ def _resolve_vector_stage_grace() -> float | None:
     return grace if grace >= 0 else _VECTOR_STAGED_GRACE_FALLBACK
 
 
-def _refresh_prepare_watchdog_budgets() -> None:
+def _merge_stage_budgets(
+    base: Mapping[str, float],
+    env_overrides: Mapping[str, float],
+    explicit_overrides: Mapping[str, float | None] | None,
+) -> dict[str, float]:
+    merged: dict[str, float] = {k: v for k, v in base.items() if v is not None}
+    merged.update({k: v for k, v in env_overrides.items() if v is not None})
+    if explicit_overrides:
+        for key, value in explicit_overrides.items():
+            if value is None:
+                continue
+            merged[key] = float(value)
+
+    for gate, floor in _SUBSYSTEM_BUDGET_FLOORS.items():
+        floor_value = float(floor)
+        merged[gate] = max(merged.get(gate, 0.0), floor_value)
+
+    return merged
+
+
+def _refresh_prepare_watchdog_budgets(
+    *,
+    stage_budgets: Mapping[str, float | None] | None = None,
+    vector_stage_budgets: Mapping[str, float | None] | None = None,
+) -> None:
     global _PREPARE_STAGE_BUDGETS, _PREPARE_VECTOR_STAGE_BUDGETS, _VECTOR_STAGE_GRACE_PERIOD
 
-    _PREPARE_STAGE_BUDGETS = _parse_stage_budget_env("PREPARE_PIPELINE_STAGE_BUDGETS")
-    _PREPARE_VECTOR_STAGE_BUDGETS = _parse_stage_budget_env(
-        "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS"
+    base = {**_SUBSYSTEM_BUDGET_FLOORS}
+    _PREPARE_STAGE_BUDGETS = _merge_stage_budgets(
+        base,
+        _parse_stage_budget_env("PREPARE_PIPELINE_STAGE_BUDGETS"),
+        stage_budgets,
+    )
+    _PREPARE_VECTOR_STAGE_BUDGETS = _merge_stage_budgets(
+        base,
+        _parse_stage_budget_env("PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS"),
+        vector_stage_budgets or stage_budgets,
     )
     _VECTOR_STAGE_GRACE_PERIOD = _resolve_vector_stage_grace()
 
@@ -373,7 +412,11 @@ _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
 _refresh_prepare_watchdog_budgets()
 
 
-def _refresh_bootstrap_wait_timeouts() -> None:
+def _refresh_bootstrap_wait_timeouts(
+    *,
+    stage_budgets: Mapping[str, float | None] | None = None,
+    vector_stage_budgets: Mapping[str, float | None] | None = None,
+) -> None:
     """Reload cached bootstrap wait timeouts from the environment."""
 
     global _BOOTSTRAP_WAIT_TIMEOUT, _BOOTSTRAP_TIMEOUT_FLOOR, _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR
@@ -389,7 +432,9 @@ def _refresh_bootstrap_wait_timeouts() -> None:
     _MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
     _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
     _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
-    _refresh_prepare_watchdog_budgets()
+    _refresh_prepare_watchdog_budgets(
+        stage_budgets=stage_budgets, vector_stage_budgets=vector_stage_budgets
+    )
     _log_bootstrap_env_snapshot()
 
 
@@ -447,6 +492,14 @@ def _normalize_watchdog_timeout(
     history = [entry.get("elapsed", 0.0) for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", [])]
     history_mean = sum(history[-5:]) / len(history[-5:]) if history[-5:] else None
 
+    stage_gates = _derive_readiness_gates(stage_label, None)
+    gate_history = [
+        entry.get("elapsed", 0.0)
+        for entry in _PREPARE_PIPELINE_WATCHDOG.get("stages", [])
+        if _derive_readiness_gates(entry.get("label"), None) & stage_gates
+    ]
+    gate_history_mean = sum(gate_history[-3:]) / len(gate_history[-3:]) if gate_history[-3:] else None
+
     configured_budget = _get_stage_budget_override(stage_label, vector_heavy=vector_heavy)
     readiness = _initialize_prepare_readiness()
     ready_gates = [gate for gate, meta in readiness.items() if meta.get("ready")]
@@ -463,10 +516,17 @@ def _normalize_watchdog_timeout(
     except OSError:
         host_scale = 1.0
 
-    timeout_floor = _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
+    gate_floor = max(
+        [_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in stage_gates]
+        or [0.0]
+    )
+    timeout_floor = max(
+        gate_floor, _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
+    )
     baseline = timeout_floor * 0.85
     scaled_history = history_mean * 1.25 if history_mean is not None else baseline
-    stage_budget = max(baseline, scaled_history) * host_scale
+    scaled_gate_history = gate_history_mean * 1.35 if gate_history_mean is not None else baseline
+    stage_budget = max(baseline, scaled_history, scaled_gate_history) * host_scale
     vector_scale = 1.1 if vector_heavy else 1.0
     stage_budget *= vector_scale
 
@@ -478,18 +538,23 @@ def _normalize_watchdog_timeout(
     if configured_budget is not None:
         stage_budget = max(stage_budget, configured_budget)
 
+    dominant_gate = next(iter(stage_gates), None)
     telemetry = {
         "history_mean": history_mean,
+        "gate_history_mean": gate_history_mean,
         "host_scale": host_scale,
         "vector_scale": vector_scale,
         "stage_budget": stage_budget,
         "timeout_floor": timeout_floor,
+        "gate_floor": gate_floor,
         "configured_stage_budget": configured_budget,
         "pending_gates": pending_gates,
         "ready_gates": ready_gates,
         "readiness_ratio": readiness_ratio,
         "pending_gate_weight": pending_weight,
         "adaptive_scale": adaptive_scale,
+        "dominant_gate": dominant_gate,
+        "stage_gates": tuple(stage_gates),
     }
 
     if deadline is None:
@@ -551,6 +616,7 @@ def _normalize_watchdog_timeout(
                 "extension_seconds": extension_seconds,
                 "configured_stage_budget": configured_budget,
                 "vector_grace_applied": grace_applied,
+                "dominant_gate": dominant_gate,
             },
         )
 
@@ -617,6 +683,18 @@ def _log_bootstrap_env_snapshot() -> None:
         "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": _resolve_bootstrap_wait_timeout(True),
         "BOOTSTRAP_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_STEP_TIMEOUT"),
         "BOOTSTRAP_VECTOR_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_VECTOR_STEP_TIMEOUT"),
+        "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": _SUBSYSTEM_BUDGET_FLOORS.get(
+            "vectorizers"
+        ),
+        "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS": _SUBSYSTEM_BUDGET_FLOORS.get(
+            "retrievers"
+        ),
+        "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": _SUBSYSTEM_BUDGET_FLOORS.get("db_indexes"),
+        "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS": _SUBSYSTEM_BUDGET_FLOORS.get(
+            "orchestrator_state"
+        ),
+        "PREPARE_PIPELINE_STAGE_BUDGETS": dict(_PREPARE_STAGE_BUDGETS),
+        "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS": dict(_PREPARE_VECTOR_STAGE_BUDGETS),
     }
 
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot
@@ -4113,6 +4191,10 @@ def prepare_pipeline_for_bootstrap(
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
     bootstrap_fast: bool = True,
+    vectorizer_budget: float | None = None,
+    retriever_budget: float | None = None,
+    db_warmup_budget: float | None = None,
+    orchestrator_budget: float | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4149,6 +4231,10 @@ def prepare_pipeline_for_bootstrap(
             extra_manager_sentinels=extra_manager_sentinels,
             bootstrap_safe=bootstrap_safe,
             bootstrap_fast=bootstrap_fast,
+            vectorizer_budget=vectorizer_budget,
+            retriever_budget=retriever_budget,
+            db_warmup_budget=db_warmup_budget,
+            orchestrator_budget=orchestrator_budget,
             **pipeline_kwargs,
         )
 
@@ -4172,6 +4258,10 @@ def _prepare_pipeline_for_bootstrap_impl(
     extra_manager_sentinels: Iterable[Any] | None = None,
     bootstrap_safe: bool = False,
     bootstrap_fast: bool = True,
+    vectorizer_budget: float | None = None,
+    retriever_budget: float | None = None,
+    db_warmup_budget: float | None = None,
+    orchestrator_budget: float | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4206,12 +4296,25 @@ def _prepare_pipeline_for_bootstrap_impl(
     ``bootstrap_wait_timeout`` overrides the helper coordination wait window so
     heavy bootstrap workloads can increase the limit without changing global
     environment defaults.
+    ``vectorizer_budget``, ``retriever_budget``, ``db_warmup_budget`` and
+    ``orchestrator_budget`` tune per-subsystem watchdog slices so vector warmups
+    or database preparation can borrow extra time without inflating the overall
+    bootstrap deadline.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
 
     enforce_bootstrap_timeout_policy(logger=logger)
-    _refresh_bootstrap_wait_timeouts()
+    subsystem_budget_overrides = {
+        "vectorizers": vectorizer_budget,
+        "retrievers": retriever_budget,
+        "db_indexes": db_warmup_budget,
+        "orchestrator_state": orchestrator_budget,
+    }
+    _refresh_bootstrap_wait_timeouts(
+        stage_budgets=subsystem_budget_overrides,
+        vector_stage_budgets=subsystem_budget_overrides,
+    )
 
     start_time = time.perf_counter()
     resolved_deadline = deadline
@@ -4234,7 +4337,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
                 "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
                 "env_vector_wait=%r timeline=%s readiness=%s pending_gates=%s "
-                "readiness_ratio=%.3f remediation_hints=%s"
+                "dominant_gate=%s readiness_ratio=%.3f remediation_hints=%s"
             ),
             stage,
             vector_heavy,
@@ -4245,6 +4348,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             timeline,
             context.get("watchdog_ready_gates"),
             context.get("watchdog_pending_gates"),
+            context.get("watchdog_dominant_gate"),
             context.get("watchdog_readiness_ratio", 0.0),
             remediation_hints,
         )
@@ -4315,6 +4419,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_ready_gates": readiness_ready,
                 "watchdog_pending_gates": readiness_pending,
                 "watchdog_readiness_ratio": readiness_ratio,
+                "watchdog_dominant_gate": watchdog_telemetry.get("dominant_gate"),
+                "watchdog_stage_gates": watchdog_telemetry.get("stage_gates"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4373,6 +4479,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_ready_gates": readiness_ready,
                 "watchdog_pending_gates": readiness_pending,
                 "watchdog_readiness_ratio": readiness_ratio,
+                "watchdog_dominant_gate": watchdog_telemetry.get("dominant_gate"),
+                "watchdog_stage_gates": watchdog_telemetry.get("stage_gates"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
