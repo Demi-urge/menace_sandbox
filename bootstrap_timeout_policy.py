@@ -359,6 +359,60 @@ def load_component_timeout_floors() -> dict[str, float]:
     return component_floors
 
 
+def load_persisted_bootstrap_wait(vector_heavy: bool = False) -> float | None:
+    """Return the last persisted adaptive bootstrap wait window when available."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    windows = host_state.get("bootstrap_wait_windows", {}) if isinstance(host_state, dict) else {}
+    key = "vector" if vector_heavy else "general"
+    window = windows.get(key, {}) if isinstance(windows, Mapping) else {}
+    try:
+        value = window.get("timeout")  # type: ignore[assignment]
+    except AttributeError:  # pragma: no cover - defensive against malformed state
+        return None
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def persist_bootstrap_wait_window(
+    timeout: float | None,
+    *,
+    vector_heavy: bool,
+    source: str,
+    metadata: Mapping[str, object] | None = None,
+) -> None:
+    """Persist the most recent adaptive bootstrap wait decision for this host."""
+
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    if not isinstance(host_state, dict):
+        host_state = {}
+
+    windows = host_state.get("bootstrap_wait_windows", {})
+    if not isinstance(windows, dict):  # pragma: no cover - defensive
+        windows = {}
+
+    key = "vector" if vector_heavy else "general"
+    window_state: dict[str, object] = {
+        "timeout": timeout,
+        "source": source,
+        "ts": time.time(),
+    }
+    if metadata:
+        window_state.update({f"meta.{k}": v for k, v in metadata.items()})
+
+    windows[key] = window_state
+    host_state["bootstrap_wait_windows"] = windows
+    state = state if isinstance(state, dict) else {}
+    state[host_key] = host_state
+    _save_timeout_state(state)
+
+
+
 def compute_prepare_pipeline_component_budgets(
     *,
     component_floors: Mapping[str, float] | None = None,

@@ -46,7 +46,9 @@ from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
+    load_persisted_bootstrap_wait,
     build_progress_signal_hook,
+    persist_bootstrap_wait_window,
     read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
     wait_for_bootstrap_quiet_period,
@@ -179,6 +181,7 @@ _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
 _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
 _SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = load_component_timeout_floors()
 _ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
+_BOOTSTRAP_WAIT_GROWTH_CAP = 0.65
 _VECTOR_BUDGET_BIAS = 1.35
 _LEGACY_TIMEOUT_THRESHOLD = 45.0
 _VECTOR_STAGED_GRACE_FALLBACK = 90.0
@@ -845,38 +848,115 @@ def _get_bootstrap_wait_timeout() -> float | None:
     ``MENACE_BOOTSTRAP_WAIT_SECS``; specify ``"none"`` to disable timeouts.
     Invalid overrides fall back to a sensible default while emitting a warning
     for visibility. A hard minimum of 240 seconds is enforced to avoid overly
-    aggressive clamps.
+    aggressive clamps.  Adaptive scaling is applied when host contention or
+    recent ``SharedTimeoutCoordinator`` overruns are observed, with decisions
+    persisted through ``bootstrap_timeout_policy`` so repeated slow boots do
+    not regress to the static floor.
     """
 
     default_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
-    if not raw_timeout:
-        return default_timeout
-    if raw_timeout.lower() == "none":
-        return None
-    try:
-        parsed_timeout = float(raw_timeout)
-    except ValueError:
-        logger.warning(
-            "Invalid MENACE_BOOTSTRAP_WAIT_SECS=%r; using default %ss",
-            raw_timeout,
-            default_timeout,
-        )
-        return default_timeout
+    adaptive_context = get_adaptive_timeout_context()
+    adaptive_overruns = 0
+    host_load = None
+    persisted_timeout = load_persisted_bootstrap_wait()
 
-    clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
-    if clamped_timeout > parsed_timeout:
-        logger.warning(
-            "MENACE_BOOTSTRAP_WAIT_SECS=%r below minimum; clamping to %ss",
-            raw_timeout,
-            clamped_timeout,
-            extra={
-                "requested_timeout": parsed_timeout,
-                "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
-                "effective_timeout": clamped_timeout,
-            },
+    if isinstance(adaptive_context, Mapping):
+        overruns = adaptive_context.get("component_overruns")
+        if isinstance(overruns, Mapping):
+            adaptive_overruns = sum(
+                int(meta.get("overruns", 0) or 0) for meta in overruns.values() if isinstance(meta, Mapping)
+            )
+        host_load = adaptive_context.get("load_average")
+
+    if host_load is None:
+        try:
+            load1, _, _ = os.getloadavg()
+            cpus = os.cpu_count() or 1
+            host_load = load1 / max(float(cpus), 1.0)
+        except OSError:
+            host_load = None
+
+    disable_timeout = False
+    if not raw_timeout:
+        requested_timeout = None
+    elif raw_timeout.lower() == "none":
+        requested_timeout = None
+        disable_timeout = True
+    else:
+        try:
+            requested_timeout = float(raw_timeout)
+        except ValueError:
+            logger.warning(
+                "Invalid MENACE_BOOTSTRAP_WAIT_SECS=%r; using default %ss",
+                raw_timeout,
+                default_timeout,
+            )
+            requested_timeout = None
+
+    base_timeout = default_timeout
+    if requested_timeout is not None:
+        clamped_timeout = max(_BOOTSTRAP_TIMEOUT_FLOOR, requested_timeout)
+        if clamped_timeout > requested_timeout:
+            logger.warning(
+                "MENACE_BOOTSTRAP_WAIT_SECS=%r below minimum; clamping to %ss",
+                raw_timeout,
+                clamped_timeout,
+                extra={
+                    "requested_timeout": requested_timeout,
+                    "timeout_floor": _BOOTSTRAP_TIMEOUT_FLOOR,
+                    "effective_timeout": clamped_timeout,
+                },
+            )
+        base_timeout = max(default_timeout, clamped_timeout)
+
+    contention_scale = 1.0
+    if host_load and host_load > 1.0:
+        contention_scale = max(contention_scale, 1.0 + min((host_load - 1.0) * 0.35, _BOOTSTRAP_WAIT_GROWTH_CAP))
+    if adaptive_overruns:
+        contention_scale = max(
+            contention_scale,
+            1.0 + min(adaptive_overruns * 0.1, _BOOTSTRAP_WAIT_GROWTH_CAP),
         )
-    return max(default_timeout, clamped_timeout)
+
+    adaptive_timeout = base_timeout * contention_scale
+    adaptive_cap = base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
+    adaptive_timeout = min(adaptive_timeout, adaptive_cap)
+
+    effective_timeout = max(base_timeout, adaptive_timeout, persisted_timeout or 0.0)
+    persist_bootstrap_wait_window(
+        None if disable_timeout else effective_timeout,
+        vector_heavy=False,
+        source="coding_bot_interface",
+        metadata={
+            "requested": requested_timeout,
+            "base_timeout": base_timeout,
+            "host_load": host_load,
+            "adaptive_overruns": adaptive_overruns,
+            "contention_scale": contention_scale,
+            "adaptive_cap": adaptive_cap,
+            "persisted_timeout": persisted_timeout,
+        },
+    )
+    logger.info(
+        "bootstrap wait timeout resolved",
+        extra={
+            "event": "bootstrap-wait-timeout",
+        "effective_timeout": effective_timeout,
+        "disabled": disable_timeout,
+        "requested_timeout": requested_timeout,
+        "base_timeout": base_timeout,
+        "persisted_timeout": persisted_timeout,
+        "host_load": host_load,
+        "adaptive_overruns": adaptive_overruns,
+            "contention_scale": round(contention_scale, 3),
+            "adaptive_cap": adaptive_cap,
+        },
+    )
+
+    if disable_timeout:
+        return None
+    return effective_timeout if requested_timeout is None or requested_timeout >= 0 else None
 
 
 _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
@@ -1115,33 +1195,91 @@ def _resolve_bootstrap_wait_timeout(vector_heavy: bool = False) -> float | None:
         _BOOTSTRAP_TIMEOUT_FLOOR,
         _BOOTSTRAP_WAIT_TIMEOUT if _BOOTSTRAP_WAIT_TIMEOUT is not None else 0,
     )
+    persisted_timeout = load_persisted_bootstrap_wait(vector_heavy=True)
+    requested_timeout: float | None = None
+    disable_timeout = False
     if raw_timeout:
         if raw_timeout.strip().lower() == "none":
-            return None
-        try:
-            parsed_timeout = float(raw_timeout)
-            clamped_timeout = max(_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR, parsed_timeout)
-            if clamped_timeout > parsed_timeout:
+            requested_timeout = None
+            disable_timeout = True
+        else:
+            try:
+                requested_timeout = float(raw_timeout)
+                clamped_timeout = max(_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR, requested_timeout)
+                if clamped_timeout > requested_timeout:
+                    logger.warning(
+                        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r below minimum; clamping to %ss",
+                        raw_timeout,
+                        clamped_timeout,
+                        extra={
+                            "requested_timeout": requested_timeout,
+                            "timeout_floor": _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR,
+                            "effective_timeout": clamped_timeout,
+                        },
+                    )
+                requested_timeout = max(default_timeout, clamped_timeout)
+            except ValueError:
                 logger.warning(
-                    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r below minimum; clamping to %ss",
+                    "Invalid MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r; using default %ss",
                     raw_timeout,
-                    clamped_timeout,
-                    extra={
-                        "requested_timeout": parsed_timeout,
-                        "timeout_floor": _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR,
-                        "effective_timeout": clamped_timeout,
-                    },
+                    default_timeout,
                 )
-            return max(default_timeout, clamped_timeout)
-        except ValueError:
-            logger.warning(
-                "Invalid MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=%r; using default %ss",
-                raw_timeout,
-                default_timeout,
-            )
-    if _BOOTSTRAP_WAIT_TIMEOUT is None:
-        return default_timeout
-    return max(_BOOTSTRAP_WAIT_TIMEOUT, default_timeout)
+                requested_timeout = None
+
+    base_timeout = (
+        requested_timeout
+        if requested_timeout is not None
+        else (default_timeout if _BOOTSTRAP_WAIT_TIMEOUT is None else max(_BOOTSTRAP_WAIT_TIMEOUT, default_timeout))
+    )
+
+    host_load = None
+    try:
+        load1, _, _ = os.getloadavg()
+        cpus = os.cpu_count() or 1
+        host_load = load1 / max(float(cpus), 1.0)
+    except OSError:
+        host_load = None
+
+    contention_scale = 1.0
+    if host_load and host_load > 1.0:
+        contention_scale = max(contention_scale, 1.0 + min((host_load - 1.0) * 0.35, _BOOTSTRAP_WAIT_GROWTH_CAP))
+    adaptive_timeout = min(
+        base_timeout * max(1.0, contention_scale, _VECTOR_BUDGET_BIAS / 1.35),
+        base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
+    )
+
+    effective_timeout = max(base_timeout, adaptive_timeout, persisted_timeout or 0.0)
+    persist_bootstrap_wait_window(
+        None if disable_timeout else effective_timeout,
+        vector_heavy=True,
+        source="coding_bot_interface",
+        metadata={
+            "requested": requested_timeout,
+            "base_timeout": base_timeout,
+            "host_load": host_load,
+            "contention_scale": contention_scale,
+            "adaptive_cap": base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
+            "persisted_timeout": persisted_timeout,
+        },
+    )
+    logger.info(
+        "vector bootstrap wait timeout resolved",
+        extra={
+            "event": "bootstrap-vector-wait-timeout",
+        "effective_timeout": effective_timeout,
+        "disabled": disable_timeout,
+        "requested_timeout": requested_timeout,
+        "base_timeout": base_timeout,
+        "persisted_timeout": persisted_timeout,
+        "host_load": host_load,
+        "contention_scale": round(contention_scale, 3),
+            "adaptive_cap": base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP),
+        },
+    )
+
+    if disable_timeout:
+        return None
+    return effective_timeout
 
 
 def _log_bootstrap_env_snapshot() -> None:
@@ -1161,6 +1299,8 @@ def _log_bootstrap_env_snapshot() -> None:
     snapshot = {
         "MENACE_BOOTSTRAP_WAIT_SECS": _BOOTSTRAP_WAIT_TIMEOUT,
         "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": _resolve_bootstrap_wait_timeout(True),
+        "BOOTSTRAP_WAIT_PERSISTED": load_persisted_bootstrap_wait(),
+        "BOOTSTRAP_VECTOR_WAIT_PERSISTED": load_persisted_bootstrap_wait(True),
         "BOOTSTRAP_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_STEP_TIMEOUT"),
         "BOOTSTRAP_VECTOR_STEP_TIMEOUT": _coerce_timeout("BOOTSTRAP_VECTOR_STEP_TIMEOUT"),
         "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": _SUBSYSTEM_BUDGET_FLOORS.get(
@@ -1177,6 +1317,7 @@ def _log_bootstrap_env_snapshot() -> None:
         "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS": dict(_PREPARE_VECTOR_STAGE_BUDGETS),
         "PREPARE_PIPELINE_BUDGET_GROWTH_CAP": _ADAPTIVE_BUDGET_GROWTH_CAP,
         "PREPARE_PIPELINE_VECTOR_BIAS": _VECTOR_BUDGET_BIAS,
+        "BOOTSTRAP_WAIT_GROWTH_CAP": _BOOTSTRAP_WAIT_GROWTH_CAP,
     }
 
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot
