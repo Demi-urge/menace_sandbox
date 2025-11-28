@@ -14,6 +14,7 @@ from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
 from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from .logging_utils import log_record
 
 _BOOTSTRAP_TIMEOUT_DEFAULTS = {
     "MENACE_BOOTSTRAP_WAIT_SECS": "240",
@@ -620,7 +621,17 @@ def main() -> None:
             **BOOTSTRAP_TIMEOUT_ENV,
         },
     )
-    EnvironmentBootstrapper().bootstrap()
+    bootstrapper = EnvironmentBootstrapper()
+    bootstrapper.bootstrap()
+    readiness_snapshot = bootstrapper.readiness_state()
+    logging.getLogger(__name__).info(
+        "bootstrap readiness summary",
+        extra=log_record(
+            event="bootstrap-readiness-summary",
+            gates=readiness_snapshot.get("gates"),
+            readiness_tokens=readiness_snapshot,
+        ),
+    )
     builder = create_context_builder()
     sup = ServiceSupervisor(context_builder=builder)
     sup.register("orchestrator", partial(_orchestrator_worker, builder))
