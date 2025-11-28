@@ -29,7 +29,7 @@ import traceback
 import faulthandler
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Callable, Dict, Iterable
+from typing import Any, Callable, Dict, Iterable, Mapping
 
 from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
@@ -54,6 +54,7 @@ from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
+    collect_timeout_telemetry,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
     compute_prepare_pipeline_component_budgets,
@@ -70,14 +71,6 @@ BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
 _BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 240.0)
-_BASELINE_BOOTSTRAP_STEP_TIMEOUT = max(
-    _BOOTSTRAP_TIMEOUT_FLOOR,
-    (
-        _coding_bot_interface._BOOTSTRAP_WAIT_TIMEOUT
-        if getattr(_coding_bot_interface, "_BOOTSTRAP_WAIT_TIMEOUT", None) is not None
-        else 240.0
-    ),
-)
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 240.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 360.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
@@ -102,6 +95,61 @@ class _BootstrapStepScheduler:
             name: "pending" for name in self._COMPONENTS
         }
         self._latest_deadlines: dict[str, float] = {}
+        self._component_budgets: dict[str, float] = {}
+        self._component_ready_at: dict[str, float] = {}
+        self._default_budget = _BOOTSTRAP_TIMEOUT_FLOOR
+        self._default_vector_budget = _PREPARE_VECTOR_TIMEOUT_FLOOR
+
+    def set_component_budgets(self, budgets: Mapping[str, float] | None) -> None:
+        mapped: dict[str, float] = {}
+
+        alias_map = {
+            "vectorizers": "vector_seeding",
+            "retrievers": "retriever_hydration",
+            "db_indexes": "db_index_load",
+            "orchestrator_state": "orchestrator_state",
+            "background_loops": "background_loops",
+            "pipeline_config": "pipeline_config",
+        }
+
+        for key, value in (budgets or {}).items():
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            mapped[alias_map.get(key, key)] = max(parsed, 0.0)
+
+        self._component_budgets = mapped
+        for component in mapped:
+            self._component_state.setdefault(component, "pending")
+        self._default_budget = max(
+            _BOOTSTRAP_TIMEOUT_FLOOR,
+            mapped.get("pipeline_config", _BOOTSTRAP_TIMEOUT_FLOOR),
+            max(mapped.values(), default=_BOOTSTRAP_TIMEOUT_FLOOR),
+        )
+        self._default_vector_budget = max(
+            _PREPARE_VECTOR_TIMEOUT_FLOOR,
+            mapped.get("vector_seeding", _PREPARE_VECTOR_TIMEOUT_FLOOR),
+        )
+
+    def default_budget(self, *, vector_heavy: bool = False) -> float:
+        return self._default_vector_budget if vector_heavy else self._default_budget
+
+    def _component_for_step(self, step_name: str, *, vector_heavy: bool) -> str | None:
+        normalized = step_name.lower()
+        if "vector" in normalized:
+            return "vector_seeding"
+        if "retriev" in normalized:
+            return "retriever_hydration"
+        if "index" in normalized or "db" in normalized:
+            return "db_index_load"
+        if "orchestrator" in normalized:
+            return "orchestrator_state"
+        if "background" in normalized:
+            return "background_loops"
+        if "prepare" in normalized:
+            return "pipeline_config"
+        return None
 
     def _host_load_scale(self) -> float:
         try:
@@ -115,15 +163,20 @@ class _BootstrapStepScheduler:
         return min(1.6, max(0.8, 1.0 + (normalized - 1.0) * 0.35))
 
     def _step_baseline(self, step_name: str, vector_heavy: bool) -> float:
+        component = self._component_for_step(step_name, vector_heavy=vector_heavy)
+        if component:
+            budget = self._component_budgets.get(component)
+            if budget is not None:
+                floor = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+                return max(budget, floor)
+
         baselines = {
-            "prepare_pipeline_for_bootstrap": _PREPARE_VECTOR_TIMEOUT_FLOOR
-            if vector_heavy
-            else _PREPARE_STANDARD_TIMEOUT_FLOOR,
-            "_seed_research_aggregator_context": _PREPARE_VECTOR_TIMEOUT_FLOOR,
-            "_push_bootstrap_context": _PREPARE_STANDARD_TIMEOUT_FLOOR,
-            "promote_pipeline": _PREPARE_STANDARD_TIMEOUT_FLOOR,
+            "prepare_pipeline_for_bootstrap": self.default_budget(vector_heavy=vector_heavy),
+            "_seed_research_aggregator_context": self.default_budget(vector_heavy=True),
+            "_push_bootstrap_context": self.default_budget(vector_heavy=False),
+            "promote_pipeline": self.default_budget(vector_heavy=vector_heavy),
         }
-        return baselines.get(step_name, _PREPARE_STANDARD_TIMEOUT_FLOOR)
+        return baselines.get(step_name, self.default_budget(vector_heavy=vector_heavy))
 
     def _historical_mean(self, step_name: str) -> float | None:
         history = self._step_history.get(step_name)
@@ -153,7 +206,10 @@ class _BootstrapStepScheduler:
         predicted = max(baseline, historical if historical is not None else 0.0)
         load_scale = self._host_load_scale()
         candidate = predicted * load_scale + BOOTSTRAP_DEADLINE_BUFFER
-        min_floor = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+        min_floor = max(
+            self.default_budget(vector_heavy=vector_heavy),
+            _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR,
+        )
         upper_bound = base_timeout * (1.6 if vector_heavy else 1.35)
 
         if candidate < baseline:
@@ -180,24 +236,39 @@ class _BootstrapStepScheduler:
         if component not in self._component_state:
             return
         self._component_state[component] = "ready"
+        self._component_ready_at[component] = time.time()
         if reason:
             LOGGER.debug("component marked ready", extra={"component": component, "reason": reason})
 
     def quorum_met(self) -> bool:
-        ready_count = sum(1 for state in self._component_state.values() if state == "ready")
-        partial_count = sum(1 for state in self._component_state.values() if state == "partial")
-        quorum = (len(self._component_state) + 1) // 2 + 1
-        return ready_count >= quorum or (ready_count + partial_count >= quorum and ready_count >= quorum - 1)
+        tracked_components = [name for name in self._component_state if name != "pipeline_config"]
+        ready_count = sum(
+            1 for name in tracked_components if self._component_state.get(name) == "ready"
+        )
+        partial_count = sum(
+            1 for name in tracked_components if self._component_state.get(name) == "partial"
+        )
+        quorum = (len(tracked_components) + 1) // 2 + 1
+        return ready_count >= quorum or (
+            ready_count + partial_count >= quorum and ready_count >= max(quorum - 1, 1)
+        )
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "components": dict(self._component_state),
             "quorum": self.quorum_met(),
             "deadlines": dict(self._latest_deadlines),
+            "component_budgets": dict(self._component_budgets),
+            "component_ready_at": dict(self._component_ready_at),
+            "online": self.quorum_met(),
         }
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
+
+
+def _default_step_floor(*, vector_heavy: bool = False) -> float:
+    return _BOOTSTRAP_SCHEDULER.default_budget(vector_heavy=vector_heavy)
 
 
 def _set_component_state(component: str, state: str) -> None:
@@ -290,7 +361,6 @@ class _BootstrapDagRunner:
             if not critical_remaining:
                 break
 
-        BOOTSTRAP_ONLINE_STATE["quorum"] = not critical_remaining
         _publish_online_state()
         return self._results
 
@@ -345,7 +415,10 @@ class _BootstrapContentionCoordinator:
 
 
 def _publish_online_state() -> None:
-    BOOTSTRAP_ONLINE_STATE.update(_BOOTSTRAP_SCHEDULER.snapshot())
+    snapshot = _BOOTSTRAP_SCHEDULER.snapshot()
+    BOOTSTRAP_ONLINE_STATE.update(snapshot)
+    BOOTSTRAP_ONLINE_STATE["quorum"] = snapshot.get("quorum", False)
+    BOOTSTRAP_ONLINE_STATE["online"] = snapshot.get("online", False)
 
 
 def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
@@ -377,14 +450,14 @@ def _apply_timeout_policy_snapshot(policy_snapshot: dict[str, dict[str, Any]]) -
         return float(value) if isinstance(value, (int, float)) else current
 
     _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
-        _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+        _default_step_floor(vector_heavy=False),
         _clamp_timeout_floor(
             _resolved_value("BOOTSTRAP_STEP_TIMEOUT", _DEFAULT_BOOTSTRAP_STEP_TIMEOUT),
             env_var="BOOTSTRAP_STEP_TIMEOUT",
         ),
     )
     _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
-        _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+        _default_step_floor(vector_heavy=True),
         _clamp_timeout_floor(
             _resolved_value(
                 "BOOTSTRAP_VECTOR_STEP_TIMEOUT", _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT
@@ -485,14 +558,14 @@ def _render_timeout_policy(policy_snapshot: dict[str, dict[str, Any]]) -> str:
 
 
 _DEFAULT_BOOTSTRAP_STEP_TIMEOUT = max(
-    _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+    _default_step_floor(vector_heavy=False),
     _clamp_timeout_floor(
-        float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_BASELINE_BOOTSTRAP_STEP_TIMEOUT))),
+        float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(_default_step_floor(vector_heavy=False)))),
         env_var="BOOTSTRAP_STEP_TIMEOUT",
     ),
 )
 _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
-    _BASELINE_BOOTSTRAP_STEP_TIMEOUT,
+    _default_step_floor(vector_heavy=True),
     _clamp_timeout_floor(
         float(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "900.0")),
         env_var="BOOTSTRAP_VECTOR_STEP_TIMEOUT",
@@ -1337,8 +1410,12 @@ def initialize_bootstrap_context(
         "component_floors", load_component_timeout_floors()
     )
     component_budgets = compute_prepare_pipeline_component_budgets(
-        component_floors=component_timeout_floors
+        component_floors=component_timeout_floors,
+        telemetry=collect_timeout_telemetry(),
     )
+    _BOOTSTRAP_SCHEDULER.set_component_budgets(component_budgets)
+    _apply_timeout_policy_snapshot(timeout_policy)
+    _publish_online_state()
 
     resolved_bootstrap_window = None
     try:
