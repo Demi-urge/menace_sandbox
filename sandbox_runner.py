@@ -70,7 +70,9 @@ def _announce_staged_readiness(logger: logging.Logger) -> None:
 
     baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
     stage_policy = build_stage_deadlines(baseline_timeout, soft_deadline=True)
-    core_ready, lagging_core, degraded_core = minimal_online({"components": {}})
+    core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
+        {"components": {}}
+    )
     logger.info(
         "staged readiness model initialised for sandbox runner",
         extra={
@@ -80,6 +82,7 @@ def _announce_staged_readiness(logger: logging.Logger) -> None:
             "core_ready": core_ready,
             "lagging_core": sorted(lagging_core),
             "degraded_core": sorted(degraded_core),
+            "degraded_online": degraded_online,
         },
     )
 

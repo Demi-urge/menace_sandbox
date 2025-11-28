@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping
 
+import os
+
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
 
@@ -101,19 +103,42 @@ def build_stage_deadlines(
     return stage_deadlines
 
 
-def minimal_online(online_state: Mapping[str, object]) -> tuple[bool, set[str], set[str]]:
+def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
+    """Return the minimum number of degraded components required for quorum."""
+
+    env_override = os.getenv("MENACE_DEGRADED_CORE_QUORUM")
+    online_state = online_state or {}
+    for candidate in (env_override, online_state.get("degraded_quorum")):
+        try:
+            if candidate is not None:
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        except (TypeError, ValueError):
+            continue
+    return max(1, len(CORE_COMPONENTS) - 1)
+
+
+def minimal_online(
+    online_state: Mapping[str, object]
+) -> tuple[bool, set[str], set[str], bool]:
     components = online_state.get("components", {}) if isinstance(online_state, Mapping) else {}
     lagging: set[str] = set()
     degraded: set[str] = set()
+    readyish: set[str] = set()
     for component in CORE_COMPONENTS:
         status = str(components.get(component, "pending"))
         if status == "ready":
+            readyish.add(component)
             continue
         if status in {"partial", "warming", "degraded"}:
             degraded.add(component)
+            readyish.add(component)
             continue
         lagging.add(component)
-    return len(lagging) == 0, lagging, degraded
+    quorum = _degraded_quorum(online_state)
+    degraded_online = len(degraded) >= quorum and len(lagging) > 0
+    return len(lagging) == 0, lagging, degraded, degraded_online
 
 
 def lagging_optional_components(online_state: Mapping[str, object]) -> set[str]:
