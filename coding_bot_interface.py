@@ -47,6 +47,7 @@ from bootstrap_timeout_policy import (
     load_component_timeout_floors,
     load_escalated_timeout_floors,
     load_persisted_bootstrap_wait,
+    load_last_component_budgets,
     build_progress_signal_hook,
     persist_bootstrap_wait_window,
     read_bootstrap_heartbeat,
@@ -490,6 +491,8 @@ def _extend_component_windows(
                 "extension_factor": backoff_factor,
                 "extensions_used": extensions + 1,
                 "progress_signal": dict(progress_signal),
+                "component_budget": window.get("budget"),
+                "component_deadline": window.get("deadline"),
             }
             extension_meta.append(meta)
 
@@ -855,11 +858,28 @@ def _get_bootstrap_wait_timeout() -> float | None:
     """
 
     default_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
+    component_budget_total: float | None = None
+    component_budget_source = "computed"
+    component_budgets: dict[str, float] = {}
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     adaptive_context = get_adaptive_timeout_context()
     adaptive_overruns = 0
     host_load = None
     persisted_timeout = load_persisted_bootstrap_wait()
+
+    try:
+        component_budgets = compute_prepare_pipeline_component_budgets()
+    except Exception:
+        component_budget_source = "persisted"
+        component_budgets = {}
+    if not component_budgets:
+        persisted_budgets = load_last_component_budgets()
+        component_budget_total = persisted_budgets.pop("__total__", None)
+        component_budgets.update(persisted_budgets)
+        component_budget_source = "persisted" if persisted_budgets else component_budget_source
+
+    if component_budget_total is None:
+        component_budget_total = sum(component_budgets.values()) if component_budgets else None
 
     if isinstance(adaptive_context, Mapping):
         overruns = adaptive_context.get("component_overruns")
@@ -923,7 +943,22 @@ def _get_bootstrap_wait_timeout() -> float | None:
     adaptive_cap = base_timeout * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
     adaptive_timeout = min(adaptive_timeout, adaptive_cap)
 
-    effective_timeout = max(base_timeout, adaptive_timeout, persisted_timeout or 0.0)
+    composed_timeout = None
+    if component_budget_total:
+        background_budget = component_budgets.get("background_loops", 0.0)
+        background_headroom = background_budget * _READINESS_GATE_WEIGHTS.get("background_loops", 0.35)
+        composed_timeout = (component_budget_total + background_headroom) * contention_scale
+        composed_cap = max(base_timeout, component_budget_total) * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
+        composed_timeout = min(composed_timeout, composed_cap)
+    else:
+        composed_cap = None
+
+    effective_timeout = max(
+        base_timeout,
+        adaptive_timeout,
+        composed_timeout or 0.0,
+        persisted_timeout or 0.0,
+    )
     persist_bootstrap_wait_window(
         None if disable_timeout else effective_timeout,
         vector_heavy=False,
@@ -936,23 +971,37 @@ def _get_bootstrap_wait_timeout() -> float | None:
             "contention_scale": contention_scale,
             "adaptive_cap": adaptive_cap,
             "persisted_timeout": persisted_timeout,
+            "component_budget_total": component_budget_total,
+            "component_budgets": component_budgets,
+            "component_budget_source": component_budget_source,
+            "composed_timeout": composed_timeout,
+            "composed_cap": composed_cap,
         },
     )
     logger.info(
         "bootstrap wait timeout resolved",
         extra={
             "event": "bootstrap-wait-timeout",
-        "effective_timeout": effective_timeout,
-        "disabled": disable_timeout,
-        "requested_timeout": requested_timeout,
-        "base_timeout": base_timeout,
-        "persisted_timeout": persisted_timeout,
-        "host_load": host_load,
-        "adaptive_overruns": adaptive_overruns,
+            "effective_timeout": effective_timeout,
+            "disabled": disable_timeout,
+            "requested_timeout": requested_timeout,
+            "base_timeout": base_timeout,
+            "persisted_timeout": persisted_timeout,
+            "host_load": host_load,
+            "adaptive_overruns": adaptive_overruns,
             "contention_scale": round(contention_scale, 3),
             "adaptive_cap": adaptive_cap,
+            "component_budget_total": component_budget_total,
+            "component_budgets": component_budgets,
+            "component_budget_source": component_budget_source,
+            "composed_timeout": composed_timeout,
+            "composed_cap": composed_cap,
         },
     )
+
+    _PREPARE_PIPELINE_WATCHDOG["component_budget_total"] = component_budget_total
+    _PREPARE_PIPELINE_WATCHDOG["component_budgets_resolved"] = dict(component_budgets)
+    _PREPARE_PIPELINE_WATCHDOG["bootstrap_composed_timeout"] = composed_timeout
 
     if disable_timeout:
         return None
@@ -1177,6 +1226,14 @@ def _normalize_watchdog_timeout(
                 "configured_stage_budget": configured_budget,
                 "vector_grace_applied": grace_applied,
                 "dominant_gate": dominant_gate,
+                "component_budget_total": _PREPARE_PIPELINE_WATCHDOG.get("component_budget_total"),
+                "component_budgets": _PREPARE_PIPELINE_WATCHDOG.get(
+                    "component_budgets_resolved"
+                ),
+                "component_windows": _PREPARE_PIPELINE_WATCHDOG.get("component_windows"),
+                "bootstrap_composed_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
+                    "bootstrap_composed_timeout"
+                ),
             },
         )
 
@@ -1318,6 +1375,9 @@ def _log_bootstrap_env_snapshot() -> None:
         "PREPARE_PIPELINE_BUDGET_GROWTH_CAP": _ADAPTIVE_BUDGET_GROWTH_CAP,
         "PREPARE_PIPELINE_VECTOR_BIAS": _VECTOR_BUDGET_BIAS,
         "BOOTSTRAP_WAIT_GROWTH_CAP": _BOOTSTRAP_WAIT_GROWTH_CAP,
+        "BOOTSTRAP_COMPONENT_BUDGET_TOTAL": _PREPARE_PIPELINE_WATCHDOG.get("component_budget_total"),
+        "BOOTSTRAP_COMPONENT_BUDGETS": _PREPARE_PIPELINE_WATCHDOG.get("component_budgets_resolved"),
+        "BOOTSTRAP_COMPOSED_TIMEOUT": _PREPARE_PIPELINE_WATCHDOG.get("bootstrap_composed_timeout"),
     }
 
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot

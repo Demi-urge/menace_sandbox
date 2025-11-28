@@ -522,6 +522,30 @@ def load_persisted_bootstrap_wait(vector_heavy: bool = False) -> float | None:
         return None
 
 
+def load_last_component_budgets() -> dict[str, float]:
+    """Return the last persisted component budgets when available."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    raw_budgets = host_state.get("last_component_budgets", {}) if isinstance(host_state, Mapping) else {}
+    budgets: dict[str, float] = {}
+
+    if isinstance(raw_budgets, Mapping):
+        for key, value in raw_budgets.items():
+            try:
+                budgets[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    total = host_state.get("last_component_budget_total") if isinstance(host_state, Mapping) else None
+    try:
+        budgets["__total__"] = float(total)  # type: ignore[assignment]
+    except (TypeError, ValueError):
+        pass
+
+    return budgets
+
+
 def persist_bootstrap_wait_window(
     timeout: float | None,
     *,
@@ -549,9 +573,21 @@ def persist_bootstrap_wait_window(
     }
     if metadata:
         window_state.update({f"meta.{k}": v for k, v in metadata.items()})
+        if "component_budget_total" in metadata:
+            window_state["component_total"] = metadata.get("component_budget_total")
+        if metadata.get("component_budgets"):
+            window_state["component_budgets"] = dict(metadata.get("component_budgets", {}))
 
     windows[key] = window_state
     host_state["bootstrap_wait_windows"] = windows
+    if metadata:
+        total = metadata.get("component_budget_total")
+        try:
+            host_state["last_component_budget_total"] = float(total) if total is not None else host_state.get(
+                "last_component_budget_total"
+            )
+        except (TypeError, ValueError):  # pragma: no cover - defensive casting
+            pass
     state = state if isinstance(state, dict) else {}
     state[host_key] = host_state
     _save_timeout_state(state)
@@ -737,6 +773,7 @@ def compute_prepare_pipeline_component_budgets(
         {
             "last_component_budgets": budgets,
             "last_component_budget_inputs": adaptive_inputs,
+            "last_component_budget_total": sum(budgets.values()),
             "updated_at": time.time(),
         }
     )
