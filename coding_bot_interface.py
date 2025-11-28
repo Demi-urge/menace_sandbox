@@ -344,6 +344,8 @@ def _mark_staged_readiness(
     *,
     ready_gates: Iterable[str],
     pending_gates: Iterable[str],
+    deferred_pending: Iterable[str] | None = None,
+    all_pending_gates: Iterable[str] | None = None,
     readiness_ratio: float,
     remaining_window: float,
     stage_budget: float,
@@ -351,10 +353,14 @@ def _mark_staged_readiness(
 ) -> Mapping[str, Any]:
     label = stage_label or "prepare_pipeline"
     critical_pending = _CRITICAL_READINESS_GATES & set(pending_gates)
+    deferred_pending = tuple(deferred_pending or ())
+    all_pending = tuple(all_pending_gates or pending_gates)
     payload = {
         "stage": label,
         "ready_gates": tuple(ready_gates),
         "pending_gates": tuple(pending_gates),
+        "all_pending_gates": all_pending,
+        "deferred_pending_gates": deferred_pending,
         "readiness_ratio": readiness_ratio,
         "remaining_window": remaining_window,
         "stage_budget": stage_budget,
@@ -373,6 +379,18 @@ def _mark_staged_readiness(
                 _SHARED_EVENT_BUS.publish(_STAGED_READY_TOPIC, payload)
             except Exception:  # pragma: no cover - best effort telemetry
                 logger.debug("staged readiness publish failed", exc_info=True)
+        if payload["quorum_ready"] and not _PREPARE_PIPELINE_WATCHDOG.get(
+            "critical_ready_emitted"
+        ):
+            emit_bootstrap_heartbeat(
+                {
+                    "event": "prepare-pipeline-critical-ready",
+                    "stage": label,
+                    "pending_optional": deferred_pending,
+                    "pending_all": all_pending,
+                }
+            )
+            _PREPARE_PIPELINE_WATCHDOG["critical_ready_emitted"] = payload["timestamp"]
 
     return payload
 
@@ -1198,10 +1216,18 @@ def _normalize_watchdog_timeout(
     readiness = _initialize_prepare_readiness()
     ready_gates = [gate for gate, meta in readiness.items() if meta.get("ready")]
     pending_gates = [gate for gate in readiness if gate not in ready_gates]
-    pending_weight = sum(_READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in pending_gates)
-    readiness_ratio = (
-        float(len(ready_gates)) / float(len(readiness)) if readiness else 0.0
+    deferred_gates = set(_PREPARE_PIPELINE_WATCHDOG.get("deferred_gates") or ())
+    deferred_pending = [gate for gate in pending_gates if gate in deferred_gates]
+    critical_pending = [
+        gate
+        for gate in pending_gates
+        if gate in _CRITICAL_READINESS_GATES or gate not in deferred_gates
+    ]
+    effective_total = max(len(readiness) - len(deferred_gates - _CRITICAL_READINESS_GATES), 1)
+    pending_weight = sum(
+        _READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in critical_pending
     )
+    readiness_ratio = float(len(ready_gates)) / float(effective_total)
 
     guard_scale = float(adaptive_context.get("guard_scale") or 1.0)
     cluster_scale = float(
@@ -1267,6 +1293,8 @@ def _normalize_watchdog_timeout(
         "gate_floor_meta": gate_floor_meta,
         "configured_stage_budget": configured_budget,
         "pending_gates": pending_gates,
+        "critical_pending_gates": critical_pending,
+        "deferred_pending_gates": deferred_pending,
         "ready_gates": ready_gates,
         "readiness_ratio": readiness_ratio,
         "pending_gate_weight": pending_weight,
@@ -1288,7 +1316,7 @@ def _normalize_watchdog_timeout(
     telemetry["remaining_window"] = remaining_window
 
     staged_readiness = (stage_budget > remaining_window and remaining_window > 0) or (
-        readiness_ratio > 0 and pending_gates
+        readiness_ratio > 0 and critical_pending
     )
     telemetry["staged_readiness"] = staged_readiness
 
@@ -1299,7 +1327,9 @@ def _normalize_watchdog_timeout(
         staged_ready_payload = _mark_staged_readiness(
             stage_label,
             ready_gates=ready_gates,
-            pending_gates=pending_gates,
+            pending_gates=critical_pending,
+            deferred_pending=deferred_pending,
+            all_pending_gates=pending_gates,
             readiness_ratio=readiness_ratio,
             remaining_window=remaining_window,
             stage_budget=stage_budget,
@@ -1323,6 +1353,8 @@ def _normalize_watchdog_timeout(
     escalated = normalized_timeout > remaining_window
     telemetry["escalated"] = escalated
     telemetry["vector_grace"] = grace_applied
+    telemetry["deferred_pending_gates"] = tuple(deferred_pending)
+    telemetry["critical_pending_gates"] = tuple(critical_pending)
 
     normalized_deadline = start_time + normalized_timeout
 
@@ -4998,6 +5030,9 @@ def prepare_pipeline_for_bootstrap(
     orchestrator_budget: float | None = None,
     component_timeouts: Mapping[str, float] | None = None,
     bootstrap_guard: bool = True,
+    defer_background_tasks: bool = True,
+    deferred_stage_labels: Iterable[str] | None = None,
+    deferred_readiness_gates: Iterable[str] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -5040,6 +5075,9 @@ def prepare_pipeline_for_bootstrap(
             orchestrator_budget=orchestrator_budget,
             component_timeouts=component_timeouts,
             bootstrap_guard=bootstrap_guard,
+            defer_background_tasks=defer_background_tasks,
+            deferred_stage_labels=deferred_stage_labels,
+            deferred_readiness_gates=deferred_readiness_gates,
             **pipeline_kwargs,
         )
 
@@ -5069,6 +5107,9 @@ def _prepare_pipeline_for_bootstrap_impl(
     orchestrator_budget: float | None = None,
     component_timeouts: Mapping[str, float] | None = None,
     bootstrap_guard: bool = True,
+    defer_background_tasks: bool = True,
+    deferred_stage_labels: Iterable[str] | None = None,
+    deferred_readiness_gates: Iterable[str] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -5113,12 +5154,28 @@ def _prepare_pipeline_for_bootstrap_impl(
     ``bootstrap_guard`` enables a contention guard that waits for peers or host
     load to subside before heavy bootstrap stages begin; set the flag to
     ``False`` or export ``MENACE_BOOTSTRAP_GUARD_OPTOUT=1`` when callers must
-    intentionally skip the guard.
+    intentionally skip the guard. ``defer_background_tasks`` marks background
+    loop orchestration as deferred readiness work, while
+    ``deferred_stage_labels`` and ``deferred_readiness_gates`` let callers
+    explicitly nominate cache warmups or index population stages to run in a
+    second phase without blocking critical readiness signals.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
 
     enforce_bootstrap_timeout_policy(logger=logger)
+    deferred_labels_normalized = {
+        (label or "").strip().lower() for label in (deferred_stage_labels or []) if label
+    }
+    deferred_gates = _derive_readiness_gates(None, deferred_readiness_gates)
+    if defer_background_tasks:
+        deferred_gates.add("background_loops")
+    for label in deferred_labels_normalized:
+        deferred_gates |= _derive_readiness_gates(label, None)
+    _PREPARE_PIPELINE_WATCHDOG["deferred_gates"] = tuple(sorted(deferred_gates))
+    _PREPARE_PIPELINE_WATCHDOG["deferred_stage_labels"] = tuple(
+        sorted(deferred_labels_normalized)
+    )
     subsystem_budget_overrides = {
         "vectorizers": vectorizer_budget,
         "retrievers": retriever_budget,
@@ -5524,6 +5581,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
+        deferred_pending = watchdog_telemetry.get("deferred_pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
         staged_ready_event = watchdog_telemetry.get("staged_ready_event")
         staged_ready_signal = bool(
@@ -5678,6 +5736,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             "pending_delta": len(readiness_pending) if gate_windows else 0,
             "ratio_delta": readiness_ratio if gate_windows else 0.0,
             "staged_ready": staged_ready_signal,
+            "deferred_pending": tuple(deferred_pending),
         }
         progress_signal["progressing"] = bool(
             staged_ready_signal or readiness_ready
@@ -5813,7 +5872,8 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         evaluation_gates = list(gate_windows) if gate_windows else [phase_label or active_shared_label or stage]
         exhausted_critical: set[str] = set()
-        pending_critical = set(readiness_pending) & _CRITICAL_READINESS_GATES
+        critical_pending_gates = watchdog_telemetry.get("critical_pending_gates") or readiness_pending
+        pending_critical = set(critical_pending_gates) & _CRITICAL_READINESS_GATES
         consumption_snapshot: dict[str, dict[str, Any]] = {}
 
         for gate in evaluation_gates:
