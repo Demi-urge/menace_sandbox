@@ -29,6 +29,7 @@ from typing import Iterable, Iterator, Mapping, Any, Callable
 from bootstrap_readiness import build_stage_deadlines, minimal_online
 from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
+    emit_bootstrap_heartbeat,
     load_component_timeout_floors,
     wait_for_bootstrap_quiet_period,
 )
@@ -50,6 +51,77 @@ DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
 
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
     os.environ.setdefault(_timeout_env, _timeout_default)
+
+
+class _BootstrapOnlineTracker:
+    """Track component readiness and emit a core-online heartbeat."""
+
+    def __init__(self, stage_policy: Mapping[str, object] | None = None) -> None:
+        self.stage_policy = stage_policy or {}
+        self.online_state: dict[str, object] = {"components": {}}
+        self._core_announced = False
+
+    def _soft_deadline(self, component: str) -> float | None:
+        entry = self.stage_policy.get(component, {})
+        if isinstance(entry, Mapping):
+            deadline = entry.get("deadline") or entry.get("scaled_budget")
+            try:
+                return float(deadline) if deadline is not None else None
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @contextlib.contextmanager
+    def soft_watchdog(self, component: str) -> Iterator[None]:
+        start = time.monotonic()
+        deadline = self._soft_deadline(component)
+        yield
+        elapsed = time.monotonic() - start
+        if deadline is not None and elapsed > deadline:
+            LOGGER.warning(
+                "optional bootstrap component exceeded soft deadline",
+                extra={
+                    "event": "bootstrap-soft-deadline",
+                    "component": component,
+                    "elapsed": round(elapsed, 2),
+                    "deadline": round(deadline, 2),
+                },
+            )
+
+    def mark_component(self, component: str, state: str = "ready") -> None:
+        components = self.online_state.setdefault("components", {})
+        if isinstance(components, Mapping):
+            components = dict(components)
+        components[str(component)] = state
+        self.online_state["components"] = components
+        self._maybe_emit_core_signal()
+
+    def _maybe_emit_core_signal(self) -> None:
+        if self._core_announced:
+            return
+        core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
+            self.online_state
+        )
+        snapshot = {
+            "core_ready": core_ready,
+            "core_lagging": sorted(lagging_core),
+            "core_degraded": sorted(degraded_core),
+            "core_degraded_online": degraded_online,
+        }
+        self.online_state.update(snapshot)
+        if not core_ready:
+            return
+        self._core_announced = True
+        heartbeat_payload = {"signal": "core-online", "online_state": dict(self.online_state)}
+        try:
+            emit_bootstrap_heartbeat(heartbeat_payload)
+        except Exception:
+            LOGGER.debug("Failed to emit core-online heartbeat", exc_info=True)
+        LOGGER.info(
+            "core bootstrap quorum reached; optional background warmup continuing",
+            extra={"event": "core-online", **heartbeat_payload},
+        )
+        print("[BOOTSTRAP] core-online; continuing optional warmup", flush=True)
 
 
 # ``bootstrap_self_coding.py`` is often executed directly via ``python`` or
@@ -177,6 +249,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         component_budgets=component_budgets,
         component_floors=component_floors,
     )
+    online_tracker = _BootstrapOnlineTracker(stage_policy)
     core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
         {"components": {}}
     )
@@ -231,7 +304,9 @@ def bootstrap_self_coding(bot_name: str) -> None:
 
     builder = _record_step("context_builder", create_context_builder)
     registry = _record_step("bot_registry", BotRegistry)
+    online_tracker.mark_component("db_index_load")
     data_bot = _record_step("data_bot", lambda: DataBot(start_server=False))
+    online_tracker.mark_component("retriever_hydration")
     engine = _record_step(
         "self_coding_engine",
         lambda: SelfCodingEngine(
@@ -257,6 +332,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
             )
 
     pipeline, promote_manager = _record_step("prepare_pipeline", _build_pipeline)
+    online_tracker.mark_component("vector_seeding")
 
     roi_threshold = error_threshold = test_failure_threshold = None
     try:
@@ -399,14 +475,18 @@ def bootstrap_self_coding(bot_name: str) -> None:
             f"{warning}. Diagnostics: {_summarise_capture()}"
         )
 
-    promote_manager(manager)
+    with online_tracker.soft_watchdog("orchestrator_state"):
+        promote_manager(manager)
+    online_tracker.mark_component("orchestrator_state")
     LOGGER.info(
         "Promoted bootstrap pipeline manager for %s (%s)",
         bot_name,
         type(manager).__name__,
         extra={"stage_policy": stage_policy},
     )
-    _persist_pipeline_durations(step_durations)
+    with online_tracker.soft_watchdog("background_loops"):
+        online_tracker.mark_component("background_loops")
+        _persist_pipeline_durations(step_durations)
 
 
 def _parse_args() -> argparse.Namespace:
