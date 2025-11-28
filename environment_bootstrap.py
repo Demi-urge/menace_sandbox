@@ -55,6 +55,8 @@ class _PhaseBudgetContext:
         clock: Callable[[], float],
         logger: logging.Logger,
         mark_online: Callable[[float | None, str], None],
+        enforce_deadline: bool = True,
+        soft_overrun_handler: Callable[[str, float, float | None], None] | None = None,
     ) -> None:
         self.phase = phase
         self.budget = budget
@@ -65,6 +67,8 @@ class _PhaseBudgetContext:
         self._warned_over_budget = False
         self.online_ready = False
         self.online_reason: str | None = None
+        self._enforce_deadline = enforce_deadline
+        self._soft_overrun_handler = soft_overrun_handler
 
     def check(self) -> None:
         limit = self.budget.get("limit")
@@ -81,6 +85,11 @@ class _PhaseBudgetContext:
                 f"{remaining:.1f}s" if remaining is not None else "unbounded",
             )
         if limit is not None and elapsed > limit:
+            if not self._enforce_deadline:
+                self._warned_over_budget = True
+                if self._soft_overrun_handler:
+                    self._soft_overrun_handler(self.phase, elapsed, limit)
+                return
             raise TimeoutError(
                 f"{self.phase} phase exhausted soft budget ({elapsed:.1f}s > {limit:.1f}s)"
             )
@@ -175,10 +184,15 @@ class EnvironmentBootstrapper:
         self._background_threads: list[threading.Thread] = []
         self._stop_events: list[threading.Event] = []
         self._watchers_limited = os.getenv("MENACE_MINIMISE_BOOTSTRAP_WATCHERS") == "1"
+        self.readiness_mode = os.getenv("MENACE_BOOTSTRAP_READINESS_MODE", "staged")
         self._phase_readiness: dict[str, bool | dict[str, object]] = {
             phase: False for phase in self.PHASES
         }
         self._phase_readiness["online"] = False
+        self._phase_gates: dict[str, dict[str, object]] = {
+            phase: {"status": "pending", "started": None, "finished": None}
+            for phase in self.PHASES
+        }
         self._background_state: dict[str, object] = {
             "scheduled": 0,
             "running": 0,
@@ -284,7 +298,9 @@ class EnvironmentBootstrapper:
             event="bootstrap-readiness",
             phase=phase,
             status=status,
+            mode=self.readiness_mode,
             readiness_tokens=dict(self._phase_readiness),
+            readiness_gates=self._readiness_snapshot(),
             **fields,
         )
         self.logger.info("bootstrap phase %s %s", phase, status, extra=payload)
@@ -292,8 +308,46 @@ class EnvironmentBootstrapper:
     def _mark_online_ready(self, elapsed: float | None, reason: str) -> None:
         if self._phase_readiness.get("online"):
             return
+        if not self._core_gates_ready():
+            return
         self._phase_readiness["online"] = True
         self._emit_phase_event("online", "ready", elapsed=elapsed, reason=reason)
+
+    def _readiness_snapshot(self) -> dict[str, dict[str, object]]:
+        return {phase: dict(details) for phase, details in self._phase_gates.items()}
+
+    def _update_gate(self, phase: str, status: str, **fields: object) -> None:
+        gate = self._phase_gates.setdefault(
+            phase, {"status": "pending", "started": None, "finished": None}
+        )
+        now = self._clock()
+        if status == "start":
+            gate["started"] = now
+        if status in {"ready", "failed", "degraded"}:
+            gate["finished"] = now
+        gate.update({"status": status, **fields})
+
+    def _core_gates_ready(self) -> bool:
+        return all(
+            self._phase_gates.get(name, {}).get("status") == "ready"
+            for name in ("critical", "provisioning")
+        )
+
+    def _maybe_mark_online(self, *, reason: str) -> None:
+        if self._phase_readiness.get("online"):
+            return
+        if not self._core_gates_ready():
+            return
+        elapsed = None
+        try:
+            elapsed = max(
+                (self._phase_gates.get(name, {}).get("finished") or 0.0)
+                - (self._phase_gates.get(name, {}).get("started") or 0.0)
+                for name in ("critical", "provisioning")
+            )
+        except Exception:
+            elapsed = None
+        self._mark_online_ready(elapsed, reason)
 
     def _run_phase(
         self,
@@ -319,15 +373,42 @@ class EnvironmentBootstrapper:
                     "scale": 1.0,
                 }
 
+        soft_overrun = False
+
+        def _mark_soft_overrun(name: str, elapsed: float, limit: float | None) -> None:
+            nonlocal soft_overrun
+            soft_overrun = True
+            self.logger.warning(
+                "phase %s exceeded enforced deadline but continuing in degraded mode", name
+            )
+            self._emit_phase_event(
+                name,
+                "degraded",
+                elapsed=elapsed,
+                limit=limit,
+                overrun=True,
+            )
+            self._update_gate(name, "degraded", elapsed=elapsed, limit=limit, overrun=True)
+
+        enforce_deadline = phase != "optional"
         phase_budget = _PhaseBudgetContext(
             phase=phase,
             budget=normalized_budget,
             clock=self._clock,
             logger=self.logger,
             mark_online=self._mark_online_ready,
+            enforce_deadline=enforce_deadline,
+            soft_overrun_handler=None if enforce_deadline else _mark_soft_overrun,
         )
 
         self._emit_phase_event(
+            phase,
+            "start",
+            budget=normalized_budget.get("budget"),
+            grace=normalized_budget.get("grace"),
+            scale=normalized_budget.get("scale"),
+        )
+        self._update_gate(
             phase,
             "start",
             budget=normalized_budget.get("budget"),
@@ -339,7 +420,8 @@ class EnvironmentBootstrapper:
             try:
                 phase_budget.check()
             finally:
-                self._check_phase_timeout(phase, start, normalized_budget.get("limit"))
+                if enforce_deadline:
+                    self._check_phase_timeout(phase, start, normalized_budget.get("limit"))
 
         try:
             try:
@@ -351,16 +433,27 @@ class EnvironmentBootstrapper:
                 work(guard)
         except Exception as exc:
             self._emit_phase_event(phase, "failed", error=str(exc))
+            self._update_gate(phase, "failed", error=str(exc))
             if strict:
                 raise
             return False
         elapsed = phase_budget.elapsed
         self._phase_readiness[phase] = True
-        if phase == "critical" or phase_budget.online_ready:
-            self._mark_online_ready(elapsed, phase_budget.online_reason or "phase-complete")
+        gate_status = "ready"
+        if soft_overrun and phase == "optional":
+            gate_status = "degraded"
+        self._update_gate(
+            phase,
+            gate_status,
+            elapsed=elapsed,
+            overrun=soft_overrun,
+            online_ready=phase_budget.online_ready,
+            online_reason=phase_budget.online_reason,
+        )
         if phase == "critical":
             self._scheduler.mark_ready()
-        self._emit_phase_event(phase, "ready", elapsed=elapsed)
+        self._emit_phase_event(phase, gate_status, elapsed=elapsed)
+        self._maybe_mark_online(reason=phase_budget.online_reason or "core-phases-complete")
         return True
 
     def _track_background_task(self, action: str, name: str) -> None:
@@ -512,6 +605,14 @@ class EnvironmentBootstrapper:
         )
 
         return soft_budgets
+
+    def readiness_state(self) -> dict[str, object]:
+        """Return a snapshot of bootstrap readiness gates."""
+
+        snapshot = dict(self._phase_readiness)
+        snapshot["gates"] = self._readiness_snapshot()
+        snapshot["background_tasks"] = dict(self._phase_readiness.get("background_tasks", {}))
+        return snapshot
 
     def shutdown(self, *, timeout: float | None = 5.0) -> None:
         """Stop background bootstrap threads started by the instance."""
