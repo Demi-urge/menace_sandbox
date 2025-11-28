@@ -18,6 +18,7 @@ vector DB migrations need extra breathing room.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
@@ -51,6 +52,7 @@ from menace_sandbox.threshold_service import ThresholdService
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
+    SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     render_prepare_pipeline_timeout_hints,
 )
@@ -787,6 +789,8 @@ def _run_with_timeout(
     heavy_bootstrap: bool = False,
     resolved_timeout: tuple[float | None, dict[str, Any]] | None = None,
     contention_scale: float = 1.0,
+    budget: SharedTimeoutCoordinator | None = None,
+    budget_label: str | None = None,
     **kwargs: Any,
 ):
     """Execute ``fn`` with a timeout to avoid indefinite hangs."""
@@ -816,160 +820,179 @@ def _run_with_timeout(
     timeout_context = {**timeout_context, "adaptive": adaptive_context}
     effective_timeout = adaptive_timeout
 
-    LOGGER.info(
-        "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
-        description,
-        _describe_timeout(requested_timeout),
-        _describe_timeout(effective_timeout),
-        heavy_bootstrap,
-        bootstrap_deadline,
-        extra={
-            "timeout_context": timeout_context,
-            "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
-            "timeout_floor_auto_escalated": timeout_context.get(
-                "timeout_floor_auto_escalated"
-            ),
-            "remaining_global_window": adaptive_context.get("remaining_global_window"),
-            "adaptive_budget": adaptive_context.get("adaptive_budget", effective_timeout),
-        },
+    budget_context = (
+        budget.consume(
+            budget_label or description,
+            requested=effective_timeout,
+            minimum=timeout_context.get("timeout_floor_applied", 0.0) or 0.0,
+            metadata={
+                "heavy": heavy_bootstrap,
+                "contention_scale": contention_scale,
+            },
+        )
+        if budget
+        else contextlib.nullcontext((effective_timeout, None))
     )
 
-    result: Dict[str, Any] = {}
+    with budget_context as (shared_timeout, budget_meta):
+        if budget_meta:
+            timeout_context["shared_budget"] = budget_meta
+        effective_timeout = shared_timeout
 
-    def _target() -> None:
-        try:
-            result["value"] = fn(**kwargs)
-        except Exception as exc:  # pragma: no cover - error propagation
-            result["exc"] = exc
-
-    thread = threading.Thread(target=_target, daemon=True)
-    thread.start()
-    thread.join(effective_timeout)
-
-    last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
-
-    if thread.is_alive():
-        now = time.monotonic()
-        with _BOOTSTRAP_TIMELINE_LOCK:
-            timeline = list(BOOTSTRAP_STEP_TIMELINE)
-        active_step = timeline[-1][0] if timeline else last_step
-        active_started_at = timeline[-1][1] if timeline else None
-        active_elapsed_ms = (
-            int((now - active_started_at) * 1000)
-            if active_started_at is not None
-            else None
-        )
-        end_wall = time.time()
-        deadline_remaining_now = (
-            bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
-        )
-        remediation_hints = None
-        if description == "prepare_pipeline_for_bootstrap":
-            remediation_hints = render_prepare_pipeline_timeout_hints()
-        try:
-            watchdog_timeline = list(
-                getattr(_coding_bot_interface, "_PREPARE_PIPELINE_WATCHDOG", {}).get(
-                    "stages", ()
-                )
-            )
-        except Exception:  # pragma: no cover - best effort diagnostics
-            watchdog_timeline = []
-
-        resolved_bootstrap_wait = None
-        resolved_vector_wait = None
-        try:
-            resolved_bootstrap_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(
-                False
-            )
-            resolved_vector_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(True)
-        except Exception:  # pragma: no cover - best effort diagnostics
-            LOGGER.debug("failed to resolve MENACE bootstrap waits", exc_info=True)
-        metadata = {
-            "start_time": _format_timestamp(start_wall),
-            "end_time": _format_timestamp(end_wall),
-            "elapsed": round(time.monotonic() - start_monotonic, 3),
-            "timeout_requested": requested_timeout,
-            "timeout_effective": effective_timeout,
-            "timeout_effective_after_clamp": timeout_context.get(
-                "effective_timeout", effective_timeout
-            ),
-            "bootstrap_deadline": bootstrap_deadline,
-            "bootstrap_remaining_start": timeout_context.get("deadline_remaining"),
-            "bootstrap_remaining_now": deadline_remaining_now,
-            "function": getattr(fn, "__name__", fn.__class__.__name__),
-            "kwargs": _safe_kwargs_summary(kwargs),
-            "thread_name": thread.name,
-            "thread_ident": thread.ident,
-            "last_step": last_step,
-            "active_step": active_step,
-            "active_elapsed_ms": active_elapsed_ms,
-            "timeout_context": timeout_context,
-            "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
-            "timeout_floor_auto_escalated": timeout_context.get(
-                "timeout_floor_auto_escalated"
-            ),
-            "prepare_watchdog_timeline": watchdog_timeline,
-            "env_menace_bootstrap_wait_resolved": resolved_bootstrap_wait,
-            "env_menace_bootstrap_vector_wait_resolved": resolved_vector_wait,
-            "remediation_hints": remediation_hints,
-        }
-
-        LOGGER.error(
-            "%s timed out after %s (last_step=%s) metadata=%s",
+        LOGGER.info(
+            "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
             description,
+            _describe_timeout(requested_timeout),
             _describe_timeout(effective_timeout),
-            last_step,
-            metadata,
+            heavy_bootstrap,
+            bootstrap_deadline,
+            extra={
+                "timeout_context": timeout_context,
+                "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
+                "timeout_floor_auto_escalated": timeout_context.get(
+                    "timeout_floor_auto_escalated"
+                ),
+                "remaining_global_window": adaptive_context.get("remaining_global_window"),
+                "adaptive_budget": adaptive_context.get("adaptive_budget", effective_timeout),
+            },
         )
-        active_fragment = (
-            f"active_step={active_step} (+{active_elapsed_ms}ms)"
-            if active_step is not None and active_elapsed_ms is not None
-            else "active_step=unknown"
-        )
-        print(
-            ("[bootstrap-timeout][metadata] %s timed out after %s (%s): %s")
-            % (
+
+        result: Dict[str, Any] = {}
+
+        def _target() -> None:
+            try:
+                result["value"] = fn(**kwargs)
+            except Exception as exc:  # pragma: no cover - error propagation
+                result["exc"] = exc
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join(effective_timeout)
+
+        last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
+
+        if thread.is_alive():
+            now = time.monotonic()
+            with _BOOTSTRAP_TIMELINE_LOCK:
+                timeline = list(BOOTSTRAP_STEP_TIMELINE)
+            active_step = timeline[-1][0] if timeline else last_step
+            active_started_at = timeline[-1][1] if timeline else None
+            active_elapsed_ms = (
+                int((now - active_started_at) * 1000)
+                if active_started_at is not None
+                else None
+            )
+            end_wall = time.time()
+            deadline_remaining_now = (
+                bootstrap_deadline - time.monotonic() if bootstrap_deadline else None
+            )
+            remediation_hints = None
+            if description == "prepare_pipeline_for_bootstrap":
+                remediation_hints = render_prepare_pipeline_timeout_hints()
+            try:
+                watchdog_timeline = list(
+                    getattr(_coding_bot_interface, "_PREPARE_PIPELINE_WATCHDOG", {}).get(
+                        "stages", ()
+                    )
+                )
+            except Exception:  # pragma: no cover - best effort diagnostics
+                watchdog_timeline = []
+
+            resolved_bootstrap_wait = None
+            resolved_vector_wait = None
+            try:
+                resolved_bootstrap_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(
+                    False
+                )
+                resolved_vector_wait = _coding_bot_interface._resolve_bootstrap_wait_timeout(True)
+            except Exception:  # pragma: no cover - best effort diagnostics
+                LOGGER.debug("failed to resolve MENACE bootstrap waits", exc_info=True)
+            metadata = {
+                "start_time": _format_timestamp(start_wall),
+                "end_time": _format_timestamp(end_wall),
+                "elapsed": round(time.monotonic() - start_monotonic, 3),
+                "timeout_requested": requested_timeout,
+                "timeout_effective": effective_timeout,
+                "timeout_effective_after_clamp": timeout_context.get(
+                    "effective_timeout", effective_timeout
+                ),
+                "bootstrap_deadline": bootstrap_deadline,
+                "bootstrap_remaining_start": timeout_context.get("deadline_remaining"),
+                "bootstrap_remaining_now": deadline_remaining_now,
+                "function": getattr(fn, "__name__", fn.__class__.__name__),
+                "kwargs": _safe_kwargs_summary(kwargs),
+                "thread_name": thread.name,
+                "thread_ident": thread.ident,
+                "last_step": last_step,
+                "active_step": active_step,
+                "active_elapsed_ms": active_elapsed_ms,
+                "timeout_context": timeout_context,
+                "timeout_floor_applied": timeout_context.get("timeout_floor_applied"),
+                "timeout_floor_auto_escalated": timeout_context.get(
+                    "timeout_floor_auto_escalated"
+                ),
+                "prepare_watchdog_timeline": watchdog_timeline,
+                "env_menace_bootstrap_wait_resolved": resolved_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_resolved": resolved_vector_wait,
+                "remediation_hints": remediation_hints,
+            }
+
+            LOGGER.error(
+                "%s timed out after %s (last_step=%s) metadata=%s",
                 description,
                 _describe_timeout(effective_timeout),
-                active_fragment,
+                last_step,
                 metadata,
-            ),
-            flush=True,
-        )
-
-        if remediation_hints:
-            for hint in remediation_hints:
-                LOGGER.warning("[bootstrap-timeout][remediation] %s", hint)
-                print(f"[bootstrap-timeout][remediation] {hint}", flush=True)
-
-        for line in _render_bootstrap_timeline(now):
-            print(line, flush=True)
-
-        _dump_thread_traces(thread)
-
-        if abort_on_timeout:
-            raise TimeoutError(
-                f"{description} timed out after {_describe_timeout(effective_timeout)}"
             )
-
-        LOGGER.warning("skipping %s due to timeout", description)
-        return None
-
-    if "exc" in result:
-        LOGGER.exception("%s failed", description, exc_info=result["exc"])
-        print(
-            (
-                "[bootstrap-error] %s failed after %s (last_step=%s)" % (
+            active_fragment = (
+                f"active_step={active_step} (+{active_elapsed_ms}ms)"
+                if active_step is not None and active_elapsed_ms is not None
+                else "active_step=unknown"
+            )
+            print(
+                ("[bootstrap-timeout][metadata] %s timed out after %s (%s): %s")
+                % (
                     description,
                     _describe_timeout(effective_timeout),
-                    last_step,
-                )
-            ),
-            flush=True,
-        )
-        raise result["exc"]
+                    active_fragment,
+                    metadata,
+                ),
+                flush=True,
+            )
 
-    return result.get("value")
+            if remediation_hints:
+                for hint in remediation_hints:
+                    LOGGER.warning("[bootstrap-timeout][remediation] %s", hint)
+                    print(f"[bootstrap-timeout][remediation] {hint}", flush=True)
+
+            for line in _render_bootstrap_timeline(now):
+                print(line, flush=True)
+
+            _dump_thread_traces(thread)
+
+            if abort_on_timeout:
+                raise TimeoutError(
+                    f"{description} timed out after {_describe_timeout(effective_timeout)}"
+                )
+
+            LOGGER.warning("skipping %s due to timeout", description)
+            return None
+
+        if "exc" in result:
+            LOGGER.exception("%s failed", description, exc_info=result["exc"])
+            print(
+                (
+                    "[bootstrap-error] %s failed after %s (last_step=%s)" % (
+                        description,
+                        _describe_timeout(effective_timeout),
+                        last_step,
+                    )
+                ),
+                flush=True,
+            )
+            raise result["exc"]
+
+        return result.get("value")
 
 
 def _seed_research_aggregator_context(
@@ -1212,6 +1235,26 @@ def initialize_bootstrap_context(
     )
     print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
 
+    resolved_bootstrap_window = None
+    try:
+        resolved_bootstrap_window = _coding_bot_interface._resolve_bootstrap_wait_timeout(
+            vector_bootstrap_hint
+        )
+    except Exception:  # pragma: no cover - diagnostics only
+        LOGGER.debug("failed to resolve shared bootstrap window", exc_info=True)
+
+    deadline_remaining = None
+    if bootstrap_deadline is not None:
+        deadline_remaining = max(0.0, bootstrap_deadline - time.monotonic())
+        if resolved_bootstrap_window is None:
+            resolved_bootstrap_window = deadline_remaining
+        elif resolved_bootstrap_window is not None:
+            resolved_bootstrap_window = min(resolved_bootstrap_window, deadline_remaining)
+
+    shared_timeout_coordinator = SharedTimeoutCoordinator(
+        resolved_bootstrap_window, logger=LOGGER, namespace="bootstrap_shared"
+    )
+
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
 
@@ -1220,7 +1263,16 @@ def initialize_bootstrap_context(
         "embedder_preload", vector_heavy=True, heavy=True
     )
     embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
-    _bootstrap_embedder(embedder_timeout, stop_event=stop_event)
+    _run_with_timeout(
+        _bootstrap_embedder,
+        timeout=embedder_timeout,
+        bootstrap_deadline=bootstrap_deadline,
+        description="bootstrap_embedder_preload",
+        heavy_bootstrap=True,
+        budget=shared_timeout_coordinator,
+        budget_label="vectorizer_preload",
+        stop_event=stop_event,
+    )
 
     if use_cache:
         cached_context = _BOOTSTRAP_CACHE.get(bot_name)
@@ -1329,6 +1381,8 @@ def initialize_bootstrap_context(
                     description="_push_bootstrap_context final",
                     abort_on_timeout=True,
                     heavy_bootstrap=heavy_bootstrap,
+                    budget=shared_timeout_coordinator,
+                    budget_label="db_bootstrap",
                     registry=registry,
                     data_bot=data_bot,
                     manager=bootstrap_manager,
@@ -1346,6 +1400,8 @@ def initialize_bootstrap_context(
                     description="_seed_research_aggregator_context final",
                     abort_on_timeout=False,
                     heavy_bootstrap=heavy_bootstrap,
+                    budget=shared_timeout_coordinator,
+                    budget_label="orchestrator_state",
                     registry=registry,
                     data_bot=data_bot,
                     context_builder=context_builder,
@@ -1406,6 +1462,8 @@ def initialize_bootstrap_context(
                 description="_push_bootstrap_context placeholder",
                 abort_on_timeout=True,
                 heavy_bootstrap=heavy_bootstrap,
+                budget=shared_timeout_coordinator,
+                budget_label="db_bootstrap",
                 func=_push_bootstrap_context,
                 label="_push_bootstrap_context placeholder",
                 registry=registry,
@@ -1445,6 +1503,8 @@ def initialize_bootstrap_context(
                 abort_on_timeout=False,
                 heavy_bootstrap=heavy_bootstrap,
                 contention_scale=placeholder_seed_gate["timeout_scale"],
+                budget=shared_timeout_coordinator,
+                budget_label="orchestrator_state",
                 func=_seed_research_aggregator_context,
                 label="_seed_research_aggregator_context placeholder",
                 registry=registry,
@@ -1581,6 +1641,8 @@ def initialize_bootstrap_context(
                         heavy_bootstrap=heavy_prepare,
                         contention_scale=prepare_gate["timeout_scale"],
                         resolved_timeout=resolved_prepare_timeout,
+                        budget=shared_timeout_coordinator,
+                        budget_label="retriever_hydration",
                         func=prepare_pipeline_for_bootstrap,
                         label="prepare_pipeline_for_bootstrap",
                         stop_event=stop_event,
@@ -1701,6 +1763,8 @@ def initialize_bootstrap_context(
                 description="promote_pipeline",
                 abort_on_timeout=True,
                 heavy_bootstrap=heavy_bootstrap,
+                budget=shared_timeout_coordinator,
+                budget_label="db_bootstrap",
                 func=promote_pipeline,
                 label="promote_pipeline",
                 manager=manager,
@@ -1734,6 +1798,8 @@ def initialize_bootstrap_context(
             description="_push_bootstrap_context final",
             abort_on_timeout=True,
             heavy_bootstrap=heavy_bootstrap,
+            budget=shared_timeout_coordinator,
+            budget_label="db_bootstrap",
             registry=registry,
             data_bot=data_bot,
             manager=manager,
@@ -1766,6 +1832,8 @@ def initialize_bootstrap_context(
             abort_on_timeout=False,
             heavy_bootstrap=heavy_bootstrap,
             contention_scale=final_seed_gate["timeout_scale"],
+            budget=shared_timeout_coordinator,
+            budget_label="orchestrator_state",
             registry=registry,
             data_bot=data_bot,
             context_builder=context_builder,
