@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any
 
 from bootstrap_readiness import build_stage_deadlines, minimal_online
 
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from bootstrap_timeout_policy import (
+    broadcast_timeout_floors,
+    enforce_bootstrap_timeout_policy,
+    get_bootstrap_guard_context,
+    load_component_timeout_floors,
+    load_escalated_timeout_floors,
+)
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
@@ -2022,6 +2028,23 @@ def _sandbox_main(
         logger.exception("failed to save foresight history")
     logger.info("sandbox run complete")
     _sandbox_cleanup(ctx)
+    guard_context = get_bootstrap_guard_context()
+    if guard_context.get("delay") or (guard_context.get("budget_scale") and guard_context.get("budget_scale") != 1.0):
+        print(
+            "[SANDBOX] contention detected; staggered budgets persisted for peer bootstraps",
+            flush=True,
+        )
+    try:
+        broadcast_timeout_floors(
+            source="sandbox_runner",
+            timeout_floors=load_escalated_timeout_floors(),
+            component_floors=load_component_timeout_floors(),
+            guard_context=guard_context,
+        )
+    except Exception:
+        logger.debug(
+            "failed to broadcast timeout floors after sandbox run", exc_info=True
+        )
     return ctx.tracker
 
 
