@@ -1246,6 +1246,13 @@ def compute_prepare_pipeline_component_budgets(
         },
     )
 
+    broadcast_timeout_floors(
+        source="compute_prepare_pipeline_component_budgets",
+        component_floors=persisted_floors or floors,
+        timeout_floors=load_escalated_timeout_floors(),
+        guard_context=guard_context,
+    )
+
     return budgets
 
 

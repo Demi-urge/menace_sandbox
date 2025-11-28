@@ -54,9 +54,12 @@ from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
+    _host_load_average,
+    _host_load_scale,
     collect_timeout_telemetry,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
+    read_bootstrap_heartbeat,
     compute_prepare_pipeline_component_budgets,
     render_prepare_pipeline_timeout_hints,
 )
@@ -151,24 +154,70 @@ class _BootstrapStepScheduler:
             return "pipeline_config"
         return None
 
-    def _host_load_scale(self) -> float:
-        try:
-            load1, _, _ = os.getloadavg()
-            cpus = os.cpu_count() or 1
-            normalized = load1 / max(cpus, 1)
-        except OSError:
-            normalized = 0.0
+    def _local_load_scale(self, load_average: float | None = None) -> float:
+        if load_average is None:
+            try:
+                load_average = _host_load_average()
+            except Exception:
+                load_average = None
+
+        if load_average is None:
+            try:
+                load1, _, _ = os.getloadavg()
+                cpus = os.cpu_count() or 1
+                load_average = load1 / max(cpus, 1)
+            except OSError:
+                load_average = 0.0
 
         # Keep a modest envelope: heavy hosts get extra slack, idle hosts tighten.
-        return min(1.6, max(0.8, 1.0 + (normalized - 1.0) * 0.35))
+        return min(1.6, max(0.8, 1.0 + (float(load_average) - 1.0) * 0.35))
 
-    def _step_baseline(self, step_name: str, vector_heavy: bool) -> float:
+    def _telemetry_scale(self, *, vector_heavy: bool) -> tuple[float, dict[str, Any]]:
+        heartbeat = read_bootstrap_heartbeat()
+        telemetry: dict[str, Any] = {"vector_heavy": vector_heavy, "heartbeat": heartbeat}
+        host_load = None
+        active_bootstraps = 0
+
+        if isinstance(heartbeat, Mapping):
+            try:
+                host_load = float(heartbeat.get("host_load"))
+            except (TypeError, ValueError):
+                host_load = None
+            try:
+                active_bootstraps = max(int(heartbeat.get("active_bootstraps", 0) or 0), 0)
+            except (TypeError, ValueError):
+                active_bootstraps = 0
+
+        peer_scale = _host_load_scale(host_load)
+        if active_bootstraps:
+            peer_scale *= 1.0 + min(max(active_bootstraps - 1, 0), 4) * 0.08
+
+        local_scale = self._local_load_scale(host_load)
+        telemetry.update(
+            {
+                "host_load": host_load,
+                "active_bootstraps": active_bootstraps,
+                "peer_scale": peer_scale,
+                "local_scale": local_scale,
+            }
+        )
+
+        scale = peer_scale
+        if local_scale < 1.0:
+            scale *= local_scale
+        else:
+            scale *= max(local_scale, 1.0)
+
+        telemetry["scale"] = scale
+        return scale, telemetry
+
+    def _step_baseline(self, step_name: str, vector_heavy: bool, *, telemetry_scale: float = 1.0) -> float:
         component = self._component_for_step(step_name, vector_heavy=vector_heavy)
         if component:
             budget = self._component_budgets.get(component)
             if budget is not None:
                 floor = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
-                return max(budget, floor)
+                return max(budget, floor) * telemetry_scale
 
         baselines = {
             "prepare_pipeline_for_bootstrap": self.default_budget(vector_heavy=vector_heavy),
@@ -176,7 +225,8 @@ class _BootstrapStepScheduler:
             "_push_bootstrap_context": self.default_budget(vector_heavy=False),
             "promote_pipeline": self.default_budget(vector_heavy=vector_heavy),
         }
-        return baselines.get(step_name, self.default_budget(vector_heavy=vector_heavy))
+        baseline = baselines.get(step_name, self.default_budget(vector_heavy=vector_heavy))
+        return baseline * telemetry_scale
 
     def _historical_mean(self, step_name: str) -> float | None:
         history = self._step_history.get(step_name)
@@ -202,9 +252,12 @@ class _BootstrapStepScheduler:
             base_timeout = _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
 
         historical = self._historical_mean(step_name)
-        baseline = max(base_timeout * 0.75, self._step_baseline(step_name, vector_heavy))
+        load_scale, telemetry = self._telemetry_scale(vector_heavy=vector_heavy)
+        baseline = max(
+            base_timeout * 0.75,
+            self._step_baseline(step_name, vector_heavy, telemetry_scale=telemetry.get("local_scale", 1.0)),
+        )
         predicted = max(baseline, historical if historical is not None else 0.0)
-        load_scale = self._host_load_scale()
         candidate = predicted * load_scale + BOOTSTRAP_DEADLINE_BUFFER
         min_floor = max(
             self.default_budget(vector_heavy=vector_heavy),
@@ -216,6 +269,20 @@ class _BootstrapStepScheduler:
             candidate = min(base_timeout, max(baseline, min_floor))
         else:
             candidate = min(max(candidate, min_floor), upper_bound)
+
+        if abs(load_scale - 1.0) >= 0.05:
+            LOGGER.info(
+                "adaptive bootstrap step budget scaled",
+                extra={
+                    "step": step_name,
+                    "scale": round(load_scale, 3),
+                    "vector_heavy": vector_heavy,
+                    "telemetry": telemetry,
+                    "predicted": predicted,
+                    "baseline": baseline,
+                    "upper_bound": upper_bound,
+                },
+            )
 
         if contention_scale != 1.0:
             candidate *= contention_scale

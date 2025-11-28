@@ -5228,6 +5228,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     except (TypeError, ValueError):
         global_bootstrap_window = None
     global_window_extension = adaptive_budget_context.get("global_window_extension")
+    if derived_component_budgets:
+        logger.info(
+            "adaptive prepare_pipeline budgets applied",
+            extra={
+                "component_budgets": derived_component_budgets,
+                "adaptive_context": adaptive_budget_context,
+                "heartbeat": read_bootstrap_heartbeat(),
+            },
+        )
     if global_bootstrap_window is None and derived_component_budgets:
         component_budget_total = sum(
             value for key, value in derived_component_budgets.items() if key not in DEFERRED_COMPONENTS
