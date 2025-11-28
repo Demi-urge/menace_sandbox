@@ -396,6 +396,23 @@ def _mark_staged_readiness(
     return payload
 
 
+def _filter_deferred_pending_gates(
+    readiness_ready: Iterable[str],
+    readiness_pending: Iterable[str],
+    deferred_pending: Iterable[str],
+) -> tuple[list[str], list[str], set[str]]:
+    """Remove deferred gates from fatal pending pools."""
+
+    deferred_set = {gate for gate in deferred_pending if gate}
+    ready_filtered = [gate for gate in readiness_ready if gate not in deferred_set]
+    pending_filtered = [
+        gate
+        for gate in readiness_pending
+        if gate not in deferred_set or gate in _CRITICAL_READINESS_GATES
+    ]
+    return ready_filtered, pending_filtered, deferred_set
+
+
 def _mark_partial_readiness(
     *,
     gates: Iterable[str],
@@ -5625,6 +5642,12 @@ def _prepare_pipeline_for_bootstrap_impl(
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         deferred_pending = watchdog_telemetry.get("deferred_pending_gates") or []
+        readiness_ready, readiness_pending, deferred_pending_set = (
+            _filter_deferred_pending_gates(
+                readiness_ready, readiness_pending, deferred_pending
+            )
+        )
+        deferred_pending = tuple(sorted(deferred_pending_set))
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
         staged_ready_event = watchdog_telemetry.get("staged_ready_event")
         staged_ready_signal = bool(
@@ -5916,6 +5939,10 @@ def _prepare_pipeline_for_bootstrap_impl(
         evaluation_gates = list(gate_windows) if gate_windows else [phase_label or active_shared_label or stage]
         exhausted_critical: set[str] = set()
         critical_pending_gates = watchdog_telemetry.get("critical_pending_gates") or readiness_pending
+        if deferred_pending_set:
+            critical_pending_gates = [
+                gate for gate in critical_pending_gates if gate not in deferred_pending_set
+            ]
         pending_critical = set(critical_pending_gates) & _CRITICAL_READINESS_GATES
         consumption_snapshot: dict[str, dict[str, Any]] = {}
 
