@@ -227,6 +227,8 @@ def wait_for_bootstrap_quiet_period(
     load_threshold: float | None = None,
     poll_interval: float = _DEFAULT_GUARD_INTERVAL,
     ignore_pid: int | None = None,
+    queue_capacity: int | None = None,
+    block_when_saturated: bool | None = None,
 ) -> tuple[float, float]:
     """Delay heavy bootstrap stages when peers are active or host load is high.
 
@@ -246,9 +248,19 @@ def wait_for_bootstrap_quiet_period(
     if threshold is None:
         threshold = _DEFAULT_LOAD_THRESHOLD
     ignore_pid = os.getpid() if ignore_pid is None else ignore_pid
+    queue_capacity = queue_capacity if queue_capacity is not None else int(
+        os.getenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "0") or 0
+    )
+    block_when_saturated = (
+        block_when_saturated
+        if block_when_saturated is not None
+        else _truthy_env(os.getenv("MENACE_BOOTSTRAP_GUARD_QUEUE_BLOCK"))
+    )
+
     deadline = time.monotonic() + target_delay
     slept = 0.0
     budget_scale = 1.0
+    queue_depth = 0
 
     normalized_load = _host_load_average()
     while time.monotonic() < deadline:
@@ -259,14 +271,39 @@ def wait_for_bootstrap_quiet_period(
             normalized_load = heartbeat.get("host_load", normalized_load)
         overloaded = normalized_load is not None and normalized_load > threshold
 
-        if not peer_active and not overloaded:
+        recent_peers = _recent_peer_activity(max_age=target_delay * 2)
+        peer_queue = []
+        for peer in recent_peers:
+            try:
+                peer_pid = int(peer.get("pid", -1))
+            except (TypeError, ValueError):
+                peer_pid = -1
+            if peer_pid != int(ignore_pid):
+                peer_queue.append(peer)
+        overload_units = 0
+        if normalized_load is not None and threshold:
+            overload_units = max(int(round(normalized_load / threshold)), 0)
+        queue_depth = max(len(peer_queue) + (1 if peer_active else 0), overload_units)
+        saturated = bool(queue_capacity and queue_depth >= queue_capacity)
+
+        if block_when_saturated and saturated:
+            raise TimeoutError("bootstrap guard queue saturated")
+
+        if not peer_active and not overloaded and queue_depth == 0:
             break
 
-        remaining_window = max(deadline - time.monotonic(), 0.0)
-        sleep_for = min(poll_interval, remaining_window)
+        remaining_budget = max(deadline - time.monotonic(), 0.0)
+        if remaining_budget <= 0:
+            break
+
+        sleep_for = min(poll_interval * max(queue_depth, 1), remaining_budget)
         slept += sleep_for
         if normalized_load and threshold:
-            budget_scale = max(budget_scale, min(normalized_load / threshold, 2.0))
+            budget_scale = max(
+                budget_scale,
+                min(normalized_load / threshold, 2.5),
+                1.0 + min(queue_depth, 3) * 0.15,
+            )
 
         logger.info(
             "delaying bootstrap to avoid contention",
@@ -274,16 +311,27 @@ def wait_for_bootstrap_quiet_period(
                 "event": "bootstrap-guard-delay",
                 "sleep_for": round(sleep_for, 2),
                 "peer_active": peer_active,
+                "queue_depth": queue_depth,
                 "normalized_load": normalized_load,
                 "threshold": threshold,
                 "budget_scale": round(budget_scale, 3),
+                "saturated": saturated,
             },
         )
         time.sleep(sleep_for)
 
+    guard_context = {
+        "delay": slept,
+        "budget_scale": budget_scale,
+        "queue_depth": queue_depth,
+        "host_load": normalized_load,
+    }
+    if queue_capacity:
+        guard_context["queue_capacity"] = queue_capacity
     _record_bootstrap_guard(
         slept, budget_scale, source="bootstrap_guard", host_load=normalized_load
     )
+    _record_adaptive_context({"guard_context": guard_context})
     return slept, budget_scale
 
 

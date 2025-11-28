@@ -69,6 +69,25 @@ def test_bootstrap_guard_waits_for_peer_activity(tmp_path, monkeypatch):
     assert budget_scale >= 1.0
 
 
+def test_bootstrap_guard_blocks_when_queue_saturated(tmp_path, monkeypatch):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "1")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_BLOCK", "1")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY", "0.1")
+
+    emit_bootstrap_heartbeat(
+        {"label": "prepare_pipeline", "remaining_budget": 20.0, "ts": time.time(), "pid": 99999}
+    )
+
+    with pytest.raises(TimeoutError):
+        wait_for_bootstrap_quiet_period(
+            logging.getLogger("bootstrap-test"),
+            poll_interval=0.02,
+            load_threshold=0.1,
+        )
+
+
 def test_shared_timeout_tracks_gate_windows(monkeypatch):
     coordinator = SharedTimeoutCoordinator(
         5.0,
@@ -101,3 +120,43 @@ def test_shared_timeout_tracks_gate_windows(monkeypatch):
     assert set(component_windows) >= {"vectorizers", "retrievers"}
     assert component_windows["vectorizers"].get("remaining") == pytest.approx(1.25, rel=0.01)
     assert component_windows["retrievers"].get("remaining") == pytest.approx(0.5, rel=0.01)
+
+
+def test_prepare_pipeline_inherits_guard_scale(monkeypatch, tmp_path):
+    import coding_bot_interface as cbi
+
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY", "0.2")
+
+    emit_bootstrap_heartbeat(
+        {"label": "prepare_pipeline", "remaining_budget": 30.0, "ts": time.time(), "pid": 99999, "host_load": 2.0}
+    )
+
+    monkeypatch.setattr(cbi, "enforce_bootstrap_timeout_policy", lambda logger=None: {})
+
+    class _Pipeline:
+        vector_bootstrap_heavy = True
+
+        def __init__(self, **_kwargs):
+            return
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Pipeline,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        vectorizer_budget=1.0,
+        retriever_budget=1.0,
+        db_warmup_budget=1.0,
+        bootstrap_guard=True,
+    )
+
+    promote(object())
+
+    guard_context = cbi._PREPARE_PIPELINE_WATCHDOG.get("guard_context", {})
+    derived_budgets = cbi._PREPARE_PIPELINE_WATCHDOG.get("derived_component_budgets") or {}
+
+    assert guard_context.get("budget_scale", 1.0) > 1.0
+    assert derived_budgets
+    assert derived_budgets.get("vectorizers", 0.0) > 1.0
