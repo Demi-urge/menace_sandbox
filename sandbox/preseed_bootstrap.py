@@ -1266,6 +1266,7 @@ def initialize_bootstrap_context(
     heavy_bootstrap: bool = False,
     stop_event: threading.Event | None = None,
     bootstrap_deadline: float | None = None,
+    shared_timeout_coordinator: SharedTimeoutCoordinator | None = None,
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
@@ -1349,12 +1350,18 @@ def initialize_bootstrap_context(
         elif resolved_bootstrap_window is not None:
             resolved_bootstrap_window = min(resolved_bootstrap_window, deadline_remaining)
 
-    shared_timeout_coordinator = SharedTimeoutCoordinator(
-        resolved_bootstrap_window,
-        logger=LOGGER,
-        namespace="bootstrap_shared",
-        component_floors=component_timeout_floors,
-    )
+    if shared_timeout_coordinator is None:
+        shared_timeout_coordinator = SharedTimeoutCoordinator(
+            resolved_bootstrap_window,
+            logger=LOGGER,
+            namespace="bootstrap_shared",
+            component_floors=component_timeout_floors,
+        )
+    else:
+        LOGGER.info(
+            "initialize_bootstrap_context using shared timeout coordinator",
+            extra={"shared_timeout": shared_timeout_coordinator.snapshot()},
+        )
 
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
