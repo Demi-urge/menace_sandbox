@@ -36,6 +36,7 @@ from bootstrap_timeout_policy import (
     broadcast_timeout_floors,
     get_bootstrap_guard_context,
     read_bootstrap_heartbeat,
+    build_progress_signal_hook,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
 )
@@ -678,6 +679,7 @@ def _monitor_bootstrap_thread(
     completed_steps: set[str] | None = None,
     vector_heavy_steps: set[str] | None = None,
     stage_policy: Mapping[str, Any] | None = None,
+    stage_signal: Callable[[Mapping[str, object]], None] | None = None,
 ) -> tuple[
     bool,
     str,
@@ -703,6 +705,7 @@ def _monitor_bootstrap_thread(
     stage_overruns: set[str] = set()
     stage_timeout_context: dict[str, Any] | None = None
     core_online_announced = False
+    stage_progress_sent: dict[str, float] = {}
 
     while bootstrap_thread.is_alive():
         if SHUTDOWN_EVENT.is_set():
@@ -739,8 +742,9 @@ def _monitor_bootstrap_thread(
             )
 
         stage = stage_for_step(current_step) or "unknown"
+        now = time.monotonic()
         if stage not in stage_start_times:
-            stage_start_times[stage] = time.monotonic()
+            stage_start_times[stage] = now
         stage_elapsed = time.monotonic() - stage_start_times[stage]
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
         core_online, lagging_core, degraded_core, degraded_online = minimal_online(
@@ -792,6 +796,27 @@ def _monitor_bootstrap_thread(
         stage_deadline = stage_entry.get("deadline") if isinstance(stage_entry, Mapping) else None
         stage_enforced = bool(stage_entry.get("enforced")) if isinstance(stage_entry, Mapping) else False
         stage_optional = bool(stage_entry.get("optional")) if isinstance(stage_entry, Mapping) else False
+        soft_degrade = bool(stage_entry.get("soft_degrade")) if isinstance(stage_entry, Mapping) else False
+
+        if stage_signal:
+            last_signal = stage_progress_sent.get(stage)
+            if last_signal is None or now - last_signal > 5:
+                try:
+                    stage_signal(
+                        {
+                            "event": "bootstrap-stage-watchdog",
+                            "stage": stage,
+                            "elapsed": round(stage_elapsed, 2),
+                            "deadline": stage_deadline,
+                            "optional": stage_optional,
+                            "enforced": stage_enforced,
+                            "core_online": core_online,
+                            "degraded_online": degraded_online,
+                        }
+                    )
+                    stage_progress_sent[stage] = now
+                except Exception:
+                    LOGGER.debug("stage progress signal failed", exc_info=True)
         if (
             stage_deadline is not None
             and stage_elapsed > stage_deadline
@@ -824,6 +849,10 @@ def _monitor_bootstrap_thread(
                     ),
                     )
 
+        if stage_timeout_context and soft_degrade:
+            stage_timeout_context = dict(stage_timeout_context)
+            stage_timeout_context["soft_degrade"] = True
+
         if stage_timeout_context and degraded_online:
             stage_timeout_context = dict(stage_timeout_context)
             stage_timeout_context.setdefault("degraded_online", True)
@@ -833,17 +862,33 @@ def _monitor_bootstrap_thread(
                 )
 
         if stage_timeout_context and stage_enforced and not degraded_online:
-            step_durations.setdefault(current_step, elapsed)
-            return (
-                True,
-                current_step,
-                elapsed,
-                budget,
-                set(step_start_times),
-                optional_lagging,
-                dict(step_durations),
-                stage_timeout_context,
-            )
+            if soft_degrade:
+                optional_lagging.add(stage)
+                if stage_signal:
+                    try:
+                        stage_signal(
+                            {
+                                "event": "bootstrap-stage-soft-overrun",
+                                "stage": stage,
+                                "elapsed": round(stage_elapsed, 2),
+                                "deadline": stage_deadline,
+                                "optional": stage_optional,
+                            }
+                        )
+                    except Exception:
+                        LOGGER.debug("stage overrun signal failed", exc_info=True)
+            else:
+                step_durations.setdefault(current_step, elapsed)
+                return (
+                    True,
+                    current_step,
+                    elapsed,
+                    budget,
+                    set(step_start_times),
+                    optional_lagging,
+                    dict(step_durations),
+                    stage_timeout_context,
+                )
  
         if elapsed > budget:
             if stage_entry.get("optional"):
@@ -873,7 +918,7 @@ def _monitor_bootstrap_thread(
                     stage_optional=stage_optional,
                     stage_enforced=stage_enforced,
                 )
-                if not degraded_online:
+                if not degraded_online and not soft_degrade:
                     step_durations.setdefault(current_step, elapsed)
                     return (
                         True,
@@ -2255,6 +2300,7 @@ def main(argv: list[str] | None = None) -> None:
         host_telemetry=host_telemetry,
         load_average=load_average,
     )
+    progress_signal = build_progress_signal_hook(namespace="bootstrap-phases")
     effective_bootstrap_timeout = bootstrap_deadline_policy.get("adjusted_timeout")
     logger.info(
         "bootstrap deadline policy resolved",
@@ -2388,6 +2434,8 @@ def main(argv: list[str] | None = None) -> None:
                                     stop_event=bootstrap_stop_event,
                                     bootstrap_deadline=bootstrap_deadline,
                                     heavy_bootstrap=heavy_bootstrap_detected,
+                                    stage_deadlines=stage_deadline_policy,
+                                    progress_signal=progress_signal,
                                 )
                             except BaseException as exc:  # pragma: no cover - propagate errors
                                 bootstrap_error = exc
@@ -2414,16 +2462,17 @@ def main(argv: list[str] | None = None) -> None:
                             lagging_optional,
                             step_durations,
                             stage_timeout_context,
-                        ) = _monitor_bootstrap_thread(
-                            bootstrap_thread=bootstrap_thread,
-                            bootstrap_stop_event=bootstrap_stop_event,
-                            bootstrap_start=bootstrap_start,
-                            step_budgets=calibrated_step_budgets,
-                            adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
-                            completed_steps=completed_steps,
-                            vector_heavy_steps=VECTOR_HEAVY_STEPS,
-                            stage_policy=stage_deadline_policy,
-                        )
+                            ) = _monitor_bootstrap_thread(
+                                bootstrap_thread=bootstrap_thread,
+                                bootstrap_stop_event=bootstrap_stop_event,
+                                bootstrap_start=bootstrap_start,
+                                step_budgets=calibrated_step_budgets,
+                                adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
+                                completed_steps=completed_steps,
+                                vector_heavy_steps=VECTOR_HEAVY_STEPS,
+                                stage_policy=stage_deadline_policy,
+                                stage_signal=progress_signal,
+                            )
                         lagging_optional_stages.update(lagging_optional)
                         bootstrap_seen_steps.update(observed_steps)
                         _persist_step_durations(step_durations, logger)

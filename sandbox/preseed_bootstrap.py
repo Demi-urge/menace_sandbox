@@ -50,12 +50,14 @@ from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
+from bootstrap_readiness import READINESS_STAGES, stage_for_step
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     _host_load_average,
     _host_load_scale,
+    build_progress_signal_hook,
     collect_timeout_telemetry,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
@@ -73,6 +75,8 @@ BOOTSTRAP_ONLINE_STATE: Dict[str, Any] = {"quorum": False, "components": {}}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
 _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
+_STEP_START_OBSERVER: Callable[[str], None] | None = None
+_STEP_END_OBSERVER: Callable[[str, float], None] | None = None
 _BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 240.0)
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 240.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 360.0
@@ -332,6 +336,105 @@ class _BootstrapStepScheduler:
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
+
+
+class _StagedBootstrapController:
+    """Coordinate readiness gates across bootstrap stages."""
+
+    def __init__(
+        self,
+        *,
+        stage_policy: Mapping[str, Any] | None,
+        coordinator: SharedTimeoutCoordinator | None,
+        signal_hook: Callable[[Mapping[str, object]], None] | None,
+    ) -> None:
+        self._remaining_steps: dict[str, set[str]] = {
+            stage.name: set(stage.steps) for stage in READINESS_STAGES
+        }
+        self._optional: dict[str, bool] = {
+            stage.name: stage.optional for stage in READINESS_STAGES
+        }
+        self._stage_policy = stage_policy or {}
+        self._coordinator = coordinator
+        self._signal_hook = signal_hook
+        self._stage_windows: Mapping[str, Mapping[str, float | None]] = {}
+        self._start_component_windows()
+
+    def _start_component_windows(self) -> None:
+        if not self._coordinator or not self._stage_policy:
+            return
+        budgets: dict[str, float] = {}
+        for stage, entry in self._stage_policy.items():
+            budget = None
+            try:
+                budget = entry.get("deadline") if isinstance(entry, Mapping) else None
+                if budget is None and isinstance(entry, Mapping):
+                    budget = entry.get("scaled_budget") or entry.get("budget")
+                if budget is not None:
+                    budgets[stage] = float(budget)
+            except (TypeError, ValueError):
+                continue
+        if budgets:
+            self._stage_windows = self._coordinator.start_component_timers(
+                budgets, minimum=0.0
+            )
+            if self._signal_hook:
+                try:
+                    self._signal_hook(
+                        {
+                            "event": "bootstrap-stage-windows",
+                            "windows": self._stage_windows,
+                        }
+                    )
+                except Exception:  # pragma: no cover - advisory only
+                    LOGGER.debug("stage window signal failed", exc_info=True)
+
+    def _emit_stage_signal(self, stage: str, step: str, state: str) -> None:
+        if not self._signal_hook:
+            return
+        payload = {
+            "event": "bootstrap-stage-progress",
+            "stage": stage,
+            "step": step,
+            "state": state,
+            "optional": self._optional.get(stage, False),
+            "remaining_steps": sorted(self._remaining_steps.get(stage, set())),
+        }
+        try:
+            self._signal_hook(payload)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("bootstrap stage signal failed", exc_info=True)
+
+    def start_step(self, step_name: str) -> None:
+        stage = stage_for_step(step_name)
+        if not stage:
+            return
+        _BOOTSTRAP_SCHEDULER.mark_partial(stage, reason=f"{step_name}_start")
+        _set_component_state(stage, "warming")
+        if self._coordinator:
+            self._coordinator.mark_component_state(stage, "running")
+        self._emit_stage_signal(stage, step_name, "running")
+
+    def complete_step(self, step_name: str, elapsed: float) -> None:
+        stage = stage_for_step(step_name)
+        if not stage:
+            return
+        remaining = self._remaining_steps.get(stage)
+        if remaining is not None:
+            remaining.discard(step_name)
+        ready = remaining is not None and len(remaining) == 0
+        if ready:
+            _BOOTSTRAP_SCHEDULER.mark_ready(stage, reason=f"{step_name}_complete")
+            _set_component_state(stage, "ready")
+        else:
+            _BOOTSTRAP_SCHEDULER.mark_partial(stage, reason=f"{step_name}_complete")
+            _set_component_state(stage, "warming")
+
+        if self._coordinator:
+            self._coordinator.mark_component_state(stage, "ready" if ready else "running")
+
+        self._emit_stage_signal(stage, step_name, "ready" if ready else "running")
+
 
 
 def _default_step_floor(*, vector_heavy: bool = False) -> float:
@@ -763,6 +866,12 @@ def _mark_bootstrap_step(step_name: str) -> None:
         BOOTSTRAP_STEP_TIMELINE.append((step_name, now))
 
     BOOTSTRAP_PROGRESS["last_step"] = step_name
+    observer = _STEP_START_OBSERVER
+    if observer:
+        try:
+            observer(step_name)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("step start observer failed", exc_info=True)
     _publish_online_state()
 
 
@@ -1408,6 +1517,8 @@ def initialize_bootstrap_context(
     stop_event: threading.Event | None = None,
     bootstrap_deadline: float | None = None,
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None,
+    stage_deadlines: Mapping[str, Any] | None = None,
+    progress_signal: Callable[[Mapping[str, object]], None] | None = None,
 ) -> Dict[str, Any]:
     """Build and seed bootstrap helpers for reuse by entry points.
 
@@ -1426,6 +1537,12 @@ def initialize_bootstrap_context(
         elapsed = perf_counter() - start_time
         LOGGER.info("%s completed (elapsed=%.3fs)", step_name, elapsed)
         _BOOTSTRAP_SCHEDULER.record_history(step_name, elapsed)
+        observer = _STEP_END_OBSERVER
+        if observer:
+            try:
+                observer(step_name, elapsed)
+            except Exception:  # pragma: no cover - advisory only
+                LOGGER.debug("step end observer failed", exc_info=True)
         _publish_online_state()
 
     def _timed_callable(func: Any, *, label: str, **func_kwargs: Any) -> Any:
@@ -1500,6 +1617,9 @@ def initialize_bootstrap_context(
         elif resolved_bootstrap_window is not None:
             resolved_bootstrap_window = min(resolved_bootstrap_window, deadline_remaining)
 
+    if progress_signal is None:
+        progress_signal = build_progress_signal_hook(namespace="bootstrap_shared")
+
     if shared_timeout_coordinator is None:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
             resolved_bootstrap_window,
@@ -1507,12 +1627,23 @@ def initialize_bootstrap_context(
             namespace="bootstrap_shared",
             component_floors=component_timeout_floors,
             component_budgets=component_budgets,
+            signal_hook=progress_signal,
+            complexity_inputs=stage_deadlines,
         )
     else:
         LOGGER.info(
             "initialize_bootstrap_context using shared timeout coordinator",
             extra={"shared_timeout": shared_timeout_coordinator.snapshot()},
         )
+
+    stage_controller = _StagedBootstrapController(
+        stage_policy=stage_deadlines,
+        coordinator=shared_timeout_coordinator,
+        signal_hook=progress_signal,
+    )
+    global _STEP_START_OBSERVER, _STEP_END_OBSERVER
+    _STEP_START_OBSERVER = stage_controller.start_step
+    _STEP_END_OBSERVER = stage_controller.complete_step
 
     set_audit_bootstrap_safe_default(True)
     _ensure_not_stopped(stop_event)
