@@ -30,6 +30,8 @@ _COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
     "retrievers": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS"],
     "db_indexes": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS"],
     "orchestrator_state": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS"],
+    "pipeline_config": _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"],
+    "background_loops": _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
 }
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
 _TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
@@ -41,6 +43,8 @@ _COMPONENT_ENV_MAPPING = {
     "retrievers": "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS",
     "db_indexes": "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS",
     "orchestrator_state": "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
+    "pipeline_config": "BOOTSTRAP_STEP_TIMEOUT",
+    "background_loops": "MENACE_BOOTSTRAP_WAIT_SECS",
 }
 _OVERRUN_TOLERANCE = 1.05
 _OVERRUN_STREAK_THRESHOLD = 2
@@ -701,6 +705,7 @@ class SharedTimeoutCoordinator:
         self.component_floors = dict(component_floors or {})
         self.component_budgets = dict(component_budgets or {})
         self.remaining_components = dict(self.component_budgets)
+        self._component_windows: dict[str, dict[str, float | None]] = {}
 
     def _reserve(
         self,
@@ -746,6 +751,32 @@ class SharedTimeoutCoordinator:
             extra={"shared_timeout": dict(record)},
         )
         return effective, record
+
+    def start_component_timers(
+        self, budgets: Mapping[str, float | None], *, minimum: float = 0.0
+    ) -> Mapping[str, Mapping[str, float | None]]:
+        """Allocate independent timers for each component gate."""
+
+        windows: dict[str, dict[str, float | None]] = {}
+        for label, requested in budgets.items():
+            effective, record = self._reserve(
+                label,
+                requested,
+                max(minimum, self.component_floors.get(label, minimum)),
+                {"component_timer": True},
+            )
+            started = time.monotonic()
+            window = {
+                "budget": effective,
+                "deadline": (started + effective) if effective is not None else None,
+                "started": started,
+                "remaining": effective,
+            }
+            windows[label] = window
+            with self._lock:
+                self._component_windows[label] = dict(window)
+                self._timeline.append({**record, **window, "namespace": self.namespace})
+        return windows
 
     @contextlib.contextmanager
     def consume(
@@ -832,4 +863,5 @@ class SharedTimeoutCoordinator:
                 "component_floors": dict(self.component_floors),
                 "component_budgets": dict(self.component_budgets),
                 "component_remaining": dict(self.remaining_components),
+                "component_windows": dict(self._component_windows),
             }
