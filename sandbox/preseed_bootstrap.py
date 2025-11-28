@@ -1828,30 +1828,176 @@ def initialize_bootstrap_context(
                             "wait_time": perf_counter() - lock_wait_start,
                         },
                     )
-                    pipeline, promote_pipeline = _run_with_timeout(
-                        _timed_callable,
-                        timeout=effective_prepare_timeout,
-                        bootstrap_deadline=bootstrap_deadline,
-                        description="prepare_pipeline_for_bootstrap",
-                        abort_on_timeout=True,
-                        heavy_bootstrap=heavy_prepare,
-                        contention_scale=prepare_gate["timeout_scale"],
-                        resolved_timeout=resolved_prepare_timeout,
-                        budget=shared_timeout_coordinator,
-                        budget_label="retrievers",
-                        func=prepare_pipeline_for_bootstrap,
-                        label="prepare_pipeline_for_bootstrap",
-                        stop_event=stop_event,
-                        pipeline_cls=ModelAutomationPipeline,
-                        context_builder=context_builder,
-                        bot_registry=registry,
-                        data_bot=data_bot,
-                        bootstrap_runtime_manager=bootstrap_manager,
-                        manager=bootstrap_manager,
-                        bootstrap_safe=True,
-                        bootstrap_fast=True,
-                        component_timeouts=component_budgets,
-                    )
+                    prepare_degraded = False
+                    retry_scheduled = False
+                    prepare_result: tuple[Any, Callable[[Any], None]] | None = None
+
+                    def _schedule_prepare_retry() -> bool:
+                        if shared_timeout_coordinator is None:
+                            return False
+
+                        retry_request = effective_prepare_timeout
+                        retry_context = _resolve_timeout(
+                            retry_request,
+                            bootstrap_deadline=bootstrap_deadline,
+                            heavy_bootstrap=heavy_prepare,
+                            contention_scale=prepare_gate["timeout_scale"],
+                        )
+                        retry_context = _clamp_prepare_timeout_floor(
+                            retry_context,
+                            vector_heavy=vector_heavy,
+                            heavy_prepare=heavy_prepare,
+                            bootstrap_deadline=bootstrap_deadline,
+                        )
+
+                        def _retry_worker() -> None:
+                            retry_label = "prepare_pipeline_for_bootstrap.retry"
+                            LOGGER.info(
+                                "restarting prepare_pipeline_for_bootstrap in background",
+                                extra={
+                                    "timeout": retry_context[0],
+                                    "timeout_context": retry_context[1],
+                                    "remaining_budget": getattr(
+                                        shared_timeout_coordinator, "remaining_budget", None
+                                    ),
+                                },
+                            )
+                            try:
+                                retry_pipeline = _run_with_timeout(
+                                    _timed_callable,
+                                    timeout=retry_context[0],
+                                    bootstrap_deadline=bootstrap_deadline,
+                                    description=retry_label,
+                                    abort_on_timeout=False,
+                                    heavy_bootstrap=heavy_prepare,
+                                    contention_scale=prepare_gate["timeout_scale"],
+                                    resolved_timeout=retry_context,
+                                    budget=shared_timeout_coordinator,
+                                    budget_label="retrievers.retry",
+                                    func=prepare_pipeline_for_bootstrap,
+                                    label=retry_label,
+                                    stop_event=stop_event,
+                                    pipeline_cls=ModelAutomationPipeline,
+                                    context_builder=context_builder,
+                                    bot_registry=registry,
+                                    data_bot=data_bot,
+                                    bootstrap_runtime_manager=bootstrap_manager,
+                                    manager=bootstrap_manager,
+                                    bootstrap_safe=True,
+                                    bootstrap_fast=True,
+                                    component_timeouts=component_budgets,
+                                )
+                            except Exception:
+                                LOGGER.exception("background prepare retry failed")
+                                return
+
+                            if retry_pipeline:
+                                LOGGER.info(
+                                    "background prepare pipeline ready after retry",
+                                    extra={"timeout": retry_context[0]},
+                                )
+                                _BOOTSTRAP_SCHEDULER.mark_ready(
+                                    "orchestrator_state", reason="prepare_retry_ready"
+                                )
+                                _set_component_state("orchestrator_state", "ready")
+
+                        thread = threading.Thread(
+                            target=_retry_worker,
+                            name="bootstrap-prepare-retry",
+                            daemon=True,
+                        )
+                        thread.start()
+                        return True
+
+                    try:
+                        prepare_result = _run_with_timeout(
+                            _timed_callable,
+                            timeout=effective_prepare_timeout,
+                            bootstrap_deadline=bootstrap_deadline,
+                            description="prepare_pipeline_for_bootstrap",
+                            abort_on_timeout=True,
+                            heavy_bootstrap=heavy_prepare,
+                            contention_scale=prepare_gate["timeout_scale"],
+                            resolved_timeout=resolved_prepare_timeout,
+                            budget=shared_timeout_coordinator,
+                            budget_label="retrievers",
+                            func=prepare_pipeline_for_bootstrap,
+                            label="prepare_pipeline_for_bootstrap",
+                            stop_event=stop_event,
+                            pipeline_cls=ModelAutomationPipeline,
+                            context_builder=context_builder,
+                            bot_registry=registry,
+                            data_bot=data_bot,
+                            bootstrap_runtime_manager=bootstrap_manager,
+                            manager=bootstrap_manager,
+                            bootstrap_safe=True,
+                            bootstrap_fast=True,
+                            component_timeouts=component_budgets,
+                        )
+                    except TimeoutError:
+                        prepare_degraded = True
+                        retry_scheduled = _schedule_prepare_retry()
+                        LOGGER.warning(
+                            "prepare_pipeline_for_bootstrap exceeded budget; entering degraded mode",
+                            extra={
+                                "timeout": effective_prepare_timeout,
+                                "timeout_context": resolved_prepare_timeout[1],
+                                "shared_budget": getattr(
+                                    shared_timeout_coordinator, "remaining_budget", None
+                                ),
+                                "retry_scheduled": retry_scheduled,
+                            },
+                        )
+                        _BOOTSTRAP_SCHEDULER.mark_partial(
+                            "orchestrator_state", reason="prepare_timeout"
+                        )
+                        _set_component_state("orchestrator_state", "partial")
+                        prepare_result = None
+                    except Exception:
+                        LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
+                        print(
+                            (
+                                "prepare_pipeline_for_bootstrap failed "
+                                "(last_step=%s, timeout=%s, elapsed=%.2fs)"
+                            )
+                            % (
+                                BOOTSTRAP_PROGRESS["last_step"],
+                                _describe_timeout(effective_prepare_timeout),
+                                perf_counter() - prepare_start,
+                            ),
+                            flush=True,
+                        )
+                        raise
+                    finally:
+                        _pop_bootstrap_context(placeholder_context)
+
+                    if prepare_degraded:
+                        degrade_snapshot = _BOOTSTRAP_SCHEDULER.snapshot()
+                        LOGGER.info(
+                            "continuing bootstrap in reduced-capability mode",
+                            extra={
+                                "online_state": degrade_snapshot,
+                                "retry_scheduled": retry_scheduled,
+                            },
+                        )
+                        _publish_online_state()
+                        _log_step("prepare_pipeline_for_bootstrap", prepare_start)
+                        bootstrap_context = {
+                            "registry": registry,
+                            "data_bot": data_bot,
+                            "context_builder": context_builder,
+                            "engine": engine,
+                            "pipeline": bootstrap_manager,
+                            "manager": bootstrap_manager,
+                            "degraded_prepare": True,
+                            "prepare_retry": retry_scheduled,
+                            "online_state": degrade_snapshot,
+                        }
+                        if use_cache:
+                            _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+                        return bootstrap_context
+
+                    pipeline, promote_pipeline = prepare_result
             except Exception:
                 LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
                 print(
