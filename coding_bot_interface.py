@@ -45,6 +45,7 @@ from bootstrap_timeout_policy import (
     get_adaptive_timeout_context,
     get_bootstrap_guard_context,
     compute_prepare_pipeline_component_budgets,
+    DEFERRED_COMPONENTS,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
     load_persisted_bootstrap_wait,
@@ -461,6 +462,7 @@ def _mark_deferred_gates(
                 "stage": stage,
                 "status": "deferred",
                 "reason": reason,
+                "deferred_class": "background" if gate in DEFERRED_COMPONENTS else "optional",
             }
         )
 
@@ -476,6 +478,8 @@ def _mark_deferred_gates(
     )
     degraded_payload = dict(payload)
     degraded_payload.update({"degraded_reason": reason, "deferred_gates": tuple(gates)})
+    if any(gate in DEFERRED_COMPONENTS for gate in gates):
+        degraded_payload["deferred_class"] = "background"
     _PREPARE_PIPELINE_WATCHDOG["degraded"] = degraded_payload
     _PREPARE_PIPELINE_WATCHDOG.setdefault("deferred", []).append(degraded_payload)
     return degraded_payload
@@ -964,6 +968,7 @@ def _get_bootstrap_wait_timeout() -> float | None:
 
     default_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
     component_budget_total: float | None = None
+    deferred_component_budget_total: float | None = None
     component_budget_source = "computed"
     component_budgets: dict[str, float] = {}
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
@@ -980,11 +985,22 @@ def _get_bootstrap_wait_timeout() -> float | None:
     if not component_budgets:
         persisted_budgets = load_last_component_budgets()
         component_budget_total = persisted_budgets.pop("__total__", None)
+        deferred_component_budget_total = persisted_budgets.pop("__deferred_total__", None)
         component_budgets.update(persisted_budgets)
         component_budget_source = "persisted" if persisted_budgets else component_budget_source
 
-    if component_budget_total is None:
-        component_budget_total = sum(component_budgets.values()) if component_budgets else None
+    if component_budget_total is None and component_budgets:
+        component_budget_total = sum(
+            value for key, value in component_budgets.items() if key not in DEFERRED_COMPONENTS
+        )
+        deferred_component_budget_total = sum(
+            value for key, value in component_budgets.items() if key in DEFERRED_COMPONENTS
+        )
+
+    if deferred_component_budget_total is None and component_budgets:
+        deferred_component_budget_total = sum(
+            value for key, value in component_budgets.items() if key in DEFERRED_COMPONENTS
+        )
 
     if isinstance(adaptive_context, Mapping):
         overruns = adaptive_context.get("component_overruns")
@@ -1049,11 +1065,12 @@ def _get_bootstrap_wait_timeout() -> float | None:
     adaptive_timeout = min(adaptive_timeout, adaptive_cap)
 
     composed_timeout = None
-    if component_budget_total:
-        background_budget = component_budgets.get("background_loops", 0.0)
-        background_headroom = background_budget * _READINESS_GATE_WEIGHTS.get("background_loops", 0.35)
-        composed_timeout = (component_budget_total + background_headroom) * contention_scale
-        composed_cap = max(base_timeout, component_budget_total) * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
+    core_budget_total = component_budget_total or 0.0
+    background_budget = component_budgets.get("background_loops", 0.0)
+    background_headroom = background_budget * _READINESS_GATE_WEIGHTS.get("background_loops", 0.35)
+    if component_budget_total or background_budget:
+        composed_timeout = (core_budget_total + background_headroom) * contention_scale
+        composed_cap = max(base_timeout, core_budget_total or base_timeout) * (1.0 + _BOOTSTRAP_WAIT_GROWTH_CAP)
         composed_timeout = min(composed_timeout, composed_cap)
     else:
         composed_cap = None
@@ -5196,10 +5213,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     adaptive_budget_context = get_adaptive_timeout_context()
     component_complexity_inputs = adaptive_budget_context.get("component_complexity")
     component_budget_total = adaptive_budget_context.get("component_budget_total")
+    deferred_budget_total = adaptive_budget_context.get("deferred_component_budget_total")
     try:
         component_budget_total = float(component_budget_total)
     except (TypeError, ValueError):
         component_budget_total = None
+    try:
+        deferred_budget_total = float(deferred_budget_total)
+    except (TypeError, ValueError):
+        deferred_budget_total = None
     global_bootstrap_window = adaptive_budget_context.get("global_window")
     try:
         global_bootstrap_window = float(global_bootstrap_window)
@@ -5207,7 +5229,12 @@ def _prepare_pipeline_for_bootstrap_impl(
         global_bootstrap_window = None
     global_window_extension = adaptive_budget_context.get("global_window_extension")
     if global_bootstrap_window is None and derived_component_budgets:
-        component_budget_total = sum(derived_component_budgets.values())
+        component_budget_total = sum(
+            value for key, value in derived_component_budgets.items() if key not in DEFERRED_COMPONENTS
+        )
+        deferred_budget_total = sum(
+            value for key, value in derived_component_budgets.items() if key in DEFERRED_COMPONENTS
+        )
         global_bootstrap_window = component_budget_total
     _PREPARE_PIPELINE_WATCHDOG["component_budget_inputs"] = adaptive_budget_context
     _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
@@ -5215,6 +5242,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_extension"] = global_window_extension
     _PREPARE_PIPELINE_WATCHDOG["component_complexity"] = component_complexity_inputs
     _PREPARE_PIPELINE_WATCHDOG["component_budget_total"] = component_budget_total
+    _PREPARE_PIPELINE_WATCHDOG["deferred_component_budget_total"] = deferred_budget_total
     logger.info(
         "adaptive component budgets prepared for bootstrap",
         extra={
@@ -5982,6 +6010,17 @@ def _prepare_pipeline_for_bootstrap_impl(
             ):
                 optional_overrun = gate_pending and gate not in _CRITICAL_READINESS_GATES
                 if optional_overrun:
+                    logger.warning(
+                        "deferred readiness gate overrun; continuing",
+                        extra={
+                            "event": "prepare-pipeline-deferred-overrun",
+                            "gate": gate,
+                            "stage": stage,
+                            "deferred_class": "background" if gate in DEFERRED_COMPONENTS else "optional",
+                            "remaining_window": phase_state.get("remaining"),
+                            "budget": phase_state.get("budget"),
+                        },
+                    )
                     _mark_deferred_gates(
                         gates=[gate],
                         stage=stage,

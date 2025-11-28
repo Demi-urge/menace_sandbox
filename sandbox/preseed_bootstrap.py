@@ -2150,21 +2150,6 @@ def initialize_bootstrap_context(
             "after internalize_coding_bot (last_step=%s)", BOOTSTRAP_PROGRESS["last_step"]
         )
         _log_step("internalize_coding_bot", internalize_start)
-        background_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
-            "background_loops_start", heavy=False, vector_heavy=False
-        )
-        _BOOTSTRAP_SCHEDULER.mark_partial(
-            "background_loops", reason="manager_internalized"
-        )
-        if background_gate.get("parallelism_scale", 1.0) < 1.0:
-            os.environ["MENACE_BOOTSTRAP_PARALLELISM_HINT"] = str(
-                background_gate["parallelism_scale"]
-            )
-            LOGGER.info(
-                "background loop start slowed due to concurrent bootstrap",
-                extra={"gate": background_gate},
-            )
-        _publish_online_state()
         _ensure_not_stopped(stop_event)
         _mark_bootstrap_step("promote_pipeline")
         promote_start = perf_counter()
@@ -2269,6 +2254,22 @@ def initialize_bootstrap_context(
         LOGGER.info("_seed_research_aggregator_context completed (step=seed_final)")
         _BOOTSTRAP_SCHEDULER.mark_ready(
             "vector_seeding", reason="seed_final_context"
+        )
+        _publish_online_state()
+
+        background_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "background_loops_start", heavy=False, vector_heavy=False
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason="post_core_ready"
+        )
+        if background_gate.get("parallelism_scale", 1.0) < 1.0:
+            os.environ["MENACE_BOOTSTRAP_PARALLELISM_HINT"] = str(
+                background_gate["parallelism_scale"]
+            )
+        LOGGER.info(
+            "scheduling deferred background loops after core readiness",
+            extra={"gate": background_gate, "event": "background-loops-deferred"},
         )
         _publish_online_state()
 
