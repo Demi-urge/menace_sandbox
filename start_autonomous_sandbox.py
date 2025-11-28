@@ -925,6 +925,31 @@ def _resolve_soft_deadline_flag(args: argparse.Namespace | None = None) -> bool:
     return soft_env or cli_soft
 
 
+def _aggregate_stage_deadlines(
+    stage_deadlines: Mapping[str, Mapping[str, Any]], *, buffer: float
+) -> float | None:
+    """Return a buffered aggregate deadline across enforced stages."""
+
+    enforced_deadlines: list[float] = []
+    for entry in stage_deadlines.values():
+        if not isinstance(entry, Mapping) or not entry.get("enforced"):
+            continue
+        deadline = entry.get("deadline")
+        if deadline is None:
+            continue
+        try:
+            enforced_deadlines.append(float(deadline))
+        except (TypeError, ValueError):
+            continue
+
+    if not enforced_deadlines:
+        return None
+
+    aggregate_deadline = sum(enforced_deadlines)
+    buffered_deadline = aggregate_deadline * max(buffer, 1.0)
+    return buffered_deadline
+
+
 def _resolve_bootstrap_deadline_policy(
     *,
     baseline_timeout: float,
@@ -947,15 +972,20 @@ def _resolve_bootstrap_deadline_policy(
         component_budgets=component_budgets,
         component_floors=component_floors,
     )
-    enforced_deadlines = [
-        entry["deadline"]
-        for entry in stage_deadlines.values()
-        if entry.get("enforced")
-    ]
-    adjusted_timeout: float | None = max(
-        (float(value) for value in enforced_deadlines if value is not None),
-        default=None,
+    aggregate_buffer = float(
+        os.getenv("BOOTSTRAP_DEADLINE_BUFFER", str(BUDGET_BUFFER_MULTIPLIER))
     )
+    aggregate_deadline = _aggregate_stage_deadlines(
+        stage_deadlines, buffer=aggregate_buffer
+    )
+    max_stage_deadline: float | None = None
+    enforced_deadlines = [
+        entry.get("deadline")
+        for entry in stage_deadlines.values()
+        if entry.get("enforced") and entry.get("deadline") is not None
+    ]
+    if enforced_deadlines:
+        max_stage_deadline = max(float(value) for value in enforced_deadlines)
     policy: dict[str, Any] = {
         "baseline_timeout": baseline_timeout,
         "heavy_detected": heavy_detected,
@@ -965,7 +995,10 @@ def _resolve_bootstrap_deadline_policy(
         "component_budgets": component_budgets,
         "component_floors": component_floors,
         "stage_deadlines": stage_deadlines,
-        "adjusted_timeout": adjusted_timeout,
+        "aggregate_deadline": aggregate_deadline,
+        "deadline_buffer": aggregate_buffer,
+        "max_stage_deadline": max_stage_deadline,
+        "adjusted_timeout": aggregate_deadline,
     }
 
     if soft_deadline and heavy_detected:
