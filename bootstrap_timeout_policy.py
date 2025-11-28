@@ -368,6 +368,70 @@ def _save_timeout_state(state: Mapping[str, object]) -> None:
         LOGGER.exception("failed to persist timeout state", extra={"path": str(_TIMEOUT_STATE_PATH)})
 
 
+def _heartbeat_progressing(heartbeat: Mapping[str, object]) -> bool:
+    for key in (
+        "meta.heartbeat.progressing",
+        "heartbeat.progressing",
+        "progressing",
+    ):
+        value = heartbeat.get(key)
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif isinstance(value, (int, float)):
+            if float(value) > 0:
+                return True
+    return False
+
+
+def _derive_rolling_global_window(
+    *,
+    base_window: float | None,
+    component_budget_total: float,
+    host_telemetry: Mapping[str, object] | None,
+) -> tuple[float | None, Mapping[str, object]]:
+    """Extend the bootstrap window when live heartbeats show progress."""
+
+    heartbeat = host_telemetry if isinstance(host_telemetry, Mapping) else {}
+    window = base_window if base_window is not None else (component_budget_total or None)
+    extension_meta: dict[str, object] = {}
+    if not heartbeat:
+        return window, extension_meta
+
+    heartbeat_window = _parse_float(str(heartbeat.get("global_window")))
+    heartbeat_remaining = _parse_float(str(heartbeat.get("remaining_budget")))
+    heartbeat_ts = _parse_float(str(heartbeat.get("ts")))
+    progressing = _heartbeat_progressing(heartbeat)
+
+    if heartbeat_window is not None:
+        window = max(window or 0.0, heartbeat_window)
+
+    projected_remaining = None
+    if heartbeat_remaining is not None:
+        staleness = max(time.time() - heartbeat_ts, 0.0) if heartbeat_ts else 0.0
+        projected_remaining = max(heartbeat_remaining - staleness, 0.0)
+        guard_padding = max(projected_remaining * 0.25, 15.0 if progressing else 5.0)
+        baseline = window if window is not None else component_budget_total
+        candidate = max(baseline or 0.0, component_budget_total) + projected_remaining + guard_padding
+        if window is None or candidate > window:
+            window = candidate
+            extension_meta = {
+                "reason": "heartbeat_progress",
+                "baseline": baseline,
+                "component_budget_total": component_budget_total,
+                "heartbeat_remaining": heartbeat_remaining,
+                "projected_remaining": projected_remaining,
+                "heartbeat_window": heartbeat_window,
+                "progressing": progressing,
+                "staleness": staleness,
+                "guard_padding": guard_padding,
+                "extended_window": window,
+                "extension_seconds": window - (baseline or 0.0),
+            }
+
+    return window, extension_meta
+
+
 def _state_host_key() -> str:
     return socket.gethostname() or "unknown-host"
 
@@ -788,6 +852,7 @@ def compute_prepare_pipeline_component_budgets(
     }
     component_budget_total = sum(budgets.values()) if budgets else 0.0
     global_window = component_budget_total or None
+    global_window_extension: Mapping[str, object] | None = None
 
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
@@ -832,6 +897,14 @@ def compute_prepare_pipeline_component_budgets(
         "background_loops": max(int(complexity.get("background_loops", 0) or 1), 1),
     }
 
+    global_window, extension_meta = _derive_rolling_global_window(
+        base_window=global_window,
+        component_budget_total=component_budget_total,
+        host_telemetry=host_telemetry,
+    )
+    if extension_meta:
+        global_window_extension = extension_meta
+
     adaptive_inputs = {
         "host": host_key,
         "load_scale": scale,
@@ -845,6 +918,7 @@ def compute_prepare_pipeline_component_budgets(
         "adaptive_floors": adaptive_floors,
         "component_budget_total": component_budget_total,
         "global_window": global_window,
+        "global_window_extension": global_window_extension,
     }
     _record_adaptive_context(adaptive_inputs)
 
@@ -873,6 +947,7 @@ def compute_prepare_pipeline_component_budgets(
                 "component_complexity": component_complexity,
                 "guard_scale": guard_scale,
             },
+            "last_global_window_extension": global_window_extension,
             "component_work_units": component_work_units,
             "updated_at": time.time(),
         }
@@ -921,6 +996,9 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
             "extensions": list(_PREPARE_PIPELINE_WATCHDOG.get("extensions", ())),
             "component_windows": _PREPARE_PIPELINE_WATCHDOG.get("component_windows"),
             "global_window": _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_window"),
+            "global_window_extension": _PREPARE_PIPELINE_WATCHDOG.get(
+                "global_bootstrap_extension"
+            ),
             "component_complexity": _PREPARE_PIPELINE_WATCHDOG.get("component_complexity"),
         }
     except Exception:

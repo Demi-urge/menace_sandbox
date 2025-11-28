@@ -5099,11 +5099,13 @@ def _prepare_pipeline_for_bootstrap_impl(
         global_bootstrap_window = float(global_bootstrap_window)
     except (TypeError, ValueError):
         global_bootstrap_window = None
+    global_window_extension = adaptive_budget_context.get("global_window_extension")
     if global_bootstrap_window is None and derived_component_budgets:
         component_budget_total = sum(derived_component_budgets.values())
         global_bootstrap_window = component_budget_total
     _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
     _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_window"] = global_bootstrap_window
+    _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_extension"] = global_window_extension
     _PREPARE_PIPELINE_WATCHDOG["component_complexity"] = component_complexity_inputs
     _PREPARE_PIPELINE_WATCHDOG["component_budget_total"] = component_budget_total
     logger.info(
@@ -5113,6 +5115,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             "pipeline_complexity": pipeline_complexity,
             "component_budgets": derived_component_budgets,
             "explicit_overrides": bool(component_timeouts),
+            "global_bootstrap_window": global_bootstrap_window,
+            "global_window_extension": global_window_extension,
         },
     )
     guard_context = get_bootstrap_guard_context()
@@ -5309,7 +5313,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
                 "env_vector_wait=%r timeline=%s readiness=%s pending_gates=%s "
                 "dominant_gate=%s readiness_ratio=%.3f remediation_hints=%s "
-                "component_windows=%s progress=%s"
+                "component_windows=%s progress=%s elastic_global_window=%s "
+                "global_window_extension=%s"
             ),
             stage,
             vector_heavy,
@@ -5325,6 +5330,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             remediation_hints,
             context.get("watchdog_component_windows"),
             context.get("watchdog_progress_signal"),
+            context.get("elastic_global_window"),
+            context.get("global_window_extension"),
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
@@ -5391,6 +5398,14 @@ def _prepare_pipeline_for_bootstrap_impl(
             _PREPARE_PIPELINE_WATCHDOG["component_overruns"] = adaptive_overruns
         if adaptive_component_floors:
             _PREPARE_PIPELINE_WATCHDOG["component_floors"] = adaptive_component_floors
+        if _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_extension"):
+            watchdog_telemetry["global_window_extension"] = _PREPARE_PIPELINE_WATCHDOG.get(
+                "global_bootstrap_extension"
+            )
+        if _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_window") is not None:
+            watchdog_telemetry["elastic_global_window"] = _PREPARE_PIPELINE_WATCHDOG.get(
+                "global_bootstrap_window"
+            )
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
@@ -5886,6 +5901,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "component_windows"
                 ),
                 "watchdog_component_budgets": component_budget_payload,
+                "elastic_global_window": watchdog_telemetry.get("elastic_global_window"),
+                "global_window_extension": watchdog_telemetry.get("global_window_extension"),
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(
                 vector_heavy, components=readiness_pending or readiness_ready
