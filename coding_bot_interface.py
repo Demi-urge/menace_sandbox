@@ -5205,38 +5205,84 @@ def _prepare_pipeline_for_bootstrap_impl(
         + sorted(readiness_gates - set(readiness_gate_order))
     )
 
-    def _calibrate_component_budgets(
-        total_budget: float | None,
-        *,
-        gates: Iterable[str] = readiness_gate_order,
-    ) -> dict[str, float]:
-        """Spread the shared timeout across known component gates."""
+    component_overrun_floors: dict[str, float] = {}
+    adaptive_overruns = (get_adaptive_timeout_context() or {}).get("component_overruns")
+    if isinstance(adaptive_overruns, Mapping):
+        for gate, meta in adaptive_overruns.items():
+            if not isinstance(meta, Mapping):
+                continue
+            for key in ("suggested_floor", "expected_floor", "floor", "max_elapsed"):
+                try:
+                    value = float(meta.get(key))
+                except (TypeError, ValueError):
+                    continue
+                component_overrun_floors[gate] = max(
+                    component_overrun_floors.get(gate, 0.0), value
+                )
 
-        if total_budget is None or total_budget <= 0:
-            return {}
+    def _historical_gate_budgets(gates: Iterable[str]) -> dict[str, float]:
+        readiness = _PREPARE_PIPELINE_WATCHDOG.get("readiness") or {}
+        stage_history = _PREPARE_PIPELINE_WATCHDOG.get("stages") or []
+        persisted_budgets = load_last_component_budgets()
+        persisted_budgets.pop("__total__", None)
+        history: dict[str, list[float]] = {gate: [] for gate in gates}
 
-        gates = tuple(gates)
-        weights = {gate: _READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in gates}
-        weight_sum = sum(weights.values()) or 1.0
-        calibrated: dict[str, float] = {}
+        for gate, meta in readiness.items():
+            if gate not in history:
+                continue
+            try:
+                elapsed = float(meta.get("elapsed", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if elapsed > 0:
+                history[gate].append(elapsed)
+
+        for entry in stage_history:
+            gates_for_stage = _derive_readiness_gates(entry.get("label"), None)
+            try:
+                elapsed = float(entry.get("elapsed", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if elapsed <= 0:
+                continue
+            for gate in gates_for_stage:
+                if gate in history:
+                    history[gate].append(elapsed)
+
+        estimates: dict[str, float] = {}
         for gate in gates:
-            fraction = weights.get(gate, 1.0) / weight_sum
-            calibrated[gate] = max(
-                _SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0), total_budget * fraction
-            )
-        return calibrated
+            samples = history.get(gate) or []
+            if samples:
+                estimates[gate] = max(samples) * 1.25
+                continue
+            persisted = persisted_budgets.get(gate)
+            try:
+                if persisted is not None:
+                    estimates[gate] = float(persisted)
+            except (TypeError, ValueError):
+                continue
+        return estimates
+    historical_gate_budgets = _historical_gate_budgets(readiness_gate_order)
+
     def _select_phase_budget(component: str) -> float | None:
         if component in component_budget_overrides:
             return component_budget_overrides[component]
         if component in subsystem_budget_overrides and subsystem_budget_overrides[component] is not None:
             return subsystem_budget_overrides[component]
         if derived_component_budgets:
-            return derived_component_budgets.get(component)
-        return None
+            budget = derived_component_budgets.get(component)
+            if budget is not None:
+                return budget
+        historical_budget = historical_gate_budgets.get(component)
+        overrun_floor = component_overrun_floors.get(component)
+        if historical_budget is not None:
+            return max(historical_budget, overrun_floor or 0.0)
+        if overrun_floor is not None:
+            return overrun_floor
+        floor = _SUBSYSTEM_BUDGET_FLOORS.get(component)
+        return floor
 
-    phase_budgets = {
-        gate: _select_phase_budget(gate) for gate in readiness_gate_order
-    }
+    phase_budgets = {gate: _select_phase_budget(gate) for gate in readiness_gate_order}
     _PREPARE_PIPELINE_WATCHDOG["component_budgets_resolved"] = dict(phase_budgets)
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
@@ -6075,12 +6121,6 @@ def _prepare_pipeline_for_bootstrap_impl(
     if global_bootstrap_window is not None:
         shared_timeout_budget = max(shared_timeout_budget or 0.0, global_bootstrap_window)
     component_budget_active = bool(component_budget_payload)
-    calibrated_component_budgets = _calibrate_component_budgets(
-        None if component_budget_active else shared_timeout_budget
-    )
-    for gate, budget in calibrated_component_budgets.items():
-        if phase_budgets.get(gate) is None:
-            phase_budgets[gate] = budget
     if resolved_deadline is not None and not component_budget_active:
         shared_timeout_budget = max(
             shared_timeout_budget or 0.0, max(resolved_deadline - start_time, 0.0)
@@ -6090,6 +6130,18 @@ def _prepare_pipeline_for_bootstrap_impl(
         namespace="prepare_pipeline", run_id=f"prepare-{os.getpid()}"
     )
     component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
+    component_budget_total = sum(component_budget_payload.values()) if component_budget_payload else None
+    if component_budget_payload:
+        persist_bootstrap_wait_window(
+            shared_timeout_budget,
+            vector_heavy=vector_bootstrap_heavy,
+            source="prepare_pipeline_component_budgets",
+            metadata={
+                "component_budgets": component_budget_payload,
+                "component_budget_total": component_budget_total,
+                "component_budget_source": "historical",
+            },
+        )
     component_windows: dict[str, dict[str, Any]] = {}
     coordinator_total_budget: float | None = None
     if component_budget_active:
