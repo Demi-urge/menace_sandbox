@@ -1,3 +1,4 @@
+import itertools
 import sys
 import contextvars
 import logging
@@ -512,31 +513,35 @@ def test_prepare_pipeline_timeout_emits_watchdog(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=cbi.logger.name)
     cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
     cbi._PREPARE_PIPELINE_WATCHDOG["timeouts"] = 0
+    cbi._initialize_prepare_readiness(reset=True)
 
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "vector_heavy", True, raising=False)
+    setattr(cbi._BOOTSTRAP_STATE, "vector_heavy", False)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "vector_heavy", True)
 
-    perf_calls = iter([0.0, 10.0, 10.0])
+    perf_calls = itertools.chain([0.0, 500.0, 500.0], itertools.repeat(500.0))
     monkeypatch.setattr(cbi.time, "perf_counter", lambda: next(perf_calls))
 
     class _Pipeline:
         def __init__(self, *_, **__):
             pass
 
-    with pytest.raises(TimeoutError):
-        cbi._prepare_pipeline_for_bootstrap_impl(
-            pipeline_cls=_Pipeline,
-            context_builder=SimpleNamespace(),
-            bot_registry=DummyRegistry(),
-            data_bot=DummyDataBot(),
-            timeout=0.0,
-        )
+    cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=DummyRegistry(),
+        data_bot=DummyDataBot(),
+        timeout=0.0,
+    )
 
-    diagnostics = [
-        record.message for record in caplog.records if "timeout diagnostics" in record.message
+    degraded_events = [
+        entry
+        for entry in cbi._PREPARE_PIPELINE_WATCHDOG["stages"]
+        if entry.get("timeout") and entry.get("degraded_but_online")
     ]
-    assert diagnostics, "timeout diagnostics should be emitted when timing out"
-    assert "vector_heavy=True" in diagnostics[-1]
-    assert "context push" in diagnostics[-1]
+    assert degraded_events, "expected degraded timeout to be recorded"
+    last_stage = degraded_events[-1]
+    assert last_stage.get("watchdog_pending_gates"), "pending gates should be surfaced"
+    assert last_stage.get("watchdog_readiness_ratio") is not None
 
     if hasattr(cbi._BOOTSTRAP_STATE, "vector_heavy"):
         delattr(cbi._BOOTSTRAP_STATE, "vector_heavy")
@@ -546,26 +551,31 @@ def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=cbi.logger.name)
     cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
     cbi._PREPARE_PIPELINE_WATCHDOG["timeouts"] = 0
+    cbi._initialize_prepare_readiness(reset=True)
 
     monkeypatch.setattr(cbi, "_BOOTSTRAP_WAIT_TIMEOUT", 30.0, raising=False)
 
-    perf_calls = iter([0.0, 200.0, 200.0])
+    perf_calls = itertools.chain([0.0, 500.0, 500.0], itertools.repeat(500.0))
     monkeypatch.setattr(cbi.time, "perf_counter", lambda: next(perf_calls))
 
     class _Pipeline:
         def __init__(self, *_, **__):
             pass
 
-    with pytest.raises(TimeoutError):
-        cbi._prepare_pipeline_for_bootstrap_impl(
-            pipeline_cls=_Pipeline,
-            context_builder=SimpleNamespace(),
-            bot_registry=DummyRegistry(),
-            data_bot=DummyDataBot(),
-            timeout=30.0,
-        )
+    cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=DummyRegistry(),
+        data_bot=DummyDataBot(),
+        timeout=30.0,
+    )
 
-    assert cbi._PREPARE_PIPELINE_WATCHDOG["stages"], "watchdog timeline should record timeout"
-    last_stage = cbi._PREPARE_PIPELINE_WATCHDOG["stages"][-1]
+    degraded_events = [
+        entry
+        for entry in cbi._PREPARE_PIPELINE_WATCHDOG["stages"]
+        if entry.get("timeout") and entry.get("degraded_but_online")
+    ]
+    assert degraded_events, "watchdog should record degraded readiness when overruns occur"
+    last_stage = degraded_events[-1]
     assert last_stage.get("resolved_timeout", 0) >= cbi._MIN_STAGE_TIMEOUT
 
