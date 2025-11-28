@@ -145,6 +145,14 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "timeouts": 0,
 }
 
+_READINESS_GATE_WEIGHTS: dict[str, float] = {
+    "vectorizers": 1.25,
+    "retrievers": 1.1,
+    "db_indexes": 0.9,
+    "pipeline_config": 0.6,
+    "orchestrator_state": 1.0,
+}
+
 _BOOTSTRAP_TIMEOUT_FLOOR = 240.0
 _MIN_STAGE_TIMEOUT = 240.0
 _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = 360.0
@@ -155,6 +163,22 @@ _VECTOR_STAGED_GRACE_FALLBACK = 90.0
 _PREPARE_STAGE_BUDGETS: dict[str, float] = {}
 _PREPARE_VECTOR_STAGE_BUDGETS: dict[str, float] = {}
 _VECTOR_STAGE_GRACE_PERIOD: float | None = None
+
+
+def _initialize_prepare_readiness(*, reset: bool = False) -> dict[str, dict[str, Any]]:
+    readiness = _PREPARE_PIPELINE_WATCHDOG.get("readiness") if not reset else None
+    if readiness is None:
+        readiness = {}
+    for gate in _READINESS_GATE_WEIGHTS:
+        readiness.setdefault(
+            gate,
+            {"ready": False, "timestamp": None, "elapsed": None, "stage": None},
+        )
+    _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
+    return readiness
+
+
+_initialize_prepare_readiness()
 
 
 def _parse_stage_budget_env(env_var: str) -> dict[str, float]:
@@ -215,6 +239,25 @@ def _refresh_prepare_watchdog_budgets() -> None:
         "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS"
     )
     _VECTOR_STAGE_GRACE_PERIOD = _resolve_vector_stage_grace()
+
+
+def _derive_readiness_gates(label: str | None, gates: Iterable[str] | None = None) -> set[str]:
+    if gates:
+        derived = {gate.strip().lower() for gate in gates if gate}
+    else:
+        derived = set()
+    normalized = (label or "").lower()
+    if "vector" in normalized:
+        derived.add("vectorizers")
+    if "retriev" in normalized:
+        derived.add("retrievers")
+    if any(token in normalized for token in ["db", "index", "database"]):
+        derived.add("db_indexes")
+    if any(token in normalized for token in ["config", "context", "pipeline"]):
+        derived.add("pipeline_config")
+    if any(token in normalized for token in ["orchestrator", "owner guard", "sentinel"]):
+        derived.add("orchestrator_state")
+    return {gate for gate in derived if gate in _READINESS_GATE_WEIGHTS}
 
 
 def _get_stage_budget_override(stage: str | None, *, vector_heavy: bool) -> float | None:
@@ -291,6 +334,7 @@ def _record_prepare_pipeline_stage(
     elapsed: float,
     timeout: bool = False,
     extra: Mapping[str, Any] | None = None,
+    readiness_gates: Iterable[str] | None = None,
 ) -> None:
     """Capture duration metadata for ``prepare_pipeline_for_bootstrap`` stages."""
 
@@ -304,6 +348,16 @@ def _record_prepare_pipeline_stage(
     if timeout:
         record["timeout"] = True
     _PREPARE_PIPELINE_WATCHDOG["stages"].append(record)
+    readiness = _initialize_prepare_readiness()
+    if not timeout:
+        for gate in _derive_readiness_gates(label, readiness_gates):
+            readiness[gate] = {
+                "ready": True,
+                "timestamp": record["timestamp"],
+                "elapsed": record["elapsed"],
+                "stage": label,
+            }
+    _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
     if timeout:
         _PREPARE_PIPELINE_WATCHDOG["timeouts"] = (
             _PREPARE_PIPELINE_WATCHDOG.get("timeouts", 0) + 1
@@ -329,6 +383,13 @@ def _normalize_watchdog_timeout(
     history_mean = sum(history[-5:]) / len(history[-5:]) if history[-5:] else None
 
     configured_budget = _get_stage_budget_override(stage_label, vector_heavy=vector_heavy)
+    readiness = _initialize_prepare_readiness()
+    ready_gates = [gate for gate, meta in readiness.items() if meta.get("ready")]
+    pending_gates = [gate for gate in readiness if gate not in ready_gates]
+    pending_weight = sum(_READINESS_GATE_WEIGHTS.get(gate, 1.0) for gate in pending_gates)
+    readiness_ratio = (
+        float(len(ready_gates)) / float(len(readiness)) if readiness else 0.0
+    )
 
     try:
         load1, _, _ = os.getloadavg()
@@ -344,6 +405,11 @@ def _normalize_watchdog_timeout(
     vector_scale = 1.1 if vector_heavy else 1.0
     stage_budget *= vector_scale
 
+    adaptive_scale = 1.0 + pending_weight * 0.15
+    if vector_heavy and "vectorizers" in pending_gates:
+        adaptive_scale += 0.2
+    stage_budget *= adaptive_scale
+
     if configured_budget is not None:
         stage_budget = max(stage_budget, configured_budget)
 
@@ -354,6 +420,11 @@ def _normalize_watchdog_timeout(
         "stage_budget": stage_budget,
         "timeout_floor": timeout_floor,
         "configured_stage_budget": configured_budget,
+        "pending_gates": pending_gates,
+        "ready_gates": ready_gates,
+        "readiness_ratio": readiness_ratio,
+        "pending_gate_weight": pending_weight,
+        "adaptive_scale": adaptive_scale,
     }
 
     if deadline is None:
@@ -362,7 +433,9 @@ def _normalize_watchdog_timeout(
     remaining_window = max(0.0, deadline - start_time)
     telemetry["remaining_window"] = remaining_window
 
-    staged_readiness = stage_budget > remaining_window and remaining_window > 0
+    staged_readiness = (stage_budget > remaining_window and remaining_window > 0) or (
+        readiness_ratio > 0 and pending_gates
+    )
     telemetry["staged_readiness"] = staged_readiness
 
     normalized_timeout = stage_budget
@@ -4079,7 +4152,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             (
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
                 "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
-                "env_vector_wait=%r timeline=%s remediation_hints=%s"
+                "env_vector_wait=%r timeline=%s readiness=%s pending_gates=%s "
+                "readiness_ratio=%.3f remediation_hints=%s"
             ),
             stage,
             vector_heavy,
@@ -4088,6 +4162,9 @@ def _prepare_pipeline_for_bootstrap_impl(
             context.get("env_menace_bootstrap_wait_secs"),
             context.get("env_menace_bootstrap_vector_wait_secs"),
             timeline,
+            context.get("watchdog_ready_gates"),
+            context.get("watchdog_pending_gates"),
+            context.get("watchdog_readiness_ratio", 0.0),
             remediation_hints,
         )
 
@@ -4110,11 +4187,17 @@ def _prepare_pipeline_for_bootstrap_impl(
         elif normalized_deadline is not None:
             resolved_deadline = normalized_deadline
 
-        effective_deadline = resolved_deadline
+        adaptive_deadline = normalized_deadline
+        if adaptive_deadline is None and resolved_timeout is not None:
+            adaptive_deadline = start_time + resolved_timeout
+        effective_deadline = adaptive_deadline or resolved_deadline
         timeout_floor = (
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
         )
 
+        readiness_ready = watchdog_telemetry.get("ready_gates") or []
+        readiness_pending = watchdog_telemetry.get("pending_gates") or []
+        readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
         if stop_event is not None and stop_event.is_set():
             context = {
                 "reason": "stop_event",
@@ -4136,6 +4219,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
                 "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
                 "watchdog_deadline_override": watchdog_telemetry.get("deadline_override"),
+                "watchdog_ready_gates": readiness_ready,
+                "watchdog_pending_gates": readiness_pending,
+                "watchdog_readiness_ratio": readiness_ratio,
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4185,6 +4271,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
                 "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
                 "watchdog_deadline_override": watchdog_telemetry.get("deadline_override"),
+                "watchdog_ready_gates": readiness_ready,
+                "watchdog_pending_gates": readiness_pending,
+                "watchdog_readiness_ratio": readiness_ratio,
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -4206,7 +4295,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 resolved_env_vector_wait,
                 len(watchdog_timeline),
             )
+            if readiness_ratio > 0 and readiness_pending:
+                context["degraded_but_online"] = True
             _record_timeout(stage, context)
+            if readiness_ratio > 0 and readiness_pending:
+                logger.warning(
+                    "prepare pipeline degraded but online; pending readiness gates=%s",
+                    readiness_pending,
+                    extra={"stage": stage, "watchdog": watchdog_telemetry},
+                )
+                return
             if watchdog_telemetry.get("staged_readiness"):
                 logger.warning(
                     "staged readiness enabled; continuing after deadline breach",
@@ -4638,6 +4736,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "activate bootstrap sentinel",
         elapsed=time.perf_counter() - sentinel_activation_start,
         extra={"placeholder": _is_bootstrap_placeholder(sentinel_manager)},
+        readiness_gates=("orchestrator_state",),
     )
     owner_guard_start = time.perf_counter()
     (
@@ -4653,6 +4752,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "claim bootstrap owner guard",
         elapsed=time.perf_counter() - owner_guard_start,
         extra={"attached": owner_guard_attached},
+        readiness_gates=("orchestrator_state",),
     )
     manual_restore_pending = not owner_guard_attached
     sentinel_state_released = False
@@ -4738,6 +4838,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "registry_present": bool(bot_registry),
                 "data_bot_present": bool(data_bot),
             },
+            readiness_gates=("pipeline_config",),
         )
         if context is not None and sentinel_manager is not None:
             context.sentinel = sentinel_manager
@@ -4880,6 +4981,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "pipeline construction",
                     elapsed=elapsed,
                     extra={"keys": keys},
+                    readiness_gates=(
+                        "pipeline_config",
+                        "retrievers",
+                        "db_indexes",
+                        "vectorizers",
+                    ),
                 )
                 return True
     
