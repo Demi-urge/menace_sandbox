@@ -26,7 +26,7 @@ from pathlib import Path
 from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
-from bootstrap_readiness import build_stage_deadlines
+from bootstrap_readiness import build_stage_deadlines, minimal_online
 from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
@@ -177,6 +177,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
         component_budgets=component_budgets,
         component_floors=component_floors,
     )
+    core_ready, lagging_core, degraded_core = minimal_online({"components": {}})
     LOGGER.info(
         "bootstrap readiness policy applied",
         extra={
@@ -184,6 +185,9 @@ def bootstrap_self_coding(bot_name: str) -> None:
             "baseline_timeout": baseline_timeout,
             "component_budgets": component_budgets,
             "component_floors": component_floors,
+            "core_ready": core_ready,
+            "lagging_core": sorted(lagging_core),
+            "degraded_core": sorted(degraded_core),
         },
     )
     if guard_delay > 0:

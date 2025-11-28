@@ -740,6 +740,14 @@ def _monitor_bootstrap_thread(
         stage_elapsed = time.monotonic() - stage_start_times[stage]
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
         core_online, lagging_core, degraded_core = minimal_online(online_state_snapshot)
+        online_state_snapshot.update(
+            {
+                "core_ready": core_online,
+                "core_lagging": sorted(lagging_core),
+                "core_degraded": sorted(degraded_core),
+            }
+        )
+        BOOTSTRAP_ONLINE_STATE.update(online_state_snapshot)
         if not core_online_announced and core_online:
             LOGGER.info(
                 "core bootstrap quorum reached; optional services warming",
@@ -805,6 +813,7 @@ def _monitor_bootstrap_thread(
                         stage=stage,
                         elapsed=round(stage_elapsed, 2),
                         deadline=stage_deadline,
+                        online_state=online_state_snapshot,
                     ),
                     )
 
@@ -832,6 +841,7 @@ def _monitor_bootstrap_thread(
                             stage=stage,
                             elapsed=round(elapsed, 2),
                             budget=round(budget, 2),
+                            online_state=online_state_snapshot,
                         ),
                     )
                     print(
