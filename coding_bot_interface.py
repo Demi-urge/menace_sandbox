@@ -159,6 +159,8 @@ _READINESS_GATE_WEIGHTS: dict[str, float] = {
     "orchestrator_state": 1.0,
 }
 
+_CRITICAL_READINESS_GATES = frozenset({"pipeline_config", "orchestrator_state"})
+
 _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
 _BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
 _MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
@@ -4330,6 +4332,7 @@ def prepare_pipeline_for_bootstrap(
     retriever_budget: float | None = None,
     db_warmup_budget: float | None = None,
     orchestrator_budget: float | None = None,
+    component_timeouts: Mapping[str, float] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4370,6 +4373,7 @@ def prepare_pipeline_for_bootstrap(
             retriever_budget=retriever_budget,
             db_warmup_budget=db_warmup_budget,
             orchestrator_budget=orchestrator_budget,
+            component_timeouts=component_timeouts,
             **pipeline_kwargs,
         )
 
@@ -4397,6 +4401,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     retriever_budget: float | None = None,
     db_warmup_budget: float | None = None,
     orchestrator_budget: float | None = None,
+    component_timeouts: Mapping[str, float] | None = None,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4434,7 +4439,10 @@ def _prepare_pipeline_for_bootstrap_impl(
     ``vectorizer_budget``, ``retriever_budget``, ``db_warmup_budget`` and
     ``orchestrator_budget`` tune per-subsystem watchdog slices so vector warmups
     or database preparation can borrow extra time without inflating the overall
-    bootstrap deadline.
+    bootstrap deadline. ``component_timeouts`` can supply structured budgets for
+    supported readiness gates (for example the output of
+    ``bootstrap_timeout_policy.load_component_timeout_floors``) which are
+    consumed by the shared timeout coordinator when available.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -4446,6 +4454,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         "db_indexes": db_warmup_budget,
         "orchestrator_state": orchestrator_budget,
     }
+    component_budget_overrides = {
+        key: value for key, value in (component_timeouts or {}).items() if value is not None
+    }
     _refresh_bootstrap_wait_timeouts(
         stage_budgets=subsystem_budget_overrides,
         vector_stage_budgets=subsystem_budget_overrides,
@@ -4456,10 +4467,18 @@ def _prepare_pipeline_for_bootstrap_impl(
     requested_timeout = None
     phase_windows: dict[str, dict[str, Any]] = {}
     phase_budgets = {
-        "vectorizers": subsystem_budget_overrides.get("vectorizers"),
-        "retrievers": subsystem_budget_overrides.get("retrievers"),
-        "db_indexes": subsystem_budget_overrides.get("db_indexes"),
-        "orchestrator_state": subsystem_budget_overrides.get("orchestrator_state"),
+        "vectorizers": component_budget_overrides.get(
+            "vectorizers", subsystem_budget_overrides.get("vectorizers")
+        ),
+        "retrievers": component_budget_overrides.get(
+            "retrievers", subsystem_budget_overrides.get("retrievers")
+        ),
+        "db_indexes": component_budget_overrides.get(
+            "db_indexes", subsystem_budget_overrides.get("db_indexes")
+        ),
+        "orchestrator_state": component_budget_overrides.get(
+            "orchestrator_state", subsystem_budget_overrides.get("orchestrator_state")
+        ),
     }
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
@@ -4525,6 +4544,36 @@ def _prepare_pipeline_for_bootstrap_impl(
             else False
         )
 
+        def _record_phase_window(key: str, state: Mapping[str, Any]) -> None:
+            window = {
+                "budget": state.get("budget"),
+                "remaining": state.get("remaining"),
+                "pending": state.get("pending"),
+                "ratio": state.get("ratio"),
+                "last_check": state.get("last_check"),
+                "gates": tuple(stage_gates),
+                "vector_heavy": vector_heavy,
+            }
+            _PREPARE_PIPELINE_WATCHDOG.setdefault("phase_windows", {})[key] = window
+
+        def _mark_degraded(reason: str, *, state: Mapping[str, Any]) -> None:
+            payload = _mark_staged_readiness(
+                stage,
+                ready_gates=readiness_ready,
+                pending_gates=readiness_pending,
+                readiness_ratio=readiness_ratio,
+                remaining_window=0.0,
+                stage_budget=state.get("budget") or 0.0,
+                vector_heavy=vector_heavy,
+            )
+            degraded_payload = dict(payload)
+            degraded_payload["degraded_reason"] = reason
+            _PREPARE_PIPELINE_WATCHDOG["degraded"] = degraded_payload
+            if shared_timeout_coordinator is not None:
+                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+                    shared_timeout_coordinator.snapshot()
+                )
+
         def _select_phase(gates: set[str]) -> str | None:
             for candidate in ("vectorizers", "retrievers", "db_indexes", "orchestrator_state"):
                 if candidate in gates:
@@ -4589,10 +4638,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                         phase_label,
                         elapsed=0.0,
                         remaining=phase_state["remaining"],
-                        metadata={"stage": stage, "grace_extension": grace_window},
-                    )
+                    metadata={"stage": stage, "grace_extension": grace_window},
+                )
             phase_state["pending"] = len(readiness_pending)
             phase_state["ratio"] = readiness_ratio
+            _record_phase_window(phase_label, phase_state)
             if (
                 progressing
                 and phase_state.get("remaining") is not None
@@ -4610,6 +4660,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                 )
                 return
             if phase_state["remaining"] is not None and phase_state["remaining"] <= 0:
+                optional_overrun = readiness_pending and not (
+                    _CRITICAL_READINESS_GATES & set(readiness_pending)
+                )
+                if optional_overrun:
+                    _mark_degraded("optional_phase_overrun", state=phase_state)
+                    return
                 elapsed = time.perf_counter() - start_time
                 context = {
                     "reason": "deadline",
@@ -4692,15 +4748,22 @@ def _prepare_pipeline_for_bootstrap_impl(
             if grace_window:
                 if phase_state["remaining"] is not None:
                     phase_state["remaining"] += grace_window
-                phase_state["grace"] = True
+            phase_state["grace"] = True
         phase_state["pending"] = len(readiness_pending)
         phase_state["ratio"] = readiness_ratio
+        _record_phase_window(phase_key, phase_state)
         if (
             phase_state["remaining"] is not None
             and phase_state["remaining"] <= 0
             and not progressing
             and not watchdog_telemetry.get("staged_readiness")
         ):
+            optional_overrun = readiness_pending and not (
+                _CRITICAL_READINESS_GATES & set(readiness_pending)
+            )
+            if optional_overrun:
+                _mark_degraded("optional_window_exhausted", state=phase_state)
+                return
             elapsed = time.perf_counter() - start_time
             context = {
                 "reason": "deadline",
@@ -4990,12 +5053,14 @@ def _prepare_pipeline_for_bootstrap_impl(
             max(resolved_deadline - start_time, 0.0),
         )
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
-    if shared_timeout_budget is not None:
+    component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
+    if shared_timeout_budget is not None or component_budget_payload:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
-            max(shared_timeout_budget, 0.0),
+            None if shared_timeout_budget is None else max(shared_timeout_budget, 0.0),
             logger=logger,
             namespace="prepare_pipeline",
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
+            component_budgets=component_budget_payload,
         )
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()
@@ -5226,7 +5291,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     with _shared_budget_reservation(
         "orchestrator_state_warmup",
         ("orchestrator_state",),
-        requested=resolved_wait_timeout,
+        requested=phase_budgets.get("orchestrator_state", resolved_wait_timeout),
     ):
         sentinel_selection_start = time.perf_counter()
         sentinel_manager = _select_placeholder(
@@ -5462,7 +5527,18 @@ def _prepare_pipeline_for_bootstrap_impl(
         with _shared_budget_reservation(
             "pipeline_component_warmup",
             ("vectorizers", "retrievers", "db_indexes"),
-            requested=resolved_wait_timeout,
+            requested=max(
+                (
+                    budget
+                    for budget in (
+                        phase_budgets.get("vectorizers"),
+                        phase_budgets.get("retrievers"),
+                        phase_budgets.get("db_indexes"),
+                    )
+                    if budget is not None
+                ),
+                default=resolved_wait_timeout,
+            ),
         ):
 
             def _vector_excursion_triggered(exc: BaseException) -> bool:

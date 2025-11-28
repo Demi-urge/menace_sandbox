@@ -502,6 +502,7 @@ class SharedTimeoutCoordinator:
         logger: logging.Logger | None = None,
         namespace: str = "bootstrap",
         component_floors: Mapping[str, float] | None = None,
+        component_budgets: Mapping[str, float] | None = None,
     ) -> None:
         self.total_budget = total_budget
         self.remaining_budget = total_budget
@@ -510,6 +511,8 @@ class SharedTimeoutCoordinator:
         self._lock = threading.Lock()
         self._timeline: list[dict[str, float | str | None]] = []
         self.component_floors = dict(component_floors or {})
+        self.component_budgets = dict(component_budgets or {})
+        self.remaining_components = dict(self.component_budgets)
 
     def _reserve(
         self,
@@ -524,6 +527,12 @@ class SharedTimeoutCoordinator:
             effective = requested if requested is not None else effective_floor
             effective = max(effective_floor, effective)
             remaining_before = self.remaining_budget
+            component_remaining = self.remaining_components.get(label)
+            if component_remaining is not None:
+                effective = min(effective, max(component_remaining, 0.0))
+                self.remaining_components[label] = max(
+                    component_remaining - effective, 0.0
+                )
             if self.remaining_budget is not None:
                 effective = min(effective, max(self.remaining_budget, 0.0))
                 self.remaining_budget = max(self.remaining_budget - effective, 0.0)
@@ -533,6 +542,9 @@ class SharedTimeoutCoordinator:
                 "requested": requested,
                 "minimum": minimum,
                 "component_floor": component_floor,
+                "component_budget": self.component_budgets.get(label),
+                "component_remaining_before": component_remaining,
+                "component_remaining_after": self.remaining_components.get(label),
                 "effective": effective,
                 "remaining_before": remaining_before,
                 "remaining_after": self.remaining_budget,
@@ -630,4 +642,6 @@ class SharedTimeoutCoordinator:
                 "remaining_budget": self.remaining_budget,
                 "timeline": list(self._timeline),
                 "component_floors": dict(self.component_floors),
+                "component_budgets": dict(self.component_budgets),
+                "component_remaining": dict(self.remaining_components),
             }
