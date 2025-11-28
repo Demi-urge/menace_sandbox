@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
+import socket
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping
 
 LOGGER = logging.getLogger(__name__)
@@ -18,6 +21,10 @@ _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 240.0,
 }
 _OVERRIDE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_ALLOW_UNSAFE"
+_TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
+_TIMEOUT_STATE_PATH = Path(
+    os.getenv(_TIMEOUT_STATE_ENV, os.path.expanduser("~/.menace_bootstrap_timeout_state.json"))
+)
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -35,6 +42,122 @@ def _parse_float(value: str | None) -> float | None:
         return None
 
 
+def _load_timeout_state() -> dict:
+    try:
+        return json.loads(_TIMEOUT_STATE_PATH.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_timeout_state(state: Mapping[str, object]) -> None:
+    try:
+        _TIMEOUT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TIMEOUT_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True))
+    except OSError:
+        LOGGER.exception("failed to persist timeout state", extra={"path": str(_TIMEOUT_STATE_PATH)})
+
+
+def _state_host_key() -> str:
+    return socket.gethostname() or "unknown-host"
+
+
+def load_escalated_timeout_floors() -> dict[str, float]:
+    """Return timeout floors that include host-scoped persisted escalations."""
+
+    minimums = dict(_BOOTSTRAP_TIMEOUT_MINIMUMS)
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+
+    for env_var, default_minimum in list(minimums.items()):
+        try:
+            host_value = float(host_state.get(env_var, default_minimum))
+        except (TypeError, ValueError):
+            host_value = default_minimum
+        minimums[env_var] = max(default_minimum, host_value)
+
+    return minimums
+
+
+def _collect_timeout_telemetry() -> Mapping[str, object]:
+    try:
+        from coding_bot_interface import _PREPARE_PIPELINE_WATCHDOG
+
+        return {
+            "timeouts": int(_PREPARE_PIPELINE_WATCHDOG.get("timeouts", 0)),
+            "stages": list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ())),
+        }
+    except Exception:
+        return {}
+
+
+def _maybe_escalate_timeout_floors(
+    minimums: MutableMapping[str, float],
+    *,
+    telemetry: Mapping[str, object],
+    logger: logging.Logger,
+) -> Mapping[str, object] | None:
+    timeouts = int(telemetry.get("timeouts", 0) or 0)
+    if timeouts < 2:
+        return None
+
+    stages = telemetry.get("stages") or []
+    longest_stage = max((float(entry.get("elapsed", 0.0)) for entry in stages), default=0.0)
+    vector_longest = max(
+        (
+            float(entry.get("elapsed", 0.0))
+            for entry in stages
+            if entry.get("timeout") and entry.get("vector_heavy")
+        ),
+        default=0.0,
+    )
+
+    general_floor = minimums.get("MENACE_BOOTSTRAP_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"])
+    vector_floor = minimums.get(
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    )
+
+    suggested_general = max(general_floor, longest_stage + 60.0 if longest_stage else general_floor + 60.0)
+    suggested_vector = max(
+        vector_floor,
+        vector_longest + 90.0 if vector_longest else suggested_general,
+    )
+
+    escalated = False
+    if suggested_general > general_floor:
+        minimums["MENACE_BOOTSTRAP_WAIT_SECS"] = suggested_general
+        minimums["BOOTSTRAP_STEP_TIMEOUT"] = max(
+            minimums.get("BOOTSTRAP_STEP_TIMEOUT", suggested_general), suggested_general
+        )
+        escalated = True
+
+    if suggested_vector > vector_floor:
+        minimums["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"] = suggested_vector
+        minimums["BOOTSTRAP_VECTOR_STEP_TIMEOUT"] = max(
+            minimums.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", suggested_vector), suggested_vector
+        )
+        escalated = True
+
+    if not escalated:
+        return None
+
+    details = {
+        "timeouts": timeouts,
+        "longest_stage": longest_stage,
+        "vector_longest": vector_longest,
+        "suggested_general": suggested_general,
+        "suggested_vector": suggested_vector,
+    }
+
+    logger.info(
+        "repeated prepare_pipeline timeouts detected; escalating bootstrap floors",
+        extra={"telemetry": details, "state_path": str(_TIMEOUT_STATE_PATH)},
+    )
+
+    return details
+
+
 def enforce_bootstrap_timeout_policy(
     *,
     logger: logging.Logger | None = None,
@@ -43,10 +166,32 @@ def enforce_bootstrap_timeout_policy(
     """Clamp bootstrap timeouts to recommended floors when needed."""
 
     active_logger = logger or LOGGER
+    minimums: dict[str, float] = load_escalated_timeout_floors()
+    telemetry = _collect_timeout_telemetry()
+    escalation_meta = _maybe_escalate_timeout_floors(minimums, telemetry=telemetry, logger=active_logger)
+    if escalation_meta:
+        state = _load_timeout_state()
+        host_key = _state_host_key()
+        host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+        host_state.update({k: minimums.get(k, v) for k, v in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()})
+        host_state["updated_at"] = time.time()
+        state = state if isinstance(state, dict) else {}
+        state[host_key] = host_state
+        _save_timeout_state(state)
+        active_logger.info(
+            "bootstrap timeout floors escalated",
+            extra={
+                "timeouts": telemetry.get("timeouts"),
+                "host": host_key,
+                "escalation": escalation_meta,
+                "floors": minimums,
+                "state_file": str(_TIMEOUT_STATE_PATH),
+            },
+        )
     allow_unsafe = _truthy_env(os.getenv(_OVERRIDE_ENV))
     results: Dict[str, Dict[str, float | bool | None]] = {}
 
-    for env_var, minimum in _BOOTSTRAP_TIMEOUT_MINIMUMS.items():
+    for env_var, minimum in minimums.items():
         raw_value = os.getenv(env_var)
         requested_value = _parse_float(raw_value)
         effective_value = requested_value if requested_value is not None else minimum
@@ -121,10 +266,11 @@ def enforce_bootstrap_timeout_policy(
 def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> list[str]:
     """Return standard remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts."""
 
-    vector_wait = _parse_float(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")) or _BOOTSTRAP_TIMEOUT_MINIMUMS[
+    minimums = load_escalated_timeout_floors()
+    vector_wait = _parse_float(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")) or minimums[
         "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
     ]
-    vector_step = _parse_float(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT")) or _BOOTSTRAP_TIMEOUT_MINIMUMS[
+    vector_step = _parse_float(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT")) or minimums[
         "BOOTSTRAP_VECTOR_STEP_TIMEOUT"
     ]
 
