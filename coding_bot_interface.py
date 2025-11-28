@@ -5018,7 +5018,25 @@ def _prepare_pipeline_for_bootstrap_impl(
         pipeline_complexity=pipeline_complexity,
         host_telemetry=read_bootstrap_heartbeat(),
     )
+    adaptive_budget_context = get_adaptive_timeout_context()
+    component_complexity_inputs = adaptive_budget_context.get("component_complexity")
+    component_budget_total = adaptive_budget_context.get("component_budget_total")
+    try:
+        component_budget_total = float(component_budget_total)
+    except (TypeError, ValueError):
+        component_budget_total = None
+    global_bootstrap_window = adaptive_budget_context.get("global_window")
+    try:
+        global_bootstrap_window = float(global_bootstrap_window)
+    except (TypeError, ValueError):
+        global_bootstrap_window = None
+    if global_bootstrap_window is None and derived_component_budgets:
+        component_budget_total = sum(derived_component_budgets.values())
+        global_bootstrap_window = component_budget_total
     _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
+    _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_window"] = global_bootstrap_window
+    _PREPARE_PIPELINE_WATCHDOG["component_complexity"] = component_complexity_inputs
+    _PREPARE_PIPELINE_WATCHDOG["component_budget_total"] = component_budget_total
     logger.info(
         "adaptive component budgets prepared for bootstrap",
         extra={
@@ -5825,6 +5843,8 @@ def _prepare_pipeline_for_bootstrap_impl(
     shared_timeout_budget = resolved_wait_timeout
     if shared_timeout_budget is None:
         shared_timeout_budget = _parse_float(os.getenv(MENACE_BOOTSTRAP_WAIT_SECS))
+    if global_bootstrap_window is not None:
+        shared_timeout_budget = max(shared_timeout_budget or 0.0, global_bootstrap_window)
     component_budget_active = bool(component_budget_payload)
     calibrated_component_budgets = _calibrate_component_budgets(
         None if component_budget_active else shared_timeout_budget
@@ -5845,9 +5865,11 @@ def _prepare_pipeline_for_bootstrap_impl(
     component_windows: dict[str, dict[str, Any]] = {}
     coordinator_total_budget: float | None = None
     if component_budget_active:
-        coordinator_total_budget = sum(
-            budget for budget in component_budget_payload.values() if budget is not None
-        )
+        coordinator_total_budget = global_bootstrap_window
+        if coordinator_total_budget is None:
+            coordinator_total_budget = sum(
+                budget for budget in component_budget_payload.values() if budget is not None
+            )
         if coordinator_total_budget == 0:
             coordinator_total_budget = None
     elif shared_timeout_budget is not None:
@@ -5861,6 +5883,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
             component_budgets=component_budget_payload,
             signal_hook=progress_signal,
+            global_window=global_bootstrap_window,
+            complexity_inputs=component_complexity_inputs,
         )
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()
