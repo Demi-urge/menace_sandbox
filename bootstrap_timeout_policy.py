@@ -122,6 +122,12 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
         return {}
 
 
+def collect_timeout_telemetry() -> Mapping[str, object]:
+    """Public wrapper used by other modules to consume timeout telemetry."""
+
+    return _collect_timeout_telemetry()
+
+
 def _categorize_stage(entry: Mapping[str, object]) -> str | None:
     label = str(entry.get("label", "")).lower()
     if "vector" in label:
@@ -133,6 +139,31 @@ def _categorize_stage(entry: Mapping[str, object]) -> str | None:
     if "orchestrator" in label:
         return "orchestrator_state"
     return None
+
+
+def _summarize_stage_telemetry(telemetry: Mapping[str, object]) -> Mapping[str, object]:
+    stages = telemetry.get("stages") or []
+    longest_stage = max((float(entry.get("elapsed", 0.0)) for entry in stages), default=0.0)
+    vector_longest = max(
+        (
+            float(entry.get("elapsed", 0.0))
+            for entry in stages
+            if entry.get("timeout") and entry.get("vector_heavy")
+        ),
+        default=0.0,
+    )
+    vector_labels = [
+        str(entry.get("label", ""))
+        for entry in stages
+        if entry.get("vector_heavy") and float(entry.get("elapsed", 0.0) or 0.0) > 0
+    ]
+
+    return {
+        "longest_stage": longest_stage,
+        "vector_longest": vector_longest,
+        "vector_labels": vector_labels,
+        "vector_stage_count": len(vector_labels),
+    }
 
 
 def _maybe_escalate_timeout_floors(
@@ -213,6 +244,77 @@ def _maybe_escalate_timeout_floors(
     )
 
     return details
+
+
+def _host_load_scale(load_average: float | None = None) -> float:
+    try:
+        load = load_average if load_average is not None else os.getloadavg()[0]
+    except OSError:
+        return 1.0
+    cpu_count = os.cpu_count() or 1
+    normalized = max(0.0, load / float(cpu_count))
+    return 1.0 + min(normalized, 1.5)
+
+
+def _soft_budget_from_timeout(
+    timeout: float | None,
+    *,
+    telemetry: Mapping[str, object],
+    load_scale: float,
+    grace_floor: float = 30.0,
+    grace_ratio: float = 0.25,
+    stage_bias: float = 0.15,
+) -> Dict[str, float | None]:
+    stage_summary = _summarize_stage_telemetry(telemetry)
+    longest_stage = float(stage_summary.get("longest_stage", 0.0) or 0.0)
+    vector_longest = float(stage_summary.get("vector_longest", 0.0) or 0.0)
+
+    if timeout is None:
+        return {
+            "budget": None,
+            "grace": None,
+            "limit": None,
+            "scale": load_scale,
+            "longest_stage": longest_stage,
+            "vector_longest": vector_longest,
+        }
+
+    scaled_budget = timeout * load_scale
+    base_grace = scaled_budget * grace_ratio
+    stage_grace = longest_stage * stage_bias if longest_stage else 0.0
+    vector_grace = vector_longest * (stage_bias + 0.1) if vector_longest else 0.0
+    grace = max(grace_floor, base_grace, stage_grace, vector_grace)
+
+    return {
+        "budget": scaled_budget,
+        "grace": grace,
+        "limit": scaled_budget + grace,
+        "scale": load_scale,
+        "longest_stage": longest_stage,
+        "vector_longest": vector_longest,
+    }
+
+
+def derive_phase_soft_budgets(
+    phase_budgets: Mapping[str, float | None],
+    *,
+    telemetry: Mapping[str, object] | None = None,
+    load_average: float | None = None,
+) -> Dict[str, Dict[str, float | None]]:
+    """Return soft budgets with grace windows and host-load scaling."""
+
+    telemetry = telemetry or _collect_timeout_telemetry()
+    scale = _host_load_scale(load_average)
+    soft_budgets: Dict[str, Dict[str, float | None]] = {}
+    for phase, timeout in phase_budgets.items():
+        soft_budgets[phase] = _soft_budget_from_timeout(
+            timeout, telemetry=telemetry, load_scale=scale
+        )
+    soft_budgets["meta"] = {
+        "load_scale": scale,
+        "telemetry": _summarize_stage_telemetry(telemetry),
+    }
+    return soft_budgets
 
 
 def enforce_bootstrap_timeout_policy(
@@ -323,6 +425,10 @@ def enforce_bootstrap_timeout_policy(
 
     results[_OVERRIDE_ENV] = {"requested": float(allow_unsafe), "effective": float(allow_unsafe)}
     results["component_floors"] = component_floors
+    soft_budget_inputs = {k: v.get("effective") for k, v in results.items() if k in minimums}
+    results["soft_budgets"] = derive_phase_soft_budgets(
+        soft_budget_inputs, telemetry=telemetry
+    )
     return results
 
 
