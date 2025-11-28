@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
-import importlib
+import time
 
 import bootstrap_timeout_policy as btp
 import coding_bot_interface as cbi
@@ -54,6 +55,27 @@ def test_component_budgets_expand_with_overruns(monkeypatch):
 
     assert budgets["vectorizers"] > floors["vectorizers"]
     assert budgets["retrievers"] > floors["retrievers"]
+
+
+def test_component_budgets_scale_with_live_backlog(monkeypatch):
+    monkeypatch.setattr(btp, "_state_host_key", lambda: "test-host")
+    monkeypatch.setattr(btp, "_save_timeout_state", lambda state: None)
+    monkeypatch.setattr(btp, "_load_timeout_state", lambda: {})
+    monkeypatch.setattr(btp, "_recent_peer_activity", lambda max_age=900.0: [{"pid": 1, "ts": time.time()}])
+
+    base_budgets = btp.compute_prepare_pipeline_component_budgets(
+        load_average=1.0, host_telemetry={"ts": time.time()}
+    )
+    backlog_budgets = btp.compute_prepare_pipeline_component_budgets(
+        load_average=1.0,
+        host_telemetry={
+            "ts": time.time(),
+            "queue_depth": 3,
+            "pending_background_loops": 4,
+        },
+    )
+
+    assert sum(backlog_budgets.values()) > sum(base_budgets.values())
 
 
 def test_vector_heavy_budgets_extend_bootstrap_wait(monkeypatch, tmp_path):
