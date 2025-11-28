@@ -743,12 +743,15 @@ def _monitor_bootstrap_thread(
             stage_start_times[stage] = time.monotonic()
         stage_elapsed = time.monotonic() - stage_start_times[stage]
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
-        core_online, lagging_core, degraded_core = minimal_online(online_state_snapshot)
+        core_online, lagging_core, degraded_core, degraded_online = minimal_online(
+            online_state_snapshot
+        )
         online_state_snapshot.update(
             {
                 "core_ready": core_online,
                 "core_lagging": sorted(lagging_core),
                 "core_degraded": sorted(degraded_core),
+                "core_degraded_online": degraded_online,
             }
         )
         BOOTSTRAP_ONLINE_STATE.update(online_state_snapshot)
@@ -821,7 +824,15 @@ def _monitor_bootstrap_thread(
                     ),
                     )
 
-        if stage_timeout_context and stage_enforced:
+        if stage_timeout_context and degraded_online:
+            stage_timeout_context = dict(stage_timeout_context)
+            stage_timeout_context.setdefault("degraded_online", True)
+            if degraded_core:
+                stage_timeout_context.setdefault(
+                    "degraded_core", sorted(degraded_core)
+                )
+
+        if stage_timeout_context and stage_enforced and not degraded_online:
             step_durations.setdefault(current_step, elapsed)
             return (
                 True,
@@ -862,17 +873,18 @@ def _monitor_bootstrap_thread(
                     stage_optional=stage_optional,
                     stage_enforced=stage_enforced,
                 )
-                step_durations.setdefault(current_step, elapsed)
-                return (
-                    True,
-                    current_step,
-                    elapsed,
-                    budget,
-                    set(step_start_times),
-                    optional_lagging,
-                    dict(step_durations),
-                    stage_timeout_context,
-                )
+                if not degraded_online:
+                    step_durations.setdefault(current_step, elapsed)
+                    return (
+                        True,
+                        current_step,
+                        elapsed,
+                        budget,
+                        set(step_start_times),
+                        optional_lagging,
+                        dict(step_durations),
+                        stage_timeout_context,
+                    )
 
         bootstrap_thread.join(1.0)
 

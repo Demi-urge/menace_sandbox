@@ -177,7 +177,9 @@ def bootstrap_self_coding(bot_name: str) -> None:
         component_budgets=component_budgets,
         component_floors=component_floors,
     )
-    core_ready, lagging_core, degraded_core = minimal_online({"components": {}})
+    core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
+        {"components": {}}
+    )
     LOGGER.info(
         "bootstrap readiness policy applied",
         extra={
@@ -188,6 +190,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
             "core_ready": core_ready,
             "lagging_core": sorted(lagging_core),
             "degraded_core": sorted(degraded_core),
+            "degraded_online": degraded_online,
         },
     )
     if guard_delay > 0:
