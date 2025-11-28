@@ -5356,8 +5356,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "resolved_timeout=%s watchdog_escalated=%s env_wait=%r "
                 "env_vector_wait=%r timeline=%s readiness=%s pending_gates=%s "
                 "dominant_gate=%s readiness_ratio=%.3f remediation_hints=%s "
-                "component_windows=%s progress=%s elastic_global_window=%s "
-                "global_window_extension=%s"
+                "component_windows=%s component_remaining=%s progress=%s "
+                "elastic_global_window=%s global_window_extension=%s "
+                "deadline_extensions=%s"
             ),
             stage,
             vector_heavy,
@@ -5372,9 +5373,11 @@ def _prepare_pipeline_for_bootstrap_impl(
             context.get("watchdog_readiness_ratio", 0.0),
             remediation_hints,
             context.get("watchdog_component_windows"),
+            context.get("watchdog_component_remaining"),
             context.get("watchdog_progress_signal"),
             context.get("elastic_global_window"),
             context.get("global_window_extension"),
+            context.get("watchdog_deadline_extensions"),
         )
 
     def _check_stop_or_timeout(stage: str) -> None:
@@ -5437,6 +5440,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "shared_timeout"
             ].get("component_remaining")
             watchdog_telemetry["shared_component_budget_payload"] = component_budget_payload
+            watchdog_telemetry["shared_component_remaining"] = {
+                gate: (meta or {}).get("remaining")
+                for gate, meta in watchdog_telemetry["shared_timeout"].get(
+                    "component_windows", {}
+                ).items()
+            }
+            if watchdog_telemetry["shared_timeout"].get("deadline_extensions"):
+                watchdog_telemetry["shared_deadline_extensions"] = watchdog_telemetry[
+                    "shared_timeout"
+                ].get("deadline_extensions")
         if adaptive_overruns:
             _PREPARE_PIPELINE_WATCHDOG["component_overruns"] = adaptive_overruns
         if adaptive_component_floors:
@@ -5906,6 +5919,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
                     "component_windows"
                 ),
+                "watchdog_component_remaining": watchdog_telemetry.get(
+                    "shared_component_remaining"
+                ),
+                "watchdog_deadline_extensions": watchdog_telemetry.get(
+                    "shared_deadline_extensions"
+                ),
                 "watchdog_component_budgets": component_budget_payload,
                 "exhausted_gates": sorted(exhausted_critical),
                 "component_consumption": consumption_snapshot,
@@ -5971,6 +5990,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_progress_signal": progress_signal,
                 "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
                     "component_windows"
+                ),
+                "watchdog_component_remaining": watchdog_telemetry.get(
+                    "shared_component_remaining"
+                ),
+                "watchdog_deadline_extensions": watchdog_telemetry.get(
+                    "shared_deadline_extensions"
                 ),
                 "watchdog_component_budgets": component_budget_payload,
                 "elastic_global_window": watchdog_telemetry.get("elastic_global_window"),
@@ -6272,6 +6297,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                     component_budget_payload, minimum=effective_timeout_floor
                 ).items()
             }
+            snapshot = shared_timeout_coordinator.snapshot()
             for gate, meta in component_windows.items():
                 logger.info(
                     "prepare_pipeline.shared_timeout.component_timer",
@@ -6282,6 +6308,19 @@ def _prepare_pipeline_for_bootstrap_impl(
                             "deadline": meta.get("deadline"),
                             "minimum": effective_timeout_floor,
                         }
+                    },
+                )
+            expanded_window = snapshot.get("expanded_global_window")
+            if expanded_window is not None:
+                _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_window"] = expanded_window
+                persist_bootstrap_wait_window(
+                    expanded_window,
+                    vector_heavy=vector_bootstrap_heavy,
+                    source="prepare_pipeline_component_budgets_expanded",
+                    metadata={
+                        "component_budgets": component_budget_payload,
+                        "component_budget_total": expanded_window,
+                        "deadline_extensions": snapshot.get("deadline_extensions"),
                     },
                 )
             _PREPARE_PIPELINE_WATCHDOG["component_budgets"] = (

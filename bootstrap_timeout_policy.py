@@ -1591,9 +1591,56 @@ class SharedTimeoutCoordinator:
         self.component_budgets = dict(component_budgets or {})
         self.remaining_components = dict(self.component_budgets)
         self._component_windows: dict[str, dict[str, float | None]] = {}
+        self._deadline_extensions: list[dict[str, object]] = []
+        self._expanded_global_window: float | None = global_window or total_budget
         self._signal_hook = signal_hook
         self.global_window = global_window
         self.complexity_inputs = dict(complexity_inputs or {})
+
+    def _register_component_window(self, label: str, budget: float | None) -> None:
+        """Track component windows and expand the aggregate deadline when needed."""
+
+        budget = budget if budget is not None else 0.0
+        with self._lock:
+            self._component_windows.setdefault(label, {"budget": budget, "remaining": budget})
+            self._component_windows[label].update({"budget": budget, "remaining": budget})
+
+            load_scale = 1.0
+            host_load = _host_load_average()
+            if host_load is not None:
+                load_scale += max(host_load - 1.0, 0.0) * 0.35
+
+            def _window_budget(window_label: str, window: Mapping[str, float | None]) -> float:
+                baseline = max(
+                    float(window.get("budget") or 0.0),
+                    self.component_floors.get(window_label, 0.0),
+                    _COMPONENT_TIMEOUT_MINIMUMS.get(window_label, 0.0),
+                )
+                return baseline
+
+            window_total = sum(
+                _window_budget(name, meta) for name, meta in self._component_windows.items()
+            )
+            scaled_total = window_total * load_scale if window_total else None
+
+            expanded = scaled_total
+            if self.total_budget is not None:
+                expanded = max(self.total_budget, scaled_total or 0.0)
+
+            if expanded is not None and expanded > (self._expanded_global_window or 0.0):
+                previous = self._expanded_global_window
+                self._expanded_global_window = expanded
+                extension = {
+                    "event": "component-deadline-extended",
+                    "gate": label,
+                    "expanded_window": expanded,
+                    "previous_window": previous,
+                    "load_scale": load_scale,
+                    "component_count": len(self._component_windows),
+                }
+                self._deadline_extensions.append(extension)
+                self.global_window = max(self.global_window or 0.0, expanded)
+                self.remaining_budget = expanded
 
     def _reserve(
         self,
@@ -1601,9 +1648,14 @@ class SharedTimeoutCoordinator:
         requested: float | None,
         minimum: float,
         metadata: Mapping[str, object] | None,
+        *,
+        component_timer: bool = False,
     ) -> tuple[float | None, MutableMapping[str, object]]:
         with self._lock:
             component_floor = self.component_floors.get(label, 0.0)
+            component_floor = max(
+                component_floor, _COMPONENT_TIMEOUT_MINIMUMS.get(label, component_floor)
+            )
             effective_floor = max(minimum, component_floor)
             effective = requested if requested is not None else effective_floor
             effective = max(effective_floor, effective)
@@ -1614,9 +1666,11 @@ class SharedTimeoutCoordinator:
                 self.remaining_components[label] = max(
                     component_remaining - effective, 0.0
                 )
-            if self.remaining_budget is not None:
+            if self.remaining_budget is not None and not component_timer:
                 effective = min(effective, max(self.remaining_budget, 0.0))
                 self.remaining_budget = max(self.remaining_budget - effective, 0.0)
+            elif component_timer:
+                self._register_component_window(label, effective)
 
             record: MutableMapping[str, object] = {
                 "label": label,
@@ -1647,11 +1701,13 @@ class SharedTimeoutCoordinator:
 
         windows: dict[str, dict[str, float | None]] = {}
         for label, requested in budgets.items():
+            floor = max(minimum, self.component_floors.get(label, minimum))
             effective, record = self._reserve(
                 label,
                 requested,
-                max(minimum, self.component_floors.get(label, minimum)),
+                floor,
                 {"component_timer": True},
+                component_timer=True,
             )
             started = time.monotonic()
             window = {
@@ -1773,6 +1829,8 @@ class SharedTimeoutCoordinator:
                 "component_budgets": dict(self.component_budgets),
                 "component_remaining": dict(self.remaining_components),
                 "component_windows": dict(self._component_windows),
+                "deadline_extensions": list(self._deadline_extensions),
+                "expanded_global_window": self._expanded_global_window,
                 "global_window": self.global_window,
                 "complexity_inputs": dict(self.complexity_inputs),
             }

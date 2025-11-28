@@ -1,5 +1,6 @@
 import time
 
+import bootstrap_timeout_policy
 from bootstrap_timeout_policy import SharedTimeoutCoordinator
 
 
@@ -34,7 +35,33 @@ def test_component_budgets_not_constrained_by_global_window():
 
     snapshot = coordinator.snapshot()
 
-    assert snapshot["remaining_budget"] is None
+    assert snapshot["remaining_budget"] >= sum(component_budgets.values())
     for gate, window in snapshot["component_windows"].items():
         assert window["remaining"] <= component_budgets[gate]
+
+
+def test_overlapping_component_windows_extend_deadline(monkeypatch):
+    component_budgets = {
+        "vectorizers": 1.5,
+        "retrievers": 1.0,
+    }
+
+    monkeypatch.setattr(bootstrap_timeout_policy, "_host_load_average", lambda: 1.0)
+
+    coordinator = SharedTimeoutCoordinator(
+        total_budget=1.0,
+        component_floors={gate: 0.5 for gate in component_budgets},
+        component_budgets=component_budgets,
+    )
+
+    windows = coordinator.start_component_timers(component_budgets, minimum=0.5)
+    assert set(windows) == set(component_budgets)
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["expanded_global_window"] >= sum(component_budgets.values())
+    assert snapshot["deadline_extensions"]
+    assert snapshot["deadline_extensions"][0]["gate"] in component_budgets
+
+    for gate, window in snapshot["component_windows"].items():
+        assert window["remaining"] == component_budgets[gate]
 
