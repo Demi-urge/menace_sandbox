@@ -16,6 +16,12 @@ _SHARED_EVENT_BUS = None
 
 LOGGER = logging.getLogger(__name__)
 _ADAPTIVE_TIMEOUT_CONTEXT: dict[str, object] = {}
+_BOOTSTRAP_COMPONENT_HINTS_ENV = "MENACE_BOOTSTRAP_COMPONENT_HINTS"
+_BOOTSTRAP_DB_INDEX_BYTES_ENV = "MENACE_BOOTSTRAP_DB_INDEX_BYTES"
+_BOOTSTRAP_COMPLEXITY_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_COMPLEXITY_SCALE"
+BOOTSTRAP_COMPONENT_HINTS_ENV = _BOOTSTRAP_COMPONENT_HINTS_ENV
+BOOTSTRAP_DB_INDEX_BYTES_ENV = _BOOTSTRAP_DB_INDEX_BYTES_ENV
+BOOTSTRAP_COMPLEXITY_SCALE_ENV = _BOOTSTRAP_COMPLEXITY_SCALE_ENV
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": 240.0,
@@ -714,6 +720,34 @@ def get_adaptive_timeout_context() -> Mapping[str, object]:
     """Return the last computed adaptive timeout context."""
 
     return dict(_ADAPTIVE_TIMEOUT_CONTEXT)
+
+
+def _parse_component_inventory(raw: Mapping[str, object] | str | None) -> Dict[str, object]:
+    """Normalize component inventory hints from strings or mappings."""
+
+    if raw is None:
+        return {}
+
+    if isinstance(raw, Mapping):
+        source_items = raw.items()
+    else:
+        source_items = []
+        for pair in str(raw).split(","):
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+                source_items.append((key.strip(), value.strip()))
+
+    inventory: Dict[str, object] = {}
+    for key, value in source_items:
+        normalized = str(key).strip().lower().replace("-", "_")
+        if not normalized:
+            continue
+        try:
+            inventory[normalized] = int(value) if str(value).isdigit() else float(value)
+        except (TypeError, ValueError):
+            inventory[normalized] = value
+
+    return inventory
 
 
 def load_escalated_timeout_floors() -> dict[str, float]:
@@ -1459,6 +1493,82 @@ def compute_prepare_pipeline_component_budgets(
     )
 
     return budgets
+
+
+def derive_bootstrap_timeout_env(
+    *,
+    minimum: float = 240.0,
+    telemetry: Mapping[str, object] | None = None,
+    pipeline_complexity: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+    scheduled_component_budgets: Mapping[str, float] | None = None,
+) -> Dict[str, float]:
+    """Return adaptive bootstrap timeout env values derived from telemetry."""
+
+    telemetry = telemetry or collect_timeout_telemetry()
+    host_telemetry = host_telemetry or read_bootstrap_heartbeat()
+    complexity: Dict[str, object] = {}
+    complexity.update(_parse_component_inventory(pipeline_complexity))
+    env_hints = _parse_component_inventory(os.getenv(_BOOTSTRAP_COMPONENT_HINTS_ENV))
+    complexity.update({k: v for k, v in env_hints.items() if k not in complexity})
+    db_index_bytes = os.getenv(_BOOTSTRAP_DB_INDEX_BYTES_ENV)
+    try:
+        if db_index_bytes:
+            complexity.setdefault("db_index_bytes", float(db_index_bytes))
+    except (TypeError, ValueError):
+        pass
+    complexity_scale_env = os.getenv(_BOOTSTRAP_COMPLEXITY_SCALE_ENV)
+    try:
+        complexity_scale = max(float(complexity_scale_env), 1.0) if complexity_scale_env else 1.0
+    except (TypeError, ValueError):
+        complexity_scale = 1.0
+    if complexity_scale > 1.0:
+        for key, value in list(complexity.items()):
+            try:
+                complexity[key] = max(int(round(float(value) * complexity_scale)), int(value))
+            except (TypeError, ValueError):
+                complexity[key] = value
+        complexity["complexity_scale"] = complexity_scale
+
+    floors = load_escalated_timeout_floors()
+    component_budgets = compute_prepare_pipeline_component_budgets(
+        telemetry=telemetry,
+        pipeline_complexity=complexity,
+        host_telemetry=host_telemetry,
+        scheduled_component_budgets=scheduled_component_budgets,
+    )
+    adaptive_context = get_adaptive_timeout_context()
+    resolved: Dict[str, float] = {}
+
+    for env_var, floor in floors.items():
+        try:
+            resolved[env_var] = max(float(floor), minimum)
+        except (TypeError, ValueError):
+            resolved[env_var] = minimum
+
+    for component, budget in component_budgets.items():
+        env_var = _ALL_COMPONENT_ENV_MAPPING.get(component)
+        if not env_var:
+            continue
+        try:
+            resolved[env_var] = max(float(budget), resolved.get(env_var, minimum))
+        except (TypeError, ValueError):
+            resolved[env_var] = resolved.get(env_var, minimum)
+
+    global_window = adaptive_context.get("global_window")
+    try:
+        window_value = float(global_window) if global_window is not None else None
+    except (TypeError, ValueError):
+        window_value = None
+
+    if window_value:
+        for env_var in ("MENACE_BOOTSTRAP_WAIT_SECS", "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"):
+            resolved[env_var] = max(resolved.get(env_var, minimum), window_value)
+
+    for env_var, floor in _BOOTSTRAP_TIMEOUT_MINIMUMS.items():
+        resolved[env_var] = max(resolved.get(env_var, minimum), floor if floor is not None else minimum)
+
+    return resolved
 
 
 def _collect_timeout_telemetry() -> Mapping[str, object]:
