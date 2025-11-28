@@ -104,3 +104,47 @@ def test_shared_timeout_records_stage_gates(monkeypatch):
         entry.get("label") in {"pipeline_component_warmup", "orchestrator_state_warmup"}
         for entry in timeline
     )
+
+
+def test_optional_budget_overrun_degrades_instead_of_fails(monkeypatch):
+    monkeypatch.setattr(cbi, "enforce_bootstrap_timeout_policy", lambda logger=None: {})
+    monkeypatch.setattr(cbi, "_MIN_STAGE_TIMEOUT", 0.0)
+    monkeypatch.setattr(cbi, "_MIN_STAGE_TIMEOUT_VECTOR", 0.0)
+    monkeypatch.setattr(cbi, "_BOOTSTRAP_TIMEOUT_FLOOR", 0.0)
+    monkeypatch.setattr(cbi, "_BOOTSTRAP_WAIT_TIMEOUT", 0.0)
+    monkeypatch.setattr(cbi, "_VECTOR_STAGE_GRACE_PERIOD", 0.0)
+    monkeypatch.setattr(
+        cbi,
+        "_derive_readiness_gates",
+        lambda _label, _gates=None: {"vectorizers"},
+    )
+
+    def _force_timeout_deadline(deadline, *, start_time, vector_heavy, stage_label=None):
+        telemetry = {
+            "ready_gates": [],
+            "pending_gates": ["vectorizers"],
+            "readiness_ratio": 0.0,
+        }
+        return start_time, 0.0, telemetry
+
+    monkeypatch.setattr(cbi, "_normalize_watchdog_timeout", _force_timeout_deadline)
+
+    class _Pipeline:
+        def __init__(self, **_kwargs: object) -> None:
+            return
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Pipeline,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        component_timeouts={"vectorizers": 0.0},
+    )
+
+    promote(object())
+
+    degraded = cbi._PREPARE_PIPELINE_WATCHDOG.get("degraded") or {}
+    assert degraded.get("degraded_reason") in {
+        "optional_phase_overrun",
+        "optional_window_exhausted",
+    }

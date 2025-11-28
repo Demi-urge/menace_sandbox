@@ -37,6 +37,8 @@ The bootstrap helpers respect several environment variables that govern how long
 - `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this between **240–360 seconds** (runtime default **240s**) so large vector stores finish batching before the watchdog fires; vector-heavy steps automatically inherit a **360s** floor via the shared timeout policy.
 - `BOOTSTRAP_STEP_BUDGET`/`BOOTSTRAP_EMBEDDER_BUDGET` – explicit per-step watchdog overrides. These now inherit the shared timeout policy and will never drop below the **240s** standard floor or the **360s** vector-heavy floor.
 
+Callers that need component-level control over bootstrap pacing can supply structured budgets (for example via `bootstrap_timeout_policy.load_component_timeout_floors()`) to `prepare_pipeline_for_bootstrap` through the `component_timeouts` argument. The shared timeout coordinator will track vectorizer, retriever, DB index, and orchestrator slices independently and persist the per-stage consumption in the watchdog telemetry so future runs can raise the appropriate floors automatically.
+
 If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 
 - Set `MENACE_BOOTSTRAP_WAIT_SECS=240` or `BOOTSTRAP_STEP_TIMEOUT=240` before rerunning bootstrap on slower hosts (these values are now the defaults).
