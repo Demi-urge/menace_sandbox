@@ -436,7 +436,7 @@ class EnvironmentBootstrapper:
         start = self._clock()
         normalized_budget: dict[str, float | None]
         if isinstance(budget, dict):
-            normalized_budget = budget
+            normalized_budget = dict(budget)
         else:
             if budget is None:
                 normalized_budget = {"budget": None, "grace": None, "limit": None, "scale": 1.0}
@@ -448,6 +448,69 @@ class EnvironmentBootstrapper:
                     "limit": budget + grace,
                     "scale": 1.0,
                 }
+
+        def _parse_float(value: object) -> float | None:
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        guard_context = (
+            self._budget_snapshot.get("bootstrap_guard", {})
+            if isinstance(self._budget_snapshot, dict)
+            else {}
+        )
+        host_context = (
+            self._budget_snapshot.get("cluster_load", {})
+            if isinstance(self._budget_snapshot, dict)
+            else {}
+        )
+        host_load = None
+        if isinstance(host_context, Mapping):
+            host_load = _parse_float(
+                host_context.get("host_load")
+                or host_context.get("load")
+                or host_context.get("load_avg")
+            )
+        guard_budget_scale = _parse_float(
+            guard_context.get("budget_scale") or guard_context.get("scale") or 1.0
+        ) or 1.0
+        guard_delay = _parse_float(
+            guard_context.get("delay") or guard_context.get("guard_delay")
+        )
+        load_threshold = _parse_float(os.getenv("MENACE_BOOTSTRAP_LOAD_THRESHOLD"))
+        if load_threshold is None:
+            load_threshold = getattr(bootstrap_timeout_policy, "_DEFAULT_LOAD_THRESHOLD", 1.35)
+        load_scale = 1.0
+        if host_load is not None and host_load > 0 and load_threshold:
+            load_scale = max(1.0, host_load / load_threshold)
+        contention_scale = max(guard_budget_scale, load_scale)
+        contention_mode = contention_scale > 1.0 or (guard_delay or 0.0) > 0.0
+
+        def _scaled(value: float | None) -> float | None:
+            if value is None:
+                return None
+            return value * contention_scale
+
+        if contention_mode:
+            normalized_budget["budget"] = _scaled(normalized_budget.get("budget"))
+            normalized_budget["grace"] = _scaled(normalized_budget.get("grace"))
+            limit = normalized_budget.get("limit")
+            if limit is None:
+                budget_value = normalized_budget.get("budget")
+                grace_value = normalized_budget.get("grace")
+                if budget_value is not None or grace_value is not None:
+                    limit = (budget_value or 0.0) + (grace_value or 0.0)
+            normalized_budget["limit"] = _scaled(limit)
+            normalized_budget["scale"] = max(
+                _parse_float(normalized_budget.get("scale")) or 1.0, contention_scale
+            )
+            normalized_budget["contention_mode"] = True
+            normalized_budget["contention_scale"] = contention_scale
+            normalized_budget["contention_load"] = host_load
+            normalized_budget["contention_threshold"] = load_threshold
+            if guard_delay is not None:
+                normalized_budget["guard_delay"] = guard_delay
 
         soft_overrun = False
 
@@ -466,7 +529,7 @@ class EnvironmentBootstrapper:
             )
             self._update_gate(name, "degraded", elapsed=elapsed, limit=limit, overrun=True)
 
-        enforce_deadline = phase == "critical"
+        enforce_deadline = phase == "critical" and not contention_mode
         phase_budget = _PhaseBudgetContext(
             phase=phase,
             budget=normalized_budget,
@@ -484,6 +547,10 @@ class EnvironmentBootstrapper:
             budget=normalized_budget.get("budget"),
             grace=normalized_budget.get("grace"),
             scale=normalized_budget.get("scale"),
+            limit=normalized_budget.get("limit"),
+            guard_delay=guard_delay,
+            contention_scale=contention_scale if contention_mode else None,
+            contention_load=host_load,
         )
         self._update_gate(
             phase,
@@ -491,6 +558,10 @@ class EnvironmentBootstrapper:
             budget=normalized_budget.get("budget"),
             grace=normalized_budget.get("grace"),
             scale=normalized_budget.get("scale"),
+            limit=normalized_budget.get("limit"),
+            guard_delay=guard_delay,
+            contention_scale=contention_scale if contention_mode else None,
+            contention_load=host_load,
         )
 
         def guard() -> None:
@@ -526,10 +597,22 @@ class EnvironmentBootstrapper:
             overrun=soft_overrun,
             online_ready=phase_budget.online_ready,
             online_reason=phase_budget.online_reason,
+            limit=normalized_budget.get("limit"),
+            guard_delay=guard_delay,
+            contention_scale=contention_scale if contention_mode else None,
+            contention_load=host_load,
         )
         if phase == "critical":
             self._scheduler.mark_ready()
-        self._emit_phase_event(phase, gate_status, elapsed=elapsed)
+        self._emit_phase_event(
+            phase,
+            gate_status,
+            elapsed=elapsed,
+            limit=normalized_budget.get("limit"),
+            guard_delay=guard_delay,
+            contention_scale=contention_scale if contention_mode else None,
+            contention_load=host_load,
+        )
         self._maybe_mark_online(
             reason=phase_budget.online_reason or "core-phases-complete",
             partial=True,
