@@ -125,18 +125,23 @@ class _BootstrapScheduler:
     def __init__(
         self,
         *,
-        ready_event: threading.Event,
+        ready_events: Mapping[str, threading.Event],
+        online_event: threading.Event,
         semaphore: threading.Semaphore,
         logger: logging.Logger,
         readiness_tracker: Callable[[str, str], None],
     ) -> None:
-        self._ready_event = ready_event
+        self._ready_events = dict(ready_events)
+        self._online_event = online_event
         self._semaphore = semaphore
         self._logger = logger
         self._readiness_tracker = readiness_tracker
 
-    def mark_ready(self) -> None:
-        self._ready_event.set()
+    def mark_ready(self, phase: str) -> None:
+        if phase in self._ready_events:
+            self._ready_events[phase].set()
+        if phase == "online":
+            self._online_event.set()
 
     def schedule(
         self,
@@ -145,12 +150,19 @@ class _BootstrapScheduler:
         *,
         delay_until_ready: bool = True,
         join_inner: bool = True,
+        ready_gate: str | None = "critical",
     ) -> threading.Thread:
         self._readiness_tracker("scheduled", name)
 
         def _runner() -> None:
-            if delay_until_ready:
-                self._ready_event.wait()
+            if delay_until_ready and ready_gate:
+                event = self._ready_events.get(ready_gate)
+                if event is None and ready_gate == "online":
+                    event = self._online_event
+                if event is None:
+                    event = next(iter(self._ready_events.values())) if self._ready_events else None
+                if event is not None:
+                    event.wait()
             with self._semaphore:
                 self._readiness_tracker("running", name)
                 try:
@@ -195,6 +207,7 @@ class EnvironmentBootstrapper:
         }
         self._phase_readiness["online_partial"] = False
         self._phase_readiness["online"] = False
+        self._phase_readiness["full_ready"] = False
         self._phase_gates: dict[str, dict[str, object]] = {
             phase: {"status": "pending", "started": None, "finished": None}
             for phase in self.PHASES
@@ -220,10 +233,15 @@ class EnvironmentBootstrapper:
                 )
             ),
         )
-        self._ready_event = threading.Event()
+        self._phase_events = {phase: threading.Event() for phase in self.PHASES}
+        self._online_event = threading.Event()
+        self._full_ready_event = threading.Event()
+        self._phase_events["online"] = self._online_event
+        self._phase_events["full_ready"] = self._full_ready_event
         self._background_semaphore = threading.Semaphore(semaphore_size)
         self._scheduler = _BootstrapScheduler(
-            ready_event=self._ready_event,
+            ready_events=self._phase_events,
+            online_event=self._online_event,
             semaphore=self._background_semaphore,
             logger=self.logger,
             readiness_tracker=self._track_background_task,
@@ -315,6 +333,23 @@ class EnvironmentBootstrapper:
             **fields,
         )
         self.logger.info("bootstrap phase %s %s", phase, status, extra=payload)
+        heartbeat_background = {
+            "scheduled": self._background_state.get("scheduled", 0),
+            "running": self._background_state.get("running", 0),
+            "finished": self._background_state.get("finished", 0),
+            "active": sorted(self._background_state.get("active", ()) or ()),
+        }
+        bootstrap_timeout_policy.emit_bootstrap_heartbeat(
+            {
+                "event": "bootstrap-phase",
+                "phase": phase,
+                "status": status,
+                "mode": self.readiness_mode,
+                "readiness": dict(self._phase_readiness),
+                "background": heartbeat_background,
+                **fields,
+            }
+        )
 
     def _mark_online_ready(self, elapsed: float | None, reason: str, partial: bool) -> None:
         if partial and not self._phase_readiness.get("online_partial"):
@@ -329,7 +364,19 @@ class EnvironmentBootstrapper:
             return
         self._phase_readiness["online_partial"] = True
         self._phase_readiness["online"] = True
+        self._scheduler.mark_ready("online")
         self._emit_phase_event("online", "ready", elapsed=elapsed, reason=reason)
+
+    def _mark_full_ready(self, *, reason: str | None = None) -> None:
+        if self._phase_readiness.get("full_ready"):
+            return
+        if not all(self._phase_readiness.get(phase) for phase in self.PHASES):
+            return
+        if int(self._background_state.get("running", 0)) > 0:
+            return
+        self._phase_readiness["full_ready"] = True
+        self._scheduler.mark_ready("full_ready")
+        self._emit_phase_event("full_ready", "ready", reason=reason)
 
     def _readiness_snapshot(self) -> dict[str, dict[str, object]]:
         return {phase: dict(details) for phase, details in self._phase_gates.items()}
@@ -602,8 +649,8 @@ class EnvironmentBootstrapper:
             contention_scale=contention_scale if contention_mode else None,
             contention_load=host_load,
         )
-        if phase == "critical":
-            self._scheduler.mark_ready()
+        if phase in self.PHASES:
+            self._scheduler.mark_ready(phase)
         self._emit_phase_event(
             phase,
             gate_status,
@@ -618,6 +665,7 @@ class EnvironmentBootstrapper:
             partial=True,
         )
         self._persist_phase_duration(phase, elapsed)
+        self._mark_full_ready(reason=f"{phase}-complete")
         return True
 
     def _track_background_task(self, action: str, name: str) -> None:
@@ -648,6 +696,17 @@ class EnvironmentBootstrapper:
             "finished": finished,
             "active": sorted(active),
         }
+        bootstrap_timeout_policy.emit_bootstrap_heartbeat(
+            {
+                "event": "bootstrap-background",
+                "active": sorted(active),
+                "running": running,
+                "finished": finished,
+                "scheduled": scheduled,
+                "online": bool(self._phase_readiness.get("online")),
+            }
+        )
+        self._mark_full_ready(reason="background-complete")
 
     def _queue_background_task(
         self,
@@ -656,12 +715,14 @@ class EnvironmentBootstrapper:
         *,
         delay_until_ready: bool = True,
         join_inner: bool = True,
+        ready_gate: str | None = "critical",
     ) -> threading.Thread:
         t = self._scheduler.schedule(
             name,
             func,
             delay_until_ready=delay_until_ready,
             join_inner=join_inner,
+            ready_gate=ready_gate,
         )
         self._background_threads.append(t)
         return t
