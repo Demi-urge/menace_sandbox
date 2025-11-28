@@ -45,6 +45,7 @@ from bootstrap_timeout_policy import (
     get_adaptive_timeout_context,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
+    build_progress_signal_hook,
     render_prepare_pipeline_timeout_hints,
 )
 
@@ -5176,6 +5177,9 @@ def _prepare_pipeline_for_bootstrap_impl(
             max(resolved_deadline - start_time, 0.0),
         )
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
+    progress_signal = build_progress_signal_hook(
+        namespace="prepare_pipeline", run_id=f"prepare-{os.getpid()}"
+    )
     component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
     component_windows: dict[str, dict[str, Any]] = {}
     if shared_timeout_budget is not None or component_budget_payload:
@@ -5185,6 +5189,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             namespace="prepare_pipeline",
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
             component_budgets=component_budget_payload,
+            signal_hook=progress_signal,
         )
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()

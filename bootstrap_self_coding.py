@@ -27,7 +27,10 @@ from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
 from bootstrap_readiness import build_stage_deadlines
-from bootstrap_timeout_policy import compute_prepare_pipeline_component_budgets
+from bootstrap_timeout_policy import (
+    compute_prepare_pipeline_component_budgets,
+    wait_for_bootstrap_quiet_period,
+)
 from bootstrap_metrics import BOOTSTRAP_DURATION_STORE, compute_stats, record_durations
 
 
@@ -70,6 +73,18 @@ JOURNAL_FILES: tuple[Path, ...] = (
     REPO_ROOT / "logs" / "audit_log.db-shm",
     REPO_ROOT / "audit" / "audit.db-journal",
 )
+
+
+def _apply_self_coding_guard() -> float:
+    """Delay bootstrap when peers are active or host load is high."""
+
+    guard_delay, guard_scale = wait_for_bootstrap_quiet_period(LOGGER)
+    if guard_scale > 1.0:
+        current = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+        adjusted = current * guard_scale
+        os.environ["BOOTSTRAP_STEP_TIMEOUT"] = str(adjusted)
+        os.environ["MENACE_BOOTSTRAP_WAIT_SECS"] = str(adjusted)
+    return guard_delay
 
 
 def _iter_cleanup_targets() -> Iterable[Path]:
@@ -150,12 +165,18 @@ def _persist_pipeline_durations(durations: Mapping[str, float]) -> None:
 def bootstrap_self_coding(bot_name: str) -> None:
     """Trigger :func:`internalize_coding_bot` for *bot_name*."""
 
+    guard_delay = _apply_self_coding_guard()
     baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
     stage_policy = build_stage_deadlines(baseline_timeout)
     LOGGER.info(
         "bootstrap readiness policy applied",
         extra={"stage_policy": stage_policy, "baseline_timeout": baseline_timeout},
     )
+    if guard_delay > 0:
+        LOGGER.info(
+            "self-coding bootstrap delayed for active peer",
+            extra={"event": "bootstrap-guard", "delay": round(guard_delay, 2)},
+        )
     policy_summary = [
         f"{stage}: {details.get('deadline')}s"
         + (" (optional)" if details.get("optional") else "")
