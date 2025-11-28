@@ -29,6 +29,14 @@ import sys
 import logging
 from logging_utils import log_record
 from dynamic_path_router import resolve_path
+from bootstrap_timeout_policy import (
+    BOOTSTRAP_COMPONENT_HINTS_ENV,
+    BOOTSTRAP_COMPLEXITY_SCALE_ENV,
+    BOOTSTRAP_DB_INDEX_BYTES_ENV,
+    collect_timeout_telemetry,
+    derive_bootstrap_timeout_env,
+    read_bootstrap_heartbeat,
+)
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -40,24 +48,66 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _load_component_inventory_hints() -> dict[str, object]:
+    """Return pipeline complexity hints sourced from environment overrides."""
+
+    hints: dict[str, object] = {}
+    raw_hints = os.getenv(BOOTSTRAP_COMPONENT_HINTS_ENV, "")
+    for pair in (p.strip() for p in raw_hints.split(",")):
+        if not pair or "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        normalized = key.strip().lower().replace("-", "_")
+        try:
+            hints[normalized] = int(value)
+        except (TypeError, ValueError):
+            try:
+                hints[normalized] = float(value)
+            except (TypeError, ValueError):
+                hints[normalized] = value.strip()
+
+    db_index_bytes = os.getenv(BOOTSTRAP_DB_INDEX_BYTES_ENV)
+    try:
+        if db_index_bytes:
+            hints["db_index_bytes"] = float(db_index_bytes)
+    except (TypeError, ValueError):
+        pass
+
+    complexity_scale = os.getenv(BOOTSTRAP_COMPLEXITY_SCALE_ENV)
+    try:
+        scale = max(float(complexity_scale), 1.0) if complexity_scale is not None else 1.0
+    except (TypeError, ValueError):
+        scale = 1.0
+
+    if scale > 1.0:
+        for key, value in list(hints.items()):
+            try:
+                hints[key] = max(int(round(float(value) * scale)), int(value))
+            except (TypeError, ValueError):
+                hints[key] = value
+        hints["complexity_scale"] = scale
+
+    return hints
+
+
 def _apply_bootstrap_timeout_env(minimum: float = 240.0) -> dict[str, str]:
-    """Clamp bootstrap timeout env vars to at least ``minimum`` seconds."""
+    """Apply adaptive bootstrap timeout env derived from telemetry and inventory."""
+
+    pipeline_complexity = _load_component_inventory_hints()
+    adaptive_env = derive_bootstrap_timeout_env(
+        minimum=minimum,
+        telemetry=collect_timeout_telemetry(),
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=read_bootstrap_heartbeat(),
+    )
 
     snapshot: dict[str, str] = {}
-    for env_var in (
-        "MENACE_BOOTSTRAP_WAIT_SECS",
-        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
-        "BOOTSTRAP_STEP_TIMEOUT",
-        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
-    ):
-        raw_value = os.getenv(env_var)
+    for env_var, value in adaptive_env.items():
         try:
-            parsed = float(raw_value) if raw_value is not None else minimum
+            resolved = max(float(value), minimum)
         except (TypeError, ValueError):
-            parsed = minimum
-
-        effective = parsed if parsed >= minimum else minimum
-        os.environ[env_var] = str(effective)
+            resolved = minimum
+        os.environ[env_var] = str(resolved)
         snapshot[env_var] = os.environ[env_var]
 
     return snapshot
