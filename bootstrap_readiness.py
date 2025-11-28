@@ -75,7 +75,12 @@ def minimal_online(online_state: Mapping[str, object]) -> bool:
 
 def lagging_optional_components(online_state: Mapping[str, object]) -> set[str]:
     components = online_state.get("components", {}) if isinstance(online_state, Mapping) else {}
-    return {name for name in OPTIONAL_COMPONENTS if str(components.get(name, "pending")) != "ready"}
+    lagging: set[str] = set()
+    for name in OPTIONAL_COMPONENTS:
+        status = str(components.get(name, "pending"))
+        if status != "ready":
+            lagging.add(name)
+    return lagging
 
 
 __all__ = [

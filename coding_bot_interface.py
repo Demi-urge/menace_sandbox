@@ -158,6 +158,7 @@ _READINESS_GATE_WEIGHTS: dict[str, float] = {
     "db_indexes": 0.9,
     "pipeline_config": 0.6,
     "orchestrator_state": 1.0,
+    "background_loops": 0.35,
 }
 
 _CRITICAL_READINESS_GATES = frozenset({"pipeline_config", "orchestrator_state"})
@@ -216,7 +217,13 @@ def _initialize_prepare_readiness(*, reset: bool = False) -> dict[str, dict[str,
     for gate in _READINESS_GATE_WEIGHTS:
         readiness.setdefault(
             gate,
-            {"ready": False, "timestamp": None, "elapsed": None, "stage": None},
+            {
+                "ready": False,
+                "timestamp": None,
+                "elapsed": None,
+                "stage": None,
+                "status": "pending",
+            },
         )
     _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
     _PREPARE_PIPELINE_WATCHDOG.setdefault(
@@ -244,6 +251,7 @@ def _mark_staged_readiness(
     vector_heavy: bool,
 ) -> Mapping[str, Any]:
     label = stage_label or "prepare_pipeline"
+    critical_pending = _CRITICAL_READINESS_GATES & set(pending_gates)
     payload = {
         "stage": label,
         "ready_gates": tuple(ready_gates),
@@ -253,6 +261,7 @@ def _mark_staged_readiness(
         "stage_budget": stage_budget,
         "vector_heavy": vector_heavy,
         "timestamp": time.time(),
+        "quorum_ready": not critical_pending,
     }
 
     previous = _PREPARE_PIPELINE_WATCHDOG.get("staged_ready")
@@ -267,6 +276,45 @@ def _mark_staged_readiness(
                 logger.debug("staged readiness publish failed", exc_info=True)
 
     return payload
+
+
+def _mark_partial_readiness(
+    *,
+    gates: Iterable[str],
+    stage: str,
+    reason: str,
+    pending_gates: Iterable[str],
+    readiness_ratio: float,
+    vector_heavy: bool,
+) -> None:
+    """Record a partial readiness state for non-critical gates."""
+
+    readiness = _initialize_prepare_readiness()
+    timestamp = time.time()
+    for gate in gates:
+        if gate not in readiness:
+            continue
+        readiness[gate].update(
+            {
+                "ready": False,
+                "timestamp": readiness[gate].get("timestamp") or timestamp,
+                "elapsed": readiness[gate].get("elapsed"),
+                "stage": stage,
+                "status": "partial",
+                "reason": reason,
+            }
+        )
+    _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
+    payload = _mark_staged_readiness(
+        stage,
+        ready_gates=[gate for gate, meta in readiness.items() if meta.get("ready")],
+        pending_gates=pending_gates,
+        readiness_ratio=readiness_ratio,
+        remaining_window=0.0,
+        stage_budget=0.0,
+        vector_heavy=vector_heavy,
+    )
+    _PREPARE_PIPELINE_WATCHDOG.setdefault("partial_ready", []).append(payload)
 
 
 _initialize_prepare_readiness()
@@ -387,6 +435,8 @@ def _derive_readiness_gates(label: str | None, gates: Iterable[str] | None = Non
         derived.add("pipeline_config")
     if any(token in normalized for token in ["orchestrator", "owner guard", "sentinel"]):
         derived.add("orchestrator_state")
+    if any(token in normalized for token in ["background", "loop", "scheduler"]):
+        derived.add("background_loops")
     return {gate for gate in derived if gate in _READINESS_GATE_WEIGHTS}
 
 
@@ -595,6 +645,7 @@ def _record_prepare_pipeline_stage(
                 "timestamp": record["timestamp"],
                 "elapsed": record["elapsed"],
                 "stage": label,
+                "status": "ready",
             }
     _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
     if timeout:
@@ -4480,6 +4531,10 @@ def _prepare_pipeline_for_bootstrap_impl(
         "orchestrator_state": component_budget_overrides.get(
             "orchestrator_state", subsystem_budget_overrides.get("orchestrator_state")
         ),
+        "pipeline_config": component_budget_overrides.get(
+            "pipeline_config", subsystem_budget_overrides.get("pipeline_config")
+        ),
+        "background_loops": component_budget_overrides.get("background_loops"),
     }
 
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
@@ -4580,100 +4635,128 @@ def _prepare_pipeline_for_bootstrap_impl(
                 )
 
         def _select_phase(gates: set[str]) -> str | None:
-            for candidate in ("vectorizers", "retrievers", "db_indexes", "orchestrator_state"):
+            for candidate in (
+                "vectorizers",
+                "retrievers",
+                "db_indexes",
+                "orchestrator_state",
+                "pipeline_config",
+                "background_loops",
+            ):
                 if candidate in gates:
                     return candidate
             return None
 
-        phase_label = _select_phase(stage_gates)
         timeout_floor = (
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
         )
 
         _PREPARE_PIPELINE_WATCHDOG["watchdog"] = watchdog_telemetry
 
+        def _touch_component_window(gate: str) -> dict[str, Any] | None:
+            if gate not in component_windows:
+                budget = phase_budgets.get(gate)
+                if budget is None:
+                    return None
+                started = time.perf_counter()
+                component_windows[gate] = {
+                    "budget": budget,
+                    "remaining": budget,
+                    "started": started,
+                    "last_check": started,
+                    "deadline": (started + budget) if budget is not None else None,
+                }
+            window = component_windows[gate]
+            now_ts = time.perf_counter()
+            elapsed_local = now_ts - window.get("last_check", window.get("started", now_ts))
+            window["last_check"] = now_ts
+            if window.get("remaining") is not None:
+                window["remaining"] = max(0.0, (window.get("remaining") or 0.0) - elapsed_local)
+            if shared_timeout_coordinator is not None:
+                shared_timeout_coordinator.record_progress(
+                    gate,
+                    elapsed=elapsed_local,
+                    remaining=window.get("remaining"),
+                    metadata={"stage": stage, "pending_gates": tuple(readiness_pending)},
+                )
+                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
+                    shared_timeout_coordinator.snapshot()
+                )
+            component_windows[gate] = window
+            return window
+
+        gate_windows: dict[str, dict[str, Any]] = {}
+        for gate in stage_gates:
+            window = _touch_component_window(gate)
+            if window:
+                gate_windows[gate] = window
+        if gate_windows:
+            _PREPARE_PIPELINE_WATCHDOG["component_windows"] = component_windows
+
+        phase_label = _select_phase(stage_gates)
         phase_key = phase_label or active_shared_label or stage
 
-        if phase_label and shared_timeout_coordinator is not None:
-            phase_state = phase_windows.get(phase_label)
-            phase_budget = phase_budgets.get(phase_label)
-            if phase_budget is None:
-                phase_budget = resolved_timeout
-            if phase_state is None:
-                budget, record = shared_timeout_coordinator.reserve_phase(
-                    phase_label,
-                    requested=phase_budget,
-                    minimum=max(
-                        timeout_floor,
-                        _SUBSYSTEM_BUDGET_FLOORS.get(phase_label, timeout_floor),
-                    ),
-                    metadata={"stage": stage},
-                )
-                phase_state = {
-                    "budget": budget if budget is not None else resolved_timeout,
-                    "remaining": budget if budget is not None else resolved_timeout,
-                    "last_check": time.perf_counter(),
-                    "pending": len(readiness_pending),
-                    "ratio": readiness_ratio,
-                    "grace": False,
-                }
-                phase_windows[phase_label] = phase_state
-                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = shared_timeout_coordinator.snapshot()
-            now = time.perf_counter()
-            elapsed = now - phase_state["last_check"]
-            if phase_state["remaining"] is not None:
-                phase_state["remaining"] = max(0.0, phase_state["remaining"] - elapsed)
-            phase_state["last_check"] = now
-            shared_timeout_coordinator.record_progress(
-                phase_label,
-                elapsed=elapsed,
-                remaining=phase_state["remaining"],
-                metadata={"stage": stage, "pending_gates": tuple(readiness_pending)},
-            )
-            pending_delta = phase_state["pending"] - len(readiness_pending)
-            ratio_delta = readiness_ratio - phase_state.get("ratio", 0.0)
-            progressing = pending_delta > 0 or ratio_delta > 0 or staged_ready_signal
-            if progressing and not phase_state["grace"]:
-                grace_window = _VECTOR_STAGE_GRACE_PERIOD if phase_label == "vectorizers" else timeout_floor * 0.25
-                if grace_window:
-                    if phase_state["remaining"] is not None:
-                        phase_state["remaining"] += grace_window
-                    phase_state["grace"] = True
-                    shared_timeout_coordinator.record_progress(
-                        phase_label,
-                        elapsed=0.0,
-                        remaining=phase_state["remaining"],
-                    metadata={"stage": stage, "grace_extension": grace_window},
-                )
-            phase_state["pending"] = len(readiness_pending)
-            phase_state["ratio"] = readiness_ratio
-            _record_phase_window(phase_label, phase_state)
-            if (
-                progressing
-                and phase_state.get("remaining") is not None
-                and phase_state["remaining"] <= 0
-            ):
+        pending_delta = 0
+        ratio_delta = 0.0
+        if gate_windows:
+            pending_delta = len(readiness_pending)
+            ratio_delta = readiness_ratio
+        else:
+            pending_delta = 0
+            ratio_delta = 0.0
+
+        progressing = pending_delta > 0 or ratio_delta > 0 or staged_ready_signal
+
+        if gate_windows:
+            exhausted_gates = []
+            for gate, window in gate_windows.items():
+                if window.get("remaining") is not None and window["remaining"] <= 0:
+                    exhausted_gates.append(gate)
+
+            if progressing:
                 extension = watchdog_telemetry.get("extension_seconds")
                 if extension is None:
                     extension = max(timeout_floor, resolved_timeout or timeout_floor)
-                phase_state["remaining"] = max(timeout_floor, extension)
-                shared_timeout_coordinator.record_progress(
-                    phase_label,
-                    elapsed=0.0,
-                    remaining=phase_state["remaining"],
-                    metadata={"stage": stage, "staged_readiness": True},
-                )
-                return
-            if phase_state["remaining"] is not None and phase_state["remaining"] <= 0:
-                optional_overrun = readiness_pending and not (
+                for gate, window in gate_windows.items():
+                    if window.get("remaining") is not None and window["remaining"] <= 0:
+                        window["remaining"] = max(timeout_floor, extension)
+                        if shared_timeout_coordinator is not None:
+                            shared_timeout_coordinator.record_progress(
+                                gate,
+                                elapsed=0.0,
+                                remaining=window.get("remaining"),
+                                metadata={"stage": stage, "staged_readiness": True},
+                            )
+                _PREPARE_PIPELINE_WATCHDOG["component_windows"] = component_windows
+                if exhausted_gates:
+                    return
+
+            if exhausted_gates:
+                optional_overrun = set(exhausted_gates) and not (
                     _CRITICAL_READINESS_GATES & set(readiness_pending)
                 )
                 if optional_overrun:
-                    _mark_degraded("optional_phase_overrun", state=phase_state)
+                    _mark_partial_readiness(
+                        gates=exhausted_gates,
+                        stage=stage,
+                        reason="component_window_exhausted",
+                        pending_gates=readiness_pending,
+                        readiness_ratio=readiness_ratio,
+                        vector_heavy=vector_heavy,
+                    )
+                    logger.info(
+                        "non-critical component window overrun tolerated",
+                        extra={
+                            "lagging_gates": exhausted_gates,
+                            "pending_gates": readiness_pending,
+                            "watchdog_component_windows": gate_windows,
+                        },
+                    )
+                    _mark_degraded("optional_phase_overrun", state={"budget": None, "remaining": None})
                     return
                 elapsed = time.perf_counter() - start_time
                 context = {
-                    "reason": "deadline",
+                    "reason": "component_deadline",
                     "resolved_timeout": resolved_timeout,
                     "vector_heavy": vector_heavy,
                     "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
@@ -4684,12 +4767,13 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "resolved_wait_timeout": resolved_wait_timeout,
                     "effective_timeout_floor": effective_timeout_floor,
                     "prepare_watchdog_timeline": watchdog_timeline,
-                    "watchdog_timeout_budget": phase_state.get("budget"),
-                    "watchdog_remaining_window": phase_state.get("remaining"),
+                    "watchdog_timeout_budget": {gate: (window or {}).get("budget") for gate, window in gate_windows.items()},
+                    "watchdog_remaining_window": {gate: (window or {}).get("remaining") for gate, window in gate_windows.items()},
                     "watchdog_ready_gates": readiness_ready,
                     "watchdog_pending_gates": readiness_pending,
                     "watchdog_readiness_ratio": readiness_ratio,
                     "watchdog_stage_gates": stage_gates,
+                    "exhausted_gates": exhausted_gates,
                     "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
                         "shared_timeout"
                     ),
@@ -4699,11 +4783,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                 logger.warning(
                     (
                         "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
-                        "phase=%s resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                        "gates=%s resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
                     ),
                     stage,
                     elapsed,
-                    phase_label,
+                    exhausted_gates,
                     resolved_timeout,
                     vector_heavy,
                     env_bootstrap_wait,
@@ -4714,7 +4798,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 raise TimeoutError(
                     (
                         "prepare_pipeline_for_bootstrap timed out during "
-                        f"{stage} ({phase_label}); remediation: {'; '.join(remediation_hints)}"
+                        f"{stage} ({', '.join(exhausted_gates)}); remediation: {'; '.join(remediation_hints)}"
                     )
                 )
 
@@ -5093,6 +5177,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         )
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
     component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
+    component_windows: dict[str, dict[str, Any]] = {}
     if shared_timeout_budget is not None or component_budget_payload:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
             None if shared_timeout_budget is None else max(shared_timeout_budget, 0.0),
@@ -5104,6 +5189,19 @@ def _prepare_pipeline_for_bootstrap_impl(
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()
         )
+        if component_budget_payload:
+            component_windows = {
+                gate: dict(meta)
+                for gate, meta in shared_timeout_coordinator.start_component_timers(
+                    component_budget_payload, minimum=effective_timeout_floor
+                ).items()
+            }
+            _PREPARE_PIPELINE_WATCHDOG["component_budgets"] = (
+                _PREPARE_PIPELINE_WATCHDOG["shared_timeout"].get(
+                    "component_budgets", {}
+                )
+            )
+            _PREPARE_PIPELINE_WATCHDOG["component_windows"] = component_windows
     active_shared_budget: float | None = None
     active_shared_label: str | None = None
     active_stage_gates: set[str] = set()

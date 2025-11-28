@@ -710,6 +710,16 @@ def _monitor_bootstrap_thread(
                 "[BOOTSTRAP] minimal services online; continuing to warm optional stages",
                 flush=True,
             )
+            lagging = lagging_optional_components(online_state_snapshot)
+            if lagging:
+                LOGGER.info(
+                    "optional components still warming",
+                    extra=log_record(
+                        event="bootstrap-online-partial",
+                        lagging_optional=sorted(lagging),
+                        online_state=online_state_snapshot,
+                    ),
+                )
             core_online_announced = True
 
         stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
