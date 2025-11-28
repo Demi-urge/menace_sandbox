@@ -102,6 +102,7 @@ sys.modules.setdefault("context_builder_util", context_builder_util_stub)
 synergy_history_db_stub = types.ModuleType("synergy_history_db")
 synergy_history_db_stub.SynergyHistoryDB = object
 sys.modules.setdefault("synergy_history_db", synergy_history_db_stub)
+sys.modules.setdefault("menace.synergy_history_db", synergy_history_db_stub)
 
 # Stub run_autonomous to bypass dependency checks if imported
 run_auto_stub = types.ModuleType("run_autonomous")

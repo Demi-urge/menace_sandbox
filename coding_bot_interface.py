@@ -40,7 +40,6 @@ from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
 from bootstrap_timeout_policy import (
-    MENACE_BOOTSTRAP_WAIT_SECS,
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
     load_component_timeout_floors,
@@ -150,6 +149,7 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
 }
 
 _STAGED_READY_TOPIC = "prepare_pipeline.staged_ready"
+MENACE_BOOTSTRAP_WAIT_SECS = "MENACE_BOOTSTRAP_WAIT_SECS"
 
 _READINESS_GATE_WEIGHTS: dict[str, float] = {
     "vectorizers": 1.25,
@@ -4504,12 +4504,15 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_env_bootstrap_wait = _resolve_bootstrap_wait_timeout(False)
         resolved_env_vector_wait = _resolve_bootstrap_wait_timeout(True)
         normalized_deadline, resolved_timeout, watchdog_telemetry = _normalize_watchdog_timeout(
-            None,
+            resolved_deadline,
             start_time=start_time,
             vector_heavy=vector_heavy,
-            stage_label=stage,
+            stage_label=active_shared_label or stage,
         )
         stage_gates = _derive_readiness_gates(stage, None)
+        if active_stage_gates:
+            stage_gates |= set(active_stage_gates)
+        watchdog_telemetry["stage_gates"] = tuple(stage_gates)
         if shared_timeout_coordinator is not None:
             watchdog_telemetry["shared_timeout"] = shared_timeout_coordinator.snapshot()
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
@@ -4533,9 +4536,15 @@ def _prepare_pipeline_for_bootstrap_impl(
             _MIN_STAGE_TIMEOUT_VECTOR if vector_heavy else _MIN_STAGE_TIMEOUT
         )
 
+        _PREPARE_PIPELINE_WATCHDOG["watchdog"] = watchdog_telemetry
+
+        phase_key = phase_label or active_shared_label or stage
+
         if phase_label and shared_timeout_coordinator is not None:
             phase_state = phase_windows.get(phase_label)
             phase_budget = phase_budgets.get(phase_label)
+            if phase_budget is None:
+                phase_budget = resolved_timeout
             if phase_state is None:
                 budget, record = shared_timeout_coordinator.reserve_phase(
                     phase_label,
@@ -4569,7 +4578,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
             pending_delta = phase_state["pending"] - len(readiness_pending)
             ratio_delta = readiness_ratio - phase_state.get("ratio", 0.0)
-            if (pending_delta > 0 or ratio_delta > 0) and not phase_state["grace"]:
+            progressing = pending_delta > 0 or ratio_delta > 0 or staged_ready_signal
+            if progressing and not phase_state["grace"]:
                 grace_window = _VECTOR_STAGE_GRACE_PERIOD if phase_label == "vectorizers" else timeout_floor * 0.25
                 if grace_window:
                     if phase_state["remaining"] is not None:
@@ -4583,6 +4593,22 @@ def _prepare_pipeline_for_bootstrap_impl(
                     )
             phase_state["pending"] = len(readiness_pending)
             phase_state["ratio"] = readiness_ratio
+            if (
+                progressing
+                and phase_state.get("remaining") is not None
+                and phase_state["remaining"] <= 0
+            ):
+                extension = watchdog_telemetry.get("extension_seconds")
+                if extension is None:
+                    extension = max(timeout_floor, resolved_timeout or timeout_floor)
+                phase_state["remaining"] = max(timeout_floor, extension)
+                shared_timeout_coordinator.record_progress(
+                    phase_label,
+                    elapsed=0.0,
+                    remaining=phase_state["remaining"],
+                    metadata={"stage": stage, "staged_readiness": True},
+                )
+                return
             if phase_state["remaining"] is not None and phase_state["remaining"] <= 0:
                 elapsed = time.perf_counter() - start_time
                 context = {
@@ -4630,6 +4656,96 @@ def _prepare_pipeline_for_bootstrap_impl(
                         f"{stage} ({phase_label}); remediation: {'; '.join(remediation_hints)}"
                     )
                 )
+
+        budget_deadline = None
+        if resolved_timeout is not None:
+            budget_deadline = start_time + resolved_timeout
+        effective_deadline = normalized_deadline or budget_deadline or resolved_deadline
+        if normalized_deadline is not None and resolved_deadline is not None:
+            effective_deadline = max(normalized_deadline, resolved_deadline)
+        if budget_deadline is not None and effective_deadline is not None:
+            effective_deadline = max(effective_deadline, budget_deadline)
+
+        phase_state = phase_windows.get(phase_key)
+        if phase_state is None:
+            phase_state = {
+                "budget": resolved_timeout,
+                "remaining": (effective_deadline - start_time) if effective_deadline else resolved_timeout,
+                "last_check": time.perf_counter(),
+                "pending": len(readiness_pending),
+                "ratio": readiness_ratio,
+                "grace": False,
+            }
+            phase_windows[phase_key] = phase_state
+        now = time.perf_counter()
+        elapsed = now - phase_state["last_check"]
+        if phase_state["remaining"] is not None and effective_deadline is not None:
+            phase_state["remaining"] = max(0.0, effective_deadline - now)
+        elif phase_state["remaining"] is not None:
+            phase_state["remaining"] = max(0.0, phase_state["remaining"] - elapsed)
+        phase_state["last_check"] = now
+        pending_delta = phase_state["pending"] - len(readiness_pending)
+        ratio_delta = readiness_ratio - phase_state.get("ratio", 0.0)
+        progressing = pending_delta > 0 or ratio_delta > 0 or staged_ready_signal
+        if progressing and not phase_state["grace"]:
+            grace_window = _VECTOR_STAGE_GRACE_PERIOD if "vectorizers" in stage_gates else timeout_floor * 0.25
+            if grace_window:
+                if phase_state["remaining"] is not None:
+                    phase_state["remaining"] += grace_window
+                phase_state["grace"] = True
+        phase_state["pending"] = len(readiness_pending)
+        phase_state["ratio"] = readiness_ratio
+        if (
+            phase_state["remaining"] is not None
+            and phase_state["remaining"] <= 0
+            and not progressing
+            and not watchdog_telemetry.get("staged_readiness")
+        ):
+            elapsed = time.perf_counter() - start_time
+            context = {
+                "reason": "deadline",
+                "resolved_timeout": resolved_timeout,
+                "vector_heavy": vector_heavy,
+                "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                "elapsed": elapsed,
+                "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
+                "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                "resolved_wait_timeout": resolved_wait_timeout,
+                "effective_timeout_floor": effective_timeout_floor,
+                "prepare_watchdog_timeline": watchdog_timeline,
+                "watchdog_timeout_budget": phase_state.get("budget"),
+                "watchdog_remaining_window": phase_state.get("remaining"),
+                "watchdog_ready_gates": readiness_ready,
+                "watchdog_pending_gates": readiness_pending,
+                "watchdog_readiness_ratio": readiness_ratio,
+                "watchdog_stage_gates": stage_gates,
+                "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
+                    "shared_timeout"
+                ),
+            }
+            remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+            context["remediation_hints"] = remediation_hints
+            logger.warning(
+                (
+                    "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
+                    "resolved_timeout=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                ),
+                stage,
+                elapsed,
+                resolved_timeout,
+                vector_heavy,
+                env_bootstrap_wait,
+                env_vector_wait,
+            )
+            _record_timeout(stage, context)
+            _emit_timeout_diagnostics(stage, context)
+            raise TimeoutError(
+                (
+                    "prepare_pipeline_for_bootstrap timed out during "
+                    f"{stage}; remediation: {'; '.join(remediation_hints)}"
+                )
+            )
 
         if stop_event is not None and stop_event.is_set():
             context = {
@@ -4769,7 +4885,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         *,
         requested: float | None,
     ) -> Iterator[tuple[float | None, Mapping[str, object]]]:
-        nonlocal active_shared_budget
+        nonlocal active_shared_budget, active_shared_label, active_stage_gates
 
         normalized_gates = _derive_readiness_gates(label, gates)
         if (
@@ -4781,6 +4897,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             yield None, {}
             return
 
+        previous_label = active_shared_label
+        previous_gates = set(active_stage_gates)
         minimum = max(
             effective_timeout_floor,
             max(_SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0) for gate in normalized_gates),
@@ -4795,6 +4913,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             },
         ) as (budget, meta):
             active_shared_budget = budget
+            active_shared_label = label
+            active_stage_gates = set(normalized_gates)
             try:
                 _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
                     shared_timeout_coordinator.snapshot()
@@ -4802,6 +4922,8 @@ def _prepare_pipeline_for_bootstrap_impl(
                 yield budget, meta
             finally:
                 active_shared_budget = None
+                active_shared_label = previous_label
+                active_stage_gates = previous_gates
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     slow_hook_threshold = 0.05
@@ -4879,6 +5001,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             shared_timeout_coordinator.snapshot()
         )
     active_shared_budget: float | None = None
+    active_shared_label: str | None = None
+    active_stage_gates: set[str] = set()
 
     def _clamp_to_timeout_floor(value: float) -> tuple[float, bool]:
         clamped_value = max(effective_timeout_floor, value)
