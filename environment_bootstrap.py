@@ -109,6 +109,52 @@ class _PhaseBudgetContext:
         }
 
 
+class _BootstrapScheduler:
+    def __init__(
+        self,
+        *,
+        ready_event: threading.Event,
+        semaphore: threading.Semaphore,
+        logger: logging.Logger,
+        readiness_tracker: Callable[[str, str], None],
+    ) -> None:
+        self._ready_event = ready_event
+        self._semaphore = semaphore
+        self._logger = logger
+        self._readiness_tracker = readiness_tracker
+
+    def mark_ready(self) -> None:
+        self._ready_event.set()
+
+    def schedule(
+        self,
+        name: str,
+        work: Callable[[], threading.Thread | None],
+        *,
+        delay_until_ready: bool = True,
+        join_inner: bool = True,
+    ) -> threading.Thread:
+        self._readiness_tracker("scheduled", name)
+
+        def _runner() -> None:
+            if delay_until_ready:
+                self._ready_event.wait()
+            with self._semaphore:
+                self._readiness_tracker("running", name)
+                try:
+                    inner = work()
+                    if join_inner and isinstance(inner, threading.Thread):
+                        inner.join()
+                except Exception as exc:  # pragma: no cover - log only
+                    self._logger.error("background task %s failed: %s", name, exc)
+                finally:
+                    self._readiness_tracker("finished", name)
+
+        t = threading.Thread(target=_runner, daemon=True, name=f"bootstrap-{name}")
+        t.start()
+        return t
+
+
 class EnvironmentBootstrapper:
     """Bootstrap dependencies and infrastructure on startup."""
 
@@ -129,24 +175,57 @@ class EnvironmentBootstrapper:
         self._background_threads: list[threading.Thread] = []
         self._stop_events: list[threading.Event] = []
         self._watchers_limited = os.getenv("MENACE_MINIMISE_BOOTSTRAP_WATCHERS") == "1"
-        self._phase_readiness: dict[str, bool] = {phase: False for phase in self.PHASES}
+        self._phase_readiness: dict[str, bool | dict[str, object]] = {
+            phase: False for phase in self.PHASES
+        }
         self._phase_readiness["online"] = False
+        self._background_state: dict[str, object] = {
+            "scheduled": 0,
+            "running": 0,
+            "finished": 0,
+            "active": set(),
+        }
+        self._phase_readiness["background_tasks"] = {
+            "scheduled": 0,
+            "running": 0,
+            "finished": 0,
+            "active": [],
+        }
+        semaphore_size = max(
+            1,
+            int(
+                os.getenv(
+                    "MENACE_BOOTSTRAP_BACKGROUND_PARALLELISM",
+                    "1" if self._watchers_limited else "3",
+                )
+            ),
+        )
+        self._ready_event = threading.Event()
+        self._background_semaphore = threading.Semaphore(semaphore_size)
+        self._scheduler = _BootstrapScheduler(
+            ready_event=self._ready_event,
+            semaphore=self._background_semaphore,
+            logger=self.logger,
+            readiness_tracker=self._track_background_task,
+        )
         interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
-        if interval and not self._watchers_limited:
+        if interval:
             try:
                 sec = float(interval)
             except ValueError:
                 sec = 0.0
             if sec > 0:
-                stop_event = threading.Event()
-                t = self.config_discovery.run_continuous(
-                    interval=sec, stop_event=stop_event
+                self._queue_background_task(
+                    "config-discovery",
+                    lambda: self._start_config_discovery_watcher(sec),
                 )
-                self._stop_events.append(stop_event)
-                self._background_threads.append(t)
+                if self._watchers_limited:
+                    self.logger.info(
+                        "config discovery watcher queued with semaphore throttling",
+                    )
         elif self._watchers_limited:
             self.logger.info(
-                "config discovery watcher disabled via MENACE_MINIMISE_BOOTSTRAP_WATCHERS"
+                "config discovery watcher disabled via MENACE_MINIMISE_BOOTSTRAP_WATCHERS",
             )
         self.tf_dir = tf_dir or os.getenv("TERRAFORM_DIR")
         self.bootstrapper = InfrastructureBootstrapper(self.tf_dir)
@@ -163,11 +242,10 @@ class EnvironmentBootstrapper:
         if self.cluster_sup:
             hosts = [h.strip() for h in os.getenv("CLUSTER_HOSTS", "").split(",") if h.strip()]
             if hosts:
-                try:
-                    self.cluster_sup.add_hosts(hosts)
-                    self.cluster_sup.start_all()
-                except Exception as exc:  # pragma: no cover - remote may fail
-                    self.logger.error("cluster supervisor failed: %s", exc)
+                self._queue_background_task(
+                    "cluster-supervisor-hosts",
+                    lambda: self._start_cluster_hosts(hosts),
+                )
 
     def _run(self, cmd: list[str], **kwargs) -> None:
         """Run a subprocess command with retries and duration logging."""
@@ -280,8 +358,72 @@ class EnvironmentBootstrapper:
         self._phase_readiness[phase] = True
         if phase == "critical" or phase_budget.online_ready:
             self._mark_online_ready(elapsed, phase_budget.online_reason or "phase-complete")
+        if phase == "critical":
+            self._scheduler.mark_ready()
         self._emit_phase_event(phase, "ready", elapsed=elapsed)
         return True
+
+    def _track_background_task(self, action: str, name: str) -> None:
+        scheduled = int(self._background_state.get("scheduled", 0))
+        running = int(self._background_state.get("running", 0))
+        finished = int(self._background_state.get("finished", 0))
+        active: set[str] = set(self._background_state.get("active", set()))
+        if action == "scheduled":
+            scheduled += 1
+        elif action == "running":
+            running += 1
+            active.add(name)
+        elif action == "finished":
+            running = max(running - 1, 0)
+            finished += 1
+            active.discard(name)
+        self._background_state.update(
+            {
+                "scheduled": scheduled,
+                "running": running,
+                "finished": finished,
+                "active": active,
+            }
+        )
+        self._phase_readiness["background_tasks"] = {
+            "scheduled": scheduled,
+            "running": running,
+            "finished": finished,
+            "active": sorted(active),
+        }
+
+    def _queue_background_task(
+        self,
+        name: str,
+        func: Callable[[], threading.Thread | None],
+        *,
+        delay_until_ready: bool = True,
+        join_inner: bool = True,
+    ) -> threading.Thread:
+        t = self._scheduler.schedule(
+            name,
+            func,
+            delay_until_ready=delay_until_ready,
+            join_inner=join_inner,
+        )
+        self._background_threads.append(t)
+        return t
+
+    def _start_config_discovery_watcher(self, interval: float) -> threading.Thread:
+        stop_event = threading.Event()
+        thread = self.config_discovery.run_continuous(
+            interval=interval, stop_event=stop_event
+        )
+        self._stop_events.append(stop_event)
+        self._background_threads.append(thread)
+        return thread
+
+    def _start_cluster_hosts(self, hosts: list[str]) -> None:
+        try:
+            self.cluster_sup.add_hosts(hosts)
+            self.cluster_sup.start_all()
+        except Exception as exc:  # pragma: no cover - remote may fail
+            self.logger.error("cluster supervisor failed: %s", exc)
 
     def _resolve_phase_budgets(
         self, timeout: float | None
@@ -739,10 +881,11 @@ class EnvironmentBootstrapper:
             except ValueError:
                 sec = 0.0
             if sec > 0:
-                stop_event = threading.Event()
-                t = self.bootstrapper.run_continuous(interval=sec, stop_event=stop_event)
-                self._stop_events.append(stop_event)
-                self._background_threads.append(t)
+                self._queue_background_task(
+                    "auto-provision",
+                    lambda: self._start_auto_provisioner(sec),
+                    delay_until_ready=False,
+                )
         check_budget()
         hosts = os.getenv("REMOTE_HOSTS", "").split(",")
         hosts = [h.strip() for h in hosts if h.strip()]
@@ -808,12 +951,25 @@ class EnvironmentBootstrapper:
                 if halt_background:
                     optional_work()
                 else:
-                    t = threading.Thread(target=optional_work, daemon=True)
-                    t.start()
-                    self._background_threads.append(t)
+                    self._queue_background_task(
+                        "optional-phase",
+                        lambda: self._run_optional(optional_work),
+                        delay_until_ready=False,
+                        join_inner=False,
+                    )
         finally:
             if halt_background:
                 self.shutdown()
+
+    def _run_optional(self, work: Callable[[], None]) -> None:
+        work()
+
+    def _start_auto_provisioner(self, interval: float) -> threading.Thread:
+        stop_event = threading.Event()
+        t = self.bootstrapper.run_continuous(interval=interval, stop_event=stop_event)
+        self._stop_events.append(stop_event)
+        self._background_threads.append(t)
+        return t
 
 
 __all__ = ["EnvironmentBootstrapper"]
