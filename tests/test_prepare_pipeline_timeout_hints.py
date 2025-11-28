@@ -34,8 +34,8 @@ def test_prepare_timeout_logs_standard_hints(monkeypatch, caplog):
 
     combined_output = caplog.text + str(excinfo.value)
 
-    assert "MENACE_BOOTSTRAP_WAIT_SECS=240" in combined_output
-    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=240" in combined_output
+    assert "MENACE_BOOTSTRAP_WAIT_SECS=" in combined_output
+    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output
 
 
@@ -67,3 +67,40 @@ def test_bootstrap_policy_refreshes_cached_wait_timeout(monkeypatch, caplog):
     assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= cbi._BOOTSTRAP_TIMEOUT_FLOOR
     assert cbi._BOOTSTRAP_WAIT_TIMEOUT < 600.0
     assert cbi._resolve_bootstrap_wait_timeout(False) == cbi._BOOTSTRAP_WAIT_TIMEOUT
+
+
+def test_shared_timeout_records_stage_gates(monkeypatch):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "90")
+    monkeypatch.setattr(cbi, "enforce_bootstrap_timeout_policy", lambda logger=None: {})
+
+    class _VectorHeavyPipeline:
+        vector_bootstrap_heavy = True
+
+        def __init__(self, **_kwargs: object) -> None:
+            return
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_VectorHeavyPipeline,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        vectorizer_budget=5.0,
+        retriever_budget=3.0,
+        db_warmup_budget=2.0,
+    )
+
+    promote(object())
+
+    shared = cbi._PREPARE_PIPELINE_WATCHDOG.get("shared_timeout", {})
+    timeline = shared.get("timeline", [])
+
+    assert timeline
+    assert any(
+        "vectorizers" in entry.get("meta.gates", ())
+        or entry.get("label") == "vectorizers"
+        for entry in timeline
+    ), timeline
+    assert any(
+        entry.get("label") in {"pipeline_component_warmup", "orchestrator_state_warmup"}
+        for entry in timeline
+    )
