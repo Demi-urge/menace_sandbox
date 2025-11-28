@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
+    load_component_timeout_floors,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
 )
@@ -711,7 +712,8 @@ def _monitor_bootstrap_thread(
             stage_start_times[stage] = time.monotonic()
         stage_elapsed = time.monotonic() - stage_start_times[stage]
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
-        if not core_online_announced and minimal_online(online_state_snapshot):
+        core_online, lagging_core, degraded_core = minimal_online(online_state_snapshot)
+        if not core_online_announced and core_online:
             LOGGER.info(
                 "core bootstrap quorum reached; optional services warming",
                 extra=log_record(
@@ -730,6 +732,15 @@ def _monitor_bootstrap_thread(
                     extra=log_record(
                         event="bootstrap-online-partial",
                         lagging_optional=sorted(lagging),
+                        online_state=online_state_snapshot,
+                    ),
+                )
+            if degraded_core:
+                LOGGER.info(
+                    "core components degraded but permitting background warmup",
+                    extra=log_record(
+                        event="bootstrap-online-degraded",
+                        degraded_core=sorted(degraded_core),
                         online_state=online_state_snapshot,
                     ),
                 )
@@ -882,11 +893,14 @@ def _resolve_bootstrap_deadline_policy(
     """Determine the effective bootstrap deadline policy."""
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
+    component_floors = load_component_timeout_floors()
     stage_deadlines = build_stage_deadlines(
         baseline_timeout,
         heavy_detected=heavy_detected,
         soft_deadline=soft_deadline,
         heavy_scale=heavy_scale,
+        component_budgets=component_floors,
+        component_floors=component_floors,
     )
     enforced_deadlines = [
         entry["deadline"]

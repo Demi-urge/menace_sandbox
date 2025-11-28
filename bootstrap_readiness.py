@@ -41,12 +41,34 @@ def stage_for_step(step: str) -> str | None:
     return _STEP_TO_STAGE.get(step)
 
 
+_STAGE_BUDGET_ALIASES: Mapping[str, tuple[str, ...]] = {
+    "db_index_load": ("db_index_load", "db_indexes", "db_index"),
+    "retriever_hydration": ("retriever_hydration", "retrievers", "retriever"),
+    "vector_seeding": ("vector_seeding", "vectorizers", "vector"),
+    "orchestrator_state": ("orchestrator_state", "orchestrator"),
+    "background_loops": ("background_loops", "background"),
+}
+
+
+def _resolve_stage_budget(stage: str, budgets: Mapping[str, float] | None) -> float | None:
+    if not budgets:
+        return None
+    if stage in budgets:
+        return float(budgets[stage])
+    for alias in _STAGE_BUDGET_ALIASES.get(stage, ()):  # pragma: no branch - small tuples
+        if alias in budgets:
+            return float(budgets[alias])
+    return None
+
+
 def build_stage_deadlines(
     baseline_timeout: float,
     *,
     heavy_detected: bool = False,
     soft_deadline: bool = False,
     heavy_scale: float = 1.5,
+    component_budgets: Mapping[str, float] | None = None,
+    component_floors: Mapping[str, float] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Construct stage-aware deadlines for bootstrap orchestration."""
 
@@ -57,20 +79,43 @@ def build_stage_deadlines(
     stage_deadlines: dict[str, dict[str, object]] = {}
     for stage in READINESS_STAGES:
         enforced = not stage.optional and not soft_deadline
-        deadline = None if soft_deadline and not stage.optional else base_timeout
+        stage_budget = _resolve_stage_budget(stage.name, component_budgets)
+        deadline = stage_budget if stage_budget is not None else base_timeout
+        if heavy_detected and stage_budget is not None and not soft_deadline:
+            deadline *= heavy_scale
+
         if stage.optional:
-            deadline = base_timeout * 0.8
+            deadline = deadline * 0.8 if deadline is not None else None
+
+        stage_floor = _resolve_stage_budget(stage.name, component_floors)
+        if stage_floor is not None and deadline is not None:
+            deadline = max(deadline, stage_floor)
+
+        deadline = None if soft_deadline and not stage.optional else deadline
         stage_deadlines[stage.name] = {
             "deadline": deadline,
             "optional": stage.optional,
             "enforced": enforced,
+            "floor": stage_floor,
+            "soft_budget": stage_budget,
+            "soft_degrade": stage.optional,
         }
     return stage_deadlines
 
 
-def minimal_online(online_state: Mapping[str, object]) -> bool:
+def minimal_online(online_state: Mapping[str, object]) -> tuple[bool, set[str], set[str]]:
     components = online_state.get("components", {}) if isinstance(online_state, Mapping) else {}
-    return all(str(components.get(component, "pending")) == "ready" for component in CORE_COMPONENTS)
+    lagging: set[str] = set()
+    degraded: set[str] = set()
+    for component in CORE_COMPONENTS:
+        status = str(components.get(component, "pending"))
+        if status == "ready":
+            continue
+        if status in {"partial", "warming", "degraded"}:
+            degraded.add(component)
+            continue
+        lagging.add(component)
+    return len(lagging) == 0, lagging, degraded
 
 
 def lagging_optional_components(online_state: Mapping[str, object]) -> set[str]:

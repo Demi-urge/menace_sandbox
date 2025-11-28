@@ -29,6 +29,7 @@ from typing import Iterable, Iterator, Mapping, Any, Callable
 from bootstrap_readiness import build_stage_deadlines
 from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
+    load_component_timeout_floors,
     wait_for_bootstrap_quiet_period,
 )
 from bootstrap_metrics import BOOTSTRAP_DURATION_STORE, compute_stats, record_durations
@@ -167,7 +168,15 @@ def bootstrap_self_coding(bot_name: str) -> None:
 
     guard_delay = _apply_self_coding_guard()
     baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
-    stage_policy = build_stage_deadlines(baseline_timeout)
+    component_floors = load_component_timeout_floors()
+    component_budgets = compute_prepare_pipeline_component_budgets(
+        component_floors=component_floors
+    )
+    stage_policy = build_stage_deadlines(
+        baseline_timeout,
+        component_budgets=component_budgets,
+        component_floors=component_floors,
+    )
     LOGGER.info(
         "bootstrap readiness policy applied",
         extra={"stage_policy": stage_policy, "baseline_timeout": baseline_timeout},
@@ -219,8 +228,6 @@ def bootstrap_self_coding(bot_name: str) -> None:
             context_builder=builder,
         ),
     )
-
-    component_budgets = compute_prepare_pipeline_component_budgets()
 
     def _build_pipeline() -> tuple[Any, Any]:
         with fallback_helper_manager(
