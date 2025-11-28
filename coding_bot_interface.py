@@ -1141,6 +1141,9 @@ def _record_prepare_pipeline_stage(
         "elapsed": round(elapsed, 6),
         "timestamp": time.time(),
     }
+    derived_gates = _derive_readiness_gates(label, readiness_gates)
+    if derived_gates:
+        record["components"] = tuple(sorted(derived_gates))
     if extra:
         record.update(dict(extra))
     if timeout:
@@ -5346,6 +5349,58 @@ def _prepare_pipeline_for_bootstrap_impl(
             extra=dict(context),
         )
 
+    def _format_budget_annotations(
+        components: Mapping[str, Mapping[str, Any]] | None,
+        *,
+        gates: Iterable[str] | None = None,
+    ) -> list[str]:
+        if not components:
+            return []
+
+        annotations: list[str] = []
+        gate_filter = set(gates or components.keys())
+
+        def _safe_float(value: object | None) -> float | None:
+            try:
+                return float(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        for gate, meta in sorted(components.items()):
+            if gate_filter and gate not in gate_filter:
+                continue
+            if not isinstance(meta, Mapping):
+                continue
+            budget = _safe_float(
+                meta.get("budget")
+                or meta.get("effective")
+                or meta.get("component_budget")
+            )
+            remaining = _safe_float(
+                meta.get("remaining")
+                or meta.get("component_remaining_after")
+                or meta.get("component_remaining")
+            )
+            spent = None
+            if budget is not None and remaining is not None:
+                spent = budget - remaining
+            elif budget is not None and meta.get("elapsed") is not None:
+                spent = _safe_float(meta.get("elapsed"))
+
+            if budget is None and remaining is None and spent is None:
+                continue
+
+            clause = f"{gate}"
+            if spent is not None and budget is not None:
+                clause += f" spent {spent:.1f}s of {budget:.1f}s"
+            elif budget is not None:
+                clause += f" budget {budget:.1f}s"
+            if remaining is not None:
+                clause += f" (remaining {remaining:.1f}s)"
+            annotations.append(clause)
+
+        return annotations
+
     def _emit_timeout_diagnostics(stage: str, context: Mapping[str, Any]) -> None:
         vector_heavy = bool(context.get("vector_heavy", False))
         timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
@@ -5843,7 +5898,16 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "deadline": phase_state.get("deadline"),
                 "extensions": phase_state.get("extensions"),
                 "policy_extensions": phase_state.get("policy_extensions"),
+                "elapsed": None,
             }
+            budget_value = phase_state.get("budget")
+            if budget_value is not None and budget_remaining is not None:
+                try:
+                    consumption_snapshot[gate]["elapsed"] = float(budget_value) - float(
+                        budget_remaining
+                    )
+                except (TypeError, ValueError):
+                    consumption_snapshot[gate].pop("elapsed", None)
             if (
                 gate_pending
                 and budget_remaining is not None
@@ -5930,6 +5994,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "component_consumption": consumption_snapshot,
             }
             context["remediation_hints"] = remediation_hints
+            budget_annotations = _format_budget_annotations(
+                consumption_snapshot, gates=exhausted_critical
+            )
+            if budget_annotations:
+                context["component_budget_annotations"] = budget_annotations
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
@@ -5945,10 +6014,14 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
+            budget_clause = (
+                f" budgets: {', '.join(budget_annotations)}" if budget_annotations else ""
+            )
             raise TimeoutError(
                 (
                     "prepare_pipeline_for_bootstrap timed out during "
-                    f"{stage} ({', '.join(sorted(exhausted_critical))}); remediation: {'; '.join(remediation_hints)}"
+                    f"{stage} ({', '.join(sorted(exhausted_critical))});"
+                    f"{budget_clause} remediation: {'; '.join(remediation_hints)}"
                 )
             )
 
@@ -6001,10 +6074,20 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "elastic_global_window": watchdog_telemetry.get("elastic_global_window"),
                 "global_window_extension": watchdog_telemetry.get("global_window_extension"),
             }
+            budget_annotations = _format_budget_annotations(
+                component_budget_payload,
+                gates=readiness_pending or readiness_ready,
+            )
             remediation_hints = render_prepare_pipeline_timeout_hints(
-                vector_heavy, components=readiness_pending or readiness_ready
+                vector_heavy,
+                components=component_budget_payload
+                if component_budget_payload
+                else readiness_pending
+                or readiness_ready,
             )
             context["remediation_hints"] = remediation_hints
+            if budget_annotations:
+                context["component_budget_annotations"] = budget_annotations
             logger.warning(
                 (
                     "prepare_pipeline_for_bootstrap cancelled during %s via stop event "
@@ -6022,10 +6105,13 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
             _record_timeout(stage, context)
             _emit_timeout_diagnostics(stage, context)
+            budget_clause = (
+                f" budgets: {', '.join(budget_annotations)}" if budget_annotations else ""
+            )
             raise TimeoutError(
                 (
                     "prepare_pipeline_for_bootstrap cancelled via stop event during "
-                    f"{stage}; remediation: {'; '.join(remediation_hints)}"
+                    f"{stage};{budget_clause} remediation: {'; '.join(remediation_hints)}"
                 )
             )
     def _typeerror_rejects_manager(exc: TypeError) -> bool:

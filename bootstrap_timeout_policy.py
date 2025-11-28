@@ -1012,6 +1012,15 @@ def collect_timeout_telemetry() -> Mapping[str, object]:
 
 
 def _categorize_stage(entry: Mapping[str, object]) -> str | None:
+    components = entry.get("components") or entry.get("component")
+    if isinstance(components, (list, tuple, set)):
+        for component in components:
+            normalized = str(component).strip().lower()
+            if normalized in _COMPONENT_TIMEOUT_MINIMUMS:
+                return normalized
+    elif isinstance(components, str) and components in _COMPONENT_TIMEOUT_MINIMUMS:
+        return components
+
     label = str(entry.get("label", "")).lower()
     if "vector" in label:
         return "vectorizers"
@@ -1021,6 +1030,10 @@ def _categorize_stage(entry: Mapping[str, object]) -> str | None:
         return "db_indexes"
     if "orchestrator" in label:
         return "orchestrator_state"
+    if any(token in label for token in ("config", "context", "pipeline")):
+        return "pipeline_config"
+    if any(token in label for token in ("background", "loop", "scheduler")):
+        return "background_loops"
     return None
 
 
@@ -1464,7 +1477,7 @@ def enforce_bootstrap_timeout_policy(
 def render_prepare_pipeline_timeout_hints(
     vector_heavy: bool | None = None,
     *,
-    components: Iterable[str] | None = None,
+    components: Mapping[str, Mapping[str, object]] | Iterable[str] | None = None,
 ) -> list[str]:
     """Return remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts.
 
@@ -1500,18 +1513,50 @@ def render_prepare_pipeline_timeout_hints(
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
 
-    if components:
-        for component in sorted(set(components)):
+    component_map: Mapping[str, Mapping[str, object]] = {}
+    component_labels: Iterable[str] | None = None
+    if isinstance(components, Mapping):
+        component_map = components
+        component_labels = components.keys()
+    else:
+        component_labels = components
+
+    if component_labels:
+        for component in sorted(set(component_labels)):
             env_var = _COMPONENT_ENV_MAPPING.get(component)
             if env_var:
                 floor = component_floors.get(component) or _COMPONENT_TIMEOUT_MINIMUMS.get(
                     component, 0.0
                 )
+                budget = component_map.get(component, {}) if component_map else {}
+                budget_clause = ""
+                if isinstance(budget, Mapping):
+                    budget_value = _parse_float(
+                        str(
+                            budget.get("budget")
+                            or budget.get("effective")
+                            or budget.get("component_budget")
+                        )
+                    )
+                    remaining = _parse_float(
+                        str(
+                            budget.get("remaining")
+                            or budget.get("component_remaining_after")
+                            or budget.get("component_remaining")
+                        )
+                    )
+                    if budget_value is not None and remaining is not None:
+                        spent = budget_value - remaining
+                        budget_clause = (
+                            f" (spent {spent:.1f}s of {budget_value:.1f}s, remaining {remaining:.1f}s)"
+                        )
+                    elif budget_value is not None:
+                        budget_clause = f" (budget {budget_value:.1f}s)"
                 hints.append(
                     (
                         f"Repeated {component} overruns detected; increase {env_var}"
                         f" to at least {int(floor)}s to grant that gate more room without"
-                        " stretching the global deadline."
+                        f" stretching the global deadline.{budget_clause}"
                     )
                 )
 
@@ -1674,6 +1719,7 @@ class SharedTimeoutCoordinator:
 
             record: MutableMapping[str, object] = {
                 "label": label,
+                "component": label,
                 "requested": requested,
                 "minimum": minimum,
                 "component_floor": component_floor,

@@ -108,3 +108,75 @@ def test_vector_heavy_budgets_extend_bootstrap_wait(monkeypatch, tmp_path):
     assert cbi._BOOTSTRAP_WAIT_TIMEOUT is not None
     assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= sum(budgets.values())
 
+
+def test_component_overruns_cover_all_taxonomy():
+    telemetry = {
+        "shared_timeout": {
+            "timeline": [
+                {"label": "vector service warmup", "elapsed": 75.0, "effective": 30.0},
+                {
+                    "label": "retriever handshake",
+                    "elapsed": 65.0,
+                    "effective": 25.0,
+                    "components": ["retrievers"],
+                },
+                {
+                    "label": "db index sync",
+                    "elapsed": 55.0,
+                    "effective": 20.0,
+                    "component": "db_indexes",
+                },
+                {
+                    "label": "orchestrator recovery",
+                    "elapsed": 45.0,
+                    "effective": 15.0,
+                },
+                {
+                    "label": "pipeline config",
+                    "elapsed": 35.0,
+                    "effective": 10.0,
+                },
+                {
+                    "label": "background scheduler loop",
+                    "elapsed": 30.0,
+                    "effective": 8.0,
+                },
+            ]
+        }
+    }
+
+    overruns = btp._summarize_component_overruns(telemetry)
+
+    expected_by_gate = {
+        "vectorizers": 30.0,
+        "retrievers": 25.0,
+        "db_indexes": 20.0,
+        "orchestrator_state": 15.0,
+        "pipeline_config": 10.0,
+        "background_loops": 8.0,
+    }
+
+    for gate, effective in expected_by_gate.items():
+        assert gate in overruns
+        assert overruns[gate]["expected_floor"] >= effective
+
+
+def test_timeout_hints_include_budget_clauses():
+    components = {
+        "vectorizers": {"budget": 60.0, "remaining": -5.0},
+        "retrievers": {"budget": 45.0, "remaining": 0.0},
+        "db_indexes": {"budget": 35.0, "remaining": 2.0},
+        "orchestrator_state": {"budget": 25.0, "remaining": 1.0},
+        "pipeline_config": {"budget": 20.0, "remaining": 5.0},
+        "background_loops": {"budget": 15.0, "remaining": 7.5},
+    }
+
+    hints = btp.render_prepare_pipeline_timeout_hints(
+        vector_heavy=False, components=components
+    )
+
+    for gate in components:
+        gate_hints = [hint for hint in hints if gate in hint]
+        assert gate_hints
+        assert any("budget" in hint or "remaining" in hint for hint in gate_hints)
+
