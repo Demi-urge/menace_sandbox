@@ -381,6 +381,17 @@ def load_escalated_timeout_floors() -> dict[str, float]:
         _save_timeout_state(state)
     _record_adaptive_context(adaptive_notes)
 
+    adaptive_floors = adaptive_notes.get("adaptive_floors")
+    if adaptive_floors:
+        LOGGER.info(
+            "adaptive bootstrap timeout floors applied",
+            extra={
+                "event": "adaptive-timeout-floors",
+                "adaptive_floors": adaptive_floors,
+                "state_path": str(_TIMEOUT_STATE_PATH),
+            },
+        )
+
     return minimums
 
 
@@ -530,6 +541,27 @@ def compute_prepare_pipeline_component_budgets(
         load_average = _parse_float(str(host_telemetry.get("host_load")))
     scale = _host_load_scale(load_average)
 
+    adaptive_floors: dict[str, dict[str, float | int | str]] = {}
+
+    def _apply_adaptive_floor(
+        component: str,
+        suggested_floor: float,
+        *,
+        reason: str,
+        overruns: int | None = None,
+    ) -> None:
+        baseline = floors.get(component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0))
+        adjusted_floor = max(baseline, suggested_floor)
+        if adjusted_floor > baseline:
+            floors[component] = adjusted_floor
+            adaptive_floors[component] = {
+                "previous": baseline,
+                "floor": adjusted_floor,
+                "reason": reason,
+            }
+            if overruns is not None:
+                adaptive_floors[component]["overruns"] = overruns
+
     def _count(value: object) -> int:
         if isinstance(value, (list, tuple, set, frozenset)):
             return len(value)
@@ -562,15 +594,27 @@ def compute_prepare_pipeline_component_budgets(
         0, _count(complexity.get("orchestrator_components")) - 1
     ) * 0.1
 
-    budgets = {
-        key: value * scale * component_complexity.get(key, 1.0)
-        for key, value in floors.items()
-    }
-
     host_overruns = {}
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     if isinstance(host_state, dict):
         host_overruns = host_state_details.get("component_overruns", {}) or {}
+
+    if isinstance(host_overruns, Mapping):
+        for component, meta in host_overruns.items():
+            streak = int(meta.get("overruns", 0) or 0)
+            suggested_floor = _parse_float(str(meta.get("suggested_floor")))
+            if streak >= _OVERRUN_STREAK_THRESHOLD and suggested_floor is not None:
+                _apply_adaptive_floor(
+                    component,
+                    float(suggested_floor),
+                    reason="persisted_overruns",
+                    overruns=streak,
+                )
+
+    budgets = {
+        key: value * scale * component_complexity.get(key, 1.0)
+        for key, value in floors.items()
+    }
 
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
@@ -588,6 +632,17 @@ def compute_prepare_pipeline_component_budgets(
             if streak >= _OVERRUN_STREAK_THRESHOLD and expected_floor:
                 candidates.append(expected_floor * scale * 1.1)
 
+            if streak >= _OVERRUN_STREAK_THRESHOLD:
+                adaptive_floor = suggested_floor
+                if adaptive_floor is None and (max_elapsed or expected_floor):
+                    adaptive_floor = max(max_elapsed + 30.0, expected_floor * 1.1)
+                if adaptive_floor is not None:
+                    _apply_adaptive_floor(
+                        component,
+                        float(adaptive_floor),
+                        reason="telemetry_overruns",
+                        overruns=streak,
+                    )
             budgets[component] = max(c for c in candidates if c is not None)
 
     telemetry_overruns = _summarize_component_overruns(telemetry or {})
@@ -602,10 +657,21 @@ def compute_prepare_pipeline_component_budgets(
         "component_complexity": component_complexity,
         "telemetry_overruns": telemetry_overruns,
         "floors": floors,
+        "adaptive_floors": adaptive_floors,
     }
     _record_adaptive_context(adaptive_inputs)
 
     host_state_details = host_state_details if isinstance(host_state_details, dict) else {}
+    if adaptive_floors:
+        persisted_floors = (
+            host_state_details.get("component_floors", {}) if isinstance(host_state_details, Mapping) else {}
+        )
+        persisted_floors = dict(persisted_floors) if isinstance(persisted_floors, Mapping) else {}
+        for component, meta in adaptive_floors.items():
+            persisted_floors[component] = float(
+                meta.get("floor", floors.get(component, 0.0))
+            )
+        host_state_details["component_floors"] = persisted_floors
     host_state_details.update(
         {
             "last_component_budgets": budgets,
@@ -618,6 +684,16 @@ def compute_prepare_pipeline_component_budgets(
     else:  # pragma: no cover - defensive against corrupted state
         host_state = {host_key: host_state_details}
     _save_timeout_state(host_state)
+
+    if adaptive_floors:
+        LOGGER.info(
+            "adaptive component floors applied",
+            extra={
+                "event": "adaptive-component-floors",
+                "floors": adaptive_floors,
+                "state_path": str(_TIMEOUT_STATE_PATH),
+            },
+        )
 
     LOGGER.info(
         "prepared adaptive component budgets",
