@@ -55,8 +55,9 @@ class _PhaseBudgetContext:
         budget: dict[str, float | None],
         clock: Callable[[], float],
         logger: logging.Logger,
-        mark_online: Callable[[float | None, str], None],
+        mark_online: Callable[[float | None, str, bool], None],
         enforce_deadline: bool = True,
+        allow_partial_online: bool = False,
         soft_overrun_handler: Callable[[str, float, float | None], None] | None = None,
     ) -> None:
         self.phase = phase
@@ -70,6 +71,7 @@ class _PhaseBudgetContext:
         self.online_reason: str | None = None
         self._enforce_deadline = enforce_deadline
         self._soft_overrun_handler = soft_overrun_handler
+        self._allow_partial_online = allow_partial_online
 
     def check(self) -> None:
         limit = self.budget.get("limit")
@@ -100,7 +102,7 @@ class _PhaseBudgetContext:
             return
         self.online_ready = True
         self.online_reason = reason
-        self._mark_online(self.elapsed, reason)
+        self._mark_online(self.elapsed, reason, True if self._allow_partial_online else False)
 
     @property
     def elapsed(self) -> float:
@@ -191,6 +193,7 @@ class EnvironmentBootstrapper:
         self._phase_readiness: dict[str, bool | dict[str, object]] = {
             phase: False for phase in self.PHASES
         }
+        self._phase_readiness["online_partial"] = False
         self._phase_readiness["online"] = False
         self._phase_gates: dict[str, dict[str, object]] = {
             phase: {"status": "pending", "started": None, "finished": None}
@@ -313,11 +316,18 @@ class EnvironmentBootstrapper:
         )
         self.logger.info("bootstrap phase %s %s", phase, status, extra=payload)
 
-    def _mark_online_ready(self, elapsed: float | None, reason: str) -> None:
+    def _mark_online_ready(self, elapsed: float | None, reason: str, partial: bool) -> None:
+        if partial and not self._phase_readiness.get("online_partial"):
+            if self._critical_gate_ready():
+                self._phase_readiness["online_partial"] = True
+                self._emit_phase_event(
+                    "online_partial", "ready", elapsed=elapsed, reason=reason
+                )
         if self._phase_readiness.get("online"):
             return
         if not self._core_gates_ready():
             return
+        self._phase_readiness["online_partial"] = True
         self._phase_readiness["online"] = True
         self._emit_phase_event("online", "ready", elapsed=elapsed, reason=reason)
 
@@ -371,27 +381,49 @@ class EnvironmentBootstrapper:
             gate["finished"] = now
         gate.update({"status": status, **fields})
 
+    def _critical_gate_ready(self) -> bool:
+        return self._phase_gates.get("critical", {}).get("status") in {
+            "ready",
+            "degraded",
+        }
+
     def _core_gates_ready(self) -> bool:
         return all(
-            self._phase_gates.get(name, {}).get("status") == "ready"
+            self._phase_gates.get(name, {}).get("status") in {"ready", "degraded"}
             for name in ("critical", "provisioning")
         )
 
-    def _maybe_mark_online(self, *, reason: str) -> None:
+    def _phase_elapsed(self, phase: str) -> float | None:
+        try:
+            gate = self._phase_gates.get(phase, {})
+            started = float(gate.get("started") or 0.0)
+            finished = float(gate.get("finished") or 0.0)
+            if started <= 0.0:
+                return None
+            if finished <= 0.0:
+                finished = self._clock()
+            return max(finished - started, 0.0)
+        except Exception:
+            return None
+
+    def _maybe_mark_online(self, *, reason: str, partial: bool = False) -> None:
+        critical_elapsed = self._phase_elapsed("critical")
+        if partial:
+            self._mark_online_ready(critical_elapsed, reason, True)
         if self._phase_readiness.get("online"):
             return
         if not self._core_gates_ready():
             return
-        elapsed = None
+        core_elapsed = None
         try:
-            elapsed = max(
+            core_elapsed = max(
                 (self._phase_gates.get(name, {}).get("finished") or 0.0)
                 - (self._phase_gates.get(name, {}).get("started") or 0.0)
                 for name in ("critical", "provisioning")
             )
         except Exception:
-            elapsed = None
-        self._mark_online_ready(elapsed, reason)
+            core_elapsed = None
+        self._mark_online_ready(core_elapsed, reason, True)
 
     def _run_phase(
         self,
@@ -434,7 +466,7 @@ class EnvironmentBootstrapper:
             )
             self._update_gate(name, "degraded", elapsed=elapsed, limit=limit, overrun=True)
 
-        enforce_deadline = phase != "optional"
+        enforce_deadline = phase == "critical"
         phase_budget = _PhaseBudgetContext(
             phase=phase,
             budget=normalized_budget,
@@ -442,6 +474,7 @@ class EnvironmentBootstrapper:
             logger=self.logger,
             mark_online=self._mark_online_ready,
             enforce_deadline=enforce_deadline,
+            allow_partial_online=phase in {"critical", "provisioning"},
             soft_overrun_handler=None if enforce_deadline else _mark_soft_overrun,
         )
 
@@ -484,7 +517,7 @@ class EnvironmentBootstrapper:
         elapsed = phase_budget.elapsed
         self._phase_readiness[phase] = True
         gate_status = "ready"
-        if soft_overrun and phase == "optional":
+        if soft_overrun and phase != "critical":
             gate_status = "degraded"
         self._update_gate(
             phase,
@@ -497,7 +530,10 @@ class EnvironmentBootstrapper:
         if phase == "critical":
             self._scheduler.mark_ready()
         self._emit_phase_event(phase, gate_status, elapsed=elapsed)
-        self._maybe_mark_online(reason=phase_budget.online_reason or "core-phases-complete")
+        self._maybe_mark_online(
+            reason=phase_budget.online_reason or "core-phases-complete",
+            partial=True,
+        )
         self._persist_phase_duration(phase, elapsed)
         return True
 
