@@ -24,10 +24,10 @@ BOOTSTRAP_DB_INDEX_BYTES_ENV = _BOOTSTRAP_DB_INDEX_BYTES_ENV
 BOOTSTRAP_COMPLEXITY_SCALE_ENV = _BOOTSTRAP_COMPLEXITY_SCALE_ENV
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": 240.0,
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 240.0,
-    "BOOTSTRAP_STEP_TIMEOUT": 240.0,
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 240.0,
+    "MENACE_BOOTSTRAP_WAIT_SECS": 120.0,
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 160.0,
+    "BOOTSTRAP_STEP_TIMEOUT": 120.0,
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 160.0,
     "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": 420.0,
     "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS": 300.0,
     "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": 240.0,
@@ -79,6 +79,14 @@ _BOOTSTRAP_HEARTBEAT_PATH = Path(
     os.getenv(_BOOTSTRAP_HEARTBEAT_ENV, "/tmp/menace_bootstrap_watchdog.json")
 )
 _BACKGROUND_UNLIMITED_ENV = "MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED"
+_ESSENTIAL_PHASES = {
+    "vectorizers",
+    "retrievers",
+    "db_indexes",
+    "orchestrator_state",
+    "pipeline_config",
+}
+_OPTIONAL_PHASES = {"background_loops"}
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -357,15 +365,104 @@ def build_progress_signal_hook(
 ) -> Callable[[Mapping[str, object]], None]:
     """Return a hook that broadcasts SharedTimeoutCoordinator progress."""
 
+    supervisor = BootstrapHeartbeatSupervisor(namespace=namespace)
+
     def _signal(record: Mapping[str, object]) -> None:
         enriched: dict[str, Any] = {
             "namespace": namespace,
             "run_id": run_id or f"{namespace}-{os.getpid()}",
             **record,
         }
+        readiness = supervisor.update(enriched)
+        if readiness:
+            enriched["bootstrap_supervisor"] = readiness
         emit_bootstrap_heartbeat(enriched)
 
     return _signal
+
+
+class BootstrapHeartbeatSupervisor:
+    """Track per-phase bootstrap heartbeats and mark online readiness."""
+
+    def __init__(self, *, namespace: str) -> None:
+        self.namespace = namespace
+        self.components: dict[str, str] = {}
+        self._last_snapshot: dict[str, object] = {}
+
+    @staticmethod
+    def _normalize_component(label: str | None) -> str | None:
+        if not label:
+            return None
+        label = str(label)
+        aliases = {
+            "vectorizer": "vectorizers",
+            "vector": "vectorizers",
+            "retriever": "retrievers",
+            "db_index": "db_indexes",
+            "db_index_load": "db_indexes",
+            "orchestrator": "orchestrator_state",
+            "config": "pipeline_config",
+            "background": "background_loops",
+        }
+        return aliases.get(label, label)
+
+    def _component_state(self, heartbeat: Mapping[str, object]) -> tuple[str | None, str | None]:
+        component = self._normalize_component(
+            heartbeat.get("component")
+            or heartbeat.get("label")
+            or heartbeat.get("phase")
+        )
+        state = heartbeat.get("component_state") or heartbeat.get("state")
+        if component is None:
+            return None, None
+
+        if state:
+            try:
+                return component, str(state)
+            except Exception:
+                return component, None
+
+        remaining = heartbeat.get("remaining")
+        progressing = _heartbeat_progressing(heartbeat)
+        if progressing and remaining is None:
+            state = "ready"
+        elif progressing:
+            state = "progressing"
+        elif remaining is None:
+            state = "pending"
+        else:
+            state = "warming"
+        return component, state
+
+    def _online(self) -> tuple[bool, set[str]]:
+        lagging: set[str] = set()
+        for component in _ESSENTIAL_PHASES:
+            state = self.components.get(component, "pending")
+            if state in {"ready", "progressing", "warming"}:
+                continue
+            lagging.add(component)
+        return len(lagging) == 0, lagging
+
+    def update(self, heartbeat: Mapping[str, object]) -> Mapping[str, object]:
+        component, state = self._component_state(heartbeat)
+        if component is None:
+            return self._last_snapshot
+
+        if state:
+            self.components[component] = state
+
+        optional = {name: self.components.get(name, "pending") for name in _OPTIONAL_PHASES}
+        online, lagging = self._online()
+        snapshot = {
+            "namespace": self.namespace,
+            "components": dict(self.components),
+            "optional": optional,
+            "online": online,
+            "lagging": sorted(lagging),
+            "ts": time.time(),
+        }
+        self._last_snapshot = snapshot
+        return snapshot
 
 
 def _load_timeout_state() -> dict:
