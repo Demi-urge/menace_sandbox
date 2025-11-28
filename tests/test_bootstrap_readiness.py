@@ -13,7 +13,7 @@ def test_minimal_online_marks_degraded_online(monkeypatch):
 
     ready, lagging, degraded, degraded_online = minimal_online(state)
 
-    assert not ready
+    assert ready
     assert degraded_online
     assert degraded == {"vector_seeding"}
     assert "retriever_hydration" in lagging

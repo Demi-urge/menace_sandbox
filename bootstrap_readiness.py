@@ -137,8 +137,10 @@ def minimal_online(
             continue
         lagging.add(component)
     quorum = _degraded_quorum(online_state)
-    degraded_online = len(degraded) >= quorum and len(lagging) > 0
-    return len(lagging) == 0, lagging, degraded, degraded_online
+    readyish_online = len(readyish) >= quorum
+    degraded_online = readyish_online and len(lagging) > 0
+    fully_ready = len(lagging) == 0
+    return fully_ready or readyish_online, lagging, degraded, degraded_online
 
 
 def lagging_optional_components(online_state: Mapping[str, object]) -> set[str]:

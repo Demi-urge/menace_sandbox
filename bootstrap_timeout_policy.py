@@ -663,13 +663,21 @@ def load_component_timeout_floors() -> dict[str, float]:
     state = _load_timeout_state()
     guard_context = get_bootstrap_guard_context()
     host_telemetry = read_bootstrap_heartbeat()
+    historical = load_last_component_budgets()
+    base_defaults: dict[str, float] = {}
+    for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
+        try:
+            historical_floor = float(historical.get(component, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            historical_floor = 0.0
+        base_defaults[component] = max(minimum, historical_floor)
     scale, scale_context = _derive_component_floor_scale(
         guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
     max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
     component_floors = {
         key: min(value * scale, value * max_scale)
-        for key, value in _COMPONENT_TIMEOUT_MINIMUMS.items()
+        for key, value in base_defaults.items()
     }
     host_key = _state_host_key()
     host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
@@ -726,13 +734,21 @@ def load_deferred_component_timeout_floors() -> dict[str, float]:
     state = _load_timeout_state()
     guard_context = get_bootstrap_guard_context()
     host_telemetry = read_bootstrap_heartbeat()
+    historical = load_last_component_budgets()
+    base_defaults: dict[str, float] = {}
+    for component, minimum in _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.items():
+        try:
+            historical_floor = float(historical.get(component, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            historical_floor = 0.0
+        base_defaults[component] = max(minimum, historical_floor)
     scale, scale_context = _derive_component_floor_scale(
         guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
     max_scale = _parse_float(os.getenv(_COMPONENT_FLOOR_MAX_SCALE_ENV)) or _DEFAULT_COMPONENT_FLOOR_MAX_SCALE
     component_floors = {
         key: min(value * scale, value * max_scale)
-        for key, value in _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.items()
+        for key, value in base_defaults.items()
     }
     host_key = _state_host_key()
     host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
@@ -1914,6 +1930,21 @@ class SharedTimeoutCoordinator:
         self._signal_hook = signal_hook
         self.global_window = global_window
         self.complexity_inputs = dict(complexity_inputs or {})
+        self._historical_budgets = load_last_component_budgets()
+        self.component_states: dict[str, str] = {}
+
+    def _component_baseline(self, label: str) -> float:
+        candidates = [
+            self.component_budgets.get(label, 0.0),
+            self.component_floors.get(label, 0.0),
+            self._historical_budgets.get(label, 0.0),
+            _COMPONENT_TIMEOUT_MINIMUMS.get(label, 0.0),
+            _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.get(label, 0.0),
+        ]
+        try:
+            return max(float(value) for value in candidates)
+        except (TypeError, ValueError):
+            return _COMPONENT_TIMEOUT_MINIMUMS.get(label, 0.0)
 
     def _register_component_window(self, label: str, budget: float | None) -> None:
         """Track component windows and expand the aggregate deadline when needed."""
@@ -1929,12 +1960,8 @@ class SharedTimeoutCoordinator:
                 load_scale += max(host_load - 1.0, 0.0) * 0.35
 
             def _window_budget(window_label: str, window: Mapping[str, float | None]) -> float:
-                baseline = max(
-                    float(window.get("budget") or 0.0),
-                    self.component_floors.get(window_label, 0.0),
-                    _COMPONENT_TIMEOUT_MINIMUMS.get(window_label, 0.0),
-                )
-                return baseline
+                baseline = float(window.get("budget") or 0.0)
+                return max(baseline, self._component_baseline(window_label))
 
             window_total = sum(
                 _window_budget(name, meta) for name, meta in self._component_windows.items()
@@ -1968,12 +1995,9 @@ class SharedTimeoutCoordinator:
         metadata: Mapping[str, object] | None,
         *,
         component_timer: bool = False,
-    ) -> tuple[float | None, MutableMapping[str, object]]:
+        ) -> tuple[float | None, MutableMapping[str, object]]:
         with self._lock:
-            component_floor = self.component_floors.get(label, 0.0)
-            component_floor = max(
-                component_floor, _COMPONENT_TIMEOUT_MINIMUMS.get(label, component_floor)
-            )
+            component_floor = max(self.component_floors.get(label, 0.0), self._component_baseline(label))
             effective_floor = max(minimum, component_floor)
             effective = requested if requested is not None else effective_floor
             effective = max(effective_floor, effective)
@@ -2107,7 +2131,11 @@ class SharedTimeoutCoordinator:
             "host_load": _host_load_average(),
             "ts": time.time(),
             "global_window": self.global_window,
+            "progressing": True,
         }
+        state = self.component_states.get(label)
+        if state:
+            record["component_state"] = state
         if self.complexity_inputs:
             record["component_complexity"] = dict(self.complexity_inputs)
         if metadata:
@@ -2135,6 +2163,24 @@ class SharedTimeoutCoordinator:
             except Exception:
                 self.logger.debug("progress signal hook failed", exc_info=True)
 
+    def mark_component_state(self, component: str, state: str) -> None:
+        """Track component readiness without halting background work."""
+
+        with self._lock:
+            self.component_states[component] = state
+        payload = {
+            "component": component,
+            "state": state,
+            "namespace": self.namespace,
+            "ts": time.time(),
+            "progressing": state not in {"failed", "blocked"},
+        }
+        if self._signal_hook:
+            try:
+                self._signal_hook(dict(payload))
+            except Exception:
+                self.logger.debug("state signal hook failed", exc_info=True)
+
     def snapshot(self) -> Mapping[str, object]:
         """Return a shallow snapshot of coordinator state."""
 
@@ -2152,4 +2198,5 @@ class SharedTimeoutCoordinator:
                 "expanded_global_window": self._expanded_global_window,
                 "global_window": self.global_window,
                 "complexity_inputs": dict(self.complexity_inputs),
+                "component_states": dict(self.component_states),
             }
