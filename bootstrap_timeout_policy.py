@@ -320,6 +320,57 @@ def _record_adaptive_context(context: Mapping[str, object]) -> None:
     _ADAPTIVE_TIMEOUT_CONTEXT.update(context)
 
 
+def _cluster_budget_scale(
+    *,
+    host_state: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+    load_average: float | None = None,
+) -> tuple[float, Mapping[str, object]]:
+    """Return a scaling factor based on peer load and persisted overruns."""
+
+    host_state = host_state or _load_timeout_state()
+    host_telemetry = host_telemetry or read_bootstrap_heartbeat()
+    threshold = _parse_float(os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)) or _DEFAULT_LOAD_THRESHOLD
+
+    telemetry_load = None
+    if isinstance(host_telemetry, Mapping):
+        telemetry_load = _parse_float(str(host_telemetry.get("host_load")))
+
+    load_average = telemetry_load if telemetry_load is not None else load_average
+    if load_average is None:
+        load_average = _host_load_average()
+
+    load_scale = 1.0
+    if load_average is not None and threshold:
+        load_scale = max(1.0, min(load_average / threshold, 2.5))
+
+    host_key = _state_host_key()
+    component_overruns: Mapping[str, object] | None = None
+    if isinstance(host_state, Mapping):
+        host_component_meta = host_state.get(host_key, {}) if host_key in host_state else host_state
+        if isinstance(host_component_meta, Mapping):
+            component_overruns = host_component_meta.get("component_overruns")
+
+    streak = 0
+    if isinstance(component_overruns, Mapping):
+        streak = max(
+            (int(meta.get("overruns", 0) or 0) for meta in component_overruns.values()),
+            default=0,
+        )
+
+    overrun_scale = 1.0 + min(streak, 5) * 0.1
+    scale = min(max(load_scale, overrun_scale), 3.0)
+    context = {
+        "host_load": load_average,
+        "load_scale": load_scale,
+        "overrun_scale": overrun_scale,
+        "overrun_streak": streak,
+        "threshold": threshold,
+        "heartbeat": dict(host_telemetry or {}),
+    }
+    return scale, context
+
+
 def get_adaptive_timeout_context() -> Mapping[str, object]:
     """Return the last computed adaptive timeout context."""
 
@@ -329,9 +380,11 @@ def get_adaptive_timeout_context() -> Mapping[str, object]:
 def load_escalated_timeout_floors() -> dict[str, float]:
     """Return timeout floors that include host-scoped persisted escalations."""
 
-    minimums = dict(_BOOTSTRAP_TIMEOUT_MINIMUMS)
     state = _load_timeout_state()
     host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    scale, scale_context = _cluster_budget_scale(host_state=state)
+
+    minimums = {key: value * scale for key, value in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()}
 
     component_overruns = (
         host_state.get("component_overruns", {}) if isinstance(host_state, dict) else {}
@@ -340,6 +393,7 @@ def load_escalated_timeout_floors() -> dict[str, float]:
     adaptive_notes: dict[str, object] = {
         "component_overruns": component_overruns,
         "decay_streak": decay_streak,
+        "cluster_scale": scale_context | {"scale": scale},
     }
     state_updated = False
 
@@ -398,8 +452,9 @@ def load_escalated_timeout_floors() -> dict[str, float]:
 def load_component_timeout_floors() -> dict[str, float]:
     """Return per-component timeout floors with host-level overrides applied."""
 
-    component_floors = dict(_COMPONENT_TIMEOUT_MINIMUMS)
     state = _load_timeout_state()
+    scale, scale_context = _cluster_budget_scale(host_state=state)
+    component_floors = {key: value * scale for key, value in _COMPONENT_TIMEOUT_MINIMUMS.items()}
     host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
     host_component_floors = (
         host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
@@ -411,6 +466,8 @@ def load_component_timeout_floors() -> dict[str, float]:
         except (TypeError, ValueError):
             host_value = default_minimum
         component_floors[component] = max(default_minimum, host_value)
+
+    _record_adaptive_context({"component_cluster_scale": scale_context | {"scale": scale}})
 
     return component_floors
 
@@ -520,7 +577,7 @@ def compute_prepare_pipeline_component_budgets(
     guard_scale = float(guard_context.get("budget_scale") or 1.0)
     if guard_scale != 1.0:
         floors = {key: value * guard_scale for key, value in floors.items()}
-    host_telemetry = dict(host_telemetry or {})
+    host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
     if isinstance(host_state, Mapping):
         host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
         previous_budgets = (host_state.get(host_key, {}) or {}).get(
@@ -539,7 +596,10 @@ def compute_prepare_pipeline_component_budgets(
 
     if load_average is None:
         load_average = _parse_float(str(host_telemetry.get("host_load")))
-    scale = _host_load_scale(load_average)
+    cluster_scale, cluster_context = _cluster_budget_scale(
+        host_state=host_state, host_telemetry=host_telemetry, load_average=load_average
+    )
+    scale = max(_host_load_scale(load_average), cluster_scale)
 
     adaptive_floors: dict[str, dict[str, float | int | str]] = {}
 
@@ -653,6 +713,7 @@ def compute_prepare_pipeline_component_budgets(
     adaptive_inputs = {
         "host": host_key,
         "load_scale": scale,
+        "cluster_scale": cluster_context | {"scale": cluster_scale},
         "load_average": load_average,
         "component_complexity": component_complexity,
         "telemetry_overruns": telemetry_overruns,

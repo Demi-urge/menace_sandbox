@@ -626,6 +626,14 @@ class EnvironmentBootstrapper:
         )
         budgets.update(calibrated_phase_budgets)
 
+        host_telemetry = bootstrap_timeout_policy.read_bootstrap_heartbeat()
+        telemetry = bootstrap_timeout_policy.collect_timeout_telemetry()
+        component_timeouts = bootstrap_timeout_policy.compute_prepare_pipeline_component_budgets(
+            component_floors=component_floors,
+            telemetry=telemetry,
+            host_telemetry=host_telemetry,
+        )
+
         def parse_env(name: str) -> float | None:
             raw = os.getenv(name)
             if raw is None:
@@ -673,6 +681,7 @@ class EnvironmentBootstrapper:
                 logger=self.logger,
                 namespace="bootstrap_phases",
                 component_floors=component_floors,
+                component_budgets=component_timeouts,
             )
             phase_minimums = {
                 "critical": phase_floors.get("critical", base_wait_floor),
@@ -691,11 +700,6 @@ class EnvironmentBootstrapper:
                 budgets[phase] = effective
             shared_snapshot = coordinator.snapshot()
 
-        telemetry = bootstrap_timeout_policy.collect_timeout_telemetry()
-        component_timeouts = bootstrap_timeout_policy.compute_prepare_pipeline_component_budgets(
-            component_floors=component_floors,
-            telemetry=telemetry,
-        )
         soft_budgets = bootstrap_timeout_policy.derive_phase_soft_budgets(
             budgets, telemetry=telemetry
         )
@@ -712,6 +716,7 @@ class EnvironmentBootstrapper:
             "timeout_enforcement": enforcement,
             "shared_timeout": shared_snapshot,
             "component_timeouts": component_timeouts,
+            "cluster_load": host_telemetry,
             "bootstrap_guard": guard_context
             | {"enabled": guard_enabled, "delay": guard_delay, "scale": guard_scale},
             "phase_stats": phase_stats,
