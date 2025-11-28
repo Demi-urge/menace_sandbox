@@ -71,23 +71,18 @@ def build_stage_deadlines(
     component_floors: Mapping[str, float] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Construct stage-aware deadlines for bootstrap orchestration."""
-
-    base_timeout = baseline_timeout
-    if heavy_detected and not soft_deadline:
-        base_timeout *= heavy_scale
-
+    scale = heavy_scale if heavy_detected and not soft_deadline else 1.0
     stage_deadlines: dict[str, dict[str, object]] = {}
     for stage in READINESS_STAGES:
         enforced = not stage.optional and not soft_deadline
         stage_budget = _resolve_stage_budget(stage.name, component_budgets)
-        deadline = stage_budget if stage_budget is not None else base_timeout
-        if heavy_detected and stage_budget is not None and not soft_deadline:
-            deadline *= heavy_scale
-
-        if stage.optional:
-            deadline = deadline * 0.8 if deadline is not None else None
-
+        resolved_budget = stage_budget if stage_budget is not None else baseline_timeout
+        scaled_budget = resolved_budget * scale if resolved_budget is not None else None
         stage_floor = _resolve_stage_budget(stage.name, component_floors)
+        if stage.optional and scaled_budget is not None:
+            scaled_budget *= 0.8
+
+        deadline = scaled_budget
         if stage_floor is not None and deadline is not None:
             deadline = max(deadline, stage_floor)
 
@@ -97,7 +92,10 @@ def build_stage_deadlines(
             "optional": stage.optional,
             "enforced": enforced,
             "floor": stage_floor,
+            "budget": resolved_budget,
+            "scaled_budget": scaled_budget,
             "soft_budget": stage_budget,
+            "scale": scale,
             "soft_degrade": stage.optional,
         }
     return stage_deadlines

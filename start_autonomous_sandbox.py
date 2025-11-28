@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
+    compute_prepare_pipeline_component_budgets,
     load_component_timeout_floors,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
@@ -628,6 +629,32 @@ def _record_bootstrap_timeout(
     return backoff
 
 
+def _stage_timeout_context(
+    *,
+    stage: str,
+    stage_entry: Mapping[str, Any] | None,
+    stage_elapsed: float,
+    stage_deadline: float | None,
+    stage_optional: bool,
+    stage_enforced: bool,
+) -> dict[str, Any]:
+    policy_fields = {}
+    for key in ("budget", "scaled_budget", "floor", "scale"):
+        if isinstance(stage_entry, Mapping) and key in stage_entry:
+            policy_fields[key] = stage_entry.get(key)
+
+    context = {
+        "stage": stage,
+        "elapsed": round(stage_elapsed, 2),
+        "deadline": stage_deadline,
+        "optional": stage_optional,
+        "enforced": stage_enforced,
+    }
+    if policy_fields:
+        context["stage_policy"] = policy_fields
+    return context
+
+
 def _check_bootstrap_sentinel() -> float:
     if not BOOTSTRAP_SENTINEL_PATH.exists():
         return 0.0
@@ -755,13 +782,14 @@ def _monitor_bootstrap_thread(
             and stage_elapsed > stage_deadline
             and stage_enforced
         ):
-            stage_timeout_context = {
-                "stage": stage,
-                "elapsed": round(stage_elapsed, 2),
-                "deadline": stage_deadline,
-                "optional": stage_optional,
-                "enforced": stage_enforced,
-            }
+            stage_timeout_context = _stage_timeout_context(
+                stage=stage,
+                stage_entry=stage_entry,
+                stage_elapsed=stage_elapsed,
+                stage_deadline=stage_deadline,
+                stage_optional=stage_optional,
+                stage_enforced=stage_enforced,
+            )
         elif (
             stage_deadline is not None
             and stage_elapsed > stage_deadline
@@ -778,7 +806,7 @@ def _monitor_bootstrap_thread(
                         elapsed=round(stage_elapsed, 2),
                         deadline=stage_deadline,
                     ),
-                )
+                    )
 
         if stage_timeout_context and stage_enforced:
             step_durations.setdefault(current_step, elapsed)
@@ -812,13 +840,14 @@ def _monitor_bootstrap_thread(
                     )
                 budget += 30.0
             else:
-                stage_timeout_context = stage_timeout_context or {
-                    "stage": stage,
-                    "elapsed": round(stage_elapsed, 2),
-                    "deadline": stage_deadline,
-                    "optional": stage_optional,
-                    "enforced": stage_enforced,
-                }
+                stage_timeout_context = stage_timeout_context or _stage_timeout_context(
+                    stage=stage,
+                    stage_entry=stage_entry,
+                    stage_elapsed=stage_elapsed,
+                    stage_deadline=stage_deadline,
+                    stage_optional=stage_optional,
+                    stage_enforced=stage_enforced,
+                )
                 step_durations.setdefault(current_step, elapsed)
                 return (
                     True,
@@ -894,12 +923,15 @@ def _resolve_bootstrap_deadline_policy(
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
     component_floors = load_component_timeout_floors()
+    component_budgets = compute_prepare_pipeline_component_budgets(
+        component_floors=component_floors
+    )
     stage_deadlines = build_stage_deadlines(
         baseline_timeout,
         heavy_detected=heavy_detected,
         soft_deadline=soft_deadline,
         heavy_scale=heavy_scale,
-        component_budgets=component_floors,
+        component_budgets=component_budgets,
         component_floors=component_floors,
     )
     enforced_deadlines = [
@@ -917,6 +949,8 @@ def _resolve_bootstrap_deadline_policy(
         "soft_deadline": soft_deadline,
         "hints": dict(hints),
         "heavy_scale": heavy_scale,
+        "component_budgets": component_budgets,
+        "component_floors": component_floors,
         "stage_deadlines": stage_deadlines,
         "adjusted_timeout": adjusted_timeout,
     }
