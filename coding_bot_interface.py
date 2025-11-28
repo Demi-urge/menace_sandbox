@@ -5136,6 +5136,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             watchdog_telemetry["shared_component_budgets"] = watchdog_telemetry[
                 "shared_timeout"
             ].get("component_remaining")
+            watchdog_telemetry["shared_component_budget_payload"] = component_budget_payload
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
@@ -5319,7 +5320,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                     return
 
         budget_deadline = None
-        if resolved_timeout is not None:
+        if resolved_timeout is not None and not (component_budget_active and gate_windows):
             budget_deadline = start_time + resolved_timeout
 
         evaluation_gates = list(gate_windows) if gate_windows else [phase_label or active_shared_label or stage]
@@ -5449,6 +5450,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                     "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
                         "component_windows"
                     ),
+                    "watchdog_component_budgets": component_budget_payload,
                     "exhausted_gates": [gate],
                 }
                 remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
@@ -5513,6 +5515,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
                     "component_windows"
                 ),
+                "watchdog_component_budgets": component_budget_payload,
             }
             remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
             context["remediation_hints"] = remediation_hints
@@ -5749,11 +5752,14 @@ def _prepare_pipeline_for_bootstrap_impl(
     shared_timeout_budget = resolved_wait_timeout
     if shared_timeout_budget is None:
         shared_timeout_budget = _parse_float(os.getenv(MENACE_BOOTSTRAP_WAIT_SECS))
-    calibrated_component_budgets = _calibrate_component_budgets(shared_timeout_budget)
+    component_budget_active = bool(component_budget_payload)
+    calibrated_component_budgets = _calibrate_component_budgets(
+        None if component_budget_active else shared_timeout_budget
+    )
     for gate, budget in calibrated_component_budgets.items():
         if phase_budgets.get(gate) is None:
             phase_budgets[gate] = budget
-    if resolved_deadline is not None:
+    if resolved_deadline is not None and not component_budget_active:
         shared_timeout_budget = min(
             shared_timeout_budget or resolved_deadline - start_time,
             max(resolved_deadline - start_time, 0.0),
@@ -5764,9 +5770,19 @@ def _prepare_pipeline_for_bootstrap_impl(
     )
     component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
     component_windows: dict[str, dict[str, Any]] = {}
-    if shared_timeout_budget is not None or component_budget_payload:
+    coordinator_total_budget: float | None = None
+    if component_budget_active:
+        coordinator_total_budget = sum(
+            budget for budget in component_budget_payload.values() if budget is not None
+        )
+        if coordinator_total_budget == 0:
+            coordinator_total_budget = None
+    elif shared_timeout_budget is not None:
+        coordinator_total_budget = max(shared_timeout_budget, 0.0)
+
+    if coordinator_total_budget is not None or component_budget_payload:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
-            None if shared_timeout_budget is None else max(shared_timeout_budget, 0.0),
+            coordinator_total_budget,
             logger=logger,
             namespace="prepare_pipeline",
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
@@ -5776,6 +5792,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()
         )
+        _PREPARE_PIPELINE_WATCHDOG["component_budget_payload"] = component_budget_payload
         if component_budget_payload:
             component_windows = {
                 gate: dict(meta)
