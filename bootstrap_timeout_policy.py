@@ -174,28 +174,30 @@ def _maybe_escalate_timeout_floors(
     logger: logging.Logger,
 ) -> Mapping[str, object] | None:
     timeouts = int(telemetry.get("timeouts", 0) or 0)
-    if timeouts < 2:
+    if timeouts <= 0:
         return None
 
     stages = telemetry.get("stages") or []
-    longest_stage = max((float(entry.get("elapsed", 0.0)) for entry in stages), default=0.0)
-    vector_longest = max(
-        (
-            float(entry.get("elapsed", 0.0))
-            for entry in stages
-            if entry.get("timeout") and entry.get("vector_heavy")
-        ),
-        default=0.0,
-    )
+    stage_summary = _summarize_stage_telemetry(telemetry)
+    load_scale = _host_load_scale()
+    longest_stage = float(stage_summary.get("longest_stage", 0.0) or 0.0)
+    vector_longest = float(stage_summary.get("vector_longest", 0.0) or 0.0)
 
-    general_floor = minimums.get("MENACE_BOOTSTRAP_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"])
+    general_floor = minimums.get(
+        "MENACE_BOOTSTRAP_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
+    )
     vector_floor = minimums.get(
         "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
     )
 
-    suggested_general = max(general_floor, longest_stage + 60.0 if longest_stage else general_floor + 60.0)
+    suggested_general = max(
+        general_floor,
+        general_floor * load_scale,
+        longest_stage + 60.0 if longest_stage else general_floor + 60.0,
+    )
     suggested_vector = max(
         vector_floor,
+        vector_floor * load_scale,
         vector_longest + 90.0 if vector_longest else suggested_general,
     )
 
@@ -205,8 +207,12 @@ def _maybe_escalate_timeout_floors(
         if component is None:
             continue
         elapsed = float(entry.get("elapsed", 0.0) or 0.0)
-        baseline = component_floors.get(component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0))
-        suggested = max(baseline, elapsed + 45.0) if elapsed else baseline
+        baseline = component_floors.get(
+            component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+        )
+        adjusted_elapsed = elapsed * load_scale if elapsed else 0.0
+        adjusted_baseline = baseline * load_scale
+        suggested = max(baseline, adjusted_baseline, adjusted_elapsed + 45.0) if elapsed else max(baseline, adjusted_baseline)
         if suggested > component_floors.get(component, baseline):
             component_floors[component] = suggested
             component_updates[component] = suggested
@@ -236,10 +242,12 @@ def _maybe_escalate_timeout_floors(
         "suggested_general": suggested_general,
         "suggested_vector": suggested_vector,
         "component_updates": component_updates,
+        "load_scale": load_scale,
+        "stage_summary": stage_summary,
     }
 
     logger.info(
-        "repeated prepare_pipeline timeouts detected; escalating bootstrap floors",
+        "adaptive prepare_pipeline timeout escalation applied",
         extra={"telemetry": details, "state_path": str(_TIMEOUT_STATE_PATH)},
     )
 
@@ -436,6 +444,14 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
     """Return standard remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts."""
 
     minimums = load_escalated_timeout_floors()
+    component_floors = load_component_timeout_floors()
+    adaptive_applied = any(
+        minimums.get(key, 0.0) > _BOOTSTRAP_TIMEOUT_MINIMUMS.get(key, 0.0)
+        for key in _BOOTSTRAP_TIMEOUT_MINIMUMS
+    ) or any(
+        component_floors.get(key, 0.0) > _COMPONENT_TIMEOUT_MINIMUMS.get(key, 0.0)
+        for key in _COMPONENT_TIMEOUT_MINIMUMS
+    )
     vector_wait = _parse_float(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS")) or minimums[
         "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
     ]
@@ -452,6 +468,15 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
         ),
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
+
+    if adaptive_applied:
+        hints.append(
+            (
+                "Adaptive timeout scaling is active for this host based on load and recent stage durations; "
+                f"values are persisted at {_TIMEOUT_STATE_PATH}. Set {_OVERRIDE_ENV}=1 or remove the state file "
+                "to force manual overrides."
+            )
+        )
 
     if vector_heavy:
         return list(hints)
