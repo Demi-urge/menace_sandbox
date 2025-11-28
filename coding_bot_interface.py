@@ -146,6 +146,8 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "timeouts": 0,
 }
 
+_STAGED_READY_TOPIC = "prepare_pipeline.staged_ready"
+
 _READINESS_GATE_WEIGHTS: dict[str, float] = {
     "vectorizers": 1.25,
     "retrievers": 1.1,
@@ -181,7 +183,54 @@ def _initialize_prepare_readiness(*, reset: bool = False) -> dict[str, dict[str,
             {"ready": False, "timestamp": None, "elapsed": None, "stage": None},
         )
     _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
+    _PREPARE_PIPELINE_WATCHDOG.setdefault(
+        "staged_ready_event", threading.Event()
+    )
     return readiness
+
+
+def _staged_ready_event() -> threading.Event:
+    event = _PREPARE_PIPELINE_WATCHDOG.get("staged_ready_event")
+    if not isinstance(event, threading.Event):
+        event = threading.Event()
+        _PREPARE_PIPELINE_WATCHDOG["staged_ready_event"] = event
+    return event
+
+
+def _mark_staged_readiness(
+    stage_label: str | None,
+    *,
+    ready_gates: Iterable[str],
+    pending_gates: Iterable[str],
+    readiness_ratio: float,
+    remaining_window: float,
+    stage_budget: float,
+    vector_heavy: bool,
+) -> Mapping[str, Any]:
+    label = stage_label or "prepare_pipeline"
+    payload = {
+        "stage": label,
+        "ready_gates": tuple(ready_gates),
+        "pending_gates": tuple(pending_gates),
+        "readiness_ratio": readiness_ratio,
+        "remaining_window": remaining_window,
+        "stage_budget": stage_budget,
+        "vector_heavy": vector_heavy,
+        "timestamp": time.time(),
+    }
+
+    previous = _PREPARE_PIPELINE_WATCHDOG.get("staged_ready")
+    _PREPARE_PIPELINE_WATCHDOG["staged_ready"] = payload
+    event = _staged_ready_event()
+    if not event.is_set() or previous != payload:
+        event.set()
+        if _SHARED_EVENT_BUS is not None:
+            try:
+                _SHARED_EVENT_BUS.publish(_STAGED_READY_TOPIC, payload)
+            except Exception:  # pragma: no cover - best effort telemetry
+                logger.debug("staged readiness publish failed", exc_info=True)
+
+    return payload
 
 
 _initialize_prepare_readiness()
@@ -456,15 +505,31 @@ def _normalize_watchdog_timeout(
 
     normalized_timeout = stage_budget
     grace_applied: float | None = None
+    staged_ready_payload: Mapping[str, Any] | None = None
     if staged_readiness:
+        staged_ready_payload = _mark_staged_readiness(
+            stage_label,
+            ready_gates=ready_gates,
+            pending_gates=pending_gates,
+            readiness_ratio=readiness_ratio,
+            remaining_window=remaining_window,
+            stage_budget=stage_budget,
+            vector_heavy=vector_heavy,
+        )
         grace_applied = _VECTOR_STAGE_GRACE_PERIOD if vector_heavy else 0.0
         if vector_heavy and grace_applied is None:
             telemetry["deadline_override"] = "drop"
             telemetry["escalated"] = True
             telemetry["vector_grace"] = None
+            telemetry["staged_ready_payload"] = staged_ready_payload
+            telemetry["staged_ready_event"] = _staged_ready_event()
             return None, normalized_timeout, telemetry
         grace_applied = grace_applied or 0.0
         normalized_timeout = stage_budget + grace_applied
+
+    if staged_ready_payload is not None:
+        telemetry["staged_ready_payload"] = staged_ready_payload
+        telemetry["staged_ready_event"] = _staged_ready_event()
 
     escalated = normalized_timeout > remaining_window
     telemetry["escalated"] = escalated
@@ -4214,6 +4279,12 @@ def _prepare_pipeline_for_bootstrap_impl(
         readiness_ready = watchdog_telemetry.get("ready_gates") or []
         readiness_pending = watchdog_telemetry.get("pending_gates") or []
         readiness_ratio = watchdog_telemetry.get("readiness_ratio") or 0.0
+        staged_ready_event = watchdog_telemetry.get("staged_ready_event")
+        staged_ready_signal = bool(
+            staged_ready_event.is_set()
+            if isinstance(staged_ready_event, threading.Event)
+            else False
+        )
         if stop_event is not None and stop_event.is_set():
             context = {
                 "reason": "stop_event",
@@ -4231,6 +4302,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
                 "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
                 "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
+                "watchdog_staged_ready_payload": watchdog_telemetry.get(
+                    "staged_ready_payload"
+                ),
+                "watchdog_staged_ready_event": watchdog_telemetry.get(
+                    "staged_ready_event"
+                ),
                 "watchdog_deadline_extended": watchdog_telemetry.get("deadline_extended"),
                 "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
                 "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
@@ -4283,6 +4360,12 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "watchdog_timeout_budget": watchdog_telemetry.get("stage_budget"),
                 "watchdog_remaining_window": watchdog_telemetry.get("remaining_window"),
                 "watchdog_staged_readiness": watchdog_telemetry.get("staged_readiness"),
+                "watchdog_staged_ready_payload": watchdog_telemetry.get(
+                    "staged_ready_payload"
+                ),
+                "watchdog_staged_ready_event": watchdog_telemetry.get(
+                    "staged_ready_event"
+                ),
                 "watchdog_deadline_extended": watchdog_telemetry.get("deadline_extended"),
                 "watchdog_extension_seconds": watchdog_telemetry.get("extension_seconds"),
                 "watchdog_vector_grace": watchdog_telemetry.get("vector_grace"),
@@ -4321,7 +4404,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                     extra={"stage": stage, "watchdog": watchdog_telemetry},
                 )
                 return
-            if watchdog_telemetry.get("staged_readiness"):
+            if watchdog_telemetry.get("staged_readiness") or staged_ready_signal:
                 logger.warning(
                     "staged readiness enabled; continuing after deadline breach",
                     extra={"stage": stage, "watchdog": watchdog_telemetry},
