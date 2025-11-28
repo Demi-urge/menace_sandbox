@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 import importlib
 import os
 import sys
@@ -282,6 +283,61 @@ def test_prepare_pipeline_bootstrap_handles_slow_data_dir(monkeypatch, caplog):
         for record in caplog.records
         if record.levelno <= logging.DEBUG
     ), "expected bootstrap_fast path resolution log"
+
+
+def test_prepare_pipeline_extends_component_windows_without_sleep():
+    windows = {"vectorizers": {"budget": 10.0, "remaining": 0.0, "last_check": 0.0}}
+    progress = {
+        "pending_delta": -1,
+        "ratio_delta": 0.1,
+        "staged_ready": False,
+        "progressing": True,
+    }
+
+    extended, exhausted, meta = coding_bot_interface._extend_component_windows(
+        windows,
+        timeout_floor=5.0,
+        resolved_timeout=10.0,
+        progress_signal=progress,
+        shared_timeout_coordinator=None,
+        stage="vector",
+        readiness_pending=("vectorizers",),
+        vector_heavy=False,
+        backoff_cap=1.5,
+        extension_limit=2,
+        time_fn=lambda: 100.0,
+    )
+
+    assert extended == ["vectorizers"]
+    assert not exhausted
+    assert meta and meta[0]["extension_factor"] == pytest.approx(1.45, rel=1e-3)
+    assert windows["vectorizers"]["remaining"] >= 14.5
+    assert windows["vectorizers"].get("extensions") == 1
+
+
+def test_prepare_pipeline_marks_optional_gates_deferred():
+    coding_bot_interface._PREPARE_PIPELINE_WATCHDOG.clear()
+    coding_bot_interface._PREPARE_PIPELINE_WATCHDOG.update(
+        {"stages": deque(maxlen=32), "timeouts": 0, "extensions": []}
+    )
+
+    payload = coding_bot_interface._mark_deferred_gates(
+        gates=["background_loops"],
+        stage="bootstrap",
+        pending_gates=["background_loops"],
+        readiness_ratio=0.25,
+        vector_heavy=False,
+        reason="exhausted_extensions",
+        stage_budget=5.0,
+        remaining_window=0.0,
+    )
+
+    readiness = coding_bot_interface._PREPARE_PIPELINE_WATCHDOG.get("readiness", {})
+    assert readiness["background_loops"]["status"] == "deferred"
+    degraded = coding_bot_interface._PREPARE_PIPELINE_WATCHDOG.get("degraded", {})
+    assert degraded.get("degraded_reason") == "exhausted_extensions"
+    assert "background_loops" in degraded.get("deferred_gates", ())
+    assert payload["pending_gates"] == ("background_loops",)
 
 
 def test_prepare_pipeline_bootstrap_skips_threshold_stat(monkeypatch):

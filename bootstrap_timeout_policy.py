@@ -488,6 +488,9 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
         return {
             "timeouts": int(_PREPARE_PIPELINE_WATCHDOG.get("timeouts", 0)),
             "stages": list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ())),
+            "shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get("shared_timeout"),
+            "extensions": list(_PREPARE_PIPELINE_WATCHDOG.get("extensions", ())),
+            "component_windows": _PREPARE_PIPELINE_WATCHDOG.get("component_windows"),
         }
     except Exception:
         return {}
@@ -567,6 +570,22 @@ def _summarize_component_overruns(telemetry: Mapping[str, object]) -> dict[str, 
         component_state["expected_floor"] = max(
             float(component_state.get("expected_floor", 0.0) or 0.0), effective_float
         )
+
+    extension_records = telemetry.get("extensions") or []
+    for entry in extension_records:
+        gate = _categorize_stage(entry) or str(entry.get("gate"))
+        if not gate:
+            continue
+        extension_budget = _parse_float(str(entry.get("extension_budget")))
+        if extension_budget is None:
+            continue
+        component_state = component_overruns.setdefault(
+            gate, {"overruns": 0, "max_elapsed": 0.0, "expected_floor": 0.0}
+        )
+        component_state["expected_floor"] = max(
+            float(component_state.get("expected_floor", 0.0) or 0.0), extension_budget
+        )
+        component_state["overruns"] = max(int(component_state.get("overruns", 0)), 1)
 
     return component_overruns
 
