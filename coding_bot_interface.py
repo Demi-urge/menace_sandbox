@@ -1493,6 +1493,9 @@ def _log_bootstrap_env_snapshot() -> None:
         "BOOTSTRAP_COMPONENT_BUDGET_TOTAL": _PREPARE_PIPELINE_WATCHDOG.get("component_budget_total"),
         "BOOTSTRAP_COMPONENT_BUDGETS": _PREPARE_PIPELINE_WATCHDOG.get("component_budgets_resolved"),
         "BOOTSTRAP_COMPOSED_TIMEOUT": _PREPARE_PIPELINE_WATCHDOG.get("bootstrap_composed_timeout"),
+        "BOOTSTRAP_ELASTIC_WINDOW": _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_window"),
+        "BOOTSTRAP_ELASTIC_EXTENSION": _PREPARE_PIPELINE_WATCHDOG.get("global_bootstrap_extension"),
+        "BOOTSTRAP_BUDGET_CONTEXT": _PREPARE_PIPELINE_WATCHDOG.get("component_budget_inputs"),
     }
 
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_env"] = snapshot
@@ -5149,6 +5152,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     if global_bootstrap_window is None and derived_component_budgets:
         component_budget_total = sum(derived_component_budgets.values())
         global_bootstrap_window = component_budget_total
+    _PREPARE_PIPELINE_WATCHDOG["component_budget_inputs"] = adaptive_budget_context
     _PREPARE_PIPELINE_WATCHDOG["derived_component_budgets"] = derived_component_budgets
     _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_window"] = global_bootstrap_window
     _PREPARE_PIPELINE_WATCHDOG["global_bootstrap_extension"] = global_window_extension
@@ -5165,6 +5169,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             "global_window_extension": global_window_extension,
         },
     )
+    _log_bootstrap_env_snapshot()
     guard_context = get_bootstrap_guard_context()
     _PREPARE_PIPELINE_WATCHDOG["guard_context"] = dict(guard_context)
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")

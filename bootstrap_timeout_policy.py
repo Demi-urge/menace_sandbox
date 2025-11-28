@@ -747,6 +747,7 @@ def compute_prepare_pipeline_component_budgets(
     guard_context = get_bootstrap_guard_context()
     host_state = _load_timeout_state()
     host_key = _state_host_key()
+    host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     floors = dict(component_floors or load_component_timeout_floors())
     guard_scale = float(guard_context.get("budget_scale") or 1.0)
     if guard_scale != 1.0:
@@ -775,6 +776,36 @@ def compute_prepare_pipeline_component_budgets(
     )
     host_scale = _host_load_scale(load_average)
     scale = max(host_scale, cluster_scale)
+
+    def _coerce_int(value: object) -> int:
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    backlog_queue_depth = _coerce_int(
+        host_telemetry.get("queue_depth")
+        or guard_context.get("queue_depth")
+        or host_state_details.get("last_component_budget_inputs", {}).get("backlog", {}).get("queue_depth")
+    )
+    pending_background_loops = _coerce_int(
+        host_telemetry.get("pending_background_loops")
+        or host_telemetry.get("background_pending")
+        or host_state_details.get("last_component_budget_inputs", {}).get("backlog", {}).get("pending_background_loops")
+    )
+    active_bootstraps = _coerce_int(
+        host_telemetry.get("active_bootstraps")
+        or host_state_details.get("last_component_budget_inputs", {}).get("backlog", {}).get("active_bootstraps")
+    )
+    if not active_bootstraps:
+        active_bootstraps = len(_recent_peer_activity())
+        if host_telemetry:
+            active_bootstraps = max(active_bootstraps, 1)
+
+    backlog_scale = 1.0 + min(backlog_queue_depth, 5) * 0.05
+    backlog_scale += min(active_bootstraps, 5) * 0.07
+    backlog_scale += min(pending_background_loops, 5) * 0.04
+    backlog_scale = min(backlog_scale, 2.0)
 
     adaptive_floors: dict[str, dict[str, float | int | str]] = {}
 
@@ -847,7 +878,7 @@ def compute_prepare_pipeline_component_budgets(
                 )
 
     budgets = {
-        key: value * scale * component_complexity.get(key, 1.0)
+        key: value * scale * backlog_scale * component_complexity.get(key, 1.0)
         for key, value in floors.items()
     }
     component_budget_total = sum(budgets.values()) if budgets else 0.0
@@ -919,6 +950,12 @@ def compute_prepare_pipeline_component_budgets(
         "component_budget_total": component_budget_total,
         "global_window": global_window,
         "global_window_extension": global_window_extension,
+        "backlog": {
+            "queue_depth": backlog_queue_depth,
+            "active_bootstraps": active_bootstraps,
+            "pending_background_loops": pending_background_loops,
+            "scale": backlog_scale,
+        },
     }
     _record_adaptive_context(adaptive_inputs)
 
@@ -946,6 +983,7 @@ def compute_prepare_pipeline_component_budgets(
                 "load_average": load_average,
                 "component_complexity": component_complexity,
                 "guard_scale": guard_scale,
+                "backlog": adaptive_inputs.get("backlog"),
             },
             "last_global_window_extension": global_window_extension,
             "component_work_units": component_work_units,
