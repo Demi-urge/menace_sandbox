@@ -7,6 +7,7 @@ via :class:`SecretsManager`.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import shlex
@@ -21,6 +22,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+import bootstrap_timeout_policy
 
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
@@ -41,6 +44,69 @@ try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
+
+
+class _PhaseBudgetContext:
+    def __init__(
+        self,
+        *,
+        phase: str,
+        budget: dict[str, float | None],
+        clock: Callable[[], float],
+        logger: logging.Logger,
+        mark_online: Callable[[float | None, str], None],
+    ) -> None:
+        self.phase = phase
+        self.budget = budget
+        self._clock = clock
+        self._start = clock()
+        self._logger = logger
+        self._mark_online = mark_online
+        self._warned_over_budget = False
+        self.online_ready = False
+        self.online_reason: str | None = None
+
+    def check(self) -> None:
+        limit = self.budget.get("limit")
+        soft_budget = self.budget.get("budget")
+        elapsed = self.elapsed
+        if soft_budget is not None and elapsed > soft_budget and not self._warned_over_budget:
+            remaining = (limit - elapsed) if limit is not None else None
+            self._warned_over_budget = True
+            self._logger.warning(
+                "phase %s exceeded soft budget (%.1fs > %.1fs); grace window %s",
+                self.phase,
+                elapsed,
+                soft_budget,
+                f"{remaining:.1f}s" if remaining is not None else "unbounded",
+            )
+        if limit is not None and elapsed > limit:
+            raise TimeoutError(
+                f"{self.phase} phase exhausted soft budget ({elapsed:.1f}s > {limit:.1f}s)"
+            )
+
+    def mark_online_ready(self, *, reason: str = "subset-ready") -> None:
+        if self.phase != "critical" and self.phase != "provisioning":
+            return
+        self.online_ready = True
+        self.online_reason = reason
+        self._mark_online(self.elapsed, reason)
+
+    @property
+    def elapsed(self) -> float:
+        return self._clock() - self._start
+
+    def snapshot(self) -> dict[str, float | str | None]:
+        return {
+            "phase": self.phase,
+            "budget": self.budget.get("budget"),
+            "grace": self.budget.get("grace"),
+            "limit": self.budget.get("limit"),
+            "scale": self.budget.get("scale"),
+            "elapsed": self.elapsed,
+            "online_ready": self.online_ready,
+            "online_reason": self.online_reason,
+        }
 
 
 class EnvironmentBootstrapper:
@@ -145,38 +211,81 @@ class EnvironmentBootstrapper:
         )
         self.logger.info("bootstrap phase %s %s", phase, status, extra=payload)
 
+    def _mark_online_ready(self, elapsed: float | None, reason: str) -> None:
+        if self._phase_readiness.get("online"):
+            return
+        self._phase_readiness["online"] = True
+        self._emit_phase_event("online", "ready", elapsed=elapsed, reason=reason)
+
     def _run_phase(
         self,
         phase: str,
-        budget: float | None,
-        work: Callable[[Callable[[], None]], None],
+        budget: float | None | dict[str, float | None],
+        work: Callable[..., None],
         *,
         strict: bool = True,
     ) -> bool:
         start = self._clock()
-        self._emit_phase_event(phase, "start", budget=budget)
+        normalized_budget: dict[str, float | None]
+        if isinstance(budget, dict):
+            normalized_budget = budget
+        else:
+            if budget is None:
+                normalized_budget = {"budget": None, "grace": None, "limit": None, "scale": 1.0}
+            else:
+                grace = max(30.0, budget * 0.25)
+                normalized_budget = {
+                    "budget": budget,
+                    "grace": grace,
+                    "limit": budget + grace,
+                    "scale": 1.0,
+                }
+
+        phase_budget = _PhaseBudgetContext(
+            phase=phase,
+            budget=normalized_budget,
+            clock=self._clock,
+            logger=self.logger,
+            mark_online=self._mark_online_ready,
+        )
+
+        self._emit_phase_event(
+            phase,
+            "start",
+            budget=normalized_budget.get("budget"),
+            grace=normalized_budget.get("grace"),
+            scale=normalized_budget.get("scale"),
+        )
 
         def guard() -> None:
-            self._check_phase_timeout(phase, start, budget)
+            try:
+                phase_budget.check()
+            finally:
+                self._check_phase_timeout(phase, start, normalized_budget.get("limit"))
 
         try:
-            work(guard)
+            try:
+                work(guard, phase_budget)
+            except TypeError as exc:
+                sig = inspect.signature(work)
+                if len(sig.parameters) > 1:
+                    raise
+                work(guard)
         except Exception as exc:
             self._emit_phase_event(phase, "failed", error=str(exc))
             if strict:
                 raise
             return False
-        elapsed = self._clock() - start
+        elapsed = phase_budget.elapsed
         self._phase_readiness[phase] = True
-        if phase == "critical":
-            self._phase_readiness["online"] = True
-            self._emit_phase_event("online", "ready", elapsed=elapsed)
+        if phase == "critical" or phase_budget.online_ready:
+            self._mark_online_ready(elapsed, phase_budget.online_reason or "phase-complete")
         self._emit_phase_event(phase, "ready", elapsed=elapsed)
         return True
 
     def _resolve_phase_budgets(
         self, timeout: float | None
-    ) -> dict[str, float | None]:
+    ) -> dict[str, dict[str, float | None]]:
         budgets = {phase: None for phase in self.PHASES}
         budgets = self.policy.resolved_phase_timeouts(budgets)
 
@@ -201,7 +310,11 @@ class EnvironmentBootstrapper:
 
         if timeout is not None:
             budgets = {phase: budgets.get(phase) or timeout for phase in self.PHASES}
-        return budgets
+
+        telemetry = bootstrap_timeout_policy.collect_timeout_telemetry()
+        return bootstrap_timeout_policy.derive_phase_soft_budgets(
+            budgets, telemetry=telemetry
+        )
 
     def shutdown(self, *, timeout: float | None = 5.0) -> None:
         """Stop background bootstrap threads started by the instance."""
@@ -517,7 +630,9 @@ class EnvironmentBootstrapper:
             self.logger.error("migrations failed: %s", exc)
 
     # ------------------------------------------------------------------
-    def _critical_prerequisites(self, check_budget: Callable[[], None]) -> None:
+    def _critical_prerequisites(
+        self, check_budget: Callable[[], None], phase_budget: _PhaseBudgetContext | None = None
+    ) -> None:
         ensure_config()
         check_budget()
         self.export_secrets()
@@ -553,10 +668,16 @@ class EnvironmentBootstrapper:
         if self.policy.ensure_apscheduler and importlib.util.find_spec("apscheduler") is None:
             self.install_dependencies(["apscheduler"])
         check_budget()
+        if phase_budget and not phase_budget.online_ready:
+            phase_budget.mark_online_ready(reason="critical-subset-complete")
 
     # ------------------------------------------------------------------
     def _provisioning_phase(
-        self, check_budget: Callable[[], None], *, skip_db_init: bool
+        self,
+        check_budget: Callable[[], None],
+        phase_budget: _PhaseBudgetContext | None = None,
+        *,
+        skip_db_init: bool,
     ) -> None:
         if self.policy.enforce_systemd and shutil.which("systemctl"):
             result = subprocess.run(
@@ -608,6 +729,8 @@ class EnvironmentBootstrapper:
             )
         check_budget()
         self.bootstrapper.bootstrap()
+        if phase_budget and not phase_budget.online_ready:
+            phase_budget.mark_online_ready(reason="provisioning-core-ready")
         check_budget()
         interval = os.getenv("AUTO_PROVISION_INTERVAL")
         if interval:
@@ -667,14 +790,16 @@ class EnvironmentBootstrapper:
             self._run_phase(
                 "provisioning",
                 budgets.get("provisioning"),
-                lambda guard: self._provisioning_phase(guard, skip_db_init=skip_db_init),
+                lambda guard, state=None: self._provisioning_phase(
+                    guard, state, skip_db_init=skip_db_init
+                ),
             )
 
             def optional_work() -> None:
                 self._run_phase(
                     "optional",
                     budgets.get("optional"),
-                    self._optional_tail,
+                    lambda guard, state=None: self._optional_tail(guard),
                     strict=False,
                 )
 
