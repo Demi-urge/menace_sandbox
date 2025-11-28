@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 
 import bootstrap_timeout_policy
+import bootstrap_metrics
 
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
@@ -226,6 +227,8 @@ class EnvironmentBootstrapper:
         )
         self.shared_timeout_coordinator = shared_timeout_coordinator
         self._component_timeouts: dict[str, float] | None = None
+        self._budget_snapshot: dict[str, object] = {}
+        self._persisted_phase_durations: set[str] = set()
         interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
         if interval:
             try:
@@ -305,6 +308,7 @@ class EnvironmentBootstrapper:
             mode=self.readiness_mode,
             readiness_tokens=dict(self._phase_readiness),
             readiness_gates=self._readiness_snapshot(),
+            budgets=self._budget_snapshot,
             **fields,
         )
         self.logger.info("bootstrap phase %s %s", phase, status, extra=payload)
@@ -319,6 +323,42 @@ class EnvironmentBootstrapper:
 
     def _readiness_snapshot(self) -> dict[str, dict[str, object]]:
         return {phase: dict(details) for phase, details in self._phase_gates.items()}
+
+    def _persist_phase_duration(self, phase: str, elapsed: float | None) -> None:
+        if elapsed is None or elapsed <= 0 or phase in self._persisted_phase_durations:
+            return
+
+        store = bootstrap_metrics.record_durations(
+            durations={phase: float(elapsed)},
+            category="bootstrap_phases",
+            logger=self.logger,
+        )
+        stats = bootstrap_metrics.compute_stats(store.get("bootstrap_phases", {}))
+        self._budget_snapshot.setdefault("phase_stats", stats)
+        self.logger.info(
+            "persisted bootstrap phase duration",
+            extra=log_record(
+                event="bootstrap-phase-duration-recorded",
+                phase=phase,
+                elapsed=round(elapsed, 2),
+                stats={
+                    key: {k: round(v, 2) for k, v in value.items()}
+                    for key, value in stats.items()
+                },
+                store=str(bootstrap_metrics.BOOTSTRAP_DURATION_STORE),
+            ),
+        )
+        self._persisted_phase_durations.add(phase)
+
+    def _persist_phase_durations(self) -> None:
+        for phase, gate in self._phase_gates.items():
+            try:
+                started = float(gate.get("started", 0.0) or 0.0)
+                finished = float(gate.get("finished", 0.0) or 0.0)
+            except Exception:
+                continue
+            elapsed = finished - started
+            self._persist_phase_duration(phase, elapsed)
 
     def _update_gate(self, phase: str, status: str, **fields: object) -> None:
         gate = self._phase_gates.setdefault(
@@ -458,6 +498,7 @@ class EnvironmentBootstrapper:
             self._scheduler.mark_ready()
         self._emit_phase_event(phase, gate_status, elapsed=elapsed)
         self._maybe_mark_online(reason=phase_budget.online_reason or "core-phases-complete")
+        self._persist_phase_duration(phase, elapsed)
         return True
 
     def _track_background_task(self, action: str, name: str) -> None:
@@ -525,6 +566,11 @@ class EnvironmentBootstrapper:
     def _resolve_phase_budgets(
         self, timeout: float | None
     ) -> dict[str, dict[str, float | None]]:
+        duration_store = bootstrap_metrics.load_duration_store()
+        phase_stats = bootstrap_metrics.compute_stats(duration_store.get("bootstrap_phases", {}))
+        component_stats = bootstrap_metrics.compute_stats(
+            duration_store.get("bootstrap_components", {})
+        )
         guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
         guard_enabled = str(guard_env or "").lower() not in ("1", "true", "yes")
         guard_delay = 0.0
@@ -541,11 +587,20 @@ class EnvironmentBootstrapper:
             logger=self.logger
         )
         floors = bootstrap_timeout_policy.load_escalated_timeout_floors()
-        base_floor = max(120.0, floors.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
-        base_floor *= guard_scale
-        component_floors = {
-            key: value * guard_scale for key, value in enforcement.get("component_floors", {}).items()
+        base_wait_floor = float(floors.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0) or 0.0)
+        phase_floors = {
+            phase: max(base_wait_floor, 0.0) * guard_scale for phase in self.PHASES
         }
+        component_floors = {
+            key: value * guard_scale
+            for key, value in enforcement.get("component_floors", {}).items()
+        }
+        calibrated_component_floors, component_calibration = bootstrap_metrics.calibrate_step_budgets(
+            base_budgets=component_floors,
+            stats=component_stats,
+            floors=component_floors,
+        )
+        component_floors = calibrated_component_floors
 
         budgets = {phase: None for phase in self.PHASES}
         budgets = self.policy.resolved_phase_timeouts(budgets)
@@ -556,6 +611,20 @@ class EnvironmentBootstrapper:
             return value * guard_scale
 
         budgets = {phase: _scale_budget(value) for phase, value in budgets.items()}
+
+        base_phase_budgets: dict[str, float] = {}
+        for phase in self.PHASES:
+            provided = budgets.get(phase)
+            floor = phase_floors.get(phase, base_wait_floor)
+            base = provided if provided is not None else floor
+            base_phase_budgets[phase] = max(base, floor)
+
+        calibrated_phase_budgets, phase_calibration = bootstrap_metrics.calibrate_step_budgets(
+            base_budgets=base_phase_budgets,
+            stats=phase_stats,
+            floors=phase_floors,
+        )
+        budgets.update(calibrated_phase_budgets)
 
         def parse_env(name: str) -> float | None:
             raw = os.getenv(name)
@@ -576,14 +645,17 @@ class EnvironmentBootstrapper:
             if override is None:
                 continue
             scaled_override = _scale_budget(override)
-            effective_override = max(base_floor, scaled_override if scaled_override is not None else override)
+            floor = phase_floors.get(phase, base_wait_floor)
+            effective_override = max(
+                floor, scaled_override if scaled_override is not None else override
+            )
             if effective_override != override:
                 self.logger.warning(
                     "%s override below persisted floor; clamping", phase,
                     extra={
                         "requested_budget": override,
                         "effective_budget": effective_override,
-                        "floor": base_floor,
+                        "floor": floor,
                     },
                 )
             os.environ[
@@ -603,13 +675,13 @@ class EnvironmentBootstrapper:
                 component_floors=component_floors,
             )
             phase_minimums = {
-                "critical": base_floor,
-                "provisioning": base_floor,
-                "optional": max(60.0, min(base_floor, 180.0)),
+                "critical": phase_floors.get("critical", base_wait_floor),
+                "provisioning": phase_floors.get("provisioning", base_wait_floor),
+                "optional": max(60.0 * guard_scale, phase_floors.get("optional", base_wait_floor)),
             }
             for phase in self.PHASES:
                 requested = budgets.get(phase)
-                minimum = phase_minimums.get(phase, base_floor)
+                minimum = phase_minimums.get(phase, base_wait_floor)
                 effective, _ = coordinator._reserve(  # type: ignore[attr-defined]
                     phase,
                     requested,
@@ -634,17 +706,23 @@ class EnvironmentBootstrapper:
 
         guard_context = bootstrap_timeout_policy.get_bootstrap_guard_context()
 
+        self._budget_snapshot = {
+            "phase_budgets": budgets,
+            "soft_budgets": soft_budgets,
+            "timeout_enforcement": enforcement,
+            "shared_timeout": shared_snapshot,
+            "component_timeouts": component_timeouts,
+            "bootstrap_guard": guard_context
+            | {"enabled": guard_enabled, "delay": guard_delay, "scale": guard_scale},
+            "phase_stats": phase_stats,
+            "phase_calibration": phase_calibration,
+            "component_stats": component_stats,
+            "component_calibration": component_calibration,
+        }
+
         self.logger.info(
             "resolved bootstrap phase budgets",
-            extra={
-                "phase_budgets": budgets,
-                "soft_budgets": soft_budgets,
-                "timeout_enforcement": enforcement,
-                "shared_timeout": shared_snapshot,
-                "component_timeouts": component_timeouts,
-                "bootstrap_guard": guard_context
-                | {"enabled": guard_enabled, "delay": guard_delay, "scale": guard_scale},
-            },
+            extra=dict(self._budget_snapshot),
         )
 
         self.shared_timeout_coordinator = coordinator
@@ -1162,6 +1240,7 @@ class EnvironmentBootstrapper:
         finally:
             if halt_background:
                 self.shutdown()
+            self._persist_phase_durations()
 
     def _run_optional(self, work: Callable[[], None]) -> None:
         work()
