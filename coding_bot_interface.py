@@ -5490,6 +5490,17 @@ def _prepare_pipeline_for_bootstrap_impl(
     phase_budgets = {gate: _select_phase_budget(gate) for gate in readiness_gate_order}
     _PREPARE_PIPELINE_WATCHDOG["component_budgets_resolved"] = dict(phase_budgets)
 
+    def _resolve_gate_budget(gate: str) -> float | None:
+        historical = historical_gate_budgets.get(gate)
+        budget = phase_budgets.get(gate)
+        if budget is None:
+            budget = historical if historical is not None else _SUBSYSTEM_BUDGET_FLOORS.get(gate)
+        return budget
+
+    component_timer_budgets = {
+        gate: _resolve_gate_budget(gate) for gate in readiness_gate_order
+    }
+
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
             stage,
@@ -5562,6 +5573,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "dominant_gate=%s readiness_ratio=%.3f remediation_hints=%s "
                 "component_windows=%s component_remaining=%s progress=%s "
                 "elastic_global_window=%s global_window_extension=%s "
+                "component_consumption=%s "
                 "deadline_extensions=%s"
             ),
             stage,
@@ -5581,6 +5593,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             context.get("watchdog_progress_signal"),
             context.get("elastic_global_window"),
             context.get("global_window_extension"),
+            context.get("component_consumption"),
             context.get("watchdog_deadline_extensions"),
         )
 
@@ -6494,7 +6507,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_wait_timeout if resolved_wait_timeout is not None else 0.0,
         _BOOTSTRAP_TIMEOUT_FLOOR,
     )
-    component_budget_payload = {k: v for k, v in phase_budgets.items() if v is not None}
+    component_budget_payload = {
+        k: v for k, v in component_timer_budgets.items() if v is not None and k not in DEFERRED_COMPONENTS
+    }
     component_budget_total = sum(component_budget_payload.values()) if component_budget_payload else None
     shared_timeout_budget = resolved_wait_timeout
     if shared_timeout_budget is None:
@@ -6522,25 +6537,27 @@ def _prepare_pipeline_for_bootstrap_impl(
             },
         )
     component_windows: dict[str, dict[str, Any]] = {}
-    coordinator_total_budget: float | None = None
-    if component_budget_active:
-        coordinator_total_budget = global_bootstrap_window
-        if coordinator_total_budget is None:
-            coordinator_total_budget = sum(
-                budget for budget in component_budget_payload.values() if budget is not None
-            )
-        if coordinator_total_budget == 0:
-            coordinator_total_budget = None
-    elif shared_timeout_budget is not None:
-        coordinator_total_budget = max(shared_timeout_budget, 0.0)
+    coordinator_total_budget: float | None = global_bootstrap_window
+    if coordinator_total_budget is None:
+        budget_basis = component_budget_payload or {
+            gate: budget
+            for gate, budget in component_timer_budgets.items()
+            if gate not in DEFERRED_COMPONENTS and budget is not None
+        }
+        if budget_basis:
+            coordinator_total_budget = sum(budget_basis.values())
+        elif shared_timeout_budget is not None:
+            coordinator_total_budget = max(shared_timeout_budget, 0.0)
+    if coordinator_total_budget == 0:
+        coordinator_total_budget = None
 
-    if coordinator_total_budget is not None or component_budget_payload:
+    if coordinator_total_budget is not None or component_timer_budgets:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
             coordinator_total_budget,
             logger=logger,
             namespace="prepare_pipeline",
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
-            component_budgets=component_budget_payload,
+            component_budgets=component_timer_budgets,
             signal_hook=progress_signal,
             global_window=global_bootstrap_window,
             complexity_inputs=component_complexity_inputs,
@@ -6549,13 +6566,31 @@ def _prepare_pipeline_for_bootstrap_impl(
             shared_timeout_coordinator.snapshot()
         )
         _PREPARE_PIPELINE_WATCHDOG["component_budget_payload"] = component_budget_payload
-        if component_budget_payload:
-            component_windows = {
-                gate: dict(meta)
-                for gate, meta in shared_timeout_coordinator.start_component_timers(
-                    component_budget_payload, minimum=effective_timeout_floor
-                ).items()
-            }
+        if component_timer_budgets:
+            primary_windows = shared_timeout_coordinator.start_component_timers(
+                {
+                    gate: budget
+                    for gate, budget in component_timer_budgets.items()
+                    if gate not in DEFERRED_COMPONENTS
+                },
+                minimum=effective_timeout_floor,
+            )
+            component_windows = {gate: dict(meta) for gate, meta in primary_windows.items()}
+            if "background_loops" in component_timer_budgets:
+                budget = component_timer_budgets.get("background_loops")
+                start = time.perf_counter()
+                if budget is None and shared_timeout_coordinator is not None:
+                    try:
+                        budget = shared_timeout_coordinator._component_baseline("background_loops")
+                    except Exception:
+                        budget = None
+                component_windows["background_loops"] = {
+                    "budget": budget,
+                    "deadline": (start + budget) if budget is not None else None,
+                    "started": start,
+                    "remaining": budget,
+                    "deferred": True,
+                }
             snapshot = shared_timeout_coordinator.snapshot()
             for gate, meta in component_windows.items():
                 logger.info(
