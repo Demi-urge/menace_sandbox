@@ -32,6 +32,14 @@ from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
+from bootstrap_readiness import (
+    CORE_COMPONENTS,
+    OPTIONAL_COMPONENTS,
+    build_stage_deadlines,
+    lagging_optional_components,
+    minimal_online,
+    stage_for_step,
+)
 
 if "--health-check" in sys.argv[1:]:
     if not os.getenv("SANDBOX_DEPENDENCY_MODE"):
@@ -83,7 +91,11 @@ WATCHER_EXCLUDES_ENV = "MENACE_BOOTSTRAP_WATCH_EXCLUDES"
 from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
-from sandbox.preseed_bootstrap import BOOTSTRAP_PROGRESS, initialize_bootstrap_context
+from sandbox.preseed_bootstrap import (
+    BOOTSTRAP_PROGRESS,
+    BOOTSTRAP_ONLINE_STATE,
+    initialize_bootstrap_context,
+)
 from sandbox_runner.bootstrap import (
     auto_configure_env,
     bootstrap_environment,
@@ -549,16 +561,19 @@ def _monitor_bootstrap_thread(
     adaptive_grace: Mapping[str, tuple[float, int]],
     completed_steps: set[str] | None = None,
     vector_heavy_steps: set[str] | None = None,
-) -> tuple[bool, str, float, float, set[str]]:
+    stage_policy: Mapping[str, Any] | None = None,
+) -> tuple[bool, str, float, float, set[str], set[str]]:
     """Track bootstrap progress and enforce per-step budgets.
 
-    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps)``.
+    Returns a tuple of ``(timed_out, last_step, elapsed, budget_used, observed_steps, lagging_optional)``.
     """
 
     completed = completed_steps or set()
     last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
     step_start_times: dict[str, float] = {last_step: bootstrap_start}
     grace_extensions: dict[str, int] = {}
+    optional_lagging: set[str] = set()
+    core_online_announced = False
 
     while bootstrap_thread.is_alive():
         if SHUTDOWN_EVENT.is_set():
@@ -592,8 +607,43 @@ def _monitor_bootstrap_thread(
                 grace[1],
             )
 
+        stage = stage_for_step(current_step) or "unknown"
+        online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
+        if not core_online_announced and minimal_online(online_state_snapshot):
+            LOGGER.info(
+                "core bootstrap quorum reached; optional services warming",
+                extra=log_record(
+                    event="bootstrap-online-minimum",
+                    online_state=online_state_snapshot,
+                ),
+            )
+            print(
+                "[BOOTSTRAP] minimal services online; continuing to warm optional stages",
+                flush=True,
+            )
+            core_online_announced = True
+
+        stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
         if elapsed > budget:
-            return True, current_step, elapsed, budget, set(step_start_times)
+            if stage_entry.get("optional"):
+                if stage not in optional_lagging:
+                    optional_lagging.add(stage)
+                    LOGGER.warning(
+                        "optional bootstrap stage exceeded soft deadline",  # advisory only
+                        extra=log_record(
+                            event="bootstrap-optional-overrun",
+                            stage=stage,
+                            elapsed=round(elapsed, 2),
+                            budget=round(budget, 2),
+                        ),
+                    )
+                    print(
+                        f"[BOOTSTRAP] optional stage {stage} is lagging ({elapsed:.1f}s)",
+                        flush=True,
+                    )
+                budget += 30.0
+            else:
+                return True, current_step, elapsed, budget, set(step_start_times), optional_lagging
 
         bootstrap_thread.join(1.0)
 
@@ -603,7 +653,7 @@ def _monitor_bootstrap_thread(
         budget = max(budget, VECTOR_STEP_BUDGET_FLOOR)
     else:
         budget = max(budget, STEP_BUDGET_FLOOR)
-    return False, last_step, elapsed, budget, set(step_start_times)
+    return False, last_step, elapsed, budget, set(step_start_times), optional_lagging
 
 
 def _detect_heavy_bootstrap_hints(args: argparse.Namespace | None = None) -> tuple[bool, dict[str, Any]]:
@@ -647,23 +697,35 @@ def _resolve_bootstrap_deadline_policy(
     """Determine the effective bootstrap deadline policy."""
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
-    adjusted_timeout: float | None = baseline_timeout
+    stage_deadlines = build_stage_deadlines(
+        baseline_timeout,
+        heavy_detected=heavy_detected,
+        soft_deadline=soft_deadline,
+        heavy_scale=heavy_scale,
+    )
+    enforced_deadlines = [
+        entry["deadline"]
+        for entry in stage_deadlines.values()
+        if entry.get("enforced")
+    ]
+    adjusted_timeout: float | None = max(
+        (float(value) for value in enforced_deadlines if value is not None),
+        default=None,
+    )
     policy: dict[str, Any] = {
         "baseline_timeout": baseline_timeout,
         "heavy_detected": heavy_detected,
         "soft_deadline": soft_deadline,
         "hints": dict(hints),
         "heavy_scale": heavy_scale,
+        "stage_deadlines": stage_deadlines,
     }
 
     if soft_deadline and heavy_detected:
-        adjusted_timeout = None
         policy["mode"] = "soft-heavy"
     elif soft_deadline:
-        adjusted_timeout = None
         policy["mode"] = "soft"
     elif heavy_detected:
-        adjusted_timeout = baseline_timeout * heavy_scale
         policy["mode"] = "scaled"
     else:
         policy["mode"] = "baseline"
@@ -1885,6 +1947,7 @@ def main(argv: list[str] | None = None) -> None:
                     bootstrap_context: dict[str, Any] | None = None
                     bootstrap_error: BaseException | None = None
                     bootstrap_seen_steps: set[str] = set()
+                    lagging_optional_stages: set[str] = set()
 
                     for attempt in range(1, max_attempts + 1):
                         last_pre_meta_trace_step = "initialize_bootstrap_context invocation"
@@ -1940,6 +2003,7 @@ def main(argv: list[str] | None = None) -> None:
                             elapsed,
                             budget_used,
                             observed_steps,
+                            lagging_optional,
                         ) = _monitor_bootstrap_thread(
                             bootstrap_thread=bootstrap_thread,
                             bootstrap_stop_event=bootstrap_stop_event,
@@ -1948,7 +2012,9 @@ def main(argv: list[str] | None = None) -> None:
                             adaptive_grace=ADAPTIVE_LONG_STAGE_GRACE,
                             completed_steps=completed_steps,
                             vector_heavy_steps=VECTOR_HEAVY_STEPS,
+                            stage_policy=bootstrap_deadline_policy.get("stage_deadlines", {}),
                         )
+                        lagging_optional_stages.update(lagging_optional)
                         bootstrap_seen_steps.update(observed_steps)
 
                         if timed_out:
@@ -2099,6 +2165,24 @@ def main(argv: list[str] | None = None) -> None:
                                 policy=bootstrap_deadline_policy,
                                 hints=deadline_hints,
                             ),
+                        )
+
+                    online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
+                    pending_optional = lagging_optional_components(online_state_snapshot)
+                    pending_optional.update(lagging_optional_stages)
+                    if pending_optional:
+                        logger.warning(
+                            "optional bootstrap stages still warming",
+                            extra=log_record(
+                                event="bootstrap-optional-pending",
+                                pending=list(sorted(pending_optional)),
+                                online_state=online_state_snapshot,
+                            ),
+                        )
+                        print(
+                            "[BOOTSTRAP] optional stages pending: %s"
+                            % ", ".join(sorted(pending_optional)),
+                            flush=True,
                         )
 
                     print(
