@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping
 
 LOGGER = logging.getLogger(__name__)
+_ADAPTIVE_TIMEOUT_CONTEXT: dict[str, object] = {}
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": 240.0,
@@ -35,6 +36,15 @@ _TIMEOUT_STATE_ENV = "MENACE_BOOTSTRAP_TIMEOUT_STATE"
 _TIMEOUT_STATE_PATH = Path(
     os.getenv(_TIMEOUT_STATE_ENV, os.path.expanduser("~/.menace_bootstrap_timeout_state.json"))
 )
+_COMPONENT_ENV_MAPPING = {
+    "vectorizers": "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS",
+    "retrievers": "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS",
+    "db_indexes": "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS",
+    "orchestrator_state": "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
+}
+_OVERRUN_TOLERANCE = 1.05
+_OVERRUN_STREAK_THRESHOLD = 2
+_DECAY_RATIO = 0.9
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -73,6 +83,17 @@ def _state_host_key() -> str:
     return socket.gethostname() or "unknown-host"
 
 
+def _record_adaptive_context(context: Mapping[str, object]) -> None:
+    _ADAPTIVE_TIMEOUT_CONTEXT.clear()
+    _ADAPTIVE_TIMEOUT_CONTEXT.update(context)
+
+
+def get_adaptive_timeout_context() -> Mapping[str, object]:
+    """Return the last computed adaptive timeout context."""
+
+    return dict(_ADAPTIVE_TIMEOUT_CONTEXT)
+
+
 def load_escalated_timeout_floors() -> dict[str, float]:
     """Return timeout floors that include host-scoped persisted escalations."""
 
@@ -80,12 +101,53 @@ def load_escalated_timeout_floors() -> dict[str, float]:
     state = _load_timeout_state()
     host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
 
+    component_overruns = (
+        host_state.get("component_overruns", {}) if isinstance(host_state, dict) else {}
+    )
+    decay_streak = int(host_state.get("success_streak", 0) or 0)
+    adaptive_notes: dict[str, object] = {
+        "component_overruns": component_overruns,
+        "decay_streak": decay_streak,
+    }
+    state_updated = False
+
     for env_var, default_minimum in list(minimums.items()):
         try:
             host_value = float(host_state.get(env_var, default_minimum))
         except (TypeError, ValueError):
             host_value = default_minimum
         minimums[env_var] = max(default_minimum, host_value)
+
+    for component, env_var in _COMPONENT_ENV_MAPPING.items():
+        overrun_state = component_overruns.get(component, {}) if isinstance(component_overruns, dict) else {}
+        overruns = int(overrun_state.get("overruns", 0) or 0)
+        suggested_floor = _parse_float(str(overrun_state.get("suggested_floor")))
+        if overruns >= _OVERRUN_STREAK_THRESHOLD and suggested_floor:
+            adjusted_floor = max(minimums.get(env_var, 0.0), float(suggested_floor))
+            if adjusted_floor > minimums.get(env_var, 0.0):
+                minimums[env_var] = adjusted_floor
+                adaptive_notes.setdefault("adaptive_floors", {})[env_var] = {
+                    "source": component,
+                    "reason": "repeated_overruns",
+                    "overruns": overruns,
+                    "suggested_floor": adjusted_floor,
+                }
+
+    if decay_streak > 0:
+        for env_var, baseline in _BOOTSTRAP_TIMEOUT_MINIMUMS.items():
+            current = minimums.get(env_var, baseline)
+            decayed = max(baseline, current * (_DECAY_RATIO**min(decay_streak, 3)))
+            if decayed < current:
+                minimums[env_var] = decayed
+                state_updated = True
+        adaptive_notes["decayed"] = True
+        host_state["success_streak"] = max(decay_streak - 1, 0)
+
+    if state_updated:
+        state = state if isinstance(state, dict) else {}
+        state[_state_host_key()] = host_state
+        _save_timeout_state(state)
+    _record_adaptive_context(adaptive_notes)
 
     return minimums
 
@@ -164,6 +226,40 @@ def _summarize_stage_telemetry(telemetry: Mapping[str, object]) -> Mapping[str, 
         "vector_labels": vector_labels,
         "vector_stage_count": len(vector_labels),
     }
+
+
+def _summarize_component_overruns(telemetry: Mapping[str, object]) -> dict[str, dict[str, float | int]]:
+    shared = telemetry.get("shared_timeout") or {}
+    timeline = shared.get("timeline") or []
+    component_overruns: dict[str, dict[str, float | int]] = {}
+    for entry in timeline:
+        component = _categorize_stage(entry) or str(entry.get("label"))
+        if not component:
+            continue
+        elapsed = float(entry.get("elapsed", 0.0) or 0.0)
+        effective = entry.get("effective")
+        if effective is None:
+            continue
+        try:
+            effective_float = float(effective)
+        except (TypeError, ValueError):
+            continue
+        overrun = elapsed > effective_float * _OVERRUN_TOLERANCE and elapsed > 0
+        if not overrun:
+            continue
+        component_state = component_overruns.setdefault(
+            component,
+            {"overruns": 0, "max_elapsed": 0.0, "expected_floor": 0.0},
+        )
+        component_state["overruns"] = int(component_state.get("overruns", 0)) + 1
+        component_state["max_elapsed"] = max(
+            float(component_state.get("max_elapsed", 0.0) or 0.0), elapsed
+        )
+        component_state["expected_floor"] = max(
+            float(component_state.get("expected_floor", 0.0) or 0.0), effective_float
+        )
+
+    return component_overruns
 
 
 def _maybe_escalate_timeout_floors(
@@ -254,6 +350,70 @@ def _maybe_escalate_timeout_floors(
     return details
 
 
+def _merge_consumption_overruns(
+    *,
+    host_state: MutableMapping[str, object],
+    component_floors: MutableMapping[str, float],
+    overruns: Mapping[str, Mapping[str, float | int]],
+) -> bool:
+    """Persist coordinator overruns and bump component floors when needed."""
+
+    if not overruns:
+        return False
+
+    component_overruns = host_state.setdefault("component_overruns", {})
+    state_changed = False
+
+    for component, meta in overruns.items():
+        existing = component_overruns.get(component, {}) if isinstance(component_overruns, dict) else {}
+        streak = int(existing.get("overruns", 0) or 0) + int(meta.get("overruns", 0) or 0)
+        max_elapsed = max(
+            float(existing.get("max_elapsed", 0.0) or 0.0),
+            float(meta.get("max_elapsed", 0.0) or 0.0),
+        )
+        expected_floor = max(
+            float(existing.get("expected_floor", 0.0) or 0.0),
+            float(meta.get("expected_floor", 0.0) or 0.0),
+        )
+        suggested_floor = max(max_elapsed + 30.0, expected_floor * 1.1) if max_elapsed else expected_floor
+        component_overruns[component] = {
+            "overruns": streak,
+            "max_elapsed": max_elapsed,
+            "expected_floor": expected_floor,
+            "suggested_floor": suggested_floor,
+            "last_seen": time.time(),
+        }
+        if streak >= _OVERRUN_STREAK_THRESHOLD and component in _COMPONENT_ENV_MAPPING:
+            baseline = _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+            previous_floor = component_floors.get(component, baseline)
+            component_floors[component] = max(previous_floor, suggested_floor, baseline)
+        state_changed = True
+
+    host_state["component_overruns"] = component_overruns
+    return state_changed
+
+
+def _apply_success_decay(
+    *,
+    host_state: MutableMapping[str, object],
+    component_floors: MutableMapping[str, float],
+) -> bool:
+    success_streak = int(host_state.get("success_streak", 0) or 0)
+    if success_streak <= 0:
+        return False
+
+    state_changed = False
+    for component, baseline in _COMPONENT_TIMEOUT_MINIMUMS.items():
+        current = component_floors.get(component, baseline)
+        decayed = max(baseline, current * (_DECAY_RATIO**min(success_streak, 3)))
+        if decayed < current:
+            component_floors[component] = decayed
+            state_changed = True
+
+    host_state["success_streak"] = max(success_streak - 1, 0)
+    return state_changed
+
+
 def _host_load_scale(load_average: float | None = None) -> float:
     try:
         load = load_average if load_average is not None else os.getloadavg()[0]
@@ -336,28 +496,48 @@ def enforce_bootstrap_timeout_policy(
     minimums: dict[str, float] = load_escalated_timeout_floors()
     component_floors: dict[str, float] = load_component_timeout_floors()
     telemetry = _collect_timeout_telemetry()
+    overrun_meta = _summarize_component_overruns(telemetry)
+    success_run = (telemetry.get("timeouts") or 0) == 0 and not overrun_meta
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    state_changed = False
+
+    if success_run:
+        host_state["success_streak"] = int(host_state.get("success_streak", 0) or 0) + 1
+    else:
+        if host_state.get("success_streak"):
+            state_changed = True
+        host_state["success_streak"] = 0
+
+    state_changed |= _merge_consumption_overruns(
+        host_state=host_state, component_floors=component_floors, overruns=overrun_meta
+    )
+    state_changed |= _apply_success_decay(host_state=host_state, component_floors=component_floors)
     escalation_meta = _maybe_escalate_timeout_floors(
         minimums, component_floors, telemetry=telemetry, logger=active_logger
     )
     if escalation_meta:
-        state = _load_timeout_state()
-        host_key = _state_host_key()
-        host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+        state_changed = True
         host_state.update({k: minimums.get(k, v) for k, v in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()})
+
+    if escalation_meta or state_changed:
         host_state["component_floors"] = dict(component_floors)
         host_state["updated_at"] = time.time()
         state = state if isinstance(state, dict) else {}
         state[host_key] = host_state
         _save_timeout_state(state)
         active_logger.info(
-            "bootstrap timeout floors escalated",
+            "bootstrap timeout floors updated",
             extra={
                 "timeouts": telemetry.get("timeouts"),
                 "host": host_key,
                 "escalation": escalation_meta,
                 "floors": minimums,
                 "component_floors": component_floors,
+                "component_overruns": overrun_meta,
                 "state_file": str(_TIMEOUT_STATE_PATH),
+                "success_run": success_run,
             },
         )
     allow_unsafe = _truthy_env(os.getenv(_OVERRIDE_ENV))
@@ -445,6 +625,7 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
 
     minimums = load_escalated_timeout_floors()
     component_floors = load_component_timeout_floors()
+    adaptive_context = get_adaptive_timeout_context()
     adaptive_applied = any(
         minimums.get(key, 0.0) > _BOOTSTRAP_TIMEOUT_MINIMUMS.get(key, 0.0)
         for key in _BOOTSTRAP_TIMEOUT_MINIMUMS
@@ -470,6 +651,11 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
     ]
 
     if adaptive_applied:
+        adaptive_floors = adaptive_context.get("adaptive_floors", {}) if isinstance(adaptive_context, dict) else {}
+        adaptive_reasons = "; ".join(
+            f"{env} raised for {meta.get('source')} after {meta.get('overruns')} overruns"
+            for env, meta in adaptive_floors.items()
+        ) or "recent load and stage durations"
         hints.append(
             (
                 "Adaptive timeout scaling is active for this host based on load and recent stage durations; "
@@ -477,6 +663,8 @@ def render_prepare_pipeline_timeout_hints(vector_heavy: bool | None = None) -> l
                 "to force manual overrides."
             )
         )
+        if adaptive_reasons:
+            hints.append(f"Recent coordinator overruns: {adaptive_reasons}.")
 
     if vector_heavy:
         return list(hints)
