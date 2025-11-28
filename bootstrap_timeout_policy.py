@@ -442,6 +442,90 @@ def _derive_rolling_global_window(
     return window, extension_meta
 
 
+def _derive_concurrency_global_window(
+    *,
+    base_window: float | None,
+    component_budget_total: float,
+    component_budgets: Mapping[str, float],
+    scheduled_component_budgets: Mapping[str, float] | None,
+    deferred_components: set[str],
+    guard_context: Mapping[str, object] | None,
+    host_telemetry: Mapping[str, object] | None,
+) -> tuple[float | None, Mapping[str, object]]:
+    """Inflate the global window when several component slices overlap."""
+
+    if not component_budget_total and not base_window:
+        return base_window, {}
+
+    scheduled = {
+        key: value
+        for key, value in (scheduled_component_budgets or {}).items()
+        if value is not None
+    }
+    budget_candidates = scheduled if scheduled else component_budgets
+    active_budgets: dict[str, float] = {}
+    for key, value in budget_candidates.items():
+        if key in deferred_components:
+            continue
+        try:
+            coerced = float(value)
+        except (TypeError, ValueError):
+            continue
+        if coerced <= 0:
+            continue
+        active_budgets[key] = coerced
+
+    concurrency = len(active_budgets)
+    if concurrency <= 1:
+        return base_window, {}
+
+    guard_context = guard_context or {}
+    host_telemetry = host_telemetry or {}
+    threshold = _parse_float(os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)) or _DEFAULT_LOAD_THRESHOLD
+    host_load = _parse_float(str(host_telemetry.get("host_load")))
+    if host_load is None:
+        host_load = _parse_float(str(guard_context.get("host_load")))
+    if host_load is None:
+        host_load = _host_load_average()
+
+    load_scale = 1.0
+    if host_load is not None and threshold:
+        load_scale += max(host_load / threshold - 1.0, 0.0) * 0.35
+
+    queue_depth = 0
+    try:
+        queue_depth = int(host_telemetry.get("queue_depth") or guard_context.get("queue_depth") or 0)
+        queue_depth = max(queue_depth, 0)
+    except (TypeError, ValueError):
+        queue_depth = 0
+
+    backlog_scale = 1.0 + min(queue_depth, 5) * 0.05
+    concurrency_scale = 1.0 + min(concurrency - 1, 4) * 0.12
+
+    extension_scale = max(concurrency_scale * load_scale * backlog_scale, 1.0)
+    base = base_window if base_window is not None else component_budget_total
+    if not base:
+        return base_window, {}
+
+    extended_window = base * extension_scale
+    if extended_window <= (base_window or base):
+        return base_window, {}
+
+    extension_meta = {
+        "concurrency": concurrency,
+        "active_components": sorted(active_budgets),
+        "base_window": base,
+        "extended_window": extended_window,
+        "extension_seconds": extended_window - base,
+        "concurrency_scale": concurrency_scale,
+        "load_scale": load_scale,
+        "backlog_scale": backlog_scale,
+        "queue_depth": queue_depth,
+        "host_load": host_load,
+    }
+    return extended_window, extension_meta
+
+
 def _state_host_key() -> str:
     return socket.gethostname() or "unknown-host"
 
@@ -757,6 +841,9 @@ def load_deferred_component_timeout_floors() -> dict[str, float]:
     )
     if not host_component_floors:
         host_component_floors = host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
+    host_component_floors = {
+        key: value for key, value in (host_component_floors or {}).items() if key in DEFERRED_COMPONENTS
+    }
 
     for component, default_minimum in list(component_floors.items()):
         try:
@@ -772,6 +859,7 @@ def load_deferred_component_timeout_floors() -> dict[str, float]:
                 peer_floors = peer_state.get("component_floors", {})
             if not isinstance(peer_floors, Mapping):
                 continue
+            peer_floors = {key: value for key, value in peer_floors.items() if key in DEFERRED_COMPONENTS}
             for component, value in peer_floors.items():
                 try:
                     peer_floor = float(value)
@@ -955,6 +1043,7 @@ def compute_prepare_pipeline_component_budgets(
     load_average: float | None = None,
     pipeline_complexity: Mapping[str, object] | None = None,
     host_telemetry: Mapping[str, object] | None = None,
+    scheduled_component_budgets: Mapping[str, float] | None = None,
 ) -> dict[str, float]:
     """Return proactive per-component budgets for prepare_pipeline gates."""
 
@@ -1109,6 +1198,18 @@ def compute_prepare_pipeline_component_budgets(
     global_window = component_budget_total or None
     global_window_extension: Mapping[str, object] | None = None
 
+    global_window, concurrency_meta = _derive_concurrency_global_window(
+        base_window=global_window,
+        component_budget_total=component_budget_total,
+        component_budgets=budgets,
+        scheduled_component_budgets=scheduled_component_budgets,
+        deferred_components=deferred_components,
+        guard_context=guard_context,
+        host_telemetry=host_telemetry,
+    )
+    if concurrency_meta:
+        global_window_extension = {"concurrency": concurrency_meta}
+
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
             base = budgets.get(component, floors.get(component, 0.0))
@@ -1162,7 +1263,7 @@ def compute_prepare_pipeline_component_budgets(
         host_telemetry=host_telemetry,
     )
     if extension_meta:
-        global_window_extension = extension_meta
+        global_window_extension = {**(global_window_extension or {}), **extension_meta}
 
     adaptive_inputs = {
         "host": host_key,
@@ -1180,6 +1281,7 @@ def compute_prepare_pipeline_component_budgets(
         "deferred_component_budgets": deferred_component_budgets,
         "global_window": global_window,
         "global_window_extension": global_window_extension,
+        "concurrency_extension": concurrency_meta,
         "backlog": {
             "queue_depth": backlog_queue_depth,
             "active_bootstraps": active_bootstraps,
@@ -1226,6 +1328,7 @@ def compute_prepare_pipeline_component_budgets(
                 "component_complexity": component_complexity,
                 "guard_scale": guard_scale,
                 "backlog": adaptive_inputs.get("backlog"),
+                "global_window_extension": global_window_extension,
             },
             "last_global_window_extension": global_window_extension,
             "component_work_units": component_work_units,
