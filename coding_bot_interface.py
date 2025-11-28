@@ -49,6 +49,7 @@ from bootstrap_timeout_policy import (
     build_progress_signal_hook,
     read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
+    wait_for_bootstrap_quiet_period,
 )
 
 try:  # pragma: no cover - prefer package-relative import
@@ -200,7 +201,7 @@ def _coerce_float_env_var(
 
     raw_value = os.getenv(env_var)
     if raw_value is None:
-    return default
+        return default
 
 
 def _summarize_pipeline_complexity(
@@ -4575,6 +4576,7 @@ def prepare_pipeline_for_bootstrap(
     db_warmup_budget: float | None = None,
     orchestrator_budget: float | None = None,
     component_timeouts: Mapping[str, float] | None = None,
+    bootstrap_guard: bool = True,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4616,6 +4618,7 @@ def prepare_pipeline_for_bootstrap(
             db_warmup_budget=db_warmup_budget,
             orchestrator_budget=orchestrator_budget,
             component_timeouts=component_timeouts,
+            bootstrap_guard=bootstrap_guard,
             **pipeline_kwargs,
         )
 
@@ -4644,6 +4647,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     db_warmup_budget: float | None = None,
     orchestrator_budget: float | None = None,
     component_timeouts: Mapping[str, float] | None = None,
+    bootstrap_guard: bool = True,
     **pipeline_kwargs: Any,
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
@@ -4685,6 +4689,10 @@ def _prepare_pipeline_for_bootstrap_impl(
     supported readiness gates (for example the output of
     ``bootstrap_timeout_policy.load_component_timeout_floors``) which are
     consumed by the shared timeout coordinator when available.
+    ``bootstrap_guard`` enables a contention guard that waits for peers or host
+    load to subside before heavy bootstrap stages begin; set the flag to
+    ``False`` or export ``MENACE_BOOTSTRAP_GUARD_OPTOUT=1`` when callers must
+    intentionally skip the guard.
     Additional keyword arguments are forwarded to ``pipeline_cls`` during
     instantiation.
     """
@@ -4721,6 +4729,61 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "explicit_overrides": bool(component_timeouts),
             },
         )
+    guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
+    guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
+        "1",
+        "true",
+        "yes",
+    )
+    guard_delay = 0.0
+    budget_scale = 1.0
+
+    def _scale_budget(value: float | None) -> float | None:
+        if value is None or budget_scale == 1.0:
+            return value
+        return value * budget_scale
+
+    if guard_enabled:
+        guard_delay, budget_scale = wait_for_bootstrap_quiet_period(logger)
+    if budget_scale != 1.0:
+        timeout = _scale_budget(timeout)
+        if deadline is not None:
+            _now_ts = time.perf_counter()
+            deadline = _now_ts + max(0.0, (deadline or 0.0) - _now_ts) * budget_scale
+        bootstrap_wait_timeout = _scale_budget(bootstrap_wait_timeout)
+        subsystem_budget_overrides = {
+            key: _scale_budget(value) for key, value in subsystem_budget_overrides.items()
+        }
+        component_budget_overrides = {
+            key: _scale_budget(value) for key, value in component_budget_overrides.items()
+        }
+        if derived_component_budgets:
+            derived_component_budgets = {
+                key: _scale_budget(value) for key, value in derived_component_budgets.items()
+            }
+
+    if guard_enabled and (guard_delay > 0 or budget_scale > 1.0):
+        logger.info(
+            "prepare_pipeline bootstrap guard engaged",
+            extra={
+                "event": "bootstrap-guard-engaged",
+                "guard_delay": round(guard_delay, 3),
+                "budget_scale": round(budget_scale, 3),
+                "subsystem_budgets": subsystem_budget_overrides,
+                "component_budgets": derived_component_budgets
+                if derived_component_budgets is not None
+                else component_budget_overrides,
+            },
+        )
+    elif not guard_enabled:
+        logger.info(
+            "prepare_pipeline bootstrap guard skipped",
+            extra={
+                "event": "bootstrap-guard-skipped",
+                "opt_out_env": guard_env,
+            },
+        )
+
     _refresh_bootstrap_wait_timeouts(
         stage_budgets=subsystem_budget_overrides,
         vector_stage_budgets=subsystem_budget_overrides,

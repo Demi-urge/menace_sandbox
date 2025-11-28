@@ -27,6 +27,8 @@ The GUI invokes `bootstrap_self_coding.py` during preflight which, in turn, buil
 
 When `_bootstrap_manager` falls back to building a sentinel pipeline, it also seeds the helper bootstrap context with the `_DisabledSelfCodingManager` runtime stub so helpers that instantiate before the pipeline context exists reuse that override instead of re-entering `_bootstrap_manager`. This guarantees that one-off maintenance scripts still avoid the re-entrant depth warning even when they cannot defer helper construction. `tests/test_bootstrap_manager_self_coding.py::test_script_fallback_helper_override_prevents_reentrant_bootstrap` covers the new override path.
 
+All `prepare_pipeline_for_bootstrap` callers now run through the `wait_for_bootstrap_quiet_period` guard before heavy stages begin. The guard waits when another bootstrap heartbeat is detected or when host load breaches the configured threshold and inflates both global and component watchdog budgets based on the detected pressure. CLI utilities and orchestration bots pick up the guard automatically; set the `bootstrap_guard` argument to `False` or export `MENACE_BOOTSTRAP_GUARD_OPTOUT=1` when a bespoke runner must bypass the delay on trusted hosts.
+
 ### Bootstrap timeouts and tuning
 
 The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
