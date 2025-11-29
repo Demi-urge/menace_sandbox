@@ -1,6 +1,5 @@
 import importlib
 import logging
-import logging
 import sys
 import time
 import types
@@ -27,23 +26,53 @@ def _load_preseed_bootstrap_module():
     _install_stub_module("safe_repr", {"summarise_value": lambda value: f"summary:{value}"})
     _install_stub_module("security.secret_redactor", {"redact_dict": lambda data: data})
     _install_stub_module(
+        "bootstrap_readiness",
+        {
+            "READINESS_STAGES": (),
+            "build_stage_deadlines": lambda *_args, **_kwargs: {},
+            "lagging_optional_components": lambda *_args, **_kwargs: set(),
+            "minimal_online": lambda *_args, **_kwargs: (False, set(), set(), False),
+            "stage_for_step": lambda *_args, **_kwargs: None,
+        },
+    )
+    _install_stub_module(
         "bootstrap_timeout_policy",
         {
+            "SharedTimeoutCoordinator": type(
+                "SharedTimeoutCoordinator",
+                (),
+                {
+                    "__init__": lambda self, *_, **__: None,
+                    "mark_component_state": lambda *_, **__: None,
+                    "allocate_timeout": lambda *_, **__: None,
+                },
+            ),
+            "_host_load_average": lambda: 0.0,
+            "_host_load_scale": lambda *_args, **_kwargs: 1.0,
+            "build_progress_signal_hook": lambda *_, **__: lambda *_a, **_k: None,
+            "collect_timeout_telemetry": lambda *_, **__: {},
             "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
+            "load_component_timeout_floors": lambda *_, **__: {},
+            "read_bootstrap_heartbeat": lambda *_, **__: {},
+            "compute_prepare_pipeline_component_budgets": lambda *_, **__: {},
             "render_prepare_pipeline_timeout_hints": lambda *_args, **_kwargs: [
-                "Increase MENACE_BOOTSTRAP_WAIT_SECS=360 or BOOTSTRAP_STEP_TIMEOUT=360 for slower bootstrap hosts.",
-                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=540 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=540 to bypass the legacy 30s cap.",
+                "Increase MENACE_BOOTSTRAP_WAIT_SECS=720 or BOOTSTRAP_STEP_TIMEOUT=720 for slower bootstrap hosts.",
+                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=900 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=900 to bypass the legacy 30s cap.",
                 "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
             ],
+            "record_component_budget_violation": lambda *_, **__: None,
+            "_PREPARE_PIPELINE_COMPONENT": "prepare_pipeline",
+            "_COMPONENT_TIMEOUT_MINIMUMS": {},
+            "_DEFERRED_COMPONENT_TIMEOUT_MINIMUMS": {},
         },
     )
 
     _install_stub_module(
         "menace_sandbox.coding_bot_interface",
         {
-            "_BOOTSTRAP_TIMEOUT_FLOOR": 360.0,
-            "_BOOTSTRAP_WAIT_TIMEOUT": 360.0,
-            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 540.0 if heavy else 360.0,
+            "_BOOTSTRAP_TIMEOUT_FLOOR": 720.0,
+            "_BOOTSTRAP_WAIT_TIMEOUT": 720.0,
+            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 900.0 if heavy else 720.0,
             "_PREPARE_PIPELINE_WATCHDOG": {"stages": []},
             "_pop_bootstrap_context": lambda *_, **__: None,
             "_push_bootstrap_context": lambda *_, **__: None,
@@ -104,8 +133,8 @@ def test_prepare_timeout_emits_remediation_guidance(capsys, caplog):
     combined_output = captured + caplog.text
 
     assert result is None
-    assert "MENACE_BOOTSTRAP_WAIT_SECS=360" in combined_output
-    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=540" in combined_output
+    assert "MENACE_BOOTSTRAP_WAIT_SECS=720" in combined_output
+    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=900" in combined_output
     assert "remaining_global_window" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output
 
@@ -127,3 +156,17 @@ def test_adaptive_timeout_extends_when_slack_available():
     )
 
     assert result == "done"
+
+
+def test_bootstrap_wrappers_export_minimum_floors(monkeypatch):
+    monkeypatch.delenv("MENACE_BOOTSTRAP_WAIT_SECS", raising=False)
+    monkeypatch.delenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", raising=False)
+
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    resolved = preseed_bootstrap.initialize_bootstrap_wait_env()
+
+    assert resolved["MENACE_BOOTSTRAP_WAIT_SECS"] >= 720
+    assert resolved["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"] >= 900
+    assert preseed_bootstrap._default_step_floor(vector_heavy=False) >= 720
+    assert preseed_bootstrap._default_step_floor(vector_heavy=True) >= 900
