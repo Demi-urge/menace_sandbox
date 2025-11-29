@@ -475,7 +475,9 @@ def test_bootstrap_owner_caches_pipeline_for_followups(monkeypatch):
     )
 
     fake_pipeline = mock.Mock(name="pipeline")
-    module.prepare_pipeline_for_bootstrap = mock.Mock(return_value=(fake_pipeline, promote))
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
 
     managers = [mock.Mock(name="manager_one"), mock.Mock(name="manager_two")]
     monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
@@ -490,9 +492,13 @@ def test_bootstrap_owner_caches_pipeline_for_followups(monkeypatch):
     monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
     monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
 
-    state_one = module._ensure_runtime_dependencies(bootstrap_owner=owner)
+    state_one = module._ensure_runtime_dependencies(
+        bootstrap_owner=owner,
+        pipeline_override=fake_pipeline,
+        promote_pipeline=promote,
+    )
     assert state_one.pipeline is fake_pipeline
-    assert module.prepare_pipeline_for_bootstrap.call_count == 1
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
 
     # Reset runtime globals but keep the bootstrap cache entry seeded above.
     module._runtime_state = None
@@ -505,7 +511,7 @@ def test_bootstrap_owner_caches_pipeline_for_followups(monkeypatch):
     state_two = module._ensure_runtime_dependencies(bootstrap_owner=owner)
 
     assert state_two.pipeline is fake_pipeline
-    assert module.prepare_pipeline_for_bootstrap.call_count == 1
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
     assert promote.call_count == 2
     assert promote.call_args_list[0][0][0] is managers[0]
     assert promote.call_args_list[1][0][0] is managers[1]
@@ -701,3 +707,30 @@ def test_bootstrap_guard_promise_waits_for_pipeline(monkeypatch):
     assert state.pipeline is fake_pipeline
     assert state.manager is fake_pipeline.manager
     module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_bootstrap_depth_blocks_new_pipeline(monkeypatch):
+    """Bootstrap depth should block attempts to build a fresh pipeline."""
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        mock_registry.return_value = mock.Mock(name="registry")
+        mock_data_bot.return_value = mock.Mock(name="data_bot")
+        module = _import_fresh()
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(depth=1)
+    module._bootstrap_dependency_broker = lambda: SimpleNamespace(resolve=lambda: (None, None))
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+
+    monkeypatch.setattr(module, "create_context_builder", lambda: mock.Mock(name="builder"))
+    monkeypatch.setattr(module, "SelfCodingEngine", lambda *_a, **_k: mock.Mock())
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", lambda: object)
+
+    with pytest.raises(RuntimeError, match="bootstrap pipeline unavailable"):
+        module._ensure_runtime_dependencies()

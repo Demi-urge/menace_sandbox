@@ -96,7 +96,6 @@ from .coding_bot_interface import (  # noqa: E402
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
-    prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
 from .shared_evolution_orchestrator import get_orchestrator  # noqa: E402
@@ -398,6 +397,8 @@ class ServiceSupervisor:
         restart_log: str = "restart.log",
         dependency_broker: object | None = None,
         bootstrap_context: object | None = None,
+        pipeline: object | None = None,
+        pipeline_promoter: Callable[[object], None] | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=10**6, backupCount=3)
@@ -408,7 +409,7 @@ class ServiceSupervisor:
         self.restart_log = restart_log
         self.targets: Dict[str, Tuple[Callable[[], None], Optional[str]]] = {}
         self.processes: Dict[str, mp.Process] = {}
-        self._pipeline_promoter: Callable[[object], None] | None = None
+        self._pipeline_promoter: Callable[[object], None] | None = pipeline_promoter
         self._bootstrap_dependency_broker = (
             dependency_broker if dependency_broker is not None else _bootstrap_dependency_broker()
         )
@@ -427,17 +428,19 @@ class ServiceSupervisor:
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
         bootstrap_pipeline, bootstrap_promoter = self._resolve_bootstrap_handles()
-        if bootstrap_pipeline is None:
-            pipeline, self._pipeline_promoter = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=self.context_builder,
-                event_bus=bus,
-                bot_registry=registry,
-                data_bot=data_bot,
-            )
-        else:
+        if pipeline is None:
             pipeline = bootstrap_pipeline
+        if self._pipeline_promoter is None:
             self._pipeline_promoter = bootstrap_promoter
+        if pipeline is None:
+            bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+            if bootstrap_depth > 0 or bootstrap_pipeline is not None:
+                raise RuntimeError(
+                    "ServiceSupervisor cannot create a pipeline while bootstrap is active"
+                )
+            raise RuntimeError(
+                "ServiceSupervisor requires an existing ModelAutomationPipeline"
+            )
         evolution_orchestrator = get_orchestrator(
             self.__class__.__name__, data_bot, engine
         )
@@ -540,13 +543,19 @@ class ServiceSupervisor:
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
             pipeline, promote_pipeline = self._resolve_bootstrap_handles()
+            if pipeline is None and hasattr(self, "manager"):
+                try:
+                    pipeline = getattr(self.manager, "pipeline", None)
+                except Exception:
+                    pipeline = None
             if pipeline is None:
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                    pipeline_cls=ModelAutomationPipeline,
-                    context_builder=self.context_builder,
-                    event_bus=bus,
-                    bot_registry=registry,
-                    data_bot=data_bot,
+                bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+                if bootstrap_depth > 0:
+                    raise RuntimeError(
+                        "deploy_patch cannot build a pipeline while bootstrap is active"
+                    )
+                raise RuntimeError(
+                    "deploy_patch requires an existing ModelAutomationPipeline"
                 )
             evolution_orchestrator = get_orchestrator(
                 self.__class__.__name__, data_bot, engine

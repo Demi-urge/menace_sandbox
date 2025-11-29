@@ -390,6 +390,25 @@ def test_deploy_patch_requires_self_tests(monkeypatch, tmp_path):
     assert promotions == [manager, manager]
 
 
+def test_deploy_patch_blocks_bootstrap_construction(monkeypatch, tmp_path):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.context_builder = DummyBuilder()
+    supervisor.approval_policy = types.SimpleNamespace()
+    supervisor.rollback_mgr = types.SimpleNamespace(auto_rollback=lambda *_a, **_k: None)
+    supervisor.logger = logging.getLogger("ServiceSupervisorBootstrapBlock")
+    supervisor.logger.handlers = []
+    supervisor.logger.addHandler(logging.NullHandler())
+
+    supervisor._resolve_bootstrap_handles = lambda: (None, None)
+    monkeypatch.setattr(ss, "_BOOTSTRAP_STATE", types.SimpleNamespace(depth=1))
+    monkeypatch.setattr(ss, "SelfCodingEngine", lambda *_a, **_k: object())
+    monkeypatch.setattr(ss, "CodeDB", lambda *_a, **_k: object())
+    monkeypatch.setattr(ss, "MenaceMemoryManager", lambda *_a, **_k: object())
+
+    with pytest.raises(RuntimeError, match="cannot build a pipeline"):
+        supervisor.deploy_patch(tmp_path, "desc")
+
+
 def test_constructor_reuses_inflight_bootstrap(monkeypatch, tmp_path):
     ss.bus = types.SimpleNamespace()
     ss.registry = types.SimpleNamespace()
