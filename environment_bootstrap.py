@@ -26,6 +26,8 @@ import urllib.request
 import bootstrap_timeout_policy
 import bootstrap_metrics
 
+from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines
+
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
 from .logging_utils import log_record
@@ -189,6 +191,124 @@ class _BootstrapScheduler:
         return t
 
 
+class _StageAwareScheduler:
+    def __init__(
+        self,
+        *,
+        stage_policy: Mapping[str, Mapping[str, object]] | None,
+        component_budgets: Mapping[str, float] | None,
+        scheduler: _BootstrapScheduler,
+        online_gate: threading.Event,
+        host_load_probe: Callable[[], float | None],
+        load_threshold: float,
+        logger: logging.Logger,
+    ) -> None:
+        self._stage_policy = stage_policy or {}
+        self._component_budgets = component_budgets or {}
+        self._scheduler = scheduler
+        self._online_gate = online_gate
+        self._host_load_probe = host_load_probe
+        self._load_threshold = max(load_threshold, 0.0)
+        self._logger = logger
+        self._stage_order: tuple[str, ...] = tuple(stage.name for stage in READINESS_STAGES)
+        self._optional: dict[str, bool] = {stage.name: stage.optional for stage in READINESS_STAGES}
+        self._scheduled: set[str] = set()
+        self._stage_events: dict[str, threading.Event] = {
+            name: threading.Event() for name in self._stage_order
+        }
+
+    def _budget_hint(self, stage: str, budget_hint: float | None) -> float | None:
+        if budget_hint is not None:
+            return budget_hint
+        meta = self._stage_policy.get(stage, {})
+        for key in ("scaled_budget", "budget", "soft_budget", "deadline"):
+            try:
+                value = meta.get(key) if isinstance(meta, Mapping) else None
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        try:
+            return float(self._component_budgets.get(stage))
+        except Exception:
+            return None
+
+    def _previous_event(self, stage: str) -> threading.Event | None:
+        if stage not in self._stage_order:
+            return None
+        idx = self._stage_order.index(stage)
+        for prior in reversed(self._stage_order[:idx]):
+            if prior in self._scheduled:
+                return self._stage_events.get(prior)
+        return None
+
+    def _throttle_delay(self, stage: str, budget_hint: float | None) -> float:
+        delay = 0.0
+        load = self._host_load_probe()
+        if load is not None and self._load_threshold:
+            over = max(load / self._load_threshold, 0.0)
+            if over > 1.0:
+                delay = max(delay, min(over * 1.5, 30.0))
+        if budget_hint is not None and budget_hint > 0:
+            delay = max(delay, min(budget_hint * 0.05, 15.0))
+        return delay
+
+    def schedule_stage(
+        self,
+        stage: str,
+        name: str,
+        func: Callable[[], threading.Thread | None],
+        *,
+        delay_until_ready: bool,
+        join_inner: bool,
+        ready_gate: str | None,
+        budget_hint: float | None = None,
+    ) -> threading.Thread:
+        if stage not in self._stage_order:
+            return self._scheduler.schedule(
+                name,
+                func,
+                delay_until_ready=delay_until_ready,
+                join_inner=join_inner,
+                ready_gate=ready_gate,
+            )
+        self._scheduled.add(stage)
+        event = self._stage_events[stage]
+        prior = self._previous_event(stage)
+
+        def _runner() -> None:
+            if prior:
+                prior.wait()
+            if self._optional.get(stage) and not self._online_gate.is_set():
+                self._logger.info(
+                    "delaying optional stage %s until core readiness stabilizes", stage
+                )
+                self._online_gate.wait()
+            hint = self._budget_hint(stage, budget_hint)
+            delay = self._throttle_delay(stage, hint)
+            if delay > 0:
+                self._logger.info(
+                    "throttling stage %s for %.1fs (load/budget guard)", stage, delay
+                )
+                time.sleep(delay)
+            try:
+                inner = self._scheduler.schedule(
+                    name,
+                    func,
+                    delay_until_ready=delay_until_ready,
+                    join_inner=join_inner,
+                    ready_gate=ready_gate,
+                )
+                if isinstance(inner, threading.Thread):
+                    inner.join()
+            finally:
+                event.set()
+
+        wrapper = threading.Thread(target=_runner, daemon=True, name=f"stage-{stage}-{name}")
+        wrapper.start()
+        return wrapper
+
+
 class EnvironmentBootstrapper:
     """Bootstrap dependencies and infrastructure on startup."""
 
@@ -229,6 +349,7 @@ class EnvironmentBootstrapper:
             "finished": 0,
             "active": set(),
         }
+        self._stage_scheduler: _StageAwareScheduler | None = None
         self._phase_readiness["background_tasks"] = {
             "scheduled": 0,
             "running": 0,
@@ -257,6 +378,11 @@ class EnvironmentBootstrapper:
             logger=self.logger,
             readiness_tracker=self._track_background_task,
         )
+        threshold = os.getenv("MENACE_BOOTSTRAP_LOAD_THRESHOLD")
+        try:
+            self._load_threshold = float(threshold) if threshold is not None else None
+        except ValueError:
+            self._load_threshold = None
         self.shared_timeout_coordinator = shared_timeout_coordinator
         self._component_timeouts: dict[str, float] | None = None
         self._budget_snapshot: dict[str, object] = {}
@@ -756,14 +882,27 @@ class EnvironmentBootstrapper:
         delay_until_ready: bool = True,
         join_inner: bool = True,
         ready_gate: str | None = "critical",
+        stage: str | None = None,
+        budget_hint: float | None = None,
     ) -> threading.Thread:
-        t = self._scheduler.schedule(
-            name,
-            func,
-            delay_until_ready=delay_until_ready,
-            join_inner=join_inner,
-            ready_gate=ready_gate,
-        )
+        if stage and self._stage_scheduler:
+            t = self._stage_scheduler.schedule_stage(
+                stage,
+                name,
+                func,
+                delay_until_ready=delay_until_ready,
+                join_inner=join_inner,
+                ready_gate=ready_gate,
+                budget_hint=budget_hint,
+            )
+        else:
+            t = self._scheduler.schedule(
+                name,
+                func,
+                delay_until_ready=delay_until_ready,
+                join_inner=join_inner,
+                ready_gate=ready_gate,
+            )
         self._background_threads.append(t)
         return t
 
@@ -964,6 +1103,14 @@ class EnvironmentBootstrapper:
             ] = str(effective_override)
             budgets[phase] = effective_override
 
+        stage_deadlines = build_stage_deadlines(
+            max(base_phase_budgets.values() or [base_wait_floor, 0.0]),
+            heavy_detected=component_budget_total > 0,
+            soft_deadline=bool(enforcement.get("soft_deadline")),
+            component_budgets=component_timeouts,
+            component_floors=component_floors,
+        )
+
         shared_snapshot: dict[str, object] | None = None
         coordinator = self.shared_timeout_coordinator
         if coordinator is not None:
@@ -1046,6 +1193,7 @@ class EnvironmentBootstrapper:
             "cluster_load": host_telemetry,
             "global_window": adaptive_window,
             "global_window_meta": rolling_meta,
+            "stage_deadlines": stage_deadlines,
             "bootstrap_guard": guard_context
             | {"enabled": guard_enabled, "delay": guard_delay, "scale": guard_scale},
             "phase_stats": phase_stats,
@@ -1059,6 +1207,8 @@ class EnvironmentBootstrapper:
             extra=dict(self._budget_snapshot),
         )
 
+        self._configure_stage_scheduler(stage_deadlines, component_timeouts)
+
         self.shared_timeout_coordinator = coordinator
         self._component_timeouts = component_timeouts
 
@@ -1071,6 +1221,62 @@ class EnvironmentBootstrapper:
         snapshot["gates"] = self._readiness_snapshot()
         snapshot["background_tasks"] = dict(self._phase_readiness.get("background_tasks", {}))
         return snapshot
+
+    def _current_host_load(self) -> float | None:
+        ctx = self._budget_snapshot.get("cluster_load") if isinstance(self._budget_snapshot, dict) else None
+        if isinstance(ctx, Mapping):
+            for key in ("host_load", "load", "load_avg"):
+                try:
+                    value = ctx.get(key)
+                    if value is not None:
+                        return float(value)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+        try:
+            load_avg = os.getloadavg()
+            return float(load_avg[0]) if load_avg else None
+        except (OSError, AttributeError):
+            return None
+
+    def _configure_stage_scheduler(
+        self,
+        stage_policy: Mapping[str, Mapping[str, object]] | None,
+        component_budgets: Mapping[str, float] | None,
+    ) -> None:
+        load_threshold = self._load_threshold
+        if load_threshold is None:
+            load_threshold = getattr(bootstrap_timeout_policy, "_DEFAULT_LOAD_THRESHOLD", 1.35)
+
+        def _probe() -> float | None:
+            return self._current_host_load()
+
+        self._stage_scheduler = _StageAwareScheduler(
+            stage_policy=stage_policy,
+            component_budgets=component_budgets,
+            scheduler=self._scheduler,
+            online_gate=self._online_event,
+            host_load_probe=_probe,
+            load_threshold=load_threshold or 1.35,
+            logger=self.logger,
+        )
+
+    def _stage_budget_hint(self, stage: str) -> float | None:
+        stage_policy = self._budget_snapshot.get("stage_deadlines")
+        if isinstance(stage_policy, Mapping):
+            entry = stage_policy.get(stage, {})
+            for key in ("scaled_budget", "soft_budget", "budget", "deadline"):
+                try:
+                    value = entry.get(key) if isinstance(entry, Mapping) else None
+                    if value is not None:
+                        return float(value)
+                except (TypeError, ValueError):
+                    continue
+        if self._component_timeouts:
+            try:
+                return float(self._component_timeouts.get(stage))
+            except Exception:
+                return None
+        return None
 
     def shutdown(self, *, timeout: float | None = 5.0) -> None:
         """Stop background bootstrap threads started by the instance."""
@@ -1506,7 +1712,15 @@ class EnvironmentBootstrapper:
         if hosts:
             self.deploy_across_hosts(hosts)
         check_budget()
-        start_scheduler_from_env()
+        self._queue_background_task(
+            "vector-service-scheduler",
+            start_scheduler_from_env,
+            delay_until_ready=True,
+            ready_gate="provisioning",
+            stage="vector_seeding",
+            budget_hint=self._stage_budget_hint("vector_seeding"),
+            join_inner=False,
+        )
 
     # ------------------------------------------------------------------
     def _optional_tail(self, check_budget: Callable[[], None]) -> None:
@@ -1570,6 +1784,9 @@ class EnvironmentBootstrapper:
                         lambda: self._run_optional(optional_work),
                         delay_until_ready=False,
                         join_inner=False,
+                        ready_gate="online",
+                        stage="background_loops",
+                        budget_hint=self._stage_budget_hint("background_loops"),
                     )
         finally:
             if halt_background:
