@@ -5470,9 +5470,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         if context_pipeline is not None:
             pipeline_candidate = context_pipeline
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
-    bootstrap_inflight = bool(
-        active_depth or active_heartbeat or any(value > 0 for value in owner_depths.values())
-    )
+    owner_bootstrap_active = any(value > 0 for value in owner_depths.values())
+    bootstrap_inflight = bool(active_depth or active_heartbeat or owner_bootstrap_active)
     guard_metadata = {
         "active_depth": active_depth,
         "active_guard_token": bool(active_guard_token),
@@ -5480,6 +5479,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "pipeline_candidate": bool(pipeline_candidate),
         "bootstrap_inflight": bootstrap_inflight,
         "owner_depths": dict(owner_depths),
+        "owner_bootstrap_active": owner_bootstrap_active,
         "dependency_broker": bool(broker_pipeline or broker_sentinel),
         "heartbeat": bool(active_heartbeat),
     }
@@ -5491,6 +5491,50 @@ def _prepare_pipeline_for_bootstrap_impl(
     reentry_blocked = bootstrap_inflight and not (
         pipeline_candidate is not None or sentinel_candidate is not None
     )
+
+    if (
+        (active_depth or owner_bootstrap_active)
+        and pipeline_candidate is None
+        and sentinel_candidate is None
+    ):
+        sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+        if sentinel_candidate is None:
+            sentinel_candidate = SimpleNamespace(bootstrap_placeholder=True)
+        _mark_bootstrap_placeholder(sentinel_candidate)
+        pipeline_candidate = SimpleNamespace(
+            manager=sentinel_candidate,
+            initial_manager=sentinel_candidate,
+            bootstrap_placeholder=True,
+        )
+        _mark_bootstrap_placeholder(pipeline_candidate)
+        _BOOTSTRAP_STATE.pipeline = pipeline_candidate
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel_candidate
+        )
+        guard_metadata.update(
+            {
+                "placeholder_short_circuit": True,
+                "reentry_blocked": reentry_blocked,
+                "active_depth": active_depth,
+                "owner_bootstrap_active": owner_bootstrap_active,
+            }
+        )
+        _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
+        logger.info(
+            "prepare_pipeline.bootstrap.placeholder_reentry",
+            extra={
+                "event": "prepare-pipeline-bootstrap-placeholder-reentry",
+                "depth": active_depth,
+                "owner_bootstrap_active": owner_bootstrap_active,
+                "dependency_broker": bool(broker_pipeline or broker_sentinel),
+            },
+        )
+        _record_prepare_pipeline_stage(
+            "bootstrap placeholder reuse",
+            elapsed=0.0,
+            extra={"dependency_broker": True, "placeholder": True},
+        )
+        reentry_blocked = False
 
     if (
         bootstrap_context is not None
@@ -5641,6 +5685,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "reentry_blocked": reentry_blocked,
                 "reentry_waited": reentry_waited or reentry_wait_elapsed > 0.0,
                 "reentry_wait_elapsed": reentry_wait_elapsed,
+                "placeholder_short_circuit": guard_metadata.get(
+                    "placeholder_short_circuit", False
+                ),
             }
         )
         _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
@@ -5657,6 +5704,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "waited": reentry_waited or reentry_wait_elapsed > 0.0,
                 "wait_timeout": reentry_wait_timeout,
                 "wait_elapsed": round(reentry_wait_elapsed, 6),
+                "placeholder": getattr(
+                    pipeline_candidate, "bootstrap_placeholder", False
+                ),
             },
         )
         logger.info(
@@ -5668,6 +5718,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "dependency_broker": bool(broker_pipeline or broker_sentinel),
                 "pipeline_candidate": getattr(
                     getattr(pipeline_candidate, "__class__", None), "__name__", str(type(pipeline_candidate))
+                ),
+                "placeholder": getattr(
+                    pipeline_candidate, "bootstrap_placeholder", False
                 ),
             },
         )
