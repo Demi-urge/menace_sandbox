@@ -44,8 +44,10 @@ from bootstrap_readiness import (
 from bootstrap_timeout_policy import (
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     compute_prepare_pipeline_component_budgets,
+    derive_bootstrap_timeout_env,
     emit_bootstrap_heartbeat,
     get_bootstrap_guard_context,
+    guard_bootstrap_wait_env,
     load_component_timeout_floors,
     wait_for_bootstrap_quiet_period,
 )
@@ -180,11 +182,33 @@ def _apply_self_coding_guard() -> float:
     """Delay bootstrap when peers are active or host load is high."""
 
     guard_delay, guard_scale = wait_for_bootstrap_quiet_period(LOGGER)
+    resolved_timeout_env = derive_bootstrap_timeout_env(
+        minimum=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
+    )
+    guard_scale = max(float(guard_scale or 1.0), 1.0)
     if guard_scale > 1.0:
-        current = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
-        adjusted = current * guard_scale
-        os.environ["BOOTSTRAP_STEP_TIMEOUT"] = str(adjusted)
-        os.environ["MENACE_BOOTSTRAP_WAIT_SECS"] = str(adjusted)
+        for env_var in (
+            "BOOTSTRAP_STEP_TIMEOUT",
+            "MENACE_BOOTSTRAP_WAIT_SECS",
+            "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+            "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        ):
+            baseline = resolved_timeout_env.get(
+                env_var, _BOOTSTRAP_TIMEOUT_MINIMUMS.get(env_var, 0.0)
+            )
+            try:
+                resolved_timeout_env[env_var] = float(baseline) * guard_scale
+            except (TypeError, ValueError):
+                continue
+
+    resolved_timeout_env.update(
+        guard_bootstrap_wait_env(env=os.environ, floors=resolved_timeout_env)
+    )
+    for env_var, value in resolved_timeout_env.items():
+        try:
+            os.environ[env_var] = str(float(value))
+        except (TypeError, ValueError):
+            continue
     return guard_delay
 
 
