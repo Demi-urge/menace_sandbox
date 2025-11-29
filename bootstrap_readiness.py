@@ -108,6 +108,8 @@ def build_stage_deadlines(
     component_budgets: Mapping[str, float] | None = None,
     component_floors: Mapping[str, float] | None = None,
     adaptive_window: float | None = None,
+    stage_windows: Mapping[str, float] | None = None,
+    stage_runtime: Mapping[str, Mapping[str, float | int]] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Construct stage-aware deadlines for bootstrap orchestration.
 
@@ -130,7 +132,13 @@ def build_stage_deadlines(
             component_floors=component_floors,
             fallback=baseline_timeout,
         )
-        scaled_budget = resolved_budget * scale if resolved_budget is not None else None
+        adaptive_stage_window = _resolve_stage_budget(stage.name, stage_windows)
+        stage_window_scale = window_scale
+        if adaptive_stage_window is not None and resolved_budget:
+            stage_window_scale = max(adaptive_stage_window / resolved_budget, window_scale)
+            resolved_budget = max(resolved_budget, adaptive_stage_window)
+
+        scaled_budget = resolved_budget * scale * stage_window_scale if resolved_budget is not None else None
         if stage.optional and scaled_budget is not None:
             # Give optional background phases slightly more time so they can
             # converge without tripping fatal watchdogs while the system is
@@ -162,6 +170,11 @@ def build_stage_deadlines(
             "soft_degrade": soft_degrade,
             "scale": scale,
             "window_scale": window_scale,
+            "stage_window_scale": stage_window_scale,
+            "adaptive_stage_window": adaptive_stage_window,
+            "runtime": dict(stage_runtime.get(stage.name, {}))
+            if isinstance(stage_runtime, Mapping)
+            else {},
             "core_gate": not stage.optional,
         }
     return stage_deadlines

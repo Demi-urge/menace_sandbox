@@ -64,6 +64,13 @@ _DEFERRED_COMPONENT_ENV_MAPPING = {
     "background_loops": "MENACE_BOOTSTRAP_WAIT_SECS",
 }
 _ALL_COMPONENT_ENV_MAPPING = {**_COMPONENT_ENV_MAPPING, **_DEFERRED_COMPONENT_ENV_MAPPING}
+_COMPONENT_TO_STAGE = {
+    "vectorizers": "vector_seeding",
+    "retrievers": "retriever_hydration",
+    "db_indexes": "db_index_load",
+    "orchestrator_state": "orchestrator_state",
+    "background_loops": "background_loops",
+}
 _OVERRUN_TOLERANCE = 1.05
 _OVERRUN_STREAK_THRESHOLD = 2
 _DECAY_RATIO = 0.9
@@ -1302,6 +1309,15 @@ def _extract_component_durations(telemetry: Mapping[str, object]) -> dict[str, d
     return durations
 
 
+def load_component_runtime_samples(
+    telemetry: Mapping[str, object] | None = None,
+) -> dict[str, dict[str, float | int]]:
+    """Public helper to surface aggregated component duration telemetry."""
+
+    telemetry = telemetry or collect_timeout_telemetry()
+    return _extract_component_durations(telemetry or {})
+
+
 def _compute_runtime_scaled_minimums(
     *,
     host_state: Mapping[str, object] | None,
@@ -1828,6 +1844,26 @@ def load_last_component_budgets() -> dict[str, float]:
     return budgets
 
 
+def _component_budgets_to_stage_windows(
+    budgets: Mapping[str, float] | None,
+) -> dict[str, float]:
+    """Normalize component budgets into readiness stage windows."""
+
+    if not budgets:
+        return {}
+    stage_windows: dict[str, float] = {}
+    for component, budget in budgets.items():
+        stage = _COMPONENT_TO_STAGE.get(component)
+        if not stage:
+            continue
+        try:
+            value = float(budget)
+        except (TypeError, ValueError):
+            continue
+        stage_windows[stage] = max(stage_windows.get(stage, 0.0), value)
+    return stage_windows
+
+
 def load_component_budget_pools() -> dict[str, float]:
     """Return persisted per-component budget pools when available."""
 
@@ -1856,6 +1892,25 @@ def load_component_budget_pools() -> dict[str, float]:
                 resolved[component] = max(resolved.get(component, 0.0), recommendation)
 
     return resolved
+
+
+def load_adaptive_stage_windows(
+    *, component_budgets: Mapping[str, float] | None = None
+) -> dict[str, float]:
+    """Return the most recent per-stage adaptive budgets."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    stage_windows = host_state.get("last_stage_budgets", {}) if isinstance(host_state, Mapping) else {}
+    if not isinstance(stage_windows, Mapping) or not stage_windows:
+        stage_windows = {}
+    mapped = _component_budgets_to_stage_windows(component_budgets)
+    for key, value in mapped.items():
+        try:
+            stage_windows[key] = max(float(value), float(stage_windows.get(key, 0.0) or 0.0))
+        except (TypeError, ValueError):
+            continue
+    return dict(stage_windows)
 
 
 def load_last_global_bootstrap_window() -> tuple[float | None, Mapping[str, object]]:
@@ -2266,6 +2321,8 @@ def compute_prepare_pipeline_component_budgets(
         key: value for key, value in budgets.items() if key in deferred_components
     }
 
+    stage_budgets = _component_budgets_to_stage_windows(budgets)
+
     component_work_units = {
         "vectorizers": max(int(complexity.get("vectorizers", 0) or 1), 1),
         "retrievers": max(int(complexity.get("retrievers", 0) or 1), 1),
@@ -2305,6 +2362,7 @@ def compute_prepare_pipeline_component_budgets(
         "deferred_component_budget_total": deferred_component_budget_total,
         "deferred_component_budgets": deferred_component_budgets,
         "component_budgets": budgets,
+        "stage_budgets": stage_budgets,
         "component_overruns": host_overruns,
         "budget_violations": host_state_details.get("component_budget_violations"),
         "global_window": global_window,
@@ -2351,6 +2409,7 @@ def compute_prepare_pipeline_component_budgets(
             "last_component_budget_total": component_budget_total,
             "last_component_minimum_total": component_minimum_total,
             "last_deferred_component_budget_total": deferred_component_budget_total,
+            "last_stage_budgets": stage_budgets,
             "last_global_bootstrap_window": global_window,
             "last_global_window_inputs": {
                 "component_total": component_budget_total,
@@ -2411,12 +2470,13 @@ def compute_prepare_pipeline_component_budgets(
 
     LOGGER.info(
         "prepared adaptive component budgets",
-        extra={
-            "event": "adaptive-component-budgets",
-            "budgets": budgets,
-            "component_budget_pools": adaptive_inputs.get("component_budget_pools"),
-            "component_pool_scales": component_pool_scales,
-            "component_complexity": component_complexity,
+            extra={
+                "event": "adaptive-component-budgets",
+                "budgets": budgets,
+                "stage_budgets": stage_budgets,
+                "component_budget_pools": adaptive_inputs.get("component_budget_pools"),
+                "component_pool_scales": component_pool_scales,
+                "component_complexity": component_complexity,
             "load_scale": scale,
             "host_load": load_average,
             "host_overruns": host_overruns,
@@ -2440,6 +2500,7 @@ def compute_prepare_pipeline_component_budgets(
             "component_budget_backoff": cohort_backoff_meta,
             "global_window": global_window,
             "global_window_extension": global_window_extension,
+            "stage_budgets": stage_budgets,
         }
     )
 

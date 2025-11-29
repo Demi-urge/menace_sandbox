@@ -48,6 +48,9 @@ from bootstrap_timeout_policy import (
     emit_bootstrap_heartbeat,
     get_bootstrap_guard_context,
     guard_bootstrap_wait_env,
+    load_adaptive_stage_windows,
+    load_component_runtime_samples,
+    collect_timeout_telemetry,
     load_component_timeout_floors,
     wait_for_bootstrap_quiet_period,
 )
@@ -59,14 +62,23 @@ LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent
 
 
+_ADAPTIVE_TIMEOUT_FLOORS = derive_bootstrap_timeout_env()
 DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]),
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    "MENACE_BOOTSTRAP_WAIT_SECS": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"])
     ),
-    "BOOTSTRAP_STEP_TIMEOUT": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]),
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get(
+            "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+        )
+    ),
+    "BOOTSTRAP_STEP_TIMEOUT": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"])
+    ),
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+        _ADAPTIVE_TIMEOUT_FLOORS.get(
+            "BOOTSTRAP_VECTOR_STEP_TIMEOUT", _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+        )
     ),
 }
 
@@ -325,6 +337,8 @@ def bootstrap_self_coding(bot_name: str) -> None:
         calibrated_timeout,
         component_budgets=component_budgets,
         component_floors=component_floors,
+        stage_windows=load_adaptive_stage_windows(component_budgets=component_budgets),
+        stage_runtime=load_component_runtime_samples(collect_timeout_telemetry()),
     )
     online_tracker = _BootstrapOnlineTracker(stage_policy)
     core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
