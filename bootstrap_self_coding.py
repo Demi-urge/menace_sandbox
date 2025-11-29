@@ -26,7 +26,11 @@ from pathlib import Path
 from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
-from bootstrap_readiness import build_stage_deadlines, minimal_online
+from bootstrap_readiness import (
+    build_stage_deadlines,
+    lagging_optional_components,
+    minimal_online,
+)
 from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
     emit_bootstrap_heartbeat,
@@ -64,7 +68,11 @@ class _BootstrapOnlineTracker:
     def _soft_deadline(self, component: str) -> float | None:
         entry = self.stage_policy.get(component, {})
         if isinstance(entry, Mapping):
-            deadline = entry.get("deadline") or entry.get("scaled_budget")
+            deadline = (
+                entry.get("soft_budget")
+                if entry.get("optional")
+                else entry.get("deadline")
+            ) or entry.get("scaled_budget")
             try:
                 return float(deadline) if deadline is not None else None
             except (TypeError, ValueError):
@@ -112,15 +120,20 @@ class _BootstrapOnlineTracker:
         if not core_ready:
             return
         self._core_announced = True
+        optional_warming = lagging_optional_components(self.online_state)
         heartbeat_payload = {"signal": "core-online", "online_state": dict(self.online_state)}
+        heartbeat_payload["optional_warming"] = sorted(optional_warming)
+        heartbeat_payload["partial_online"] = bool(optional_warming)
         try:
             emit_bootstrap_heartbeat(heartbeat_payload)
         except Exception:
             LOGGER.debug("Failed to emit core-online heartbeat", exc_info=True)
-        LOGGER.info(
-            "core bootstrap quorum reached; optional background warmup continuing",
-            extra={"event": "core-online", **heartbeat_payload},
+        message = (
+            "core bootstrap quorum reached; optional background warmup continuing"
+            if optional_warming
+            else "core bootstrap quorum reached; all stages online"
         )
+        LOGGER.info(message, extra={"event": "core-online", **heartbeat_payload})
         print("[BOOTSTRAP] core-online; continuing optional warmup", flush=True)
 
 
@@ -271,11 +284,13 @@ def bootstrap_self_coding(bot_name: str) -> None:
             "self-coding bootstrap delayed for active peer",
             extra={"event": "bootstrap-guard", "delay": round(guard_delay, 2)},
         )
-    policy_summary = [
-        f"{stage}: {details.get('deadline')}s"
-        + (" (optional)" if details.get("optional") else "")
-        for stage, details in sorted(stage_policy.items())
-    ]
+    policy_summary = []
+    for stage, details in sorted(stage_policy.items()):
+        if not isinstance(details, Mapping):
+            continue
+        target = details.get("deadline") if not details.get("optional") else details.get("soft_budget")
+        suffix = " (optional, soft)" if details.get("optional") else " (core)"
+        policy_summary.append(f"{stage}: {target}s{suffix}")
     print("bootstrap readiness policy: %s" % ", ".join(policy_summary), flush=True)
 
     from menace_sandbox.bot_registry import BotRegistry
