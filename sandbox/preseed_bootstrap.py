@@ -69,6 +69,8 @@ from bootstrap_timeout_policy import (
     read_bootstrap_heartbeat,
     compute_prepare_pipeline_component_budgets,
     render_prepare_pipeline_timeout_hints,
+    record_component_budget_violation,
+    _PREPARE_PIPELINE_COMPONENT,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1141,6 +1143,35 @@ def _clamp_prepare_timeout_floor(
         if deadline_remaining is not None and deadline_remaining < timeout_floor:
             shortfall = round(timeout_floor - deadline_remaining, 3)
             updated_context["deadline_shortfall"] = shortfall
+
+        floor_shortfall = round(timeout_floor - adaptive_timeout, 3)
+        updated_context["timeout_floor_shortfall"] = floor_shortfall
+        host_load = _host_load_average()
+        updated_context["host_load"] = host_load
+        violation_payload = {
+            "component": _PREPARE_PIPELINE_COMPONENT,
+            "floor": timeout_floor,
+            "shortfall": floor_shortfall,
+            "requested": adaptive_timeout,
+            "host_load": host_load,
+            "deadline_remaining": deadline_remaining,
+            "deadline_shortfall": shortfall,
+            "vector_heavy": vector_heavy or heavy_prepare,
+        }
+        record_component_budget_violation(
+            _PREPARE_PIPELINE_COMPONENT,
+            floor=timeout_floor,
+            shortfall=floor_shortfall,
+            requested=adaptive_timeout,
+            host_load=host_load,
+            context=violation_payload,
+        )
+        try:
+            watchdog = getattr(_coding_bot_interface, "_PREPARE_PIPELINE_WATCHDOG", {})
+            if isinstance(watchdog, dict):
+                watchdog.setdefault("budget_violations", []).append(violation_payload)
+        except Exception:  # pragma: no cover - diagnostics only
+            LOGGER.debug("failed to snapshot budget violation", exc_info=True)
 
         LOGGER.warning(
             "prepare_pipeline_for_bootstrap timeout below safe floor; raising to floor",

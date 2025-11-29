@@ -89,6 +89,11 @@ _ESSENTIAL_PHASES = {
 }
 _OPTIONAL_PHASES = {"background_loops"}
 
+# The component key used when the prepare pipeline floor needs to be raised
+# before work has started. This keeps the persisted telemetry consistent with
+# the component budget maps used by the timeout helpers.
+_PREPARE_PIPELINE_COMPONENT = "prepare_pipeline"
+
 
 def _truthy_env(value: str | None) -> bool:
     if value is None:
@@ -481,6 +486,77 @@ def _save_timeout_state(state: Mapping[str, object]) -> None:
         _TIMEOUT_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True))
     except OSError:
         LOGGER.exception("failed to persist timeout state", extra={"path": str(_TIMEOUT_STATE_PATH)})
+
+
+def load_component_budget_violations() -> dict[str, Mapping[str, object]]:
+    """Return persisted records of component budget shortfalls."""
+
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    violations = host_state.get("component_budget_violations", {}) if isinstance(host_state, Mapping) else {}
+    return dict(violations) if isinstance(violations, Mapping) else {}
+
+
+def record_component_budget_violation(
+    component: str,
+    *,
+    floor: float,
+    shortfall: float,
+    requested: float | None = None,
+    host_load: float | None = None,
+    context: Mapping[str, object] | None = None,
+) -> None:
+    """Persist a component budget shortfall so future runs can pre-extend budgets."""
+
+    try:
+        floor_value = float(floor)
+    except (TypeError, ValueError):  # pragma: no cover - defensive casting
+        floor_value = 0.0
+    try:
+        shortfall_value = max(float(shortfall), 0.0)
+    except (TypeError, ValueError):  # pragma: no cover - defensive casting
+        shortfall_value = 0.0
+    recommended_budget = max(floor_value, floor_value + shortfall_value)
+    if requested is not None:
+        try:
+            recommended_budget = max(recommended_budget, float(requested))
+        except (TypeError, ValueError):
+            pass
+
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    if not isinstance(host_state, dict):  # pragma: no cover - defensive
+        host_state = {}
+
+    violations = host_state.get("component_budget_violations", {})
+    if not isinstance(violations, dict):  # pragma: no cover - defensive
+        violations = {}
+
+    existing = violations.get(component, {}) if isinstance(violations, Mapping) else {}
+    violation_state: dict[str, object] = {
+        "floor": floor_value,
+        "floor_shortfall": shortfall_value,
+        "recommended_budget": max(
+            recommended_budget,
+            float(existing.get("recommended_budget", 0.0) or 0.0)
+            if isinstance(existing, Mapping)
+            else 0.0,
+        ),
+        "ts": time.time(),
+    }
+    if host_load is not None:
+        violation_state["host_load"] = host_load
+    if requested is not None:
+        violation_state["requested"] = requested
+    if context:
+        violation_state["context"] = dict(context)
+
+    violations[component] = violation_state
+    host_state["component_budget_violations"] = violations
+    state = state if isinstance(state, dict) else {}
+    state[host_key] = host_state
+    _save_timeout_state(state)
 
 
 def _heartbeat_progressing(heartbeat: Mapping[str, object]) -> bool:
@@ -1502,6 +1578,16 @@ def load_component_budget_pools() -> dict[str, float]:
             except (TypeError, ValueError):
                 continue
 
+    violations = host_state.get("component_budget_violations", {}) if isinstance(host_state, Mapping) else {}
+    if isinstance(violations, Mapping):
+        for component, meta in violations.items():
+            try:
+                recommendation = float(meta.get("recommended_budget", 0.0))
+            except (TypeError, ValueError):
+                recommendation = 0.0
+            if recommendation:
+                resolved[component] = max(resolved.get(component, 0.0), recommendation)
+
     return resolved
 
 
@@ -1914,6 +2000,8 @@ def compute_prepare_pipeline_component_budgets(
         "deferred_component_budget_total": deferred_component_budget_total,
         "deferred_component_budgets": deferred_component_budgets,
         "component_budgets": budgets,
+        "component_overruns": host_overruns,
+        "budget_violations": host_state_details.get("component_budget_violations"),
         "global_window": global_window,
         "global_window_extension": global_window_extension,
         "concurrency_extension": concurrency_meta,
@@ -2121,6 +2209,7 @@ def _collect_timeout_telemetry() -> Mapping[str, object]:
                 "global_bootstrap_extension"
             ),
             "component_complexity": _PREPARE_PIPELINE_WATCHDOG.get("component_complexity"),
+            "budget_violations": _PREPARE_PIPELINE_WATCHDOG.get("budget_violations"),
         }
     except Exception:
         return {}
@@ -2213,6 +2302,19 @@ def _summarize_component_overruns(telemetry: Mapping[str, object]) -> dict[str, 
         component_state["expected_floor"] = max(
             float(component_state.get("expected_floor", 0.0) or 0.0), effective_float
         )
+        try:
+            component_floor = float(entry.get("component_floor", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            component_floor = _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0)
+        floor_gap = max(0.0, elapsed - component_floor)
+        component_state["floor_shortfall"] = max(
+            float(component_state.get("floor_shortfall", 0.0) or 0.0), floor_gap
+        )
+        host_load = _parse_float(str(entry.get("host_load")))
+        if host_load is not None:
+            component_state["host_load"] = max(
+                float(component_state.get("host_load", 0.0) or 0.0), host_load
+            )
 
     extension_records = telemetry.get("extensions") or []
     for entry in extension_records:
@@ -2346,6 +2448,14 @@ def _merge_consumption_overruns(
             float(existing.get("expected_floor", 0.0) or 0.0),
             float(meta.get("expected_floor", 0.0) or 0.0),
         )
+        floor_shortfall = max(
+            float(existing.get("floor_shortfall", 0.0) or 0.0),
+            float(meta.get("floor_shortfall", 0.0) or 0.0),
+        )
+        host_load = max(
+            float(existing.get("host_load", 0.0) or 0.0),
+            float(meta.get("host_load", 0.0) or 0.0),
+        )
         suggested_floor = max(max_elapsed + 30.0, expected_floor * 1.1) if max_elapsed else expected_floor
         component_overruns[component] = {
             "overruns": streak,
@@ -2353,6 +2463,8 @@ def _merge_consumption_overruns(
             "expected_floor": expected_floor,
             "suggested_floor": suggested_floor,
             "last_seen": time.time(),
+            "floor_shortfall": floor_shortfall,
+            "host_load": host_load if host_load > 0 else None,
         }
         if streak >= _OVERRUN_STREAK_THRESHOLD and component in _ALL_COMPONENT_ENV_MAPPING:
             baseline = _COMPONENT_TIMEOUT_MINIMUMS.get(
@@ -2360,6 +2472,14 @@ def _merge_consumption_overruns(
             )
             previous_floor = component_floors.get(component, baseline)
             component_floors[component] = max(previous_floor, suggested_floor, baseline)
+        record_component_budget_violation(
+            component,
+            floor=expected_floor or suggested_floor,
+            shortfall=floor_shortfall,
+            requested=max_elapsed,
+            host_load=host_load if host_load > 0 else None,
+            context={"source": "component_overrun"},
+        )
         state_changed = True
 
     host_state["component_overruns"] = component_overruns
@@ -3000,6 +3120,7 @@ class SharedTimeoutCoordinator:
             elapsed = time.monotonic() - start
             record = dict(record)
             record.update({"elapsed": elapsed, "namespace": self.namespace})
+            record["host_load"] = _host_load_average()
             with self._lock:
                 self._timeline.append(record)
             self.logger.info(
