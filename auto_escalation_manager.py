@@ -20,7 +20,15 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    _is_bootstrap_placeholder,
+    _looks_like_pipeline_candidate,
+    _using_bootstrap_sentinel,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 
 try:
     from vector_service.context_builder import ContextBuilder
@@ -94,7 +102,10 @@ class AutoEscalationManager:
         *,
         context_builder: ContextBuilder,
         publish_attempts: int = 1,
+        bootstrap_context: object | None = None,
+        bootstrap_dependency_broker: object | None = None,
     ) -> None:
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
 
         # Use the provided context builder for the debugger and expose it for reuse.
@@ -121,16 +132,96 @@ class AutoEscalationManager:
                     context_builder=self.context_builder,
                 )
                 try:
+                    bootstrap_context = bootstrap_context or _current_bootstrap_context()
+                    dependency_broker = (
+                        bootstrap_dependency_broker
+                        or getattr(bootstrap_context, "dependency_broker", None)
+                        or _bootstrap_dependency_broker()
+                    )
+
+                    broker_pipeline, broker_manager = dependency_broker.resolve()
+
+                    pipeline_candidate = (
+                        getattr(bootstrap_context, "pipeline", None)
+                        if bootstrap_context is not None
+                        else None
+                    )
+                    manager_candidate = None
+                    if bootstrap_context is not None:
+                        manager_candidate = getattr(bootstrap_context, "manager", None)
+                        if manager_candidate is None:
+                            manager_candidate = getattr(bootstrap_context, "sentinel", None)
+
+                    if pipeline_candidate is None and _looks_like_pipeline_candidate(
+                        broker_pipeline
+                    ):
+                        pipeline_candidate = broker_pipeline
+                    if manager_candidate is None:
+                        manager_candidate = broker_manager
+
+                    bootstrap_inflight = bool(
+                        bootstrap_context
+                        or broker_pipeline
+                        or broker_manager
+                        or _is_bootstrap_placeholder(manager_candidate)
+                    )
+
+                    pipeline = None
+                    promote_pipeline = lambda *_a: None
+
+                    if bootstrap_inflight and _looks_like_pipeline_candidate(
+                        pipeline_candidate
+                    ):
+                        pipeline = pipeline_candidate
+                        if manager_candidate is None:
+                            manager_candidate = getattr(pipeline_candidate, "manager", None)
+                        if _is_bootstrap_placeholder(manager_candidate):
+                            self.logger.info(
+                                "auto_escalation.bootstrap.reuse_placeholder",
+                                extra={
+                                    "event": "auto-escalation-bootstrap-placeholder-reuse",
+                                },
+                            )
+                    elif not (
+                        bootstrap_inflight
+                        and _using_bootstrap_sentinel(manager_candidate)
+                    ):
+                        from .self_coding_manager import SelfCodingManager
+                        from .model_automation_pipeline import ModelAutomationPipeline
+
+                        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                            pipeline_cls=ModelAutomationPipeline,
+                            context_builder=self.context_builder,
+                            bot_registry=registry,
+                            data_bot=data_bot,
+                            event_bus=event_bus,
+                            manager_override=manager_candidate,
+                        )
+                    elif pipeline_candidate is not None:
+                        pipeline = pipeline_candidate
+                        if _is_bootstrap_placeholder(manager_candidate):
+                            self.logger.info(
+                                "auto_escalation.bootstrap.reuse_placeholder",
+                                extra={
+                                    "event": "auto-escalation-bootstrap-placeholder-reuse",
+                                },
+                            )
+                    if pipeline is None:
+                        from .self_coding_manager import SelfCodingManager
+                        from .model_automation_pipeline import ModelAutomationPipeline
+
+                        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                            pipeline_cls=ModelAutomationPipeline,
+                            context_builder=self.context_builder,
+                            bot_registry=registry,
+                            data_bot=data_bot,
+                            event_bus=event_bus,
+                            manager_override=manager_candidate,
+                        )
+
                     from .self_coding_manager import SelfCodingManager
                     from .model_automation_pipeline import ModelAutomationPipeline
 
-                    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                        pipeline_cls=ModelAutomationPipeline,
-                        context_builder=self.context_builder,
-                        bot_registry=registry,
-                        data_bot=data_bot,
-                        event_bus=event_bus,
-                    )
                     manager = SelfCodingManager(
                         engine,
                         pipeline,
