@@ -6,10 +6,10 @@ services:
     env_file:
       - .env
     environment:
-      MENACE_BOOTSTRAP_WAIT_SECS: "360"
-      MENACE_BOOTSTRAP_VECTOR_WAIT_SECS: "540"
-      BOOTSTRAP_STEP_TIMEOUT: "360"
-      BOOTSTRAP_VECTOR_STEP_TIMEOUT: "540"
+      MENACE_BOOTSTRAP_WAIT_SECS: "720"
+      MENACE_BOOTSTRAP_VECTOR_WAIT_SECS: "900"
+      BOOTSTRAP_STEP_TIMEOUT: "720"
+      BOOTSTRAP_VECTOR_STEP_TIMEOUT: "900"
       VM_SETTINGS: '{"windows_image":"/vm-images/windows.qcow2","macos_image":"/vm-images/macos.qcow2","memory":"2G"}'
       DB_ROUTER_METRICS_INTERVAL: "60"
     volumes:
