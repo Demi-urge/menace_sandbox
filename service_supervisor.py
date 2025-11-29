@@ -93,6 +93,9 @@ from .bot_registry import BotRegistry  # noqa: E402
 from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
 from .self_coding_thresholds import get_thresholds  # noqa: E402
 from .coding_bot_interface import (  # noqa: E402
+    _BOOTSTRAP_STATE,
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -393,6 +396,8 @@ class ServiceSupervisor:
         context_builder: ContextBuilder,
         log_path: str = "supervisor.log",
         restart_log: str = "restart.log",
+        dependency_broker: object | None = None,
+        bootstrap_context: object | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=10**6, backupCount=3)
@@ -404,6 +409,10 @@ class ServiceSupervisor:
         self.targets: Dict[str, Tuple[Callable[[], None], Optional[str]]] = {}
         self.processes: Dict[str, mp.Process] = {}
         self._pipeline_promoter: Callable[[object], None] | None = None
+        self._bootstrap_dependency_broker = (
+            dependency_broker if dependency_broker is not None else _bootstrap_dependency_broker()
+        )
+        self._bootstrap_context = bootstrap_context
         # Use the self healing orchestrator for restart logic
         self.healer = SelfHealingOrchestrator(KnowledgeGraph())
         self.healer.heal = self._heal  # type: ignore[assignment]
@@ -417,13 +426,18 @@ class ServiceSupervisor:
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
-        pipeline, self._pipeline_promoter = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=self.context_builder,
-            event_bus=bus,
-            bot_registry=registry,
-            data_bot=data_bot,
-        )
+        bootstrap_pipeline, bootstrap_promoter = self._resolve_bootstrap_handles()
+        if bootstrap_pipeline is None:
+            pipeline, self._pipeline_promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=self.context_builder,
+                event_bus=bus,
+                bot_registry=registry,
+                data_bot=data_bot,
+            )
+        else:
+            pipeline = bootstrap_pipeline
+            self._pipeline_promoter = bootstrap_promoter
         evolution_orchestrator = get_orchestrator(
             self.__class__.__name__, data_bot, engine
         )
@@ -465,6 +479,47 @@ class ServiceSupervisor:
         manager.quick_fix = self.fix_engine
         self.evolution_orchestrator = evolution_orchestrator
 
+    def _resolve_bootstrap_handles(
+        self,
+    ) -> tuple[object | None, Callable[[object], None] | None]:
+        """Return any active bootstrap pipeline/promoter for reuse."""
+
+        pipeline_candidate = None
+        promoter: Callable[[object], None] | None = None
+
+        broker: object | None = getattr(self, "_bootstrap_dependency_broker", None)
+        if callable(broker) and not hasattr(broker, "resolve"):
+            try:
+                broker = broker()
+            except Exception:
+                broker = None
+        if broker is None:
+            try:
+                broker = _bootstrap_dependency_broker()
+            except Exception:
+                broker = None
+            self._bootstrap_dependency_broker = broker
+        if broker is not None:
+            try:
+                pipeline_candidate, _sentinel = broker.resolve()
+            except Exception:
+                pipeline_candidate = None
+
+        if getattr(self, "_bootstrap_context", None) is None:
+            try:
+                self._bootstrap_context = _current_bootstrap_context()
+            except Exception:
+                self._bootstrap_context = None
+
+        if pipeline_candidate is None and getattr(self, "_bootstrap_context", None) is not None:
+            pipeline_candidate = getattr(self._bootstrap_context, "pipeline", None)
+
+        callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+        if callbacks:
+            promoter = callbacks[-1]
+
+        return pipeline_candidate, promoter
+
     def _record_failure(self, etype: str) -> None:
         """Record supervisor issues to the knowledge graph."""
         try:
@@ -484,13 +539,15 @@ class ServiceSupervisor:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
-            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=self.context_builder,
-                event_bus=bus,
-                bot_registry=registry,
-                data_bot=data_bot,
-            )
+            pipeline, promote_pipeline = self._resolve_bootstrap_handles()
+            if pipeline is None:
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=self.context_builder,
+                    event_bus=bus,
+                    bot_registry=registry,
+                    data_bot=data_bot,
+                )
             evolution_orchestrator = get_orchestrator(
                 self.__class__.__name__, data_bot, engine
             )
