@@ -179,7 +179,16 @@ def _ensure_self_coding_decorated(deps: _RuntimeDependencies) -> None:
     _self_coding_configured = True
 
 
-def _ensure_runtime_dependencies() -> _RuntimeDependencies:
+_bootstrap_pipeline_cache: dict[object, tuple["ModelAutomationPipeline", Callable[[SelfCodingManager | None], None], SelfCodingManager | None]] = {}
+
+
+def _ensure_runtime_dependencies(
+    *,
+    bootstrap_owner: object | None = None,
+    pipeline_override: "ModelAutomationPipeline | None" = None,
+    manager_override: SelfCodingManager | None = None,
+    promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
+) -> _RuntimeDependencies:
     """Instantiate heavy runtime helpers on demand."""
 
     global registry
@@ -193,6 +202,20 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
     global _runtime_state
     global _runtime_placeholder
     global _runtime_initializing
+
+    owner = bootstrap_owner
+    try:
+        if owner is None:
+            from .coding_bot_interface import get_structural_bootstrap_owner
+
+            owner = get_structural_bootstrap_owner()
+    except Exception:  # pragma: no cover - bootstrap owner best effort
+        owner = bootstrap_owner
+
+    if owner is not None and pipeline_override is None:
+        cached = _bootstrap_pipeline_cache.get(owner)
+        if cached is not None:
+            pipeline_override, promote_pipeline, manager_override = cached
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
@@ -218,9 +241,9 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
             data_bot=dbot,
             context_builder=ctx_builder,
             engine=eng,
-            pipeline=pipeline,
+            pipeline=pipeline_override if pipeline_override is not None else pipeline,
             evolution_orchestrator=evolution_orchestrator,
-            manager=manager,
+            manager=manager_override if manager_override is not None else manager,
         )
         return _runtime_placeholder
 
@@ -243,29 +266,34 @@ def _ensure_runtime_dependencies() -> _RuntimeDependencies:
         data_bot=dbot,
         context_builder=ctx_builder,
         engine=eng,
-        pipeline=pipeline,
+        pipeline=pipeline_override if pipeline_override is not None else pipeline,
         evolution_orchestrator=evolution_orchestrator,
-        manager=manager,
+        manager=manager_override if manager_override is not None else manager,
     )
 
     orchestrator = evolution_orchestrator
-    mgr = manager
+    mgr = manager_override if manager_override is not None else manager
 
     success = False
 
     try:
         pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
-        promote_pipeline: Callable[[SelfCodingManager | None], None]
-        if pipeline is not None:
+        promote_pipeline = promote_pipeline or (lambda *_args: None)
+        if pipeline_override is not None:
+            pipe = pipeline_override
+        elif pipeline is not None:
             pipe = pipeline
-            promote_pipeline = lambda *_args: None
         else:
             pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
                 context_builder=ctx_builder,
                 bot_registry=reg,
                 data_bot=dbot,
+                manager_override=manager_override,
             )
+
+        if owner is not None and owner not in _bootstrap_pipeline_cache:
+            _bootstrap_pipeline_cache[owner] = (pipe, promote_pipeline, manager_override)
 
         try:
             orchestrator = (
@@ -1177,12 +1205,20 @@ class ResearchAggregatorBot:
         cache_ttl: float = 3600.0,
         *,
         manager: SelfCodingManager | None = None,
+        pipeline: "ModelAutomationPipeline | None" = None,
+        pipeline_promoter: Callable[[SelfCodingManager | None], None] | None = None,
+        bootstrap_owner: object | None = None,
         context_builder: ContextBuilder | None = None,
         bootstrap: bool = False,
         defer_migrations_until_ready: bool = False,
     ) -> None:
         init_start = time.perf_counter()
-        deps = _ensure_runtime_dependencies()
+        deps = _ensure_runtime_dependencies(
+            bootstrap_owner=bootstrap_owner,
+            pipeline_override=pipeline,
+            manager_override=manager,
+            promote_pipeline=pipeline_promoter,
+        )
         _ensure_self_coding_decorated(deps)
         builder = context_builder or deps.context_builder
         if builder is None:
