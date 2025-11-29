@@ -5262,8 +5262,16 @@ def _prepare_pipeline_for_bootstrap_impl(
     }
     pipeline_complexity = _summarize_pipeline_complexity(pipeline_cls, pipeline_kwargs)
     _PREPARE_PIPELINE_WATCHDOG["pipeline_complexity"] = pipeline_complexity
+    component_floor_overrides = {**_SUBSYSTEM_BUDGET_FLOORS}
+    for key, value in component_budget_overrides.items():
+        if value is None:
+            continue
+        component_floor_overrides[key] = max(
+            value, component_floor_overrides.get(key, 0.0)
+        )
+
     derived_component_budgets: dict[str, float] | None = compute_prepare_pipeline_component_budgets(
-        component_floors=_SUBSYSTEM_BUDGET_FLOORS,
+        component_floors=component_floor_overrides,
         telemetry=_PREPARE_PIPELINE_WATCHDOG,
         pipeline_complexity=pipeline_complexity,
         host_telemetry=read_bootstrap_heartbeat(),

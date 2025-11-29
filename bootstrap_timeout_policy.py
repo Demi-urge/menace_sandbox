@@ -863,8 +863,28 @@ def compute_adaptive_component_minimums(
     hints.update(_parse_component_inventory(component_hints))
     env_hints = _parse_component_inventory(os.getenv(_BOOTSTRAP_COMPONENT_HINTS_ENV))
     hints.update({k: v for k, v in env_hints.items() if k not in hints})
+    db_index_bytes = os.getenv(_BOOTSTRAP_DB_INDEX_BYTES_ENV)
+    try:
+        if db_index_bytes and "db_index_bytes" not in hints:
+            hints["db_index_bytes"] = float(db_index_bytes)
+    except (TypeError, ValueError):
+        pass
+
     complexity = _parse_component_inventory(pipeline_complexity)
     complexity.update({k: v for k, v in hints.items() if k not in complexity})
+
+    complexity_scale_env = os.getenv(_BOOTSTRAP_COMPLEXITY_SCALE_ENV)
+    try:
+        complexity_scale = max(float(complexity_scale_env), 1.0) if complexity_scale_env else 1.0
+    except (TypeError, ValueError):
+        complexity_scale = 1.0
+    if complexity_scale > 1.0:
+        for key, value in list(complexity.items()):
+            try:
+                complexity[key] = max(int(round(float(value) * complexity_scale)), int(value))
+            except (TypeError, ValueError):
+                complexity[key] = value
+        complexity["complexity_scale"] = complexity_scale
 
     if load_average is None:
         load_average = _parse_float(str(host_telemetry.get("host_load")))
@@ -876,8 +896,28 @@ def compute_adaptive_component_minimums(
         guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
     except Exception:
         guard_scale = 1.0
+    backlog_queue_depth = 0
+    try:
+        backlog_queue_depth = max(
+            backlog_queue_depth,
+            int(host_telemetry.get("queue_depth", 0) or 0),
+            int(guard_context.get("queue_depth", 0) or 0),
+        )
+    except (TypeError, ValueError):
+        pass
+    active_bootstraps = 0
+    for key in ("active_bootstraps", "cluster_backlog"):
+        try:
+            active_bootstraps = max(active_bootstraps, int(host_telemetry.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    if not active_bootstraps and host_telemetry:
+        active_bootstraps = len(_recent_peer_activity())
+    backlog_scale = 1.0 + min(backlog_queue_depth, 5) * 0.05
+    backlog_scale += min(active_bootstraps, 5) * 0.08
+    backlog_scale = min(backlog_scale, 2.0)
     load_scale = _host_load_scale(load_average)
-    scale = max(load_scale, guard_scale)
+    scale = max(load_scale, guard_scale, backlog_scale)
 
     def _count(value: object) -> int:
         if isinstance(value, (list, tuple, set, frozenset)):
@@ -889,10 +929,20 @@ def compute_adaptive_component_minimums(
         except (TypeError, ValueError):
             return 0
 
+    def _size_scale(bytes_size: object) -> float:
+        try:
+            value = float(bytes_size)
+        except (TypeError, ValueError):
+            return 1.0
+        gigabytes = max(value, 0.0) / (1024**3)
+        return 1.0 + min(gigabytes / 5.0, 0.75)
+
     component_complexity: dict[str, float] = {}
     component_complexity["vectorizers"] = 1.0 + max(0, _count(complexity.get("vectorizers")) - 1) * 0.35
     component_complexity["retrievers"] = 1.0 + max(0, _count(complexity.get("retrievers")) - 1) * 0.25
     component_complexity["db_indexes"] = 1.0 + max(0, _count(complexity.get("db_indexes")) - 1) * 0.2
+    if "db_index_bytes" in complexity:
+        component_complexity["db_indexes"] *= _size_scale(complexity.get("db_index_bytes"))
     component_complexity["background_loops"] = 1.0 + max(0, _count(complexity.get("background_loops"))) * 0.15
     component_complexity["pipeline_config"] = 1.0 + max(
         0, _count(complexity.get("pipeline_config_sections")) - 1
