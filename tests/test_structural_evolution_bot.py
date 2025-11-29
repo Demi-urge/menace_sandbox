@@ -2,21 +2,48 @@ import pytest
 
 pytest.importorskip("pandas")
 
-import pandas as pd
-import menace.data_bot as real_db
-from db_router import init_db_router
+import importlib
+import threading
+import contextlib
 import types
 import sys
 
+import pandas as pd
+
+import menace.data_bot as real_db
+from db_router import init_db_router
+
 
 def _load_bot(monkeypatch):
-    stub_cbi = types.SimpleNamespace(self_coding_managed=lambda **_: (lambda cls: cls))
+    def _normalise_manager_arg(manager, owner, *, fallback=None):
+        return manager or fallback
+
+    @contextlib.contextmanager
+    def _structural_guard(owner=None):
+        yield
+
+    def _prepare_pipeline_for_bootstrap(*args, **kwargs):
+        return types.SimpleNamespace(name="pipeline"), lambda *_: None
+
+    def _get_structural_bootstrap_owner():
+        return None
+
+    stub_cbi = types.SimpleNamespace(
+        self_coding_managed=lambda **_: (lambda cls: cls),
+        normalise_manager_arg=_normalise_manager_arg,
+        prepare_pipeline_for_bootstrap=_prepare_pipeline_for_bootstrap,
+        structural_bootstrap_owner_guard=_structural_guard,
+        get_structural_bootstrap_owner=_get_structural_bootstrap_owner,
+    )
     monkeypatch.setitem(sys.modules, "coding_bot_interface", stub_cbi)
     monkeypatch.setitem(sys.modules, "menace.coding_bot_interface", stub_cbi)
     class DummyManager:
         def __init__(self, *a, **k):
             pass
+    def _internalize(*args, **kwargs):
+        return DummyManager()
     stub_mgr_mod = types.SimpleNamespace(SelfCodingManager=DummyManager)
+    stub_mgr_mod.internalize_coding_bot = _internalize
     monkeypatch.setitem(sys.modules, "self_coding_manager", stub_mgr_mod)
     monkeypatch.setitem(sys.modules, "menace.self_coding_manager", stub_mgr_mod)
     class StubDataBot:
@@ -91,3 +118,77 @@ def test_major_change(tmp_path, monkeypatch):
         assert approved
     assert router._access_counts["local"]["evolutions"] >= 1
     router.close()
+
+
+def test_import_while_bootstrap_in_progress(monkeypatch):
+    sys.modules.pop("menace.structural_evolution_bot", None)
+    sys.modules.pop("structural_evolution_bot", None)
+
+    calls: list[str] = []
+    start_gate = threading.Event()
+    release_gate = threading.Event()
+
+    class DummyManager:
+        pass
+
+    def fake_prepare(*args, **kwargs):
+        calls.append("prepare")
+        start_gate.set()
+        release_gate.wait(timeout=5)
+        return types.SimpleNamespace(name="pipeline"), lambda *_: None
+
+    def fake_internalize(*args, **kwargs):
+        return DummyManager()
+
+    monkeypatch.setattr(
+        "menace.coding_bot_interface.prepare_pipeline_for_bootstrap", fake_prepare
+    )
+    monkeypatch.setattr(
+        "menace.self_coding_manager.internalize_coding_bot", fake_internalize
+    )
+    monkeypatch.setattr("menace.code_database.CodeDB", lambda: object())
+    monkeypatch.setattr("menace.gpt_memory.GPTMemoryManager", lambda *a, **k: object())
+    monkeypatch.setattr(
+        "menace.self_coding_engine.SelfCodingEngine", lambda *a, **k: types.SimpleNamespace()
+    )
+    monkeypatch.setattr("menace.context_builder_util.create_context_builder", lambda: object())
+    monkeypatch.setattr("menace.shared_evolution_orchestrator.get_orchestrator", lambda *a, **k: object())
+    monkeypatch.setattr(
+        "menace.self_coding_thresholds.get_thresholds",
+        lambda *a, **k: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+    )
+    monkeypatch.setattr("menace.data_bot.persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "menace.threshold_service.ThresholdService", lambda *a, **k: types.SimpleNamespace()
+    )
+    monkeypatch.setattr("menace.data_bot.DataBot", lambda *a, **k: types.SimpleNamespace())
+    monkeypatch.setattr(
+        "menace.model_automation_pipeline.ModelAutomationPipeline", type("Pipeline", (), {})
+    )
+
+    owner_token = object()
+
+    def bootstrap_thread():
+        seb = importlib.import_module("menace.structural_evolution_bot")
+        seb.get_structural_evolution_manager(owner_token)
+
+    bootstrap = threading.Thread(target=bootstrap_thread)
+    bootstrap.start()
+
+    assert start_gate.wait(timeout=5)
+    seb = importlib.import_module("menace.structural_evolution_bot")
+
+    waiter = threading.Thread(
+        target=lambda: seb.get_structural_evolution_manager(owner_token)
+    )
+    waiter.start()
+
+    assert calls == ["prepare"]
+    release_gate.set()
+    bootstrap.join(timeout=5)
+    waiter.join(timeout=5)
+    assert calls == ["prepare"]
+    assert not bootstrap.is_alive()
+    assert not waiter.is_alive()
