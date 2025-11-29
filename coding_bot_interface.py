@@ -5451,13 +5451,24 @@ def _prepare_pipeline_for_bootstrap_impl(
     sentinel_candidate = manager_override or manager_sentinel
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    bootstrap_context = _current_bootstrap_context()
     if sentinel_candidate is None:
         sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
     if sentinel_candidate is None:
         sentinel_candidate = broker_sentinel
+    if sentinel_candidate is None and bootstrap_context is not None:
+        sentinel_candidate = getattr(bootstrap_context, "sentinel", None) or getattr(
+            bootstrap_context, "manager", None
+        )
     if sentinel_candidate is not None:
         _mark_bootstrap_placeholder(sentinel_candidate)
     pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None) or broker_pipeline
+    if bootstrap_context is not None:
+        context_pipeline = _resolve_bootstrap_pipeline_candidate(
+            getattr(bootstrap_context, "pipeline", None)
+        )
+        if context_pipeline is not None:
+            pipeline_candidate = context_pipeline
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
     bootstrap_inflight = bool(
         active_depth or active_heartbeat or any(value > 0 for value in owner_depths.values())
@@ -5480,6 +5491,62 @@ def _prepare_pipeline_for_bootstrap_impl(
     reentry_blocked = bootstrap_inflight and not (
         pipeline_candidate is not None or sentinel_candidate is not None
     )
+
+    if (
+        bootstrap_context is not None
+        and bootstrap_inflight
+        and (pipeline_candidate is not None or sentinel_candidate is not None)
+    ):
+        if pipeline_candidate is None and sentinel_candidate is not None:
+            pipeline_candidate = SimpleNamespace(
+                manager=sentinel_candidate,
+                initial_manager=sentinel_candidate,
+                bootstrap_placeholder=True,
+            )
+            _mark_bootstrap_placeholder(pipeline_candidate)
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel_candidate
+        )
+
+        def _promote_existing(real_manager: Any) -> None:
+            if real_manager is None:
+                return
+            if pipeline_candidate is None:
+                return
+            _assign_bootstrap_manager_placeholder(
+                pipeline_candidate,
+                real_manager,
+                propagate_nested=True,
+            )
+
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+        promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
+        if promise is not None and sentinel_candidate is not None:
+            promise.add_waiter(sentinel_candidate)
+        logger.info(
+            "prepare_pipeline.bootstrap.session_guard",
+            extra={
+                "event": "prepare-pipeline-bootstrap-session-guard",
+                "active_depth": active_depth,
+                "dependency_broker": bool(broker_pipeline or broker_sentinel),
+                "context_pipeline": bool(getattr(bootstrap_context, "pipeline", None)),
+                "context_sentinel": bool(
+                    getattr(bootstrap_context, "sentinel", None)
+                    or getattr(bootstrap_context, "manager", None)
+                ),
+                "deduplicated": True,
+            },
+        )
+        _record_prepare_pipeline_stage(
+            "bootstrap session guard",
+            elapsed=0.0,
+            extra={"dependency_broker": True},
+        )
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel_candidate
+        )
+        _register_bootstrap_helper_callback(_promote_existing)
+        return pipeline_candidate, _promote_existing
 
     if reentry_blocked:
         wait_start = time.perf_counter()
@@ -5530,6 +5597,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         )
         _mark_bootstrap_placeholder(pipeline_candidate)
         _BOOTSTRAP_STATE.pipeline = pipeline_candidate
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel_candidate
+        )
 
     if bootstrap_inflight and (pipeline_candidate is not None or sentinel_candidate is not None):
         if pipeline_candidate is None:
