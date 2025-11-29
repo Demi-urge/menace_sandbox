@@ -35,9 +35,13 @@ from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
+    _resolve_bootstrap_wait_timeout,
     prepare_pipeline_for_bootstrap,
 )
-from bootstrap_timeout_policy import compute_prepare_pipeline_component_budgets
+from bootstrap_timeout_policy import (
+    compute_prepare_pipeline_component_budgets,
+    read_bootstrap_heartbeat,
+)
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
@@ -181,14 +185,32 @@ class MenaceOrchestrator:
         except Exception:
             self.logger.exception("context builder refresh failed")
         bootstrap_context = None
+        bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, _broker_manager = dependency_broker.resolve()
         try:
             bootstrap_context = _current_bootstrap_context()
         except Exception:
             bootstrap_context = None
+        try:
+            bootstrap_heartbeat = read_bootstrap_heartbeat()
+        except Exception:
+            bootstrap_heartbeat = None
 
         self.pipeline_promoter: Callable[[Any], None] | None = None
+        if broker_pipeline is None and (bootstrap_context is not None or bootstrap_heartbeat):
+            wait_timeout = _resolve_bootstrap_wait_timeout()
+            wait_start = time.perf_counter()
+            while broker_pipeline is None:
+                broker_pipeline, _broker_manager = dependency_broker.resolve()
+                if broker_pipeline is None and bootstrap_context is not None:
+                    broker_pipeline = getattr(bootstrap_context, "pipeline", None)
+                if broker_pipeline is not None:
+                    break
+                if wait_timeout is not None and (time.perf_counter() - wait_start) >= wait_timeout:
+                    break
+                time.sleep(0.05)
+
         bootstrap_pipeline = broker_pipeline
         bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
 
@@ -202,6 +224,12 @@ class MenaceOrchestrator:
                     if bootstrap_pipeline is not None:
                         break
                     time.sleep(0.05)
+
+        if bootstrap_pipeline is not None:
+            dependency_broker.advertise(
+                pipeline=bootstrap_pipeline,
+                sentinel=_broker_manager or getattr(bootstrap_context, "manager", None),
+            )
 
         if bootstrap_pipeline is None:
             placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
@@ -218,9 +246,29 @@ class MenaceOrchestrator:
             )
             self.pipeline = pipeline
             self.pipeline_promoter = promote_pipeline
+            dependency_broker.advertise(
+                pipeline=self.pipeline,
+                sentinel=getattr(self.pipeline, "manager", None),
+            )
+            self.logger.info(
+                "menace orchestrator starting new bootstrap pipeline",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-new",
+                    "bootstrap_context": bool(bootstrap_context),
+                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                },
+            )
         else:
             self.pipeline = bootstrap_pipeline
             self.pipeline_promoter = bootstrap_promoter
+            self.logger.info(
+                "menace orchestrator reusing bootstrap pipeline",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-reuse",
+                    "bootstrap_context": bool(bootstrap_context),
+                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                },
+            )
         self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
@@ -228,6 +276,8 @@ class MenaceOrchestrator:
         self.rollback_mgr = rollback_mgr
         if auto_bootstrap is None:
             auto_bootstrap = not bool(os.getenv("MENACE_LIGHT_IMPORTS"))
+        if bootstrap_context is not None or bootstrap_heartbeat:
+            auto_bootstrap = False
         self.model_id: int | None = None
         if auto_bootstrap and bootstrap_context is None:
             try:
