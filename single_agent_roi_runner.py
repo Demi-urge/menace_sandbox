@@ -36,8 +36,10 @@ from context_builder_util import create_context_builder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.coding_bot_interface import (
-    fallback_helper_manager,
-    prepare_pipeline_for_bootstrap,
+    _BOOTSTRAP_STATE,
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    _looks_like_pipeline_candidate,
 )
 from menace_sandbox.data_bot import DataBot
 from menace_sandbox.menace_memory_manager import MenaceMemoryManager
@@ -641,35 +643,60 @@ class MetricsWriter:
             LOGGER.exception("Failed to persist summary metrics to %s", self.path)
 
 
-def build_manager(bot_name: str) -> SelfCodingBootstrap:
+def build_manager(
+    bot_name: str,
+    *,
+    pipeline: ModelAutomationPipeline | None = None,
+    pipeline_promoter: Callable[[SelfCodingManager | None], None] | None = None,
+    dependency_broker: object | None = None,
+) -> SelfCodingBootstrap:
     registry = BotRegistry()
     data_bot = DataBot(start_server=False)
     builder = create_context_builder()
     engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder)
 
-    with fallback_helper_manager(bot_registry=registry, data_bot=data_bot) as bootstrap_manager:
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=builder,
-            bot_registry=registry,
-            data_bot=data_bot,
-            bootstrap_runtime_manager=bootstrap_manager,
-            manager=bootstrap_manager,
+    dependency_broker = dependency_broker or _bootstrap_dependency_broker()
+    broker_pipeline, broker_manager = dependency_broker.resolve()
+    bootstrap_context = _current_bootstrap_context()
+    pipeline_candidate = pipeline or broker_pipeline
+    if pipeline_candidate is None and bootstrap_context is not None:
+        pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
+    if not _looks_like_pipeline_candidate(pipeline_candidate):
+        pipeline_candidate = None
+    manager_candidate = broker_manager
+    if manager_candidate is None and bootstrap_context is not None:
+        manager_candidate = getattr(bootstrap_context, "manager", None) or getattr(
+            bootstrap_context, "sentinel", None
         )
+    if pipeline_promoter is None:
+        callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+        if callbacks:
+            pipeline_promoter = callbacks[-1]
+    if pipeline_candidate is None:
+        bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+        if bootstrap_depth > 0 or bootstrap_context is not None:
+            raise RuntimeError(
+                "ROI runner requires an existing pipeline while bootstrap is active"
+            )
+        raise RuntimeError("ModelAutomationPipeline must be provided for ROI runs")
+    pipeline = pipeline_candidate
+    promote_pipeline = pipeline_promoter or (lambda *_a: None)
 
     thresholds = get_thresholds(bot_name)
     threshold_service = ThresholdService()
-    manager = internalize_coding_bot(
-        bot_name,
-        engine,
-        pipeline,
-        data_bot=data_bot,
-        bot_registry=registry,
-        roi_threshold=thresholds.roi_drop,
-        error_threshold=thresholds.error_increase,
-        test_failure_threshold=thresholds.test_failure_increase,
-        threshold_service=threshold_service,
-    )
+    manager = manager_candidate
+    if manager is None:
+        manager = internalize_coding_bot(
+            bot_name,
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+            threshold_service=threshold_service,
+        )
     promote_pipeline(manager)
     return SelfCodingBootstrap(
         manager=manager,

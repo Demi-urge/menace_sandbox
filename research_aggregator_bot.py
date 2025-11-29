@@ -17,7 +17,6 @@ from .coding_bot_interface import (
     _using_bootstrap_sentinel,
     _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
-    prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -380,12 +379,19 @@ def _ensure_runtime_dependencies(
                 time.sleep(0.01)
 
         if pipe is None:
-            pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=pipeline_cls,
-                context_builder=ctx_builder,
-                bot_registry=reg,
-                data_bot=dbot,
-                manager_override=manager_override,
+            bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+            bootstrap_context = _current_bootstrap_context()
+            bootstrap_active = (
+                bootstrap_depth > 0
+                or guard_promise is not None
+                or bootstrap_context is not None
+            )
+            if bootstrap_active:
+                raise RuntimeError(
+                    "bootstrap pipeline unavailable while bootstrap is in progress"
+                )
+            raise RuntimeError(
+                "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
             )
 
         if owner is not None and owner not in _bootstrap_pipeline_cache:
