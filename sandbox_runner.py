@@ -45,6 +45,7 @@ from bootstrap_timeout_policy import (
     guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
     load_component_timeout_floors,
+    load_deferred_component_timeout_floors,
     load_escalated_timeout_floors,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
@@ -216,11 +217,38 @@ def _announce_staged_readiness(logger: logging.Logger) -> None:
 def _calibrated_stage_policy(
     logger: logging.Logger,
 ) -> tuple[float, dict[str, dict[str, object]], dict[str, float], dict[str, object], float]:
-    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+    component_floors = load_component_timeout_floors()
+    deferred_component_floors = load_deferred_component_timeout_floors()
+    all_component_floors = {**component_floors, **deferred_component_floors}
+
+    try:
+        baseline_env = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "0.0") or 0.0)
+    except (TypeError, ValueError):
+        baseline_env = 0.0
+
+    baseline_timeout = max(
+        baseline_env,
+        _BOOTSTRAP_TIMEOUT_MINIMUMS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0),
+        max(all_component_floors.values() or [0.0]),
+    )
     duration_store = load_duration_store()
     stage_stats = compute_stats(duration_store.get("bootstrap_stages", {}))
-    base_stage_budgets = {stage.name: baseline_timeout for stage in READINESS_STAGES}
-    floors = {stage.name: _COMPONENT_BASELINES.get(stage.name, 0.0) for stage in READINESS_STAGES}
+    stage_component_map = {
+        "db_index_load": ("db_indexes",),
+        "retriever_hydration": ("retrievers",),
+        "vector_seeding": ("vectorizers", "pipeline_config"),
+        "orchestrator_state": ("orchestrator_state",),
+        "background_loops": ("background_loops",),
+    }
+    base_stage_budgets: dict[str, float] = {}
+    floors: dict[str, float] = {}
+    for stage in READINESS_STAGES:
+        components = stage_component_map.get(stage.name, (stage.name,))
+        component_floor_candidates = [all_component_floors.get(component, 0.0) for component in components]
+        component_floor_candidates.append(_COMPONENT_BASELINES.get(stage.name, 0.0))
+        stage_floor = max(component_floor_candidates)
+        floors[stage.name] = stage_floor
+        base_stage_budgets[stage.name] = max(baseline_timeout, stage_floor)
     calibrated_stage_budgets, budget_debug = calibrate_step_budgets(
         base_budgets=base_stage_budgets,
         stats=stage_stats,
