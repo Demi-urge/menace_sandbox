@@ -2847,6 +2847,7 @@ class SharedTimeoutCoordinator:
         self.complexity_inputs = dict(complexity_inputs or {})
         self._historical_budgets = load_last_component_budgets()
         self.component_states: dict[str, str] = {}
+        self._last_readiness: dict[str, object] | None = None
 
     def _component_baseline(self, label: str) -> float:
         candidates = [
@@ -3053,8 +3054,8 @@ class SharedTimeoutCoordinator:
             record["component_state"] = state
         if self.complexity_inputs:
             record["component_complexity"] = dict(self.complexity_inputs)
-        if metadata:
-            record.update({f"meta.{k}": v for k, v in metadata.items()})
+            if metadata:
+                record.update({f"meta.{k}": v for k, v in metadata.items()})
         with self._lock:
             window = self._component_windows.get(label)
             if window is not None:
@@ -3096,6 +3097,65 @@ class SharedTimeoutCoordinator:
             except Exception:
                 self.logger.debug("state signal hook failed", exc_info=True)
 
+    def record_readiness(self, readiness: Mapping[str, object]) -> None:
+        """Persist staged readiness and expose pending component summaries."""
+
+        ready_gates = set(readiness.get("ready_gates", ()))
+        pending_gates = set(
+            readiness.get("all_pending_gates")
+            or readiness.get("pending_gates")
+            or ()
+        )
+        deferred_pending = set(readiness.get("deferred_pending_gates") or ())
+        critical_gates = set(readiness.get("critical_gates") or ())
+        background_gates = set(readiness.get("background_gates") or ())
+
+        with self._lock:
+            self._last_readiness = dict(readiness)
+            for gate in ready_gates:
+                self.component_states[gate] = "ready"
+            for gate in pending_gates:
+                self.component_states.setdefault(gate, "pending")
+            for gate in deferred_pending:
+                self.component_states[gate] = (
+                    "background" if gate in background_gates else "pending"
+                )
+            for gate in critical_gates - ready_gates:
+                self.component_states.setdefault(gate, "pending")
+
+    def quorum_met(
+        self,
+        readiness: Mapping[str, object] | None = None,
+        *,
+        critical_gates: Iterable[str] | None = None,
+        background_gates: Iterable[str] | None = None,
+    ) -> tuple[bool, Mapping[str, object]]:
+        """Return whether critical gates are online and what remains pending."""
+
+        snapshot = readiness or self._last_readiness or {}
+        ready = set(snapshot.get("ready_gates", ()))
+        pending = set(
+            snapshot.get("all_pending_gates")
+            or snapshot.get("pending_gates")
+            or ()
+        )
+        deferred = set(snapshot.get("deferred_pending_gates") or ())
+        critical = set(critical_gates or snapshot.get("critical_gates") or ())
+        background = set(background_gates or snapshot.get("background_gates") or ())
+
+        pending_critical = (critical - ready) & (pending | deferred)
+        pending_background = (pending | deferred) & background
+        pending_optional = (pending | deferred) - pending_critical - pending_background
+        core_ready = len(pending_critical) == 0
+
+        details = {
+            "ready_gates": sorted(ready),
+            "pending_optional": sorted(pending_optional),
+            "pending_background": sorted(pending_background),
+            "pending_critical": sorted(pending_critical),
+        }
+        return core_ready, details
+
     def snapshot(self) -> Mapping[str, object]:
         """Return a shallow snapshot of coordinator state."""
 
@@ -3114,4 +3174,5 @@ class SharedTimeoutCoordinator:
                 "global_window": self.global_window,
                 "complexity_inputs": dict(self.complexity_inputs),
                 "component_states": dict(self.component_states),
+                "last_readiness": dict(self._last_readiness or {}),
             }

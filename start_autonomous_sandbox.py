@@ -49,6 +49,7 @@ from bootstrap_readiness import (
     minimal_online,
     stage_for_step,
 )
+from coding_bot_interface import get_prepare_pipeline_coordinator
 from bootstrap_metrics import (
     BOOTSTRAP_DURATION_STORE,
     BUDGET_MAX_SCALE,
@@ -751,12 +752,24 @@ def _monitor_bootstrap_thread(
         core_online, lagging_core, degraded_core, degraded_online = minimal_online(
             online_state_snapshot
         )
+        coordinator_ready = False
+        coordinator_meta: Mapping[str, object] = {}
+        coordinator = get_prepare_pipeline_coordinator()
+        if coordinator is not None:
+            coordinator_ready, coordinator_meta = coordinator.quorum_met()
+            if coordinator_ready and not core_online:
+                core_online = True
+                degraded_online = True
         online_state_snapshot.update(
             {
                 "core_ready": core_online,
                 "core_lagging": sorted(lagging_core),
                 "core_degraded": sorted(degraded_core),
                 "core_degraded_online": degraded_online,
+                "pending_optional": list(coordinator_meta.get("pending_optional", ())),
+                "pending_background": list(
+                    coordinator_meta.get("pending_background", ())
+                ),
             }
         )
         BOOTSTRAP_ONLINE_STATE.update(online_state_snapshot)
@@ -773,6 +786,10 @@ def _monitor_bootstrap_thread(
                 flush=True,
             )
             lagging = lagging_optional_components(online_state_snapshot)
+            if coordinator_meta.get("pending_optional"):
+                lagging.update(coordinator_meta.get("pending_optional", ()))
+            if coordinator_meta.get("pending_background"):
+                lagging.update(coordinator_meta.get("pending_background", ()))
             if lagging:
                 LOGGER.info(
                     "optional components still warming",
@@ -780,6 +797,8 @@ def _monitor_bootstrap_thread(
                         event="bootstrap-online-partial",
                         lagging_optional=sorted(lagging),
                         online_state=online_state_snapshot,
+                        pending_optional=coordinator_meta.get("pending_optional"),
+                        pending_background=coordinator_meta.get("pending_background"),
                     ),
                 )
             if degraded_core:
@@ -789,6 +808,8 @@ def _monitor_bootstrap_thread(
                         event="bootstrap-online-degraded",
                         degraded_core=sorted(degraded_core),
                         online_state=online_state_snapshot,
+                        pending_optional=coordinator_meta.get("pending_optional"),
+                        pending_background=coordinator_meta.get("pending_background"),
                     ),
                 )
             core_online_announced = True
@@ -817,6 +838,13 @@ def _monitor_bootstrap_thread(
                             "enforced": stage_enforced,
                             "core_online": core_online,
                             "degraded_online": degraded_online,
+                            "coordinator_ready": coordinator_ready,
+                            "pending_optional": list(
+                                coordinator_meta.get("pending_optional", ())
+                            ),
+                            "pending_background": list(
+                                coordinator_meta.get("pending_background", ())
+                            ),
                         }
                     )
                     stage_progress_sent[stage] = now
