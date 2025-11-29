@@ -754,7 +754,56 @@ def _monitor_bootstrap_thread(
         if stage not in stage_start_times:
             stage_start_times[stage] = now
         stage_elapsed = time.monotonic() - stage_start_times[stage]
+        stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
+        stage_deadline = stage_entry.get("deadline") if isinstance(stage_entry, Mapping) else None
+        stage_soft_budget = (
+            stage_entry.get("soft_budget") if isinstance(stage_entry, Mapping) else None
+        )
+        stage_enforced = bool(stage_entry.get("enforced")) if isinstance(stage_entry, Mapping) else False
+        stage_optional = bool(stage_entry.get("optional")) if isinstance(stage_entry, Mapping) else False
+        soft_degrade = bool(stage_entry.get("soft_degrade")) if isinstance(stage_entry, Mapping) else False
+        soft_target = stage_soft_budget or stage_deadline
+
         online_state_snapshot = dict(BOOTSTRAP_ONLINE_STATE)
+
+        def _mark_component_state(state: str) -> None:
+            components = online_state_snapshot.get("components", {})
+            if not isinstance(components, Mapping):
+                components = {}
+            updated_components = dict(components)
+            if updated_components.get(stage) == state:
+                return
+            updated_components[stage] = state
+            online_state_snapshot["components"] = updated_components
+            BOOTSTRAP_ONLINE_STATE["components"] = updated_components
+
+        if (
+            soft_target is not None
+            and stage_entry.get("core_gate")
+            and stage_elapsed > soft_target
+        ):
+            _mark_component_state("degraded")
+            if stage not in core_soft_overruns:
+                core_soft_overruns.add(stage)
+                LOGGER.info(
+                    "core gate exceeded target; promoting to degraded-online",
+                    extra=log_record(
+                        event="bootstrap-core-degraded", stage=stage, elapsed=round(stage_elapsed, 2)
+                    ),
+                )
+                if stage_signal:
+                    try:
+                        stage_signal(
+                            {
+                                "event": "bootstrap-core-degraded",
+                                "stage": stage,
+                                "elapsed": round(stage_elapsed, 2),
+                                "soft_target": soft_target,
+                            }
+                        )
+                    except Exception:
+                        LOGGER.debug("core degraded signal failed", exc_info=True)
+
         core_online, lagging_core, degraded_core, degraded_online = minimal_online(
             online_state_snapshot
         )
@@ -830,15 +879,6 @@ def _monitor_bootstrap_thread(
                 )
             core_online_announced = True
 
-        stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
-        stage_deadline = stage_entry.get("deadline") if isinstance(stage_entry, Mapping) else None
-        stage_soft_budget = (
-            stage_entry.get("soft_budget") if isinstance(stage_entry, Mapping) else None
-        )
-        stage_enforced = bool(stage_entry.get("enforced")) if isinstance(stage_entry, Mapping) else False
-        stage_optional = bool(stage_entry.get("optional")) if isinstance(stage_entry, Mapping) else False
-        soft_degrade = bool(stage_entry.get("soft_degrade")) if isinstance(stage_entry, Mapping) else False
-
         if stage_signal:
             last_signal = stage_progress_sent.get(stage)
             if last_signal is None or now - last_signal > 5:
@@ -866,7 +906,7 @@ def _monitor_bootstrap_thread(
                     stage_progress_sent[stage] = now
                 except Exception:
                     LOGGER.debug("stage progress signal failed", exc_info=True)
-        soft_target = stage_soft_budget if stage_optional else stage_deadline
+        soft_target = stage_soft_budget or stage_deadline
 
         if (
             stage_deadline is not None
@@ -928,6 +968,7 @@ def _monitor_bootstrap_thread(
         if stage_timeout_context and soft_degrade:
             stage_timeout_context = dict(stage_timeout_context)
             stage_timeout_context["soft_degrade"] = True
+            _mark_component_state("degraded")
             core_soft_overruns.add(stage)
             optional_lagging.add(stage)
             optional_timeout_notes.setdefault(
