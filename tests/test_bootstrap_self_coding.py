@@ -3093,6 +3093,78 @@ def test_prepare_pipeline_avoids_nested_bootstrap_manager(monkeypatch):
     assert bootstrap_calls == []
 
 
+def test_prepare_pipeline_reuses_inflight_bootstrap(monkeypatch, caplog):
+    registry = SimpleNamespace(name="registry")
+    data_bot = SimpleNamespace(name="data")
+    builder = SimpleNamespace(name="ctx")
+
+    caplog.set_level(logging.INFO, logger=coding_bot_interface.logger.name)
+
+    sentinel = SimpleNamespace(
+        bootstrap_placeholder=True,
+        bootstrap_owner_active=True,
+    )
+    previous_depth = getattr(coding_bot_interface._BOOTSTRAP_STATE, "depth", None)
+    previous_sentinel = getattr(
+        coding_bot_interface._BOOTSTRAP_STATE, "sentinel_manager", None
+    )
+    previous_token = getattr(
+        coding_bot_interface._BOOTSTRAP_STATE, "active_bootstrap_token", None
+    )
+    coding_bot_interface._BOOTSTRAP_STATE.depth = 1
+    coding_bot_interface._BOOTSTRAP_STATE.sentinel_manager = sentinel
+    coding_bot_interface._BOOTSTRAP_STATE.active_bootstrap_token = object()
+
+    instantiated: list[SimpleNamespace] = []
+
+    class _NestedPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+        ) -> None:
+            instantiated.append(self)
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self._bots = []
+
+    try:
+        pipeline, promote = coding_bot_interface.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_NestedPipeline,
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+    finally:
+        if previous_depth is None:
+            delattr(coding_bot_interface._BOOTSTRAP_STATE, "depth")
+        else:
+            coding_bot_interface._BOOTSTRAP_STATE.depth = previous_depth
+        if previous_sentinel is None:
+            delattr(coding_bot_interface._BOOTSTRAP_STATE, "sentinel_manager")
+        else:
+            coding_bot_interface._BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+        if previous_token is None:
+            delattr(coding_bot_interface._BOOTSTRAP_STATE, "active_bootstrap_token")
+        else:
+            coding_bot_interface._BOOTSTRAP_STATE.active_bootstrap_token = previous_token
+
+    assert not instantiated
+    assert coding_bot_interface._is_bootstrap_placeholder(pipeline.manager)
+
+    nested_manager = SimpleNamespace(name="nested-manager")
+    promote(nested_manager)
+
+    assert pipeline.manager is nested_manager
+    assert any("short_circuit" in record.getMessage() for record in caplog.records)
+
+
 def test_bootstrap_entrypoint_handles_stubbed_communication_bot(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=coding_bot_interface.logger.name)
 
