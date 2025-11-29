@@ -52,6 +52,7 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 from bootstrap_readiness import (
     READINESS_STAGES,
+    build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
     stage_for_step,
@@ -1662,14 +1663,33 @@ def initialize_bootstrap_context(
     component_timeout_floors = timeout_policy.get(
         "component_floors", load_component_timeout_floors()
     )
+    resolved_stage_deadlines = stage_deadlines
+    if resolved_stage_deadlines is None:
+        baseline_timeout = float(
+            os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(BOOTSTRAP_STEP_TIMEOUT))
+            or BOOTSTRAP_STEP_TIMEOUT
+        )
+        resolved_stage_deadlines = build_stage_deadlines(
+            baseline_timeout, soft_deadline=True
+        )
+        LOGGER.info(
+            "bootstrap stage deadlines initialised from baseline budget",
+            extra={
+                "event": "bootstrap-stage-deadlines",
+                "baseline_timeout": baseline_timeout,
+                "stage_policy": resolved_stage_deadlines,
+            },
+        )
+
     component_budgets = compute_prepare_pipeline_component_budgets(
         component_floors=component_timeout_floors,
         telemetry=collect_timeout_telemetry(),
         host_telemetry=read_bootstrap_heartbeat(),
-        pipeline_complexity=stage_deadlines,
+        pipeline_complexity=resolved_stage_deadlines,
     )
     _BOOTSTRAP_SCHEDULER.set_component_budgets(component_budgets)
     _apply_timeout_policy_snapshot(timeout_policy)
+    BOOTSTRAP_ONLINE_STATE["stage_policy"] = resolved_stage_deadlines
     _publish_online_state()
 
     resolved_bootstrap_window = None
@@ -1707,7 +1727,7 @@ def initialize_bootstrap_context(
             component_floors=component_timeout_floors,
             component_budgets=component_budgets,
             signal_hook=progress_signal,
-            complexity_inputs=stage_deadlines,
+            complexity_inputs=resolved_stage_deadlines,
         )
     else:
         LOGGER.info(
@@ -1716,7 +1736,7 @@ def initialize_bootstrap_context(
         )
 
     stage_controller = _StagedBootstrapController(
-        stage_policy=stage_deadlines,
+        stage_policy=resolved_stage_deadlines,
         coordinator=shared_timeout_coordinator,
         signal_hook=progress_signal,
     )

@@ -710,6 +710,7 @@ def _monitor_bootstrap_thread(
     stage_start_times: dict[str, float] = {}
     stage_overruns: set[str] = set()
     stage_timeout_context: dict[str, Any] | None = None
+    optional_timeout_notes: dict[str, dict[str, object]] = {}
     core_online_announced = False
     stage_progress_sent: dict[str, float] = {}
 
@@ -774,8 +775,13 @@ def _monitor_bootstrap_thread(
                 "pending_background": list(
                     coordinator_meta.get("pending_background", ())
                 ),
+                "optional_timeout_notes": dict(optional_timeout_notes),
             }
         )
+        optional_warming = lagging_optional_components(online_state_snapshot)
+        optional_warming.update(optional_lagging)
+        optional_warming.update(optional_timeout_notes)
+        online_state_snapshot["optional_warming"] = sorted(optional_warming)
         BOOTSTRAP_ONLINE_STATE.update(online_state_snapshot)
         if not core_online_announced and core_online:
             LOGGER.info(
@@ -794,6 +800,8 @@ def _monitor_bootstrap_thread(
                 lagging.update(coordinator_meta.get("pending_optional", ()))
             if coordinator_meta.get("pending_background"):
                 lagging.update(coordinator_meta.get("pending_background", ()))
+            lagging.update(optional_timeout_notes)
+            lagging.update(optional_lagging)
             if lagging:
                 LOGGER.info(
                     "optional components still warming",
@@ -877,6 +885,16 @@ def _monitor_bootstrap_thread(
         ):
             if stage not in stage_overruns:
                 stage_overruns.add(stage)
+                optional_lagging.add(stage)
+                optional_timeout_notes.setdefault(
+                    stage,
+                    {
+                        "elapsed": round(stage_elapsed, 2),
+                        "deadline": soft_target,
+                        "optional": True,
+                        "soft_degrade": True,
+                    },
+                )
                 LOGGER.warning(
                     "optional stage exceeded soft deadline after core readiness",
                     extra=log_record(
@@ -887,6 +905,21 @@ def _monitor_bootstrap_thread(
                         online_state=online_state_snapshot,
                     ),
                 )
+                if stage_signal:
+                    try:
+                        stage_signal(
+                            {
+                                "event": "bootstrap-optional-stage-overrun",
+                                "stage": stage,
+                                "elapsed": round(stage_elapsed, 2),
+                                "deadline": soft_target,
+                                "core_online": core_online,
+                                "degraded_online": degraded_online,
+                                "optional": True,
+                            }
+                        )
+                    except Exception:
+                        LOGGER.debug("optional stage overrun signal failed", exc_info=True)
 
         if stage_timeout_context and soft_degrade:
             stage_timeout_context = dict(stage_timeout_context)
@@ -933,6 +966,15 @@ def _monitor_bootstrap_thread(
             if stage_entry.get("optional"):
                 if stage not in optional_lagging:
                     optional_lagging.add(stage)
+                    optional_timeout_notes.setdefault(
+                        stage,
+                        {
+                            "elapsed": round(elapsed, 2),
+                            "budget": round(budget, 2),
+                            "optional": True,
+                            "soft_degrade": True,
+                        },
+                    )
                     LOGGER.warning(
                         "optional bootstrap stage exceeded soft deadline",  # advisory only
                         extra=log_record(
@@ -979,6 +1021,7 @@ def _monitor_bootstrap_thread(
     else:
         budget = max(budget, STEP_BUDGET_FLOOR)
     step_durations.setdefault(last_step, elapsed)
+    optional_lagging.update(optional_timeout_notes)
     return (
         False,
         last_step,
