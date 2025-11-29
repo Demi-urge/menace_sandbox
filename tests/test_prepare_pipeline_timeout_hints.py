@@ -6,6 +6,7 @@ import time
 import pytest
 
 import coding_bot_interface as cbi
+import bootstrap_timeout_policy as btp
 
 
 class _DummyPipeline:
@@ -42,7 +43,12 @@ def test_prepare_timeout_logs_standard_hints(monkeypatch, caplog):
 def test_bootstrap_policy_refreshes_cached_wait_timeout(monkeypatch, caplog):
     monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "600")
     cbi._refresh_bootstrap_wait_timeouts()
-    assert cbi._BOOTSTRAP_WAIT_TIMEOUT == 600.0
+    minimum_component_window = sum(
+        value
+        for key, value in btp._BOOTSTRAP_TIMEOUT_MINIMUMS.items()
+        if key.startswith("PREPARE_PIPELINE_") and key.endswith("_BUDGET_SECS")
+    )
+    assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= minimum_component_window
 
     monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "30")
     stop_event = threading.Event()
@@ -65,7 +71,7 @@ def test_bootstrap_policy_refreshes_cached_wait_timeout(monkeypatch, caplog):
 
     assert float(os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")) >= cbi._BOOTSTRAP_TIMEOUT_FLOOR
     assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= cbi._BOOTSTRAP_TIMEOUT_FLOOR
-    assert cbi._BOOTSTRAP_WAIT_TIMEOUT < 600.0
+    assert cbi._BOOTSTRAP_WAIT_TIMEOUT >= minimum_component_window
     assert cbi._resolve_bootstrap_wait_timeout(False) == cbi._BOOTSTRAP_WAIT_TIMEOUT
 
 

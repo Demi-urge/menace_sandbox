@@ -1808,11 +1808,23 @@ def compute_prepare_pipeline_component_budgets(
     component_budget_total = sum(
         value for key, value in budgets.items() if key not in deferred_components
     ) if budgets else 0.0
+    component_minimum_total = sum(
+        value
+        for key, value in runtime_component_minimums.items()
+        if key not in deferred_components
+    )
     deferred_component_budget_total = sum(
         value for key, value in budgets.items() if key in deferred_components
     ) if budgets else 0.0
-    global_window = component_budget_total or None
+    global_window = component_budget_total or component_minimum_total or None
     global_window_extension: Mapping[str, object] | None = None
+
+    if component_minimum_total and (global_window or 0.0) < component_minimum_total:
+        global_window = component_minimum_total
+        global_window_extension = {
+            "minimum_component_window": component_minimum_total,
+            "runtime_component_minimums": runtime_component_minimums,
+        }
 
     global_window, concurrency_meta = _derive_concurrency_global_window(
         base_window=global_window,
@@ -1824,7 +1836,7 @@ def compute_prepare_pipeline_component_budgets(
         host_telemetry=host_telemetry,
     )
     if concurrency_meta:
-        global_window_extension = {"concurrency": concurrency_meta}
+        global_window_extension = {**(global_window_extension or {}), "concurrency": concurrency_meta}
 
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
@@ -1897,6 +1909,7 @@ def compute_prepare_pipeline_component_budgets(
         "floors": floors,
         "adaptive_floors": adaptive_floors,
         "cohort_backoff": cohort_backoff_meta,
+        "component_minimum_total": component_minimum_total,
         "component_budget_total": component_budget_total,
         "deferred_component_budget_total": deferred_component_budget_total,
         "deferred_component_budgets": deferred_component_budgets,
@@ -1940,6 +1953,7 @@ def compute_prepare_pipeline_component_budgets(
             "last_deferred_component_budgets": deferred_component_budgets,
             "last_component_budget_inputs": adaptive_inputs,
             "last_component_budget_total": component_budget_total,
+            "last_component_minimum_total": component_minimum_total,
             "last_deferred_component_budget_total": deferred_component_budget_total,
             "last_global_bootstrap_window": global_window,
             "last_global_window_inputs": {
