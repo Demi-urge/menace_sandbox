@@ -51,11 +51,18 @@ from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_co
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
 from bootstrap_readiness import (
+    _COMPONENT_BASELINES,
     READINESS_STAGES,
     build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
     stage_for_step,
+)
+from bootstrap_metrics import (
+    calibrate_overall_timeout,
+    calibrate_step_budgets,
+    compute_stats,
+    load_duration_store,
 )
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
@@ -66,6 +73,7 @@ from bootstrap_timeout_policy import (
     build_progress_signal_hook,
     collect_timeout_telemetry,
     enforce_bootstrap_timeout_policy,
+    get_bootstrap_guard_context,
     load_component_timeout_floors,
     read_bootstrap_heartbeat,
     compute_prepare_pipeline_component_budgets,
@@ -1669,15 +1677,40 @@ def initialize_bootstrap_context(
             os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(BOOTSTRAP_STEP_TIMEOUT))
             or BOOTSTRAP_STEP_TIMEOUT
         )
+        duration_store = load_duration_store()
+        stage_stats = compute_stats(duration_store.get("bootstrap_stages", {}))
+        base_stage_budgets = {stage.name: baseline_timeout for stage in READINESS_STAGES}
+        calibrated_stage_budgets, budget_debug = calibrate_step_budgets(
+            base_budgets=base_stage_budgets,
+            stats=stage_stats,
+            floors={stage.name: _COMPONENT_BASELINES.get(stage.name, 0.0) for stage in READINESS_STAGES},
+        )
+        guard_context = get_bootstrap_guard_context() or {}
+        try:
+            guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+        except Exception:
+            guard_scale = 1.0
+        if guard_scale > 1.0:
+            calibrated_stage_budgets = {
+                stage: budget * guard_scale for stage, budget in calibrated_stage_budgets.items()
+            }
+        calibrated_timeout, timeout_debug = calibrate_overall_timeout(
+            base_timeout=baseline_timeout, calibrated_budgets=calibrated_stage_budgets
+        )
+        calibrated_timeout *= guard_scale
         resolved_stage_deadlines = build_stage_deadlines(
-            baseline_timeout, soft_deadline=True
+            calibrated_timeout, soft_deadline=True
         )
         LOGGER.info(
             "bootstrap stage deadlines initialised from baseline budget",
             extra={
                 "event": "bootstrap-stage-deadlines",
-                "baseline_timeout": baseline_timeout,
+                "baseline_timeout": calibrated_timeout,
                 "stage_policy": resolved_stage_deadlines,
+                "stage_budgets": calibrated_stage_budgets,
+                "budget_adjustments": budget_debug.get("adjusted"),
+                "budget_scale": guard_scale,
+                "timeout_context": timeout_debug,
             },
         )
 

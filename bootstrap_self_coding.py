@@ -26,7 +26,17 @@ from pathlib import Path
 from textwrap import shorten
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
+from bootstrap_metrics import (
+    BOOTSTRAP_DURATION_STORE,
+    calibrate_overall_timeout,
+    calibrate_step_budgets,
+    compute_stats,
+    load_duration_store,
+    record_durations,
+)
 from bootstrap_readiness import (
+    READINESS_STAGES,
+    _COMPONENT_BASELINES,
     build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
@@ -35,10 +45,10 @@ from bootstrap_timeout_policy import (
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     compute_prepare_pipeline_component_budgets,
     emit_bootstrap_heartbeat,
+    get_bootstrap_guard_context,
     load_component_timeout_floors,
     wait_for_bootstrap_quiet_period,
 )
-from bootstrap_metrics import BOOTSTRAP_DURATION_STORE, compute_stats, record_durations
 
 
 LOGGER = logging.getLogger(__name__)
@@ -257,13 +267,38 @@ def bootstrap_self_coding(bot_name: str) -> None:
     """Trigger :func:`internalize_coding_bot` for *bot_name*."""
 
     guard_delay = _apply_self_coding_guard()
-    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
     component_floors = load_component_timeout_floors()
     component_budgets = compute_prepare_pipeline_component_budgets(
         component_floors=component_floors
     )
+    duration_store = load_duration_store()
+    stage_stats = compute_stats(duration_store.get("bootstrap_stages", {}))
+    base_stage_budgets = {
+        stage.name: float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+        for stage in READINESS_STAGES
+    }
+    floors = {stage.name: _COMPONENT_BASELINES.get(stage.name, 0.0) for stage in READINESS_STAGES}
+    calibrated_stage_budgets, budget_debug = calibrate_step_budgets(
+        base_budgets=base_stage_budgets,
+        stats=stage_stats,
+        floors=floors,
+    )
+    guard_context = get_bootstrap_guard_context() or {}
+    try:
+        guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+    except Exception:
+        guard_scale = 1.0
+    if guard_scale > 1.0:
+        calibrated_stage_budgets = {
+            stage: budget * guard_scale for stage, budget in calibrated_stage_budgets.items()
+        }
+    calibrated_timeout, timeout_debug = calibrate_overall_timeout(
+        base_timeout=base_stage_budgets.get("db_index_load", 0.0),
+        calibrated_budgets=calibrated_stage_budgets,
+    )
+    calibrated_timeout *= guard_scale
     stage_policy = build_stage_deadlines(
-        baseline_timeout,
+        calibrated_timeout,
         component_budgets=component_budgets,
         component_floors=component_floors,
     )
@@ -275,9 +310,13 @@ def bootstrap_self_coding(bot_name: str) -> None:
         "bootstrap readiness policy applied",
         extra={
             "stage_policy": stage_policy,
-            "baseline_timeout": baseline_timeout,
+            "baseline_timeout": calibrated_timeout,
             "component_budgets": component_budgets,
             "component_floors": component_floors,
+            "stage_budgets": calibrated_stage_budgets,
+            "budget_adjustments": budget_debug.get("adjusted"),
+            "budget_scale": guard_scale,
+            "timeout_context": timeout_debug,
             "core_ready": core_ready,
             "lagging_core": sorted(lagging_core),
             "degraded_core": sorted(degraded_core),
