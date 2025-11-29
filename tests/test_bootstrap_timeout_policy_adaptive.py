@@ -84,7 +84,9 @@ def test_persisted_floors_feed_component_coordinator(monkeypatch, tmp_path):
         {"retrievers": budgets["retrievers"]}, minimum=0.0
     )
 
-    assert windows["retrievers"]["budget"] >= 360.0
+    assert windows["retrievers"]["budget"] >= policy._COMPONENT_TIMEOUT_MINIMUMS[  # type: ignore[attr-defined]
+        "retrievers"
+    ]
 
 
 def test_global_window_scales_with_component_complexity(monkeypatch, tmp_path):
