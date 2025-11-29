@@ -13,14 +13,18 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy
+from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy, _BOOTSTRAP_TIMEOUT_MINIMUMS
 from .logging_utils import log_record
 
 _BOOTSTRAP_TIMEOUT_DEFAULTS = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
-    "BOOTSTRAP_STEP_TIMEOUT": "240",
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
+    "MENACE_BOOTSTRAP_WAIT_SECS": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]),
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
+        _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    ),
+    "BOOTSTRAP_STEP_TIMEOUT": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]),
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": str(
+        _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+    ),
 }
 
 for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():

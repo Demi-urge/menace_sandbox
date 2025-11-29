@@ -20,7 +20,7 @@ Menace now surfaces bootstrap progress in **three phases** (critical, provisioni
 
 ## Timeouts
 
-* Increase the env var `MENACE_BOOTSTRAP_WAIT_SECS` to a higher value such as `360` to handle more complex development environments.
-* If you need more fine-grained control, increase `BOOTSTRAP_STEP_TIMEOUT`, `PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS`, `PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS`, `PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS`, and `PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS`.
+* Increase the env var `MENACE_BOOTSTRAP_WAIT_SECS` to a higher value such as `360` (the enforced floor) to handle more complex development environments; vector-heavy runs should respect the `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` floor of `540`.
+* If you need more fine-grained control, increase `BOOTSTRAP_STEP_TIMEOUT`, `PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS`, `PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS`, `PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS`, and `PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS` (floors: vectorizers **720s**, retrievers/DB warmup **480s**, orchestrator/config **420s**).
 * High-load or vector-heavy hosts may raise component floors automatically using the persisted heartbeat data. Inspect the state at `~/.menace_bootstrap_timeout_state.json` to confirm the elevated floors and stagger additional cluster bootstraps when the watchdog reports contention.
 

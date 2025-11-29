@@ -31,8 +31,8 @@ def _load_preseed_bootstrap_module():
         {
             "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
             "render_prepare_pipeline_timeout_hints": lambda *_args, **_kwargs: [
-                "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
-                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=360 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=360 to bypass the legacy 30s cap.",
+                "Increase MENACE_BOOTSTRAP_WAIT_SECS=360 or BOOTSTRAP_STEP_TIMEOUT=360 for slower bootstrap hosts.",
+                "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=540 or BOOTSTRAP_VECTOR_STEP_TIMEOUT=540 to bypass the legacy 30s cap.",
                 "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
             ],
         },
@@ -41,9 +41,9 @@ def _load_preseed_bootstrap_module():
     _install_stub_module(
         "menace_sandbox.coding_bot_interface",
         {
-            "_BOOTSTRAP_TIMEOUT_FLOOR": 240.0,
-            "_BOOTSTRAP_WAIT_TIMEOUT": 240.0,
-            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 240.0,
+            "_BOOTSTRAP_TIMEOUT_FLOOR": 360.0,
+            "_BOOTSTRAP_WAIT_TIMEOUT": 360.0,
+            "_resolve_bootstrap_wait_timeout": lambda heavy=False: 540.0 if heavy else 360.0,
             "_PREPARE_PIPELINE_WATCHDOG": {"stages": []},
             "_pop_bootstrap_context": lambda *_, **__: None,
             "_push_bootstrap_context": lambda *_, **__: None,
@@ -104,8 +104,8 @@ def test_prepare_timeout_emits_remediation_guidance(capsys, caplog):
     combined_output = captured + caplog.text
 
     assert result is None
-    assert "MENACE_BOOTSTRAP_WAIT_SECS=240" in combined_output
-    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=360" in combined_output
+    assert "MENACE_BOOTSTRAP_WAIT_SECS=360" in combined_output
+    assert "BOOTSTRAP_VECTOR_STEP_TIMEOUT=540" in combined_output
     assert "remaining_global_window" in combined_output
     assert "Stagger concurrent bootstraps" in combined_output
 
