@@ -273,3 +273,119 @@ def test_ensure_runtime_dependencies_bootstraps_once(monkeypatch):
     assert module.internalize_coding_bot.call_count == 1
     assert len(call_args) == 1
     assert len(decorated_classes) == 1
+
+
+def test_bootstrap_owner_reuses_injected_pipeline(monkeypatch):
+    """A bootstrap sentinel lets callers reuse an inflight pipeline."""
+
+    owner = object()
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+    fake_manager = mock.Mock(name="manager")
+    fake_pipeline = mock.Mock(name="pipeline")
+    promote = mock.Mock(name="promote")
+
+    _stub_module(
+        monkeypatch,
+        "menace_sandbox.coding_bot_interface",
+        {"get_structural_bootstrap_owner": mock.Mock(return_value=owner)},
+    )
+    module._bootstrap_pipeline_cache[owner] = (fake_pipeline, promote, None)
+    module.prepare_pipeline_for_bootstrap = mock.Mock()
+
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=fake_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies(bootstrap_owner=owner)
+
+    assert state.pipeline is fake_pipeline
+    assert module.prepare_pipeline_for_bootstrap.call_count == 0
+    promote.assert_called_once_with(fake_manager)
+
+
+def test_bootstrap_owner_caches_pipeline_for_followups(monkeypatch):
+    """The cached promotion callback is reused while the sentinel is active."""
+
+    owner = object()
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+    promote = mock.Mock(name="promote")
+
+    _stub_module(
+        monkeypatch,
+        "menace_sandbox.coding_bot_interface",
+        {"get_structural_bootstrap_owner": mock.Mock(return_value=owner)},
+    )
+
+    fake_pipeline = mock.Mock(name="pipeline")
+    module.prepare_pipeline_for_bootstrap = mock.Mock(return_value=(fake_pipeline, promote))
+
+    managers = [mock.Mock(name="manager_one"), mock.Mock(name="manager_two")]
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(side_effect=managers))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state_one = module._ensure_runtime_dependencies(bootstrap_owner=owner)
+    assert state_one.pipeline is fake_pipeline
+    assert module.prepare_pipeline_for_bootstrap.call_count == 1
+
+    # Reset runtime globals but keep the bootstrap cache entry seeded above.
+    module._runtime_state = None
+    module._runtime_placeholder = None
+    module._runtime_initializing = False
+    module.pipeline = None
+    module.manager = None
+    module._self_coding_configured = False
+
+    state_two = module._ensure_runtime_dependencies(bootstrap_owner=owner)
+
+    assert state_two.pipeline is fake_pipeline
+    assert module.prepare_pipeline_for_bootstrap.call_count == 1
+    assert promote.call_count == 2
+    assert promote.call_args_list[0][0][0] is managers[0]
+    assert promote.call_args_list[1][0][0] is managers[1]
