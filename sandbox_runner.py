@@ -23,7 +23,11 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
 
-from bootstrap_readiness import build_stage_deadlines, minimal_online
+from bootstrap_readiness import (
+    build_stage_deadlines,
+    lagging_optional_components,
+    minimal_online,
+)
 
 from bootstrap_timeout_policy import (
     broadcast_timeout_floors,
@@ -78,7 +82,11 @@ class _BootstrapOnlineTracker:
     def _soft_deadline(self, component: str) -> float | None:
         entry = self.stage_policy.get(component, {})
         if isinstance(entry, Mapping):
-            deadline = entry.get("deadline") or entry.get("scaled_budget")
+            deadline = (
+                entry.get("soft_budget")
+                if entry.get("optional")
+                else entry.get("deadline")
+            ) or entry.get("scaled_budget")
             try:
                 return float(deadline) if deadline is not None else None
             except (TypeError, ValueError):
@@ -126,18 +134,23 @@ class _BootstrapOnlineTracker:
         if not core_ready:
             return
         self._core_emitted = True
+        optional_warming = lagging_optional_components(self.online_state)
         payload = {
             "event": "core-online",
             "online_state": dict(self.online_state),
+            "optional_warming": sorted(optional_warming),
+            "partial_online": bool(optional_warming),
         }
         try:
             emit_bootstrap_heartbeat({"signal": "core-online", **payload})
         except Exception:
             self.logger.debug("failed to emit core-online heartbeat", exc_info=True)
-        self.logger.info(
-            "core bootstrap quorum reached; optional stages warming",
-            extra=log_record(**payload),
+        message = (
+            "core bootstrap quorum reached; optional stages warming"
+            if optional_warming
+            else "core bootstrap quorum reached; all stages online"
         )
+        self.logger.info(message, extra=log_record(**payload))
         print("[SANDBOX] core-online; continuing optional warmup", flush=True)
 
 

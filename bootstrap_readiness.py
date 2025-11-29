@@ -108,11 +108,18 @@ def build_stage_deadlines(
     component_budgets: Mapping[str, float] | None = None,
     component_floors: Mapping[str, float] | None = None,
 ) -> dict[str, dict[str, object]]:
-    """Construct stage-aware deadlines for bootstrap orchestration."""
+    """Construct stage-aware deadlines for bootstrap orchestration.
+
+    Core stages (``db_index_load``, ``retriever_hydration``, ``vector_seeding``)
+    return hard deadlines when ``soft_deadline`` is ``False``. Optional stages
+    (``orchestrator_state`` and ``background_loops``) only publish "soft"
+    budgets so they can warm in the background after core readiness without
+    tripping fatal watchdogs.
+    """
+
     scale = heavy_scale if heavy_detected and not soft_deadline else 1.0
     stage_deadlines: dict[str, dict[str, object]] = {}
     for stage in READINESS_STAGES:
-        enforced = not stage.optional and not soft_deadline
         resolved_budget, stage_floor = _baseline_for_stage(
             stage.name,
             component_budgets=component_budgets,
@@ -126,21 +133,25 @@ def build_stage_deadlines(
             # already serving traffic in a degraded state.
             scaled_budget *= 1.25
 
-        deadline = scaled_budget
-        if stage_floor is not None and deadline is not None:
-            deadline = max(deadline, stage_floor)
+        if stage_floor is not None and scaled_budget is not None:
+            scaled_budget = max(scaled_budget, stage_floor)
 
-        deadline = None if soft_deadline and not stage.optional else deadline
+        enforced = not stage.optional and not soft_deadline
+        hard_deadline = None if stage.optional else scaled_budget
+        if soft_deadline:
+            hard_deadline = None
+
         stage_deadlines[stage.name] = {
-            "deadline": deadline,
+            "deadline": hard_deadline,
+            "soft_budget": scaled_budget,
             "optional": stage.optional,
             "enforced": enforced,
             "floor": stage_floor,
             "budget": resolved_budget,
             "scaled_budget": scaled_budget,
-            "soft_budget": stage_budget,
-            "scale": scale,
             "soft_degrade": stage.optional,
+            "scale": scale,
+            "core_gate": not stage.optional,
         }
     return stage_deadlines
 
@@ -164,6 +175,13 @@ def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
 def minimal_online(
     online_state: Mapping[str, object]
 ) -> tuple[bool, set[str], set[str], bool]:
+    """Evaluate readiness using only core components.
+
+    Optional bootstrap stages are treated as post-ready warmups, so their
+    status is excluded from the readiness calculation. Returns
+    ``(ready, lagging_core, degraded_core, degraded_online)`` where ``ready``
+    reflects core quorum, not background orchestration work.
+    """
     components = online_state.get("components", {}) if isinstance(online_state, Mapping) else {}
     lagging: set[str] = set()
     degraded: set[str] = set()

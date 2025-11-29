@@ -795,6 +795,9 @@ def _monitor_bootstrap_thread(
 
         stage_entry = stage_policy.get(stage, {}) if isinstance(stage_policy, Mapping) else {}
         stage_deadline = stage_entry.get("deadline") if isinstance(stage_entry, Mapping) else None
+        stage_soft_budget = (
+            stage_entry.get("soft_budget") if isinstance(stage_entry, Mapping) else None
+        )
         stage_enforced = bool(stage_entry.get("enforced")) if isinstance(stage_entry, Mapping) else False
         stage_optional = bool(stage_entry.get("optional")) if isinstance(stage_entry, Mapping) else False
         soft_degrade = bool(stage_entry.get("soft_degrade")) if isinstance(stage_entry, Mapping) else False
@@ -809,6 +812,7 @@ def _monitor_bootstrap_thread(
                             "stage": stage,
                             "elapsed": round(stage_elapsed, 2),
                             "deadline": stage_deadline,
+                            "soft_budget": stage_soft_budget,
                             "optional": stage_optional,
                             "enforced": stage_enforced,
                             "core_online": core_online,
@@ -818,6 +822,8 @@ def _monitor_bootstrap_thread(
                     stage_progress_sent[stage] = now
                 except Exception:
                     LOGGER.debug("stage progress signal failed", exc_info=True)
+        soft_target = stage_soft_budget if stage_optional else stage_deadline
+
         if (
             stage_deadline is not None
             and stage_elapsed > stage_deadline
@@ -832,8 +838,8 @@ def _monitor_bootstrap_thread(
                 stage_enforced=stage_enforced,
             )
         elif (
-            stage_deadline is not None
-            and stage_elapsed > stage_deadline
+            soft_target is not None
+            and stage_elapsed > soft_target
             and stage_optional
             and core_online_announced
         ):
@@ -845,10 +851,10 @@ def _monitor_bootstrap_thread(
                         event="bootstrap-optional-stage-overrun",
                         stage=stage,
                         elapsed=round(stage_elapsed, 2),
-                        deadline=stage_deadline,
+                        deadline=soft_target,
                         online_state=online_state_snapshot,
                     ),
-                    )
+                )
 
         if stage_timeout_context and soft_degrade:
             stage_timeout_context = dict(stage_timeout_context)

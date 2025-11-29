@@ -604,8 +604,10 @@ def _publish_online_state() -> None:
         }
     )
     optional_warming = lagging_optional_components(snapshot)
+    BOOTSTRAP_ONLINE_STATE["optional_warming"] = sorted(optional_warming)
+    BOOTSTRAP_ONLINE_STATE["partial_online"] = bool(optional_warming)
     if optional_warming:
-        BOOTSTRAP_ONLINE_STATE["optional_warming"] = sorted(optional_warming)
+        BOOTSTRAP_ONLINE_STATE["optional_degraded"] = sorted(optional_warming)
 
 
 def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
