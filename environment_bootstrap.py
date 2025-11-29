@@ -67,6 +67,7 @@ class _PhaseBudgetContext:
         self._logger = logger
         self._mark_online = mark_online
         self._warned_over_budget = False
+        self._soft_overrun_emitted = False
         self.online_ready = False
         self.online_reason: str | None = None
         self._enforce_deadline = enforce_deadline
@@ -87,10 +88,19 @@ class _PhaseBudgetContext:
                 soft_budget,
                 f"{remaining:.1f}s" if remaining is not None else "unbounded",
             )
+        if (
+            not self._enforce_deadline
+            and self._soft_overrun_handler
+            and not self._soft_overrun_emitted
+            and (soft_budget is not None and elapsed > soft_budget)
+        ):
+            self._soft_overrun_emitted = True
+            self._soft_overrun_handler(self.phase, elapsed, limit or soft_budget)
         if limit is not None and elapsed > limit:
             if not self._enforce_deadline:
                 self._warned_over_budget = True
-                if self._soft_overrun_handler:
+                if self._soft_overrun_handler and not self._soft_overrun_emitted:
+                    self._soft_overrun_emitted = True
                     self._soft_overrun_handler(self.phase, elapsed, limit)
                 return
             raise TimeoutError(
@@ -373,7 +383,8 @@ class EnvironmentBootstrapper:
                 )
             return
 
-        if not core_ready and not (partial and critical_ready):
+        if not core_ready:
+            self._phase_readiness["online_degraded"] = degraded
             return
 
         self._phase_readiness["online_partial"] = True
