@@ -8,7 +8,11 @@ import sys
 from pathlib import Path
 from typing import MutableMapping, Sequence
 
-from bootstrap_timeout_policy import enforce_bootstrap_timeout_policy, _BOOTSTRAP_TIMEOUT_MINIMUMS
+from bootstrap_timeout_policy import (
+    derive_bootstrap_timeout_env,
+    enforce_bootstrap_timeout_policy,
+    _BOOTSTRAP_TIMEOUT_MINIMUMS,
+)
 
 # === BEGIN PATH SETUP ===
 
@@ -54,19 +58,16 @@ _DisabledSelfCodingManager = getattr(
     _coding_bot_interface, "_DisabledSelfCodingManager", None
 )
 
-_BOOTSTRAP_TIMEOUT_DEFAULTS = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]),
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
-    ),
-    "BOOTSTRAP_STEP_TIMEOUT": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]),
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
-    ),
-}
+def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
+    defaults = derive_bootstrap_timeout_env(
+        minimum=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
+    )
+    for env_var, resolved in defaults.items():
+        os.environ.setdefault(env_var, str(resolved))
+    return defaults
 
-for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
-    os.environ.setdefault(_env_var, _default_value)
+
+_BOOTSTRAP_TIMEOUT_DEFAULTS = _hydrate_bootstrap_timeout_env()
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
