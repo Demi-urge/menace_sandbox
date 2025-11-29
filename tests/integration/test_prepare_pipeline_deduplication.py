@@ -63,3 +63,85 @@ def test_prepare_pipeline_reuses_global_bootstrap_token() -> None:
     assert len(constructor_calls) == 1
     assert secondary_pipeline is not None
     assert callable(secondary_promote)
+
+
+def test_nested_helper_reuses_active_pipeline(monkeypatch):
+    owner_guard = object()
+    sentinel = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_candidate = SimpleNamespace(
+        manager=sentinel, initial_manager=None, bootstrap_placeholder=True
+    )
+
+    cbi._BOOTSTRAP_STATE.depth = 1  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.active_bootstrap_token = object()  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.active_bootstrap_guard = owner_guard  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.sentinel_manager = sentinel  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.pipeline = pipeline_candidate  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.owner_depths = {owner_guard: 1}  # type: ignore[attr-defined]
+    cbi._PREPARE_PIPELINE_WATCHDOG.clear()
+
+    class _Unreachable:
+        def __init__(self, **_: object) -> None:  # pragma: no cover - guard must short circuit
+            raise AssertionError("pipeline constructor should be bypassed")
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Unreachable,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        bootstrap_guard=True,
+    )
+
+    guard_state = cbi._PREPARE_PIPELINE_WATCHDOG.get("bootstrap_guard", {})
+
+    assert pipeline is pipeline_candidate
+    assert guard_state.get("short_circuit") is True
+    assert guard_state.get("owner_depths", {}).get(owner_guard) == 1
+    assert callable(promote)
+
+    promote(object())
+
+    assert ("reuse", id(pipeline_candidate)) in cbi._PREPARE_PIPELINE_WATCHDOG.get(
+        "promotion_callbacks", set()
+    )
+
+
+def test_reentrant_promoter_applies_manager_once(monkeypatch):
+    sentinel = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_candidate = SimpleNamespace(
+        manager=sentinel, initial_manager=None, bootstrap_placeholder=True
+    )
+    cbi._BOOTSTRAP_STATE.depth = 1  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.sentinel_manager = sentinel  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.pipeline = pipeline_candidate  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.owner_depths = {object(): 1}  # type: ignore[attr-defined]
+    cbi._PREPARE_PIPELINE_WATCHDOG.clear()
+
+    assigned: list[object] = []
+    real_assign = cbi._assign_bootstrap_manager_placeholder
+
+    def _spy_assign(target: object, placeholder: object, **kwargs: object) -> bool:
+        assigned.append(placeholder)
+        return real_assign(target, placeholder, **kwargs)
+
+    monkeypatch.setattr(
+        cbi,
+        "_assign_bootstrap_manager_placeholder",
+        _spy_assign,
+    )
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=type("_SentinelCarrier", (), {}),
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        bootstrap_guard=True,
+    )
+
+    real_manager = object()
+    promote(real_manager)
+
+    assert pipeline is pipeline_candidate
+    assert pipeline_candidate.manager is real_manager
+    assert pipeline_candidate.initial_manager is real_manager
+    assert assigned.count(real_manager) == 1
