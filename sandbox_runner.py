@@ -104,6 +104,8 @@ class _BootstrapOnlineTracker:
         yield
         elapsed = time.monotonic() - start
         if deadline is not None and elapsed > deadline:
+            component_state = "degraded" if self.stage_policy.get(component, {}).get("core_gate") else "warming"
+            self.mark_component(component, component_state)
             self.logger.warning(
                 "optional bootstrap component exceeded soft deadline",
                 extra=log_record(
@@ -111,6 +113,7 @@ class _BootstrapOnlineTracker:
                     component=component,
                     elapsed=round(elapsed, 2),
                     deadline=round(deadline, 2),
+                    degraded=component_state == "degraded",
                 ),
             )
 
