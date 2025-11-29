@@ -9,7 +9,9 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import (
+    _BOOTSTRAP_STATE,
     _looks_like_pipeline_candidate,
+    _bootstrap_dependency_broker,
     get_active_bootstrap_pipeline,
     _using_bootstrap_sentinel,
     prepare_pipeline_for_bootstrap,
@@ -188,6 +190,13 @@ def _ensure_self_coding_decorated(deps: _RuntimeDependencies) -> None:
 _bootstrap_pipeline_cache: dict[object, tuple["ModelAutomationPipeline", Callable[[SelfCodingManager | None], None], SelfCodingManager | None]] = {}
 
 
+def _active_bootstrap_promoter() -> Callable[[Any], None] | None:
+    callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+    if callbacks:
+        return callbacks[-1]
+    return None
+
+
 def _ensure_runtime_dependencies(
     *,
     bootstrap_owner: object | None = None,
@@ -307,11 +316,19 @@ def _ensure_runtime_dependencies(
 
     try:
         pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
-        promote_pipeline = promote_pipeline or (lambda *_args: None)
+        promote_pipeline = promote_pipeline or _active_bootstrap_promoter() or (
+            lambda *_args: None
+        )
+        dependency_broker = _bootstrap_dependency_broker()
+        broker_pipeline, broker_manager = dependency_broker.resolve()
         if pipeline_override is not None:
             pipe = pipeline_override
         elif pipeline is not None:
             pipe = pipeline
+        elif broker_pipeline is not None:
+            pipe = broker_pipeline
+            if manager_override is None and manager is None and broker_manager is not None:
+                manager_override = broker_manager
         else:
             pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
