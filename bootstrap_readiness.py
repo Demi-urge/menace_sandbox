@@ -107,6 +107,7 @@ def build_stage_deadlines(
     heavy_scale: float = 1.5,
     component_budgets: Mapping[str, float] | None = None,
     component_floors: Mapping[str, float] | None = None,
+    adaptive_window: float | None = None,
 ) -> dict[str, dict[str, object]]:
     """Construct stage-aware deadlines for bootstrap orchestration.
 
@@ -117,7 +118,10 @@ def build_stage_deadlines(
     tripping fatal watchdogs.
     """
 
-    scale = heavy_scale if heavy_detected and not soft_deadline else 1.0
+    window_scale = 1.0
+    if adaptive_window is not None and baseline_timeout:
+        window_scale = max(adaptive_window / baseline_timeout, 1.0)
+    scale = (heavy_scale if heavy_detected and not soft_deadline else 1.0) * window_scale
     stage_deadlines: dict[str, dict[str, object]] = {}
     for stage in READINESS_STAGES:
         resolved_budget, stage_floor = _baseline_for_stage(
@@ -157,6 +161,7 @@ def build_stage_deadlines(
             "scaled_budget": scaled_budget,
             "soft_degrade": soft_degrade,
             "scale": scale,
+            "window_scale": window_scale,
             "core_gate": not stage.optional,
         }
     return stage_deadlines

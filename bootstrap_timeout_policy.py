@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any, Iterable
 
+import bootstrap_metrics
+
 _SHARED_EVENT_BUS = None
 
 LOGGER = logging.getLogger(__name__)
@@ -775,6 +777,58 @@ def _derive_concurrency_global_window(
         "host_load": host_load,
     }
     return extended_window, extension_meta
+
+
+def derive_elastic_global_window(
+    *,
+    base_window: float | None,
+    component_budgets: Mapping[str, float] | None = None,
+    backlog_queue_depth: int = 0,
+    active_components: int = 0,
+    component_stats: Mapping[str, Mapping[str, float]] | None = None,
+) -> tuple[float | None, Mapping[str, object]]:
+    """Scale the global window using concurrency, backlog, and runtime telemetry."""
+
+    budgets = {
+        key: float(value)
+        for key, value in (component_budgets or {}).items()
+        if value is not None and key not in _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS
+    }
+    active_components = max(active_components, len(budgets))
+
+    stats = component_stats
+    if stats is None:
+        duration_store = bootstrap_metrics.load_duration_store()
+        stats = bootstrap_metrics.compute_stats(duration_store.get("bootstrap_components", {}))
+
+    calibrated_budgets, calibration_meta = bootstrap_metrics.calibrate_step_budgets(
+        base_budgets=budgets or {},
+        stats=stats or {},
+        floors=_COMPONENT_TIMEOUT_MINIMUMS,
+    )
+    calibrated_window, window_meta = bootstrap_metrics.calibrate_overall_timeout(
+        base_timeout=base_window or 0.0, calibrated_budgets=calibrated_budgets
+    )
+
+    backlog_scale = 1.0 + min(max(backlog_queue_depth, 0), 10) * 0.05
+    concurrency_scale = 1.0 + max(active_components - 1, 0) * 0.08
+    elastic_scale = max(backlog_scale, concurrency_scale)
+
+    elastic_window = max(base_window or 0.0, calibrated_window)
+    elastic_window = elastic_window * elastic_scale if elastic_window else None
+
+    meta = {
+        "calibrated_budgets": calibrated_budgets,
+        "calibration": calibration_meta,
+        "calibrated_window": calibrated_window,
+        "window_meta": window_meta,
+        "backlog_scale": backlog_scale,
+        "concurrency_scale": concurrency_scale,
+        "elastic_scale": elastic_scale,
+        "backlog_queue_depth": backlog_queue_depth,
+        "active_components": active_components,
+    }
+    return elastic_window, meta
 
 
 def _state_host_key() -> str:
@@ -2161,6 +2215,20 @@ def compute_prepare_pipeline_component_budgets(
     if concurrency_meta:
         global_window_extension = {**(global_window_extension or {}), "concurrency": concurrency_meta}
 
+    component_stats = bootstrap_metrics.compute_stats(
+        bootstrap_metrics.load_duration_store().get("bootstrap_components", {})
+    )
+    elastic_window, elastic_meta = derive_elastic_global_window(
+        base_window=global_window,
+        component_budgets=budgets,
+        backlog_queue_depth=backlog_queue_depth,
+        active_components=concurrency_meta.get("concurrency", 0) if concurrency_meta else 0,
+        component_stats=component_stats,
+    )
+    if elastic_window is not None and elastic_window > (global_window or 0.0):
+        global_window_extension = {**(global_window_extension or {}), "elastic": elastic_meta}
+        global_window = elastic_window
+
     def _apply_overruns(overruns: Mapping[str, Mapping[str, float | int]]) -> None:
         for component, meta in overruns.items():
             base = budgets.get(component, floors.get(component, 0.0))
@@ -2242,6 +2310,8 @@ def compute_prepare_pipeline_component_budgets(
         "global_window": global_window,
         "global_window_extension": global_window_extension,
         "concurrency_extension": concurrency_meta,
+        "elastic_window": elastic_window,
+        "component_stats": component_stats,
         "backlog": {
             "queue_depth": backlog_queue_depth,
             "active_bootstraps": active_bootstraps,
