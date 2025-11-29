@@ -206,6 +206,7 @@ class EnvironmentBootstrapper:
             phase: False for phase in self.PHASES
         }
         self._phase_readiness["online_partial"] = False
+        self._phase_readiness["online_degraded"] = False
         self._phase_readiness["online"] = False
         self._phase_readiness["full_ready"] = False
         self._phase_gates: dict[str, dict[str, object]] = {
@@ -352,20 +353,41 @@ class EnvironmentBootstrapper:
         )
 
     def _mark_online_ready(self, elapsed: float | None, reason: str, partial: bool) -> None:
-        if partial and not self._phase_readiness.get("online_partial"):
-            if self._critical_gate_ready():
+        core_ready = self._core_gates_ready()
+        critical_ready = self._critical_gate_ready()
+        lagging = self._lagging_core_phases()
+        degraded = bool(lagging)
+
+        if partial and not self._phase_readiness.get("online_partial") and critical_ready:
+            self._phase_readiness["online_partial"] = True
+            self._emit_phase_event(
+                "online_partial", "ready", elapsed=elapsed, reason=reason
+            )
+
+        if self._phase_readiness.get("online"):
+            self._phase_readiness["online_degraded"] = degraded
+            if not degraded:
                 self._phase_readiness["online_partial"] = True
                 self._emit_phase_event(
-                    "online_partial", "ready", elapsed=elapsed, reason=reason
+                    "online", "ready", elapsed=elapsed, reason=reason
                 )
-        if self._phase_readiness.get("online"):
             return
-        if not self._core_gates_ready():
+
+        if not core_ready and not (partial and critical_ready):
             return
+
         self._phase_readiness["online_partial"] = True
+        self._phase_readiness["online_degraded"] = degraded
         self._phase_readiness["online"] = True
         self._scheduler.mark_ready("online")
-        self._emit_phase_event("online", "ready", elapsed=elapsed, reason=reason)
+        event_status = "degraded" if degraded else "ready"
+        self._emit_phase_event(
+            "online",
+            event_status,
+            elapsed=elapsed,
+            reason=reason,
+            lagging_core=sorted(lagging),
+        )
 
     def _mark_full_ready(self, *, reason: str | None = None) -> None:
         if self._phase_readiness.get("full_ready"):
@@ -439,6 +461,13 @@ class EnvironmentBootstrapper:
             self._phase_gates.get(name, {}).get("status") in {"ready", "degraded"}
             for name in ("critical", "provisioning")
         )
+
+    def _lagging_core_phases(self) -> set[str]:
+        lagging: set[str] = set()
+        for name in ("critical", "provisioning"):
+            if self._phase_gates.get(name, {}).get("status") not in {"ready", "degraded"}:
+                lagging.add(name)
+        return lagging
 
     def _phase_elapsed(self, phase: str) -> float | None:
         try:

@@ -121,7 +121,10 @@ def build_stage_deadlines(
         )
         scaled_budget = resolved_budget * scale if resolved_budget is not None else None
         if stage.optional and scaled_budget is not None:
-            scaled_budget *= 0.8
+            # Give optional background phases slightly more time so they can
+            # converge without tripping fatal watchdogs while the system is
+            # already serving traffic in a degraded state.
+            scaled_budget *= 1.25
 
         deadline = scaled_budget
         if stage_floor is not None and deadline is not None:

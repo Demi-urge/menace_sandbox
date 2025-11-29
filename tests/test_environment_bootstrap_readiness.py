@@ -78,3 +78,28 @@ def test_partial_then_full_readiness(monkeypatch, tmp_path):
     assert final_heartbeat.get("phase") in {"optional", "full_ready"}
 
     bootstrapper.shutdown()
+
+
+def test_core_online_degrades_until_provisioning_completes(monkeypatch, tmp_path):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setattr(
+        environment_bootstrap, "InfrastructureBootstrapper", _StubInfrastructureBootstrapper
+    )
+
+    bootstrapper = _LightweightBootstrapper(policy=_StubPolicy())
+
+    bootstrapper._update_gate("critical", "ready")
+    bootstrapper._maybe_mark_online(reason="critical-only", partial=True)
+
+    assert bootstrapper._phase_readiness.get("online") is True
+    assert bootstrapper._phase_readiness.get("online_degraded") is True
+    assert bootstrapper._lagging_core_phases() == {"provisioning"}
+
+    bootstrapper._update_gate("provisioning", "ready")
+    bootstrapper._maybe_mark_online(reason="provisioning-finished", partial=False)
+
+    assert bootstrapper._phase_readiness.get("online_degraded") is False
+    assert bootstrapper._lagging_core_phases() == set()
+
+    bootstrapper.shutdown()
