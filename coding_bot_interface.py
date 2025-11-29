@@ -346,6 +346,15 @@ def _staged_ready_event() -> threading.Event:
     return event
 
 
+def get_prepare_pipeline_coordinator() -> SharedTimeoutCoordinator | None:
+    """Return the live shared timeout coordinator for prepare_pipeline."""
+
+    coordinator = _PREPARE_PIPELINE_WATCHDOG.get("shared_timeout_instance")
+    if isinstance(coordinator, SharedTimeoutCoordinator):
+        return coordinator
+    return None
+
+
 def _mark_staged_readiness(
     stage_label: str | None,
     *,
@@ -362,12 +371,23 @@ def _mark_staged_readiness(
     critical_pending = _CRITICAL_READINESS_GATES & set(pending_gates)
     deferred_pending = tuple(deferred_pending or ())
     all_pending = tuple(all_pending_gates or pending_gates)
+    background_pending = tuple(gate for gate in pending_gates if gate in DEFERRED_COMPONENTS)
+    optional_pending = tuple(
+        gate
+        for gate in pending_gates
+        if gate not in _CRITICAL_READINESS_GATES and gate not in DEFERRED_COMPONENTS
+    )
     payload = {
         "stage": label,
         "ready_gates": tuple(ready_gates),
         "pending_gates": tuple(pending_gates),
         "all_pending_gates": all_pending,
         "deferred_pending_gates": deferred_pending,
+        "background_pending_gates": background_pending,
+        "optional_pending_gates": optional_pending,
+        "critical_pending_gates": tuple(critical_pending),
+        "critical_gates": tuple(_CRITICAL_READINESS_GATES),
+        "background_gates": tuple(DEFERRED_COMPONENTS),
         "readiness_ratio": readiness_ratio,
         "remaining_window": remaining_window,
         "stage_budget": stage_budget,
@@ -398,6 +418,23 @@ def _mark_staged_readiness(
                 }
             )
             _PREPARE_PIPELINE_WATCHDOG["critical_ready_emitted"] = payload["timestamp"]
+
+        coordinator = get_prepare_pipeline_coordinator()
+        if coordinator is not None:
+            coordinator.record_readiness(payload)
+
+        logger.info(
+            "prepare_pipeline.readiness_update",
+            extra={
+                "readiness": {
+                    "stage": label,
+                    "critical_pending": tuple(critical_pending),
+                    "optional_pending": optional_pending,
+                    "background_pending": background_pending,
+                    "ready_gates": tuple(ready_gates),
+                }
+            },
+        )
 
     return payload
 
@@ -6765,6 +6802,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             global_window=global_bootstrap_window,
             complexity_inputs=component_complexity_inputs,
         )
+        _PREPARE_PIPELINE_WATCHDOG["shared_timeout_instance"] = shared_timeout_coordinator
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
             shared_timeout_coordinator.snapshot()
         )

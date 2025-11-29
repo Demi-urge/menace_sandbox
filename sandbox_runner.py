@@ -37,6 +37,7 @@ from bootstrap_timeout_policy import (
     load_component_timeout_floors,
     load_escalated_timeout_floors,
 )
+from coding_bot_interface import get_prepare_pipeline_coordinator
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
@@ -124,22 +125,37 @@ class _BootstrapOnlineTracker:
         core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
             self.online_state
         )
+        coordinator_ready = False
+        readiness_meta: Mapping[str, object] = {}
+        coordinator = get_prepare_pipeline_coordinator()
+        if coordinator is not None:
+            coordinator_ready, readiness_meta = coordinator.quorum_met()
+            if coordinator_ready and not core_ready:
+                core_ready = True
+                degraded_online = True
         snapshot = {
             "core_ready": core_ready,
             "core_lagging": sorted(lagging_core),
             "core_degraded": sorted(degraded_core),
             "core_degraded_online": degraded_online,
+            "pending_optional": list(readiness_meta.get("pending_optional", ())),
+            "pending_background": list(readiness_meta.get("pending_background", ())),
         }
         self.online_state.update(snapshot)
         if not core_ready:
             return
         self._core_emitted = True
         optional_warming = lagging_optional_components(self.online_state)
+        warming_components = set(optional_warming)
+        warming_components.update(readiness_meta.get("pending_optional", ()) if isinstance(readiness_meta, Mapping) else ())
+        warming_components.update(readiness_meta.get("pending_background", ()) if isinstance(readiness_meta, Mapping) else ())
         payload = {
             "event": "core-online",
             "online_state": dict(self.online_state),
             "optional_warming": sorted(optional_warming),
-            "partial_online": bool(optional_warming),
+            "partial_online": bool(warming_components),
+            "pending_optional": list(readiness_meta.get("pending_optional", ())),
+            "pending_background": list(readiness_meta.get("pending_background", ())),
         }
         try:
             emit_bootstrap_heartbeat({"signal": "core-online", **payload})
@@ -147,7 +163,7 @@ class _BootstrapOnlineTracker:
             self.logger.debug("failed to emit core-online heartbeat", exc_info=True)
         message = (
             "core bootstrap quorum reached; optional stages warming"
-            if optional_warming
+            if warming_components
             else "core bootstrap quorum reached; all stages online"
         )
         self.logger.info(message, extra=log_record(**payload))
