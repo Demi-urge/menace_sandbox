@@ -511,6 +511,7 @@ def _extend_component_windows(
     timeout_floor: float,
     resolved_timeout: float | None,
     progress_signal: Mapping[str, Any],
+    gate_progress: Mapping[str, Mapping[str, Any]] | None,
     shared_timeout_coordinator: SharedTimeoutCoordinator | None,
     stage: str,
     readiness_pending: Iterable[str],
@@ -546,7 +547,14 @@ def _extend_component_windows(
             continue
 
         heartbeat_recent = gate in recent_heartbeats
-        gate_progressing = progressing or heartbeat_recent
+        progress_meta = gate_progress.get(gate, {}) if gate_progress else {}
+        gate_progressing = (
+            progress_meta.get("progressing")
+            or progress_meta.get("progress_delta", 0.0) > 0
+            or progress_meta.get("progress_ratio_delta", 0.0) > 0
+            or progressing
+            or heartbeat_recent
+        )
         if heartbeat_recent and heartbeat_grace > 0:
             grace_budget = max(heartbeat_grace, timeout_floor * 0.25)
             window["remaining"] = grace_budget
@@ -600,6 +608,7 @@ def _extend_component_windows(
                 "component_budget": window.get("budget"),
                 "component_deadline": window.get("deadline"),
                 "work_remaining_ratio": work_remaining_ratio,
+                "gate_progress": progress_meta,
             }
             extension_meta.append(meta)
 
@@ -5887,7 +5896,49 @@ def _prepare_pipeline_for_bootstrap_impl(
             progress_signal["progressing"] = True
         _PREPARE_PIPELINE_WATCHDOG["component_work_completed_total"] = completed_units
 
+        gate_progress: dict[str, dict[str, Any]] = {}
+        for gate, window in gate_windows.items():
+            work_total = max(int(component_work_units.get(gate, 1) or 1), 1)
+            work_completed = float(component_work_progress.get(gate, 0.0) or 0.0)
+            prior_ratio = float(window.get("progress_ratio") or 0.0)
+            progress_ratio = min(work_completed / work_total, 1.0) if work_total else 0.0
+            progress_delta = progress_ratio - prior_ratio
+            progress_meta = {
+                "gate": gate,
+                "work_completed": work_completed,
+                "work_total": work_total,
+                "progress_ratio": progress_ratio,
+                "progress_ratio_delta": progress_delta,
+                "progressing": progress_delta > 0,
+                "heartbeat_recent": gate in recent_heartbeats,
+                "stalled": gate in stalled_heartbeats,
+            }
+            gate_progress[gate] = progress_meta
+            window["progress_ratio"] = progress_ratio
+            window["work_completed"] = work_completed
+            window["work_total"] = work_total
+
+        progress_signal["per_gate_progress"] = gate_progress
+        _PREPARE_PIPELINE_WATCHDOG["component_progress"] = gate_progress
         watchdog_telemetry["progress_signal"] = dict(progress_signal)
+
+        if gate_windows and not pending_critical and readiness_pending:
+            staged_payload = _mark_staged_readiness(
+                stage,
+                ready_gates=readiness_ready,
+                pending_gates=readiness_pending,
+                deferred_pending=deferred_pending,
+                all_pending_gates=readiness_pending,
+                readiness_ratio=readiness_ratio,
+                remaining_window=watchdog_telemetry.get("remaining_window", 0.0) or 0.0,
+                stage_budget=watchdog_telemetry.get("stage_budget")
+                or resolved_timeout
+                or timeout_floor,
+                vector_heavy=vector_heavy,
+            )
+            watchdog_telemetry["staged_readiness"] = True
+            watchdog_telemetry.setdefault("staged_ready_payload", staged_payload)
+            _PREPARE_PIPELINE_WATCHDOG["staged_ready"] = staged_payload
 
         if gate_windows:
             extended, exhausted_gates, extension_meta = _extend_component_windows(
@@ -5895,6 +5946,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 timeout_floor=timeout_floor,
                 resolved_timeout=resolved_timeout,
                 progress_signal=progress_signal,
+                gate_progress=gate_progress,
                 shared_timeout_coordinator=shared_timeout_coordinator,
                 stage=stage,
                 readiness_pending=readiness_pending,
@@ -6115,6 +6167,20 @@ def _prepare_pipeline_for_bootstrap_impl(
                     )
                     continue
                 exhausted_critical.add(gate)
+
+        if gate_windows:
+            deadline_snapshot = {}
+            for gate, window in gate_windows.items():
+                deadline_snapshot[gate] = {
+                    "budget": window.get("budget"),
+                    "deadline": window.get("deadline"),
+                    "remaining": window.get("remaining"),
+                    "extensions": window.get("extensions"),
+                    "policy_extensions": window.get("policy_extensions"),
+                    "progress": (gate_progress or {}).get(gate),
+                }
+            _PREPARE_PIPELINE_WATCHDOG["component_deadlines"] = deadline_snapshot
+            watchdog_telemetry["component_deadlines"] = deadline_snapshot
 
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
