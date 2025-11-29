@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sys
 from types import ModuleType, SimpleNamespace
@@ -18,9 +19,31 @@ def _reset_cbi_state() -> None:
         "pipeline",
         "owner_depths",
         "active_bootstrap_guard",
+        "active_bootstrap_token",
     ):
         if hasattr(cbi._BOOTSTRAP_STATE, attr):
             delattr(cbi._BOOTSTRAP_STATE, attr)
+
+
+@contextlib.contextmanager
+def _guarded_bootstrap(pipeline: object | None = None, manager: object | None = None):
+    manager = manager or SimpleNamespace(bootstrap_placeholder=True)
+    pipeline = pipeline or SimpleNamespace(
+        manager=manager,
+        initial_manager=None,
+        bootstrap_placeholder=True,
+    )
+    manager.pipeline = getattr(manager, "pipeline", pipeline)
+    cbi._mark_bootstrap_placeholder(pipeline)
+    cbi._mark_bootstrap_placeholder(manager)
+    cbi._BOOTSTRAP_STATE.depth = 1  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.owner_depths = {object(): 1}  # type: ignore[attr-defined]
+    context = cbi._push_bootstrap_context(manager=manager, pipeline=pipeline)
+    try:
+        yield pipeline, manager
+    finally:
+        cbi._pop_bootstrap_context(context)
+        _reset_cbi_state()
 
 
 def test_research_aggregator_reuses_broker_pipeline(monkeypatch):
@@ -191,3 +214,103 @@ def test_service_supervisor_reuses_dependency_broker_pipeline(monkeypatch, tmp_p
         "prepare_pipeline_for_bootstrap" in record.getMessage()
         for record in caplog.records
     )
+
+
+@pytest.mark.integration
+def test_error_bot_reuses_guarded_bootstrap_pipeline(monkeypatch):
+    _reset_cbi_state()
+    sys.modules.pop("menace_sandbox.error_bot", None)
+    sys.modules.pop("error_bot", None)
+
+    with _guarded_bootstrap() as (pipeline, manager):
+        promotions: list[object] = []
+        pipeline._pipeline_promoter = lambda mgr: promotions.append(mgr)
+
+        module = importlib.import_module("menace_sandbox.error_bot")
+
+        for attr in (
+            "_context_builder",
+            "_engine",
+            "_pipeline",
+            "_evolution_orchestrator",
+            "_thresholds",
+            "_manager_instance",
+            "_pipeline_promoter",
+        ):
+            setattr(module, attr, None)
+
+        module.create_context_builder = lambda: SimpleNamespace(label="guarded")
+        module.BotRegistry = lambda *_, **__: SimpleNamespace()
+        module.DataBot = lambda *_, **__: SimpleNamespace()
+        module.SelfCodingEngine = lambda *_, **__: SimpleNamespace()
+        module.CodeDB = lambda *_, **__: SimpleNamespace()
+        module.GPTMemoryManager = lambda *_, **__: SimpleNamespace()
+        module.get_orchestrator = lambda *_, **__: SimpleNamespace()
+        module.get_thresholds = lambda *_: SimpleNamespace(
+            roi_drop=1.0, error_increase=2.0, test_failure_increase=3.0
+        )
+        module.persist_sc_thresholds = mock.Mock()
+        module.ThresholdService = lambda: SimpleNamespace()
+        module.internalize_coding_bot = mock.Mock(
+            side_effect=AssertionError("internalize_coding_bot should not run")
+        )
+        module.prepare_pipeline_for_bootstrap = mock.Mock(
+            side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+        )
+
+        resolved_manager = module._ensure_self_coding_manager()
+
+        assert resolved_manager is manager
+        assert module.prepare_pipeline_for_bootstrap.call_count == 0
+        assert module.internalize_coding_bot.call_count == 0
+        assert promotions == []
+
+
+@pytest.mark.integration
+def test_research_aggregator_respects_guarded_pipeline(monkeypatch):
+    _reset_cbi_state()
+    sys.modules.pop("menace_sandbox.research_aggregator_bot", None)
+
+    with _guarded_bootstrap() as (pipeline, manager):
+        promotions: list[object] = []
+
+        module = importlib.import_module("menace_sandbox.research_aggregator_bot")
+        module.pipeline = None
+        module.manager = None
+        module.registry = None
+        module.data_bot = None
+        module._context_builder = None
+        module.engine = None
+        module._PipelineCls = None
+        module._runtime_state = None
+        module._runtime_placeholder = None
+        module._runtime_initializing = False
+        module._self_coding_configured = False
+
+        module.create_context_builder = mock.Mock(return_value=SimpleNamespace())
+        module.BotRegistry = lambda *_, **__: SimpleNamespace()
+        module.DataBot = lambda *_, **__: SimpleNamespace()
+        module.SelfCodingEngine = lambda *_, **__: SimpleNamespace()
+        module.CodeDB = lambda *_, **__: SimpleNamespace()
+        module.GPTMemoryManager = lambda *_, **__: SimpleNamespace()
+        module._resolve_pipeline_cls = mock.Mock(return_value=type("_Pipeline", (), {}))
+        module.get_orchestrator = mock.Mock(return_value=SimpleNamespace())
+        module.get_thresholds = mock.Mock(
+            return_value=SimpleNamespace(
+                roi_drop=1.0, error_increase=2.0, test_failure_increase=3.0
+            )
+        )
+        module.persist_sc_thresholds = mock.Mock()
+        module.internalize_coding_bot = mock.Mock(return_value=manager)
+        module.ThresholdService = mock.Mock(return_value=SimpleNamespace())
+        module.self_coding_managed = lambda **_: (lambda cls: cls)
+        module.prepare_pipeline_for_bootstrap = mock.Mock(
+            side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+        )
+
+        state = module._ensure_runtime_dependencies(promote_pipeline=promotions.append)
+
+        assert state.pipeline is pipeline
+        assert state.manager is manager
+        assert module.prepare_pipeline_for_bootstrap.call_count == 0
+        assert promotions == [manager]
