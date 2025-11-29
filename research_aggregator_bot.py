@@ -17,6 +17,7 @@ from .coding_bot_interface import (
     _using_bootstrap_sentinel,
     _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
+    prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -221,6 +222,7 @@ def _ensure_runtime_dependencies(
     global _runtime_initializing
 
     pipeline_hint = pipeline_override
+    promote_explicit = promote_pipeline is not None
     guard_pipeline, guard_manager = get_active_bootstrap_pipeline()
     if pipeline_hint is None and _looks_like_pipeline_candidate(guard_pipeline):
         pipeline_hint = guard_pipeline
@@ -327,9 +329,7 @@ def _ensure_runtime_dependencies(
 
     try:
         pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
-        promote_pipeline = promote_pipeline or _active_bootstrap_promoter() or (
-            lambda *_args: None
-        )
+        promote_pipeline = promote_pipeline or _active_bootstrap_promoter()
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
         dependency_broker = _bootstrap_dependency_broker()
@@ -379,6 +379,29 @@ def _ensure_runtime_dependencies(
                 time.sleep(0.01)
 
         if pipe is None:
+            guard_pipeline, guard_manager = get_active_bootstrap_pipeline()
+            if _looks_like_pipeline_candidate(guard_pipeline):
+                pipe = guard_pipeline
+                if manager_override is None:
+                    manager_override = guard_manager
+                guard_promoter = _active_bootstrap_promoter()
+                if guard_promoter is not None:
+                    promote_pipeline = guard_promoter
+
+        if pipe is None:
+            bootstrap_context = _current_bootstrap_context()
+            if bootstrap_context is not None:
+                context_pipeline = getattr(bootstrap_context, "pipeline", None)
+                context_manager = getattr(bootstrap_context, "manager", None)
+                if _looks_like_pipeline_candidate(context_pipeline):
+                    pipe = context_pipeline
+                    if manager_override is None and context_manager is not None:
+                        manager_override = context_manager
+                    context_promoter = _active_bootstrap_promoter()
+                    if context_promoter is not None:
+                        promote_pipeline = context_promoter
+
+        if pipe is None:
             bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
             bootstrap_context = _current_bootstrap_context()
             bootstrap_active = (
@@ -386,13 +409,30 @@ def _ensure_runtime_dependencies(
                 or guard_promise is not None
                 or bootstrap_context is not None
             )
-            if bootstrap_active:
-                raise RuntimeError(
-                    "bootstrap pipeline unavailable while bootstrap is in progress"
+            if not bootstrap_active:
+                pipe, promoted = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=pipeline_cls,
+                    context_builder=ctx_builder,
+                    bot_registry=reg,
+                    data_bot=dbot,
+                    bootstrap_runtime_manager=manager_override
+                    if manager_override is not None
+                    else manager,
+                    manager_override=manager_override,
                 )
-            raise RuntimeError(
-                "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
-            )
+                if promoted is not None and not promote_explicit:
+                    promote_pipeline = promoted
+            if pipe is None:
+                if bootstrap_active:
+                    raise RuntimeError(
+                        "bootstrap pipeline unavailable while bootstrap is in progress"
+                    )
+                raise RuntimeError(
+                    "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
+                )
+
+        if promote_pipeline is None:
+            promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
 
         if owner is not None and owner not in _bootstrap_pipeline_cache:
             _bootstrap_pipeline_cache[owner] = (pipe, promote_pipeline, manager_override)
