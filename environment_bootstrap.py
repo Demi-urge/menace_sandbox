@@ -999,6 +999,9 @@ class EnvironmentBootstrapper:
             host_telemetry=host_telemetry,
         )
         component_budget_total = float(sum(component_timeouts.values())) if component_timeouts else 0.0
+        active_component_count = len(
+            [gate for gate, budget in component_timeouts.items() if gate not in bootstrap_timeout_policy.DEFERRED_COMPONENTS]
+        )
         persisted_window, persisted_window_inputs = (
             bootstrap_timeout_policy.load_last_global_bootstrap_window()
         )
@@ -1109,6 +1112,7 @@ class EnvironmentBootstrapper:
             soft_deadline=bool(enforcement.get("soft_deadline")),
             component_budgets=component_timeouts,
             component_floors=component_floors,
+            adaptive_window=adaptive_window,
         )
 
         shared_snapshot: dict[str, object] | None = None
@@ -1155,6 +1159,17 @@ class EnvironmentBootstrapper:
         adaptive_window = rolling_window
         if adaptive_window is None:
             adaptive_window = _max_budget_value(budgets)
+
+        elastic_window, elastic_meta = bootstrap_timeout_policy.derive_elastic_global_window(
+            base_window=adaptive_window,
+            component_budgets=component_timeouts,
+            backlog_queue_depth=int(heartbeat_hint.get("queue_depth") or 0),
+            active_components=active_component_count,
+            component_stats=component_stats,
+        )
+        if elastic_window is not None:
+            adaptive_window = max(adaptive_window or 0.0, elastic_window)
+            rolling_meta = {**(rolling_meta or {}), "elastic_window": elastic_meta}
 
         bootstrap_timeout_policy.persist_bootstrap_wait_window(
             adaptive_window,

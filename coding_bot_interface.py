@@ -60,6 +60,7 @@ from bootstrap_timeout_policy import (
     render_prepare_pipeline_timeout_hints,
     wait_for_bootstrap_quiet_period,
     emit_bootstrap_heartbeat,
+    derive_elastic_global_window,
     _BACKGROUND_UNLIMITED_ENV,
     _parse_float,
     _truthy_env,
@@ -6895,6 +6896,16 @@ def _prepare_pipeline_for_bootstrap_impl(
             dynamic_global_window = max(dynamic_global_window or 0.0, candidate)
     if dynamic_global_window is not None:
         dynamic_global_window *= max(gate_scale, load_scale, backlog_scale)
+    elastic_window, elastic_meta = derive_elastic_global_window(
+        base_window=dynamic_global_window,
+        component_budgets=component_budget_payload or derived_component_budgets or {},
+        backlog_queue_depth=backlog_depth,
+        active_components=active_gate_count,
+        component_stats=adaptive_budget_context.get("component_stats"),
+    )
+    if elastic_window is not None:
+        dynamic_global_window = max(dynamic_global_window or 0.0, elastic_window)
+    _PREPARE_PIPELINE_WATCHDOG["elastic_window_meta"] = elastic_meta
     _PREPARE_PIPELINE_WATCHDOG["dynamic_global_window_inputs"] = {
         "gate_scale": gate_scale,
         "load_scale": load_scale,
@@ -6904,6 +6915,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "component_budget_total": component_budget_total,
         "active_gate_count": active_gate_count,
         "dynamic_global_window": dynamic_global_window,
+        "elastic_window": elastic_window,
     }
     shared_timeout_budget = None
     component_budget_active = True
