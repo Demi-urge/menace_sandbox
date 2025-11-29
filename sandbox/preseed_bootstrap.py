@@ -50,7 +50,12 @@ from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
 from menace_sandbox.threshold_service import ThresholdService
-from bootstrap_readiness import READINESS_STAGES, stage_for_step
+from bootstrap_readiness import (
+    READINESS_STAGES,
+    lagging_optional_components,
+    minimal_online,
+    stage_for_step,
+)
 from safe_repr import summarise_value
 from security.secret_redactor import redact_dict
 from bootstrap_timeout_policy import (
@@ -587,8 +592,20 @@ class _BootstrapContentionCoordinator:
 def _publish_online_state() -> None:
     snapshot = _BOOTSTRAP_SCHEDULER.snapshot()
     BOOTSTRAP_ONLINE_STATE.update(snapshot)
-    BOOTSTRAP_ONLINE_STATE["quorum"] = snapshot.get("quorum", False)
-    BOOTSTRAP_ONLINE_STATE["online"] = snapshot.get("online", False)
+    core_ready, lagging_core, degraded_core, degraded_online = minimal_online(snapshot)
+    BOOTSTRAP_ONLINE_STATE.update(
+        {
+            "core_ready": core_ready,
+            "core_lagging": sorted(lagging_core),
+            "core_degraded": sorted(degraded_core),
+            "core_degraded_online": degraded_online,
+            "quorum": snapshot.get("quorum", False) or core_ready,
+            "online": snapshot.get("online", False) or core_ready,
+        }
+    )
+    optional_warming = lagging_optional_components(snapshot)
+    if optional_warming:
+        BOOTSTRAP_ONLINE_STATE["optional_warming"] = sorted(optional_warming)
 
 
 def _clamp_timeout_floor(timeout: float, *, env_var: str) -> float:
