@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from typing import Dict
 from typing import Iterable, Tuple
 
 BOOTSTRAP_PROCESS_MARKERS: tuple[str, ...] = (
@@ -33,6 +34,70 @@ PROTECTED_PATH_TOKENS: tuple[str, ...] = (
     ".venv",
     "virtualenv",
 )
+
+
+def _parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def enforce_timeout_floor_envs(logger: logging.Logger | None = None) -> Dict[str, float]:
+    """Clamp bootstrap timeout environment variables to escalated floors.
+
+    Legacy service units and ".env" files occasionally inject overly short
+    timeout ceilings.  To keep the hydra-style bootstrap budgets consistent,
+    fetch the persisted timeout floors from :mod:`bootstrap_timeout_policy`
+    and overwrite any lower environment values before orchestration begins.
+    """
+
+    try:
+        from bootstrap_timeout_policy import load_escalated_timeout_floors
+    except Exception as exc:  # pragma: no cover - optional dependency during linting
+        if logger:
+            logger.warning(
+                "bootstrap_timeout_policy unavailable; skipping timeout floor enforcement: %s",
+                exc,
+            )
+        return {}
+
+    floors = load_escalated_timeout_floors()
+    applied: Dict[str, float] = {}
+
+    for env_var, floor in floors.items():
+        raw_value = os.getenv(env_var)
+        parsed = _parse_float(raw_value)
+
+        if parsed is None or parsed < floor:
+            if parsed is not None and logger:
+                logger.warning(
+                    "%s below escalated floor (requested=%.1fs, floor=%.1fs); overriding",
+                    env_var,
+                    parsed,
+                    floor,
+                )
+            elif parsed is None and raw_value is not None and logger:
+                logger.warning(
+                    "%s is not a valid float (%r); enforcing escalated floor %.1fs",
+                    env_var,
+                    raw_value,
+                    floor,
+                )
+            os.environ[env_var] = str(floor)
+            applied[env_var] = floor
+        else:
+            applied[env_var] = parsed
+
+    if logger:
+        logger.info(
+            "bootstrap timeout floors enforced",
+            extra={"floors": floors, "applied": applied},
+        )
+
+    return applied
 
 
 def _iter_processes(logger: logging.Logger | None) -> Iterable[Tuple[int, str, str]]:

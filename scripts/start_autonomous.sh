@@ -47,9 +47,9 @@ conflict_check = importlib.import_module("bootstrap_conflict_check")
 
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-conflict_check.enforce_conflict_free_environment(
-    logger=logging.getLogger("bootstrap.conflict-check")
-)
+conflict_logger = logging.getLogger("bootstrap.conflict-check")
+conflict_check.enforce_timeout_floor_envs(logger=conflict_logger)
+conflict_check.enforce_conflict_free_environment(logger=conflict_logger)
 
 auto_env_setup.ensure_env()
 run_autonomous.main(sys.argv[1:])
