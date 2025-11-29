@@ -97,6 +97,31 @@ except Exception:  # pragma: no cover - fallback when executed from flat layout
     except Exception:  # pragma: no cover - dependency probe unavailable
         ensure_self_coding_ready = None  # type: ignore[assignment]
 
+_STRUCTURAL_BOOTSTRAP_OWNER: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "structural_bootstrap_owner", default=None
+)
+
+
+@contextlib.contextmanager
+def structural_bootstrap_owner_guard(owner: object) -> Iterator[None]:
+    """Mark an in-flight StructuralEvolutionBot bootstrap owner.
+
+    Nested imports can reuse the active owner to avoid duplicate bootstrap
+    attempts when a pipeline is already being prepared.
+    """
+
+    token = _STRUCTURAL_BOOTSTRAP_OWNER.set(owner)
+    try:
+        yield
+    finally:
+        _STRUCTURAL_BOOTSTRAP_OWNER.reset(token)
+
+
+def get_structural_bootstrap_owner() -> object | None:
+    """Return the active StructuralEvolutionBot bootstrap owner token."""
+
+    return _STRUCTURAL_BOOTSTRAP_OWNER.get(None)
+
 try:  # pragma: no cover - prefer package import when available
     from menace_sandbox.self_coding_policy import get_self_coding_policy
 except Exception:  # pragma: no cover - fallback when executed from flat layout

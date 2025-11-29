@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import (
-    normalise_manager_arg,
-    prepare_pipeline_for_bootstrap,
-    self_coding_managed,
-)
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +21,13 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
+from .coding_bot_interface import (
+    get_structural_bootstrap_owner as _get_structural_bootstrap_owner,
+    normalise_manager_arg,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+    structural_bootstrap_owner_guard,
+)
 from .data_bot import MetricsDB, DataBot, persist_sc_thresholds
 from .evolution_approval_policy import EvolutionApprovalPolicy
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -46,11 +49,64 @@ else:  # pragma: no cover - runtime fallback avoids circular import on load
 
 logger = logging.getLogger(__name__)
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+_registry: BotRegistry | None = None
+_data_bot: DataBot | None = None
+_context_builder: ContextBuilder | None = None
+_engine: SelfCodingEngine | None = None
+_pipeline: "ModelAutomationPipeline" | None = None
+_pipeline_promoter: Callable[[object], None] | None = None
+_manager: SelfCodingManager | None = None
+_thresholds = None
+_bootstrap_lock = threading.RLock()
+_bootstrap_event = threading.Event()
+_bootstrap_error: BaseException | None = None
+_bootstrap_in_progress = False
+# Legacy module-level handles populated after bootstrap for callers that still
+# reference ``structural_evolution_bot.manager`` or ``.data_bot``.
+registry: BotRegistry | None = None
+data_bot: DataBot | None = None
+manager: SelfCodingManager | None = None
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
+
+def _get_registry() -> BotRegistry:
+    global _registry
+    if _registry is None:
+        _registry = BotRegistry()
+    return _registry
+
+
+def _get_data_bot() -> DataBot:
+    global _data_bot
+    if _data_bot is None:
+        _data_bot = DataBot(start_server=False)
+    return _data_bot
+
+
+def _get_context_builder() -> ContextBuilder:
+    global _context_builder
+    if _context_builder is None:
+        _context_builder = create_context_builder()
+    return _context_builder
+
+
+def _get_engine() -> SelfCodingEngine:
+    global _engine
+    if _engine is None:
+        _engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_get_context_builder())
+    return _engine
+
+
+def _load_thresholds():
+    global _thresholds
+    if _thresholds is None:
+        _thresholds = get_thresholds("StructuralEvolutionBot")
+        persist_sc_thresholds(
+            "StructuralEvolutionBot",
+            roi_drop=_thresholds.roi_drop,
+            error_increase=_thresholds.error_increase,
+            test_failure_increase=_thresholds.test_failure_increase,
+        )
+    return _thresholds
 
 
 def _build_pipeline() -> tuple["ModelAutomationPipeline", Callable[[object], None]]:
@@ -60,34 +116,84 @@ def _build_pipeline() -> tuple["ModelAutomationPipeline", Callable[[object], Non
 
     return prepare_pipeline_for_bootstrap(
         pipeline_cls=_Pipeline,
-        context_builder=_context_builder,
-        bot_registry=registry,
-        data_bot=data_bot,
+        context_builder=_get_context_builder(),
+        bot_registry=_get_registry(),
+        data_bot=_get_data_bot(),
     )
 
 
-pipeline, _promote_pipeline = _build_pipeline()
-evolution_orchestrator = get_orchestrator("StructuralEvolutionBot", data_bot, engine)
-_th = get_thresholds("StructuralEvolutionBot")
-persist_sc_thresholds(
-    "StructuralEvolutionBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "StructuralEvolutionBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-)
-_promote_pipeline(manager)
+def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingManager:
+    global _pipeline, _manager, _pipeline_promoter, _bootstrap_error, _bootstrap_in_progress
+
+    with _bootstrap_lock:
+        if _manager is not None:
+            return _manager
+        if _bootstrap_in_progress:
+            logger.debug("StructuralEvolutionBot bootstrap already in progress; waiting for result")
+            wait_event = True
+        else:
+            wait_event = False
+            _bootstrap_in_progress = True
+            _bootstrap_event.clear()
+
+    if wait_event:
+        if not _bootstrap_event.wait(timeout=30):
+            raise TimeoutError("StructuralEvolutionBot bootstrap wait timed out")
+        if _bootstrap_error is not None:
+            raise _bootstrap_error
+        if _manager is None:
+            raise RuntimeError("StructuralEvolutionBot bootstrap did not produce a manager")
+        return _manager
+
+    owner_token = owner if owner is not None else object()
+    with structural_bootstrap_owner_guard(owner_token):
+        try:
+            _pipeline, _pipeline_promoter = _build_pipeline()
+            orchestrator = get_orchestrator("StructuralEvolutionBot", _get_data_bot(), _get_engine())
+            th = _load_thresholds()
+            _manager = internalize_coding_bot(
+                "StructuralEvolutionBot",
+                _get_engine(),
+                _pipeline,
+                data_bot=_get_data_bot(),
+                bot_registry=_get_registry(),
+                evolution_orchestrator=orchestrator,
+                threshold_service=ThresholdService(),
+                roi_threshold=th.roi_drop,
+                error_threshold=th.error_increase,
+                test_failure_threshold=th.test_failure_increase,
+            )
+            globals()["manager"] = _manager
+            globals()["data_bot"] = _get_data_bot()
+            globals()["registry"] = _get_registry()
+            if _pipeline_promoter is not None:
+                _pipeline_promoter(_manager)
+            return _manager
+        except BaseException as exc:  # pragma: no cover - propagate and record
+            _bootstrap_error = exc
+            raise
+        finally:
+            with _bootstrap_lock:
+                _bootstrap_in_progress = False
+                _bootstrap_event.set()
+
+
+def get_structural_evolution_manager(owner: object | None = None) -> SelfCodingManager:
+    """Return a bootstrapped :class:`SelfCodingManager` instance."""
+
+    owner = owner or _get_structural_bootstrap_owner() or None
+    return _prepare_or_wait_for_bootstrap(owner)
+
+
+def active_structural_bootstrap_owner() -> object | None:
+    """Expose the active bootstrap owner token, if any."""
+
+    return _get_structural_bootstrap_owner()
+
+
+_get_registry.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+_get_data_bot.__self_coding_lazy__ = True  # type: ignore[attr-defined]
+get_structural_evolution_manager.__self_coding_lazy__ = True  # type: ignore[attr-defined]
 
 @dataclass
 class SystemSnapshot:
@@ -155,7 +261,11 @@ class EvolutionDB:
         self.conn.commit()
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+@self_coding_managed(
+    bot_registry=_get_registry,
+    data_bot=_get_data_bot,
+    manager=get_structural_evolution_manager,
+)
 class StructuralEvolutionBot:
     """Forecast and apply structural adjustments based on metrics."""
 
@@ -173,11 +283,12 @@ class StructuralEvolutionBot:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("StructuralEvolution")
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = data_bot
+        self.data_bot = _get_data_bot()
+        fallback_manager = manager if manager is not None else get_structural_evolution_manager()
         self.manager = normalise_manager_arg(
             manager,
             type(self),
-            fallback=globals().get("manager"),
+            fallback=fallback_manager,
         )
 
     def take_snapshot(self, limit: int = 100) -> SystemSnapshot:
