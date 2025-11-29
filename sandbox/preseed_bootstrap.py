@@ -997,6 +997,7 @@ def _compute_adaptive_budget(
     effective_timeout: float | None,
     *,
     bootstrap_deadline: float | None,
+    reconciled_deadline: float | None,
     abort_on_timeout: bool,
     vector_heavy: bool = False,
     contention_scale: float = 1.0,
@@ -1004,7 +1005,12 @@ def _compute_adaptive_budget(
     """Adapt timeout budgets using history and remaining global window."""
 
     now = time.monotonic()
-    remaining_global = bootstrap_deadline - now if bootstrap_deadline else None
+    deadline_reference = (
+        reconciled_deadline
+        if reconciled_deadline is not None
+        else bootstrap_deadline
+    )
+    remaining_global = deadline_reference - now if deadline_reference else None
     adaptive_context: dict[str, Any] = {
         "step": step_name,
         "requested_timeout": effective_timeout,
@@ -1012,6 +1018,8 @@ def _compute_adaptive_budget(
         "abort_on_timeout": abort_on_timeout,
         "vector_heavy": vector_heavy,
         "contention_scale": contention_scale,
+        "bootstrap_deadline": bootstrap_deadline,
+        "reconciled_deadline": reconciled_deadline,
     }
 
     predicted_budget = _BOOTSTRAP_SCHEDULER.allocate_timeout(
@@ -1029,8 +1037,12 @@ def _compute_adaptive_budget(
     start_reference = _BOOTSTRAP_TIMELINE_START or now
     elapsed_total = max(0.0, now - start_reference)
     allowed_total = None
-    if bootstrap_deadline is not None:
-        allowed_total = max(0.0, bootstrap_deadline - start_reference)
+    deadlines: list[float] = []
+    for candidate in (bootstrap_deadline, reconciled_deadline):
+        if candidate is not None:
+            deadlines.append(max(0.0, candidate - start_reference))
+    if deadlines:
+        allowed_total = max(deadlines)
 
     projected_total = elapsed_total + adaptive_budget
     slack_total = None if allowed_total is None else allowed_total - projected_total
@@ -1073,6 +1085,7 @@ def _clamp_prepare_timeout_floor(
     vector_heavy: bool,
     heavy_prepare: bool,
     bootstrap_deadline: float | None,
+    reconciled_deadline: float | None,
 ) -> tuple[float | None, dict[str, Any]]:
     """Clamp prepare timeouts while respecting adaptive stage budgets."""
 
@@ -1098,6 +1111,7 @@ def _clamp_prepare_timeout_floor(
         "prepare_pipeline_for_bootstrap",
         effective_timeout,
         bootstrap_deadline=bootstrap_deadline,
+        reconciled_deadline=reconciled_deadline,
         abort_on_timeout=True,
         vector_heavy=vector_heavy or heavy_prepare,
     )
@@ -1108,8 +1122,12 @@ def _clamp_prepare_timeout_floor(
         return adaptive_timeout, updated_context
 
     deadline_remaining = None
-    if bootstrap_deadline is not None:
-        deadline_remaining = bootstrap_deadline - time.monotonic()
+    for candidate_deadline in (reconciled_deadline, bootstrap_deadline):
+        if candidate_deadline is None:
+            continue
+        remaining = candidate_deadline - time.monotonic()
+        if deadline_remaining is None or remaining > deadline_remaining:
+            deadline_remaining = remaining
 
     if adaptive_timeout < timeout_floor:
         updated_context.update(
@@ -1179,6 +1197,7 @@ def _run_with_timeout(
         description,
         effective_timeout,
         bootstrap_deadline=bootstrap_deadline,
+        reconciled_deadline=bootstrap_deadline,
         abort_on_timeout=abort_on_timeout,
         vector_heavy=heavy_bootstrap,
         contention_scale=contention_scale,
@@ -1629,14 +1648,22 @@ def initialize_bootstrap_context(
         )
     except Exception:  # pragma: no cover - diagnostics only
         LOGGER.debug("failed to resolve shared bootstrap window", exc_info=True)
-
+    reconciled_bootstrap_deadline = bootstrap_deadline
     deadline_remaining = None
-    if bootstrap_deadline is not None:
-        deadline_remaining = max(0.0, bootstrap_deadline - time.monotonic())
-        if resolved_bootstrap_window is None:
-            resolved_bootstrap_window = deadline_remaining
-        elif resolved_bootstrap_window is not None:
-            resolved_bootstrap_window = min(resolved_bootstrap_window, deadline_remaining)
+    now_monotonic = time.monotonic()
+    if resolved_bootstrap_window is not None:
+        resolved_window_deadline = now_monotonic + resolved_bootstrap_window
+        if reconciled_bootstrap_deadline is None:
+            reconciled_bootstrap_deadline = resolved_window_deadline
+        else:
+            reconciled_bootstrap_deadline = max(
+                reconciled_bootstrap_deadline, resolved_window_deadline
+            )
+
+    if reconciled_bootstrap_deadline is not None:
+        deadline_remaining = max(0.0, reconciled_bootstrap_deadline - time.monotonic())
+        resolved_bootstrap_window = max(resolved_bootstrap_window or 0.0, deadline_remaining)
+        bootstrap_deadline = reconciled_bootstrap_deadline
 
     if progress_signal is None:
         progress_signal = build_progress_signal_hook(namespace="bootstrap_shared")
@@ -2074,6 +2101,7 @@ def initialize_bootstrap_context(
                 vector_heavy=vector_heavy,
                 heavy_prepare=heavy_prepare,
                 bootstrap_deadline=bootstrap_deadline,
+                reconciled_deadline=bootstrap_deadline,
             )
             effective_prepare_timeout = resolved_prepare_timeout[0]
             LOGGER.info(
@@ -2144,6 +2172,7 @@ def initialize_bootstrap_context(
                             vector_heavy=vector_heavy,
                             heavy_prepare=heavy_prepare,
                             bootstrap_deadline=bootstrap_deadline,
+                            reconciled_deadline=bootstrap_deadline,
                         )
 
                         def _retry_worker() -> None:
