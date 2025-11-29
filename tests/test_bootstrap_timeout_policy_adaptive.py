@@ -124,7 +124,7 @@ def test_concurrent_component_budgets_extend_window(monkeypatch, tmp_path):
 
     host_telemetry = {"host_load": 2.0, "queue_depth": 2}
     budgets = policy.compute_prepare_pipeline_component_budgets(
-        scheduled_component_budgets={"vectorizers": 420.0, "retrievers": 320.0},
+        scheduled_component_budgets={"vectorizers": 360.0, "retrievers": 240.0},
         host_telemetry=host_telemetry,
     )
 
