@@ -847,6 +847,65 @@ def _parse_component_inventory(raw: Mapping[str, object] | str | None) -> Dict[s
     return inventory
 
 
+def compute_adaptive_component_minimums(
+    *,
+    pipeline_complexity: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+    load_average: float | None = None,
+    component_hints: Mapping[str, object] | str | None = None,
+) -> dict[str, float]:
+    """Scale component minimums using guard, heartbeat, and hint context."""
+
+    host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
+    hints: dict[str, object] = {}
+    hints.update(_parse_component_inventory(component_hints))
+    env_hints = _parse_component_inventory(os.getenv(_BOOTSTRAP_COMPONENT_HINTS_ENV))
+    hints.update({k: v for k, v in env_hints.items() if k not in hints})
+    complexity = _parse_component_inventory(pipeline_complexity)
+    complexity.update({k: v for k, v in hints.items() if k not in complexity})
+
+    if load_average is None:
+        load_average = _parse_float(str(host_telemetry.get("host_load")))
+    if load_average is None:
+        load_average = _host_load_average()
+
+    guard_context = get_bootstrap_guard_context()
+    try:
+        guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+    except Exception:
+        guard_scale = 1.0
+    load_scale = _host_load_scale(load_average)
+    scale = max(load_scale, guard_scale)
+
+    def _count(value: object) -> int:
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return len(value)
+        if isinstance(value, Mapping):
+            return len(value)
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    component_complexity: dict[str, float] = {}
+    component_complexity["vectorizers"] = 1.0 + max(0, _count(complexity.get("vectorizers")) - 1) * 0.35
+    component_complexity["retrievers"] = 1.0 + max(0, _count(complexity.get("retrievers")) - 1) * 0.25
+    component_complexity["db_indexes"] = 1.0 + max(0, _count(complexity.get("db_indexes")) - 1) * 0.2
+    component_complexity["background_loops"] = 1.0 + max(0, _count(complexity.get("background_loops"))) * 0.15
+    component_complexity["pipeline_config"] = 1.0 + max(
+        0, _count(complexity.get("pipeline_config_sections")) - 1
+    ) * 0.1
+    component_complexity["orchestrator_state"] = 1.0 + max(
+        0, _count(complexity.get("orchestrator_components")) - 1
+    ) * 0.1
+
+    adaptive_minimums: dict[str, float] = {}
+    for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
+        adaptive_minimums[component] = minimum * scale * component_complexity.get(component, 1.0)
+
+    return adaptive_minimums
+
+
 def load_escalated_timeout_floors() -> dict[str, float]:
     """Return timeout floors that include host-scoped persisted escalations."""
 
@@ -926,13 +985,17 @@ def load_component_timeout_floors() -> dict[str, float]:
     guard_context = get_bootstrap_guard_context()
     host_telemetry = read_bootstrap_heartbeat()
     historical = load_last_component_budgets()
+    adaptive_minimums = compute_adaptive_component_minimums(
+        host_telemetry=host_telemetry
+    )
     base_defaults: dict[str, float] = {}
     for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
         try:
             historical_floor = float(historical.get(component, 0.0) or 0.0)
         except (TypeError, ValueError):
             historical_floor = 0.0
-        base_defaults[component] = max(minimum, historical_floor)
+        adaptive_floor = adaptive_minimums.get(component, 0.0)
+        base_defaults[component] = max(minimum, historical_floor, adaptive_floor)
     scale, scale_context = _derive_component_floor_scale(
         guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
@@ -1322,7 +1385,14 @@ def compute_prepare_pipeline_component_budgets(
     host_state = _load_timeout_state()
     host_key = _state_host_key()
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
+    adaptive_minimums = compute_adaptive_component_minimums(
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=host_telemetry,
+        load_average=load_average,
+    )
     floors = dict(component_floors or load_component_timeout_floors())
+    for component, floor in adaptive_minimums.items():
+        floors[component] = max(floor, floors.get(component, 0.0))
     deferred_floors = dict(deferred_component_floors or load_deferred_component_timeout_floors())
     deferred_components = set(deferred_floors)
     floors.update(deferred_floors)
@@ -1345,6 +1415,8 @@ def compute_prepare_pipeline_component_budgets(
 
     if load_average is None:
         load_average = _parse_float(str(host_telemetry.get("host_load")))
+    if load_average is None:
+        load_average = _host_load_average()
     cluster_scale, cluster_context = _cluster_budget_scale(
         host_state=host_state, host_telemetry=host_telemetry, load_average=load_average
     )

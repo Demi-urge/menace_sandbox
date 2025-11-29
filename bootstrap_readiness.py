@@ -78,9 +78,11 @@ def build_stage_deadlines(
     for stage in READINESS_STAGES:
         enforced = not stage.optional and not soft_deadline
         stage_budget = _resolve_stage_budget(stage.name, component_budgets)
-        resolved_budget = stage_budget if stage_budget is not None else baseline_timeout
-        scaled_budget = resolved_budget * scale if resolved_budget is not None else None
         stage_floor = _resolve_stage_budget(stage.name, component_floors)
+        resolved_budget = stage_budget
+        if resolved_budget is None:
+            resolved_budget = stage_floor if stage_floor is not None else baseline_timeout
+        scaled_budget = resolved_budget * scale if resolved_budget is not None else None
         if stage.optional and scaled_budget is not None:
             scaled_budget *= 0.8
 
