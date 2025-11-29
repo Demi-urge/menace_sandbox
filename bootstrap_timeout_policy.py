@@ -2748,7 +2748,7 @@ def render_prepare_pipeline_timeout_hints(
     ]
 
     hints = [
-        "Increase MENACE_BOOTSTRAP_WAIT_SECS=240 or BOOTSTRAP_STEP_TIMEOUT=240 for slower bootstrap hosts.",
+        "Increase MENACE_BOOTSTRAP_WAIT_SECS=360 or BOOTSTRAP_STEP_TIMEOUT=360 for slower bootstrap hosts.",
         (
             "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS="
             f"{int(vector_wait)} or BOOTSTRAP_VECTOR_STEP_TIMEOUT={int(vector_step)} "

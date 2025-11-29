@@ -25,6 +25,7 @@ from tkinter import ttk
 from dependency_health import DependencyMode, resolve_dependency_mode
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 import bootstrap_conflict_check
+from bootstrap_timeout_policy import _BOOTSTRAP_TIMEOUT_MINIMUMS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_FILE_PATH = REPO_ROOT / "menace_gui_logs.txt"
@@ -34,10 +35,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _BOOTSTRAP_TIMEOUT_DEFAULTS = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "360",
-    "BOOTSTRAP_STEP_TIMEOUT": "240",
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "360",
+    "MENACE_BOOTSTRAP_WAIT_SECS": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]),
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
+        _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    ),
+    "BOOTSTRAP_STEP_TIMEOUT": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]),
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": str(
+        _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+    ),
     "MENACE_BOOTSTRAP_STAGGER_SECS": "30",
     "MENACE_BOOTSTRAP_STAGGER_JITTER_SECS": "30",
 }
