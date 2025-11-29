@@ -5576,6 +5576,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         budget = phase_budgets.get(gate)
         if budget is None:
             budget = historical if historical is not None else _SUBSYSTEM_BUDGET_FLOORS.get(gate)
+        if budget is None:
+            budget = _SUBSYSTEM_BUDGET_FLOORS.get(gate, 0.0)
         return budget
 
     component_timer_budgets = {
@@ -6123,6 +6125,25 @@ def _prepare_pipeline_for_bootstrap_impl(
                 gate for gate in critical_pending_gates if gate not in deferred_pending_set
             ]
         pending_critical = set(critical_pending_gates) & _CRITICAL_READINESS_GATES
+        if not pending_critical and component_windows:
+            for gate, window in list(component_windows.items()):
+                if not window or not window.get("awaiting_trigger"):
+                    continue
+                budget = window.get("budget")
+                if budget is None:
+                    continue
+                start = time.perf_counter()
+                window.update(
+                    {
+                        "awaiting_trigger": False,
+                        "started": start,
+                        "deadline": start + budget,
+                        "remaining": budget,
+                    }
+                )
+                _PREPARE_PIPELINE_WATCHDOG.setdefault("deferred_triggers", []).append(
+                    {"gate": gate, "budget": budget, "start": start}
+                )
         consumption_snapshot: dict[str, dict[str, Any]] = {}
         previous_consumption: Mapping[str, Any] = (
             _PREPARE_PIPELINE_WATCHDOG.get("component_consumption") or {}
@@ -6240,6 +6261,32 @@ def _prepare_pipeline_for_bootstrap_impl(
                 and not progressing
                 and not watchdog_telemetry.get("staged_readiness")
             ):
+                heartbeat = (_PREPARE_PIPELINE_WATCHDOG.get("component_heartbeats") or {}).get(
+                    gate, {}
+                )
+                heartbeat_ts = heartbeat.get("ts") if isinstance(heartbeat, Mapping) else None
+                if heartbeat_ts:
+                    try:
+                        heartbeat_age = time.time() - float(heartbeat_ts)
+                    except (TypeError, ValueError):
+                        heartbeat_age = None
+                    if heartbeat_age is not None and heartbeat_age <= _COMPONENT_HEARTBEAT_GRACE:
+                        heartbeat_extension = max(timeout_floor, phase_state.get("budget") or timeout_floor)
+                        phase_state["remaining"] = heartbeat_extension
+                        phase_state["deadline"] = time.perf_counter() + heartbeat_extension
+                        phase_state["extensions"] = int(phase_state.get("extensions", 0) or 0) + 1
+                        _PREPARE_PIPELINE_WATCHDOG.setdefault("component_heartbeat_extensions", []).append(
+                            {
+                                "gate": gate,
+                                "extension": heartbeat_extension,
+                                "heartbeat": dict(heartbeat),
+                                "stage": stage,
+                            }
+                        )
+                        budget_remaining = heartbeat_extension
+                        gate_pending = gate in readiness_pending or not gate_windows
+                        consumption_snapshot[gate]["remaining"] = budget_remaining
+                        continue
                 optional_overrun = gate_pending and gate not in _CRITICAL_READINESS_GATES
                 if optional_overrun:
                     logger.warning(
@@ -6816,14 +6863,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         "active_gate_count": active_gate_count,
         "dynamic_global_window": dynamic_global_window,
     }
-    shared_timeout_budget = dynamic_global_window
-    component_budget_active = bool(component_budget_payload)
-    if component_budget_active:
-        shared_timeout_budget = None
-    elif resolved_deadline is not None:
-        shared_timeout_budget = max(
-            shared_timeout_budget or 0.0, max(resolved_deadline - start_time, 0.0)
-        )
+    shared_timeout_budget = None
+    component_budget_active = True
     shared_timeout_coordinator: SharedTimeoutCoordinator | None = None
     progress_signal = build_progress_signal_hook(
         namespace="prepare_pipeline", run_id=f"prepare-{os.getpid()}"
@@ -6908,7 +6949,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             component_windows = {gate: dict(meta) for gate, meta in primary_windows.items()}
             if "background_loops" in component_timer_budgets:
                 budget = component_timer_budgets.get("background_loops")
-                start = time.perf_counter()
+                start = None
                 if budget is None and shared_timeout_coordinator is not None:
                     try:
                         budget = shared_timeout_coordinator._component_baseline("background_loops")
@@ -6916,10 +6957,11 @@ def _prepare_pipeline_for_bootstrap_impl(
                         budget = None
                 component_windows["background_loops"] = {
                     "budget": budget,
-                    "deadline": (start + budget) if budget is not None else None,
+                    "deadline": None,
                     "started": start,
                     "remaining": budget,
                     "deferred": True,
+                    "awaiting_trigger": True,
                 }
             snapshot = shared_timeout_coordinator.snapshot()
             for gate, meta in component_windows.items():
