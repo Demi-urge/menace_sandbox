@@ -228,6 +228,11 @@ _install_stub_module(
     "menace_sandbox.coding_bot_interface",
     self_coding_managed=_identity_decorator,
     prepare_pipeline_for_bootstrap=_default_prepare_pipeline_for_bootstrap,
+    _bootstrap_dependency_broker=lambda: types.SimpleNamespace(
+        resolve=lambda: (None, None)
+    ),
+    _current_bootstrap_context=lambda: None,
+    _BOOTSTRAP_STATE=types.SimpleNamespace(),
 )
 _install_stub_module(
     "menace_sandbox.shared_evolution_orchestrator",
@@ -383,3 +388,85 @@ def test_deploy_patch_requires_self_tests(monkeypatch, tmp_path):
     manager.summary_payload = {"self_tests": {"failed": 0}}
     supervisor.deploy_patch(target, "desc")
     assert promotions == [manager, manager]
+
+
+def test_constructor_reuses_inflight_bootstrap(monkeypatch, tmp_path):
+    ss.bus = types.SimpleNamespace()
+    ss.registry = types.SimpleNamespace()
+    ss.data_bot = types.SimpleNamespace()
+
+    bootstrap_pipeline = types.SimpleNamespace(manager="sentinel", initial_manager="sentinel")
+    promotion_calls: list[object] = []
+
+    def _promote(manager):
+        promotion_calls.append(manager)
+        bootstrap_pipeline.manager = manager
+
+    broker = types.SimpleNamespace(resolve=lambda: (bootstrap_pipeline, bootstrap_pipeline.manager))
+    bootstrap_state = types.SimpleNamespace(helper_promotion_callbacks=[_promote])
+
+    def _noop_promoter(*_args, **_kwargs):
+        promotion_calls.append("fallback")
+
+    prepare_calls: list[dict[str, object]] = []
+
+    def _prepare(**kwargs):
+        prepare_calls.append(kwargs)
+        return types.SimpleNamespace(), _noop_promoter
+
+    manager = DummyManager()
+    monkeypatch.setattr(ss, "prepare_pipeline_for_bootstrap", _prepare)
+    monkeypatch.setattr(ss, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(ss, "_BOOTSTRAP_STATE", bootstrap_state)
+    monkeypatch.setattr(ss, "_current_bootstrap_context", lambda: types.SimpleNamespace(pipeline=bootstrap_pipeline))
+    monkeypatch.setattr(
+        ss,
+        "SelfHealingOrchestrator",
+        lambda *a, **k: types.SimpleNamespace(
+            graph=types.SimpleNamespace(add_telemetry_event=lambda *args, **kwargs: None)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(ss, "AutomatedRollbackManager", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(ss, "PatchApprovalPolicy", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        ss,
+        "AutoEscalationManager",
+        lambda *a, **k: types.SimpleNamespace(handle=lambda *args, **kwargs: None),
+        raising=False,
+    )
+    monkeypatch.setattr(ss, "CodeDB", lambda *a, **k: object(), raising=False)
+    monkeypatch.setattr(ss, "MenaceMemoryManager", lambda *a, **k: object(), raising=False)
+    monkeypatch.setattr(
+        ss,
+        "SelfCodingEngine",
+        lambda *a, **k: types.SimpleNamespace(last_added_modules=[], added_modules=[]),
+        raising=False,
+    )
+    monkeypatch.setattr(ss, "get_orchestrator", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        ss,
+        "get_thresholds",
+        lambda name: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(ss, "persist_sc_thresholds", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(ss, "internalize_coding_bot", lambda *a, **k: manager, raising=False)
+    monkeypatch.setattr(ss, "ErrorDB", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        ss,
+        "QuickFixEngine",
+        lambda *a, **k: types.SimpleNamespace(run=lambda *args, **kwargs: None),
+        raising=False,
+    )
+
+    supervisor = ss.ServiceSupervisor(
+        context_builder=DummyBuilder(),
+        log_path=str(tmp_path / "supervisor.log"),
+        restart_log=str(tmp_path / "restart.log"),
+    )
+
+    assert prepare_calls == []
+    assert promotion_calls == [manager]

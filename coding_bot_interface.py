@@ -5447,6 +5447,7 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     active_guard_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
+    active_heartbeat = read_bootstrap_heartbeat()
     sentinel_candidate = manager_override or manager_sentinel
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
@@ -5458,7 +5459,9 @@ def _prepare_pipeline_for_bootstrap_impl(
         _mark_bootstrap_placeholder(sentinel_candidate)
     pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None) or broker_pipeline
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
-    bootstrap_inflight = bool(active_depth or any(value > 0 for value in owner_depths.values()))
+    bootstrap_inflight = bool(
+        active_depth or active_heartbeat or any(value > 0 for value in owner_depths.values())
+    )
     guard_metadata = {
         "active_depth": active_depth,
         "active_guard_token": bool(active_guard_token),
@@ -5467,6 +5470,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "bootstrap_inflight": bootstrap_inflight,
         "owner_depths": dict(owner_depths),
         "dependency_broker": bool(broker_pipeline or broker_sentinel),
+        "heartbeat": bool(active_heartbeat),
     }
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
 
