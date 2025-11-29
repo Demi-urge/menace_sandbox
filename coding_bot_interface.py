@@ -1077,6 +1077,8 @@ def _get_bootstrap_wait_timeout() -> float | None:
             value for key, value in budget_pools.items() if key in DEFERRED_COMPONENTS
         )
 
+    _PREPARE_PIPELINE_WATCHDOG["component_budget_pools"] = dict(budget_pools)
+
     if deferred_component_budget_total is None and budget_pools:
         deferred_component_budget_total = sum(
             value for key, value in budget_pools.items() if key in DEFERRED_COMPONENTS
