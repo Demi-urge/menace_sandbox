@@ -8193,8 +8193,30 @@ def _bootstrap_manager(
     owner_guard = previous_sentinel
     if owner_guard is _SENTINEL_UNSET:
         owner_guard = name
+
+    global_bootstrap_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
+    if global_bootstrap_token is None:
+        global_bootstrap_token = object()
+        _BOOTSTRAP_STATE.active_bootstrap_token = global_bootstrap_token
+        _BOOTSTRAP_STATE.active_bootstrap_guard = owner_guard
+    else:
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", owner_guard)
     owns_reentrant_promise = False
     reentrant_promises_settled = False
+
+    def _log_deduplicated_bootstrap(reason: str, placeholder: Any | None = None) -> None:
+        logger.info(
+            "prepare_pipeline.bootstrap.deduplicated",
+            extra={
+                "event": "prepare-pipeline-bootstrap-deduplicated",
+                "reason": reason,
+                "owner_guard": getattr(getattr(owner_guard, "__class__", None), "__name__", str(owner_guard)),
+                "requested_owner": name,
+                "global_bootstrap_token": bool(global_bootstrap_token),
+                "depth": current_owner_depth,
+                "placeholder": getattr(getattr(placeholder, "__class__", None), "__name__", None),
+            },
+        )
 
     def _settle_reentrant_promises(manager_value: Any | None) -> None:
         nonlocal reentrant_promises_settled
@@ -8225,12 +8247,14 @@ def _bootstrap_manager(
                 current_owner_depth,
             )
             _track_extra_sentinel(owner_guard)
+            _log_deduplicated_bootstrap("owner-match", placeholder=owner_guard)
             return owner_guard
         fallback_owner = None
         if owner_guard is not name:
             fallback_owner = _resolve_fallback_owner(owner_guard)
         if fallback_owner is not None:
             _track_extra_sentinel(fallback_owner)
+            _log_deduplicated_bootstrap("fallback-owner", placeholder=fallback_owner)
             return fallback_owner
         promise = _peek_owner_promise(owner_guard)
         placeholder_active = _is_bootstrap_placeholder(previous_sentinel)
@@ -8240,7 +8264,9 @@ def _bootstrap_manager(
             and promise.add_waiter(sentinel_manager)
         ):
             _track_extra_sentinel(sentinel_manager)
+            _log_deduplicated_bootstrap("promise-waiter", placeholder=sentinel_manager)
             return sentinel_manager
+        _log_deduplicated_bootstrap("disabled-manager", placeholder=sentinel_manager)
         return _disabled_manager("bootstrap already in progress", reentrant=True)
 
     owner_depths[owner_guard] = current_owner_depth + 1
@@ -8732,6 +8758,17 @@ def _bootstrap_manager(
                 pass
         else:
             _BOOTSTRAP_STATE.sentinel_manager = previous_sentinel
+        if getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None) is global_bootstrap_token:
+            if not getattr(_BOOTSTRAP_STATE, "owner_depths", None):
+                for attr in (
+                    "active_bootstrap_token",
+                    "active_bootstrap_guard",
+                ):
+                    if hasattr(_BOOTSTRAP_STATE, attr):
+                        try:
+                            delattr(_BOOTSTRAP_STATE, attr)
+                        except AttributeError:
+                            pass
         logger.debug(
             "restored bootstrap sentinel for %s (depth=%s)",
             name,
