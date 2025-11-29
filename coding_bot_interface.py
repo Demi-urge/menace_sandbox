@@ -6122,6 +6122,10 @@ def _prepare_pipeline_for_bootstrap_impl(
             ]
         pending_critical = set(critical_pending_gates) & _CRITICAL_READINESS_GATES
         consumption_snapshot: dict[str, dict[str, Any]] = {}
+        previous_consumption: Mapping[str, Any] = (
+            _PREPARE_PIPELINE_WATCHDOG.get("component_consumption") or {}
+        )
+        consumption_progress: dict[str, float] = {}
 
         for gate in evaluation_gates:
             phase_key = gate if gate_windows else gate
@@ -6220,6 +6224,13 @@ def _prepare_pipeline_for_bootstrap_impl(
                     )
                 except (TypeError, ValueError):
                     consumption_snapshot[gate].pop("elapsed", None)
+            previous_state = previous_consumption.get(gate, {}) if previous_consumption else {}
+            try:
+                previous_remaining = float(previous_state.get("remaining"))
+                if budget_remaining is not None and previous_remaining > budget_remaining:
+                    consumption_progress[gate] = previous_remaining - float(budget_remaining)
+            except (TypeError, ValueError):
+                pass
             if (
                 gate_pending
                 and budget_remaining is not None
@@ -6253,6 +6264,28 @@ def _prepare_pipeline_for_bootstrap_impl(
                     continue
                 exhausted_critical.add(gate)
 
+        if consumption_progress:
+            progress_signal["consumption_progress"] = consumption_progress
+            progress_signal["consumption_progress_gates"] = tuple(
+                sorted(consumption_progress)
+            )
+            progress_signal["progressing"] = True
+        _PREPARE_PIPELINE_WATCHDOG["component_consumption"] = consumption_snapshot
+
+        gate_progressing = any(
+            (meta or {}).get("progressing")
+            or (meta or {}).get("progress_ratio_delta", 0.0) > 0
+            for meta in (gate_progress or {}).values()
+        )
+        progress_detected = bool(
+            progress_signal.get("progressing")
+            or progress_signal.get("heartbeat_recent")
+            or gate_progressing
+            or bool(consumption_progress)
+        )
+        watchdog_telemetry["progress_signal"] = dict(progress_signal)
+        _PREPARE_PIPELINE_WATCHDOG["watchdog"] = watchdog_telemetry
+
         if gate_windows:
             deadline_snapshot = {}
             for gate, window in gate_windows.items():
@@ -6277,8 +6310,58 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
-            if progress_signal.get("progressing"):
-                _mark_deferred_gates(
+            if progress_detected:
+                adaptive_extensions: list[dict[str, Any]] = []
+                for gate in exhausted_critical:
+                    window = gate_windows.get(gate) if gate_windows else None
+                    extension_budget = max(
+                        timeout_floor,
+                        (window or {}).get("budget")
+                        or phase_budgets.get(gate)
+                        or resolved_timeout
+                        or timeout_floor,
+                    )
+                    if window is None:
+                        continue
+                    window["remaining"] = extension_budget
+                    window["deadline"] = time.perf_counter() + extension_budget
+                    window["extensions"] = int(window.get("extensions", 0) or 0) + 1
+                    adaptive_extensions.append(
+                        {
+                            "event": "prepare-pipeline-critical-extension",
+                            "gate": gate,
+                            "stage": stage,
+                            "extension_budget": extension_budget,
+                            "progress_signal": dict(progress_signal),
+                        }
+                    )
+                    if shared_timeout_coordinator is not None:
+                        shared_timeout_coordinator.record_progress(
+                            gate,
+                            elapsed=0.0,
+                            remaining=window.get("remaining"),
+                            metadata={
+                                "stage": stage,
+                                "critical_extension": True,
+                                "pending_gates": tuple(readiness_pending),
+                            },
+                        )
+                if adaptive_extensions:
+                    _PREPARE_PIPELINE_WATCHDOG.setdefault("extensions", []).extend(
+                        adaptive_extensions
+                    )
+                    _PREPARE_PIPELINE_WATCHDOG["component_windows"] = component_windows
+                    logger.warning(
+                        "prepare_pipeline extended critical gates after overrun with progress",
+                        extra={
+                            "event": "prepare-pipeline-critical-extended",
+                            "gates": sorted(exhausted_critical),
+                            "pending_gates": readiness_pending,
+                            "progress_signal": progress_signal,
+                        },
+                    )
+                    return
+                degraded_payload = _mark_deferred_gates(
                     gates=exhausted_critical,
                     stage=stage,
                     pending_gates=readiness_pending,
@@ -6288,13 +6371,15 @@ def _prepare_pipeline_for_bootstrap_impl(
                     stage_budget=watchdog_telemetry.get("stage_budget", 0.0),
                     remaining_window=watchdog_telemetry.get("remaining_window", 0.0),
                 )
+                watchdog_telemetry["degraded_payload"] = degraded_payload
                 logger.warning(
-                    "prepare_pipeline continuing after critical gate overrun with progress",
+                    "prepare_pipeline continuing after critical gate overrun with degraded readiness",
                     extra={
                         "event": "prepare-pipeline-critical-progress",
                         "gates": sorted(exhausted_critical),
                         "pending_gates": readiness_pending,
                         "progress_signal": progress_signal,
+                        "degraded": degraded_payload,
                     },
                 )
                 return
