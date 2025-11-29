@@ -326,6 +326,59 @@ def test_bootstrap_owner_reuses_injected_pipeline(monkeypatch):
     promote.assert_called_once_with(fake_manager)
 
 
+def test_bootstrap_sentinel_reuses_existing_pipeline(monkeypatch):
+    """A bootstrap sentinel prevents nested pipeline creation."""
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+    fake_pipeline = mock.Mock(name="pipeline")
+    sentinel_manager = SimpleNamespace(pipeline=fake_pipeline, bootstrap_mode=True)
+
+    get_owner = mock.Mock(name="get_structural_bootstrap_owner")
+    _stub_module(
+        monkeypatch,
+        "menace_sandbox.coding_bot_interface",
+        {"get_structural_bootstrap_owner": get_owner},
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock()
+    monkeypatch.setattr(module, "_using_bootstrap_sentinel", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        module, "_looks_like_pipeline_candidate", lambda value: value is fake_pipeline
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=sentinel_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies(manager_override=sentinel_manager)
+
+    assert state.pipeline is fake_pipeline
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+    get_owner.assert_not_called()
+
+
 def test_bootstrap_owner_caches_pipeline_for_followups(monkeypatch):
     """The cached promotion callback is reused while the sentinel is active."""
 
