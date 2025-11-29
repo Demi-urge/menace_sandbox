@@ -6360,7 +6360,8 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
-            if progress_detected:
+            stop_signaled = stop_event is not None and stop_event.is_set()
+            if progress_detected and not stop_signaled:
                 adaptive_extensions: list[dict[str, Any]] = []
                 for gate in exhausted_critical:
                     window = gate_windows.get(gate) if gate_windows else None
@@ -6422,6 +6423,17 @@ def _prepare_pipeline_for_bootstrap_impl(
                     remaining_window=watchdog_telemetry.get("remaining_window", 0.0),
                 )
                 watchdog_telemetry["degraded_payload"] = degraded_payload
+                watchdog_telemetry["deferred_recovery_tasks"] = remediation_hints
+                _PREPARE_PIPELINE_WATCHDOG.setdefault(
+                    "deferred_recovery_tasks", []
+                ).append(
+                    {
+                        "stage": stage,
+                        "pending_gates": tuple(sorted(exhausted_critical)),
+                        "progress_signal": dict(progress_signal),
+                        "remediation_hints": remediation_hints,
+                    }
+                )
                 logger.warning(
                     "prepare_pipeline continuing after critical gate overrun with degraded readiness",
                     extra={
@@ -6430,82 +6442,111 @@ def _prepare_pipeline_for_bootstrap_impl(
                         "pending_gates": readiness_pending,
                         "progress_signal": progress_signal,
                         "degraded": degraded_payload,
+                        "deferred_recovery_tasks": remediation_hints,
                     },
                 )
                 return
-            remediation_hints = render_prepare_pipeline_timeout_hints(
-                vector_heavy,
-                components=exhausted_critical or pending_critical,
-                overruns=adaptive_overruns,
-            )
-            context = {
-                "reason": "component_window",
-                "resolved_timeout": resolved_timeout,
-                "vector_heavy": vector_heavy,
-                "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
-                "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
-                "elapsed": elapsed_stage,
-                "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
-                "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
-                "resolved_wait_timeout": resolved_wait_timeout,
-                "effective_timeout_floor": effective_timeout_floor,
-                "prepare_watchdog_timeline": watchdog_timeline,
-                "watchdog_timeout_budget": {gate: phase_windows.get(gate, {}).get("budget") for gate in pending_critical},
-                "watchdog_remaining_window": {gate: phase_windows.get(gate, {}).get("remaining") for gate in pending_critical},
-                "watchdog_ready_gates": readiness_ready,
-                "watchdog_pending_gates": readiness_pending,
-                "watchdog_readiness_ratio": readiness_ratio,
-                "watchdog_stage_gates": stage_gates,
-                "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
-                    "shared_timeout"
-                ),
-                "watchdog_component_overruns": adaptive_overruns,
-                "watchdog_component_floors": adaptive_component_floors,
-                "watchdog_progress_signal": progress_signal,
-                "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
-                    "component_windows"
-                ),
-                "watchdog_component_remaining": watchdog_telemetry.get(
-                    "shared_component_remaining"
-                ),
-                "watchdog_deadline_extensions": watchdog_telemetry.get(
-                    "shared_deadline_extensions"
-                ),
-                "watchdog_component_budgets": component_budget_payload,
-                "exhausted_gates": sorted(exhausted_critical),
-                "component_consumption": consumption_snapshot,
-            }
-            context["remediation_hints"] = remediation_hints
-            budget_annotations = _format_budget_annotations(
-                consumption_snapshot, gates=exhausted_critical
-            )
-            if budget_annotations:
-                context["component_budget_annotations"] = budget_annotations
-            logger.warning(
-                (
-                    "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
-                    "gates=%s consumption=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
-                ),
-                stage,
-                elapsed_stage,
-                sorted(exhausted_critical),
-                {gate: consumption_snapshot.get(gate) for gate in pending_critical},
-                vector_heavy,
-                env_bootstrap_wait,
-                env_vector_wait,
-            )
-            _record_timeout(stage, context)
-            _emit_timeout_diagnostics(stage, context)
-            budget_clause = (
-                f" budgets: {', '.join(budget_annotations)}" if budget_annotations else ""
-            )
-            raise TimeoutError(
-                (
-                    "prepare_pipeline_for_bootstrap timed out during "
-                    f"{stage} ({', '.join(sorted(exhausted_critical))});"
-                    f"{budget_clause} remediation: {'; '.join(remediation_hints)}"
+            if stop_signaled:
+                # Defer to the explicit stop handler below so cancellation is surfaced
+                # even when progress signals are present.
+                degraded_payload = watchdog_telemetry.get("degraded_payload") or _mark_deferred_gates(
+                    gates=exhausted_critical,
+                    stage=stage,
+                    pending_gates=readiness_pending,
+                    readiness_ratio=readiness_ratio,
+                    vector_heavy=vector_heavy,
+                    reason="critical_overrun_stop_signal",
+                    stage_budget=watchdog_telemetry.get("stage_budget", 0.0),
+                    remaining_window=watchdog_telemetry.get("remaining_window", 0.0),
                 )
-            )
+                _PREPARE_PIPELINE_WATCHDOG.setdefault("deferred_recovery_tasks", []).append(
+                    {
+                        "stage": stage,
+                        "pending_gates": tuple(sorted(exhausted_critical)),
+                        "progress_signal": dict(progress_signal),
+                        "remediation_hints": remediation_hints,
+                    }
+                )
+                _PREPARE_PIPELINE_WATCHDOG.setdefault("degraded", degraded_payload)
+                watchdog_telemetry["deferred_recovery_tasks"] = remediation_hints
+                watchdog_telemetry["degraded_payload"] = degraded_payload
+                watchdog_telemetry["progress_signal"] = dict(progress_signal)
+                watchdog_telemetry["stopped"] = True
+                _PREPARE_PIPELINE_WATCHDOG["watchdog"] = watchdog_telemetry
+            else:
+                remediation_hints = render_prepare_pipeline_timeout_hints(
+                    vector_heavy,
+                    components=exhausted_critical or pending_critical,
+                    overruns=adaptive_overruns,
+                )
+                context = {
+                    "reason": "component_window",
+                    "resolved_timeout": resolved_timeout,
+                    "vector_heavy": vector_heavy,
+                    "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
+                    "env_menace_bootstrap_vector_wait_secs": env_vector_wait,
+                    "elapsed": elapsed_stage,
+                    "env_menace_bootstrap_wait_resolved": resolved_env_bootstrap_wait,
+                    "env_menace_bootstrap_vector_wait_resolved": resolved_env_vector_wait,
+                    "resolved_wait_timeout": resolved_wait_timeout,
+                    "effective_timeout_floor": effective_timeout_floor,
+                    "prepare_watchdog_timeline": watchdog_timeline,
+                    "watchdog_timeout_budget": {gate: phase_windows.get(gate, {}).get("budget") for gate in pending_critical},
+                    "watchdog_remaining_window": {gate: phase_windows.get(gate, {}).get("remaining") for gate in pending_critical},
+                    "watchdog_ready_gates": readiness_ready,
+                    "watchdog_pending_gates": readiness_pending,
+                    "watchdog_readiness_ratio": readiness_ratio,
+                    "watchdog_stage_gates": stage_gates,
+                    "watchdog_shared_timeout": _PREPARE_PIPELINE_WATCHDOG.get(
+                        "shared_timeout"
+                    ),
+                    "watchdog_component_overruns": adaptive_overruns,
+                    "watchdog_component_floors": adaptive_component_floors,
+                    "watchdog_progress_signal": progress_signal,
+                    "watchdog_component_windows": _PREPARE_PIPELINE_WATCHDOG.get(
+                        "component_windows"
+                    ),
+                    "watchdog_component_remaining": watchdog_telemetry.get(
+                        "shared_component_remaining"
+                    ),
+                    "watchdog_deadline_extensions": watchdog_telemetry.get(
+                        "shared_deadline_extensions"
+                    ),
+                    "watchdog_component_budgets": component_budget_payload,
+                    "exhausted_gates": sorted(exhausted_critical),
+                    "component_consumption": consumption_snapshot,
+                }
+                context["remediation_hints"] = remediation_hints
+                budget_annotations = _format_budget_annotations(
+                    consumption_snapshot, gates=exhausted_critical
+                )
+                if budget_annotations:
+                    context["component_budget_annotations"] = budget_annotations
+                logger.warning(
+                    (
+                        "prepare_pipeline_for_bootstrap timed out during %s after %.3fs "
+                        "gates=%s consumption=%s vector_heavy=%s env_wait=%r env_vector_wait=%r"
+                    ),
+                    stage,
+                    elapsed_stage,
+                    sorted(exhausted_critical),
+                    {gate: consumption_snapshot.get(gate) for gate in pending_critical},
+                    vector_heavy,
+                    env_bootstrap_wait,
+                    env_vector_wait,
+                )
+                _record_timeout(stage, context)
+                _emit_timeout_diagnostics(stage, context)
+                budget_clause = (
+                    f" budgets: {', '.join(budget_annotations)}" if budget_annotations else ""
+                )
+                raise TimeoutError(
+                    (
+                        "prepare_pipeline_for_bootstrap timed out during "
+                        f"{stage} ({', '.join(sorted(exhausted_critical))});"
+                        f"{budget_clause} remediation: {'; '.join(remediation_hints)}"
+                    )
+                )
 
         if stop_event is not None and stop_event.is_set():
             context = {
