@@ -854,6 +854,7 @@ def compute_adaptive_component_minimums(
     host_telemetry: Mapping[str, object] | None = None,
     load_average: float | None = None,
     component_hints: Mapping[str, object] | str | None = None,
+    component_minimums: Mapping[str, float] | None = None,
 ) -> dict[str, float]:
     """Scale component minimums using guard, heartbeat, and hint context."""
 
@@ -900,8 +901,9 @@ def compute_adaptive_component_minimums(
         0, _count(complexity.get("orchestrator_components")) - 1
     ) * 0.1
 
+    base_minimums = dict(component_minimums or _COMPONENT_TIMEOUT_MINIMUMS)
     adaptive_minimums: dict[str, float] = {}
-    for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
+    for component, minimum in base_minimums.items():
         adaptive_minimums[component] = minimum * scale * component_complexity.get(component, 1.0)
 
     return adaptive_minimums
@@ -914,7 +916,14 @@ def load_escalated_timeout_floors() -> dict[str, float]:
     host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
     scale, scale_context = _cluster_budget_scale(host_state=state)
 
-    minimums = {key: value * scale for key, value in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()}
+    backlog_state = host_state.get("backlog_pressure", {}) if isinstance(host_state, Mapping) else {}
+    runtime_bootstrap_minimums, runtime_component_minimums, runtime_meta = _compute_runtime_scaled_minimums(
+        host_state=host_state,
+        backlog_queue_depth=int(backlog_state.get("max_queue_depth", 0) or 0),
+        active_bootstraps=int(backlog_state.get("max_active_bootstraps", 0) or 0),
+    )
+
+    minimums = {key: value * scale for key, value in runtime_bootstrap_minimums.items()}
 
     component_overruns = (
         host_state.get("component_overruns", {}) if isinstance(host_state, dict) else {}
@@ -972,11 +981,150 @@ def load_escalated_timeout_floors() -> dict[str, float]:
             extra={
                 "event": "adaptive-timeout-floors",
                 "adaptive_floors": adaptive_floors,
+                "runtime_minimums": runtime_meta,
                 "state_path": str(_TIMEOUT_STATE_PATH),
             },
         )
 
     return minimums
+
+
+def _extract_component_durations(telemetry: Mapping[str, object]) -> dict[str, dict[str, float | int]]:
+    """Return aggregated component duration samples from telemetry."""
+
+    shared = telemetry.get("shared_timeout") or {}
+    timeline = shared.get("timeline") or []
+    durations: dict[str, dict[str, float | int]] = {}
+
+    for entry in timeline:
+        component = _categorize_stage(entry) or str(entry.get("label"))
+        elapsed = _parse_float(str(entry.get("elapsed")))
+        if not component or elapsed is None or elapsed <= 0:
+            continue
+        duration_state = durations.setdefault(
+            component, {"samples": 0, "total": 0.0, "max_elapsed": 0.0}
+        )
+        duration_state["samples"] = int(duration_state.get("samples", 0) or 0) + 1
+        duration_state["total"] = float(duration_state.get("total", 0.0) or 0.0) + elapsed
+        duration_state["max_elapsed"] = max(
+            float(duration_state.get("max_elapsed", 0.0) or 0.0), elapsed
+        )
+
+    return durations
+
+
+def _compute_runtime_scaled_minimums(
+    *,
+    host_state: Mapping[str, object] | None,
+    backlog_queue_depth: int,
+    active_bootstraps: int,
+) -> tuple[dict[str, float], dict[str, float], dict[str, object]]:
+    """Scale timeout minimums using persisted runtime telemetry."""
+
+    runtime_meta = {}
+    backlog_meta = {}
+    if isinstance(host_state, Mapping):
+        runtime_meta = host_state.get("component_runtime", {}) or {}
+        backlog_meta = host_state.get("backlog_pressure", {}) or {}
+
+    max_queue_depth = max(int(backlog_meta.get("max_queue_depth", 0) or 0), backlog_queue_depth)
+    max_active_bootstraps = max(
+        int(backlog_meta.get("max_active_bootstraps", 0) or 0), active_bootstraps
+    )
+
+    concurrency_scale = 1.0 + min(max_queue_depth, 5) * 0.05 + min(max_active_bootstraps, 5) * 0.07
+    bootstrap_minimums = {
+        key: value * concurrency_scale for key, value in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()
+    }
+
+    component_minimums = dict(_COMPONENT_TIMEOUT_MINIMUMS)
+    component_meta: dict[str, object] = {
+        "max_queue_depth": max_queue_depth,
+        "max_active_bootstraps": max_active_bootstraps,
+        "concurrency_scale": concurrency_scale,
+    }
+
+    for component, minimum in list(component_minimums.items()):
+        stats = runtime_meta.get(component, {}) if isinstance(runtime_meta, Mapping) else {}
+        avg_elapsed = float(stats.get("avg_elapsed", 0.0) or 0.0)
+        max_elapsed = float(stats.get("max_elapsed", 0.0) or 0.0)
+        samples = int(stats.get("samples", 0) or 0)
+        peer_pressure = max(int(stats.get("peer_bootstraps", 0) or 0), max_active_bootstraps)
+        queue_pressure = max(int(stats.get("queue_depth", 0) or 0), max_queue_depth)
+        streak = int(stats.get("overruns", 0) or 0)
+        component_scale = 1.0 + min(peer_pressure, 5) * 0.05 + min(queue_pressure, 5) * 0.04
+        overrun_scale = 1.15 if streak >= _OVERRUN_STREAK_THRESHOLD else 1.0
+        duration_floor = 0.0
+        if max_elapsed or avg_elapsed:
+            duration_floor = max(max_elapsed * 1.1, avg_elapsed * 1.25)
+            if streak >= _OVERRUN_STREAK_THRESHOLD:
+                duration_floor = max(duration_floor, max_elapsed + 45.0)
+        component_minimums[component] = max(
+            minimum,
+            duration_floor,
+            minimum * concurrency_scale * component_scale * overrun_scale,
+        )
+        component_meta[component] = {
+            "max_elapsed": max_elapsed,
+            "avg_elapsed": avg_elapsed,
+            "samples": samples,
+            "component_scale": component_scale,
+            "overrun_scale": overrun_scale,
+        }
+
+    return bootstrap_minimums, component_minimums, component_meta
+
+
+def _update_component_runtime_stats(
+    host_state_details: MutableMapping[str, object],
+    *,
+    telemetry: Mapping[str, object],
+    backlog_queue_depth: int,
+    active_bootstraps: int,
+    overruns: Mapping[str, Mapping[str, float | int]] | None = None,
+) -> None:
+    """Persist per-component runtime telemetry for future budget calculations."""
+
+    durations = _extract_component_durations(telemetry)
+    runtime_state = host_state_details.get("component_runtime", {})
+    if not isinstance(runtime_state, MutableMapping):
+        runtime_state = {}
+
+    for component, stats in durations.items():
+        samples = int(stats.get("samples", 0) or 0)
+        total = float(stats.get("total", 0.0) or 0.0)
+        max_elapsed = float(stats.get("max_elapsed", 0.0) or 0.0)
+        if samples <= 0 or total <= 0:
+            continue
+        state = runtime_state.get(component, {}) if isinstance(runtime_state, Mapping) else {}
+        existing_samples = int(state.get("samples", 0) or 0)
+        existing_avg = float(state.get("avg_elapsed", 0.0) or 0.0)
+        aggregate_total = existing_avg * existing_samples + total
+        aggregate_samples = existing_samples + samples
+        avg_elapsed = aggregate_total / aggregate_samples if aggregate_samples else max_elapsed
+        runtime_state[component] = {
+            "samples": aggregate_samples,
+            "avg_elapsed": avg_elapsed,
+            "max_elapsed": max(max_elapsed, float(state.get("max_elapsed", 0.0) or 0.0)),
+            "queue_depth": max(int(state.get("queue_depth", 0) or 0), backlog_queue_depth),
+            "peer_bootstraps": max(int(state.get("peer_bootstraps", 0) or 0), active_bootstraps),
+            "overruns": max(int(state.get("overruns", 0) or 0), int((overruns or {}).get(component, {}).get("overruns", 0) or 0)),
+        }
+
+    if runtime_state:
+        host_state_details["component_runtime"] = runtime_state
+
+    backlog_state = host_state_details.get("backlog_pressure", {})
+    if not isinstance(backlog_state, MutableMapping):
+        backlog_state = {}
+    backlog_state["max_queue_depth"] = max(
+        int(backlog_state.get("max_queue_depth", 0) or 0), backlog_queue_depth
+    )
+    backlog_state["max_active_bootstraps"] = max(
+        int(backlog_state.get("max_active_bootstraps", 0) or 0), active_bootstraps
+    )
+    backlog_state["updated_at"] = time.time()
+    host_state_details["backlog_pressure"] = backlog_state
 
 
 def load_component_timeout_floors() -> dict[str, float]:
@@ -986,11 +1134,20 @@ def load_component_timeout_floors() -> dict[str, float]:
     guard_context = get_bootstrap_guard_context()
     host_telemetry = read_bootstrap_heartbeat()
     historical = load_last_component_budgets()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    backlog_state = host_state.get("backlog_pressure", {}) if isinstance(host_state, Mapping) else {}
+    runtime_bootstrap_minimums, runtime_component_minimums, runtime_meta = _compute_runtime_scaled_minimums(
+        host_state=host_state,
+        backlog_queue_depth=int(backlog_state.get("max_queue_depth", 0) or 0),
+        active_bootstraps=int(backlog_state.get("max_active_bootstraps", 0) or 0),
+    )
     adaptive_minimums = compute_adaptive_component_minimums(
-        host_telemetry=host_telemetry
+        host_telemetry=host_telemetry,
+        component_minimums=runtime_component_minimums,
     )
     base_defaults: dict[str, float] = {}
-    for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
+    for component, minimum in runtime_component_minimums.items():
         try:
             historical_floor = float(historical.get(component, 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -998,7 +1155,7 @@ def load_component_timeout_floors() -> dict[str, float]:
         adaptive_floor = adaptive_minimums.get(component, 0.0)
         base_defaults[component] = max(minimum, historical_floor, adaptive_floor)
     scale, scale_context = _derive_component_floor_scale(
-        guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
+    guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
 
     heartbeat_scale = 1.0
@@ -1047,8 +1204,6 @@ def load_component_timeout_floors() -> dict[str, float]:
             * max(vector_scale, 1.1),
             base_defaults.get("retrievers", 0.0) * max_scale,
         )
-    host_key = _state_host_key()
-    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
     host_component_floors = (
         host_state.get("component_floors", {}) if isinstance(host_state, dict) else {}
     )
@@ -1099,6 +1254,7 @@ def load_component_timeout_floors() -> dict[str, float]:
             "vector_heavy": vector_heavy,
             "max_scale": max_scale,
             "heartbeat_scale": heartbeat_scale,
+            "runtime_minimums": runtime_meta,
         },
         "component_floors": dict(component_floors),
     }
@@ -1386,43 +1542,11 @@ def compute_prepare_pipeline_component_budgets(
     host_state = _load_timeout_state()
     host_key = _state_host_key()
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
-    adaptive_minimums = compute_adaptive_component_minimums(
-        pipeline_complexity=pipeline_complexity,
-        host_telemetry=host_telemetry,
-        load_average=load_average,
-    )
+    host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
     floors = dict(component_floors or load_component_timeout_floors())
-    for component, floor in adaptive_minimums.items():
-        floors[component] = max(floor, floors.get(component, 0.0))
     deferred_floors = dict(deferred_component_floors or load_deferred_component_timeout_floors())
     deferred_components = set(deferred_floors)
     floors.update(deferred_floors)
-    host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
-    if isinstance(host_state, Mapping):
-        host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
-        previous_budgets = (host_state.get(host_key, {}) or {}).get(
-            "last_component_budgets", {}
-        )
-        for key, value in (host_floors or {}).items():
-            try:
-                floors[key] = max(floors.get(key, 0.0), float(value))
-            except (TypeError, ValueError):
-                continue
-        for key, value in (previous_budgets or {}).items():
-            try:
-                floors[key] = max(floors.get(key, 0.0), float(value))
-            except (TypeError, ValueError):
-                continue
-
-    if load_average is None:
-        load_average = _parse_float(str(host_telemetry.get("host_load")))
-    if load_average is None:
-        load_average = _host_load_average()
-    cluster_scale, cluster_context = _cluster_budget_scale(
-        host_state=host_state, host_telemetry=host_telemetry, load_average=load_average
-    )
-    host_scale = _host_load_scale(load_average)
-    scale = max(host_scale, cluster_scale)
 
     def _coerce_int(value: object) -> int:
         try:
@@ -1454,6 +1578,59 @@ def compute_prepare_pipeline_component_budgets(
     backlog_scale += min(pending_background_loops, 5) * 0.04
     backlog_scale = min(backlog_scale, 2.0)
 
+    telemetry_overruns = _summarize_component_overruns(telemetry or {})
+    _update_component_runtime_stats(
+        host_state_details,
+        telemetry=telemetry,
+        backlog_queue_depth=backlog_queue_depth,
+        active_bootstraps=active_bootstraps,
+        overruns=telemetry_overruns,
+    )
+
+    runtime_bootstrap_minimums, runtime_component_minimums, runtime_meta = _compute_runtime_scaled_minimums(
+        host_state=host_state_details if isinstance(host_state_details, Mapping) else {},
+        backlog_queue_depth=backlog_queue_depth,
+        active_bootstraps=active_bootstraps,
+    )
+
+    if load_average is None:
+        load_average = _parse_float(str(host_telemetry.get("host_load")))
+    if load_average is None:
+        load_average = _host_load_average()
+    cluster_scale, cluster_context = _cluster_budget_scale(
+        host_state=host_state, host_telemetry=host_telemetry, load_average=load_average
+    )
+    host_scale = _host_load_scale(load_average)
+    scale = max(host_scale, cluster_scale)
+
+    adaptive_minimums = compute_adaptive_component_minimums(
+        pipeline_complexity=pipeline_complexity,
+        host_telemetry=host_telemetry,
+        load_average=load_average,
+        component_minimums=runtime_component_minimums,
+    )
+
+    for component, floor in runtime_component_minimums.items():
+        floors[component] = max(floor, floors.get(component, 0.0))
+    for component, floor in adaptive_minimums.items():
+        floors[component] = max(floor, floors.get(component, 0.0))
+
+    if isinstance(host_state, Mapping):
+        host_floors = (host_state.get(host_key, {}) or {}).get("component_floors", {})
+        previous_budgets = (host_state.get(host_key, {}) or {}).get(
+            "last_component_budgets", {},
+        )
+        for key, value in (host_floors or {}).items():
+            try:
+                floors[key] = max(floors.get(key, 0.0), float(value))
+            except (TypeError, ValueError):
+                continue
+        for key, value in (previous_budgets or {}).items():
+            try:
+                floors[key] = max(floors.get(key, 0.0), float(value))
+            except (TypeError, ValueError):
+                continue
+
     adaptive_floors: dict[str, dict[str, float | int | str]] = {}
 
     def _apply_adaptive_floor(
@@ -1463,7 +1640,9 @@ def compute_prepare_pipeline_component_budgets(
         reason: str,
         overruns: int | None = None,
     ) -> None:
-        baseline = floors.get(component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0))
+        baseline = floors.get(
+            component, runtime_component_minimums.get(component, _COMPONENT_TIMEOUT_MINIMUMS.get(component, 0.0))
+        )
         adjusted_floor = max(baseline, suggested_floor)
         if adjusted_floor > baseline:
             floors[component] = adjusted_floor
@@ -1508,11 +1687,8 @@ def compute_prepare_pipeline_component_budgets(
     ) * 0.1
 
     host_overruns = {}
-    host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     if isinstance(host_state, dict):
         host_overruns = host_state_details.get("component_overruns", {}) or {}
-
-    telemetry_overruns = _summarize_component_overruns(telemetry or {})
 
     component_pool_scales = _derive_component_pool_scales(
         guard_context=guard_context,
@@ -1626,6 +1802,9 @@ def compute_prepare_pipeline_component_budgets(
         "component_pool_scales": component_pool_scales,
         "component_work_units": component_work_units,
         "telemetry_overruns": telemetry_overruns,
+        "runtime_minimums": runtime_component_minimums,
+        "runtime_bootstrap_minimums": runtime_bootstrap_minimums,
+        "runtime_meta": runtime_meta,
         "component_budget_pools": {key: budgets.get(key, floors.get(key, 0.0)) for key in floors},
         "floors": floors,
         "adaptive_floors": adaptive_floors,
@@ -1687,6 +1866,9 @@ def compute_prepare_pipeline_component_budgets(
             "component_work_units": component_work_units,
             "component_budget_pools": adaptive_inputs.get("component_budget_pools", {}),
             "component_pool_scales": component_pool_scales,
+            "runtime_minimums": runtime_component_minimums,
+            "runtime_bootstrap_minimums": runtime_bootstrap_minimums,
+            "runtime_meta": runtime_meta,
             "updated_at": time.time(),
         }
     )
