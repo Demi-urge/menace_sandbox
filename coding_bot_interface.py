@@ -5359,6 +5359,52 @@ def _prepare_pipeline_for_bootstrap_impl(
     instantiation.
     """
 
+    active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    active_guard_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
+    sentinel_candidate = manager_override or manager_sentinel
+    if sentinel_candidate is None:
+        sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+    if sentinel_candidate is not None:
+        _mark_bootstrap_placeholder(sentinel_candidate)
+    pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None)
+    bootstrap_inflight = bool(active_depth or active_guard_token)
+
+    if bootstrap_inflight and (pipeline_candidate is not None or sentinel_candidate is not None):
+        if pipeline_candidate is None:
+            pipeline_candidate = SimpleNamespace(
+                manager=sentinel_candidate,
+                initial_manager=sentinel_candidate,
+                bootstrap_placeholder=True,
+            )
+            _mark_bootstrap_placeholder(pipeline_candidate)
+
+        def _reuse_promote(real_manager: Any) -> None:
+            if real_manager is None:
+                return
+
+            def _apply(manager_value: Any) -> None:
+                _assign_bootstrap_manager_placeholder(
+                    pipeline_candidate,
+                    manager_value,
+                    propagate_nested=True,
+                )
+
+            _apply(real_manager)
+            _register_bootstrap_helper_callback(_apply)
+
+        logger.info(
+            "prepare_pipeline.bootstrap.short_circuit",
+            extra={
+                "event": "prepare-pipeline-bootstrap-short-circuit",
+                "depth": active_depth,
+                "guard_token": bool(active_guard_token),
+                "pipeline_candidate": getattr(
+                    getattr(pipeline_candidate, "__class__", None), "__name__", str(type(pipeline_candidate))
+                ),
+            },
+        )
+        return pipeline_candidate, _reuse_promote
+
     enforce_bootstrap_timeout_policy(logger=logger)
     global _SUBSYSTEM_BUDGET_FLOORS
     _SUBSYSTEM_BUDGET_FLOORS = load_component_timeout_floors()
