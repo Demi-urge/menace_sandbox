@@ -24,15 +24,15 @@ BOOTSTRAP_DB_INDEX_BYTES_ENV = _BOOTSTRAP_DB_INDEX_BYTES_ENV
 BOOTSTRAP_COMPLEXITY_SCALE_ENV = _BOOTSTRAP_COMPLEXITY_SCALE_ENV
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": 360.0,
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 540.0,
-    "BOOTSTRAP_STEP_TIMEOUT": 360.0,
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 540.0,
-    "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": 720.0,
-    "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS": 480.0,
-    "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": 480.0,
-    "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS": 420.0,
-    "PREPARE_PIPELINE_CONFIG_BUDGET_SECS": 420.0,
+    "MENACE_BOOTSTRAP_WAIT_SECS": 720.0,
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 900.0,
+    "BOOTSTRAP_STEP_TIMEOUT": 720.0,
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 900.0,
+    "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": 900.0,
+    "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS": 720.0,
+    "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": 720.0,
+    "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS": 540.0,
+    "PREPARE_PIPELINE_CONFIG_BUDGET_SECS": 540.0,
 }
 _COMPONENT_TIMEOUT_MINIMUMS: dict[str, float] = {
     "vectorizers": _BOOTSTRAP_TIMEOUT_MINIMUMS["PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS"],
@@ -1011,7 +1011,7 @@ def compute_adaptive_component_minimums(
         except (TypeError, ValueError):
             return 1.0
         gigabytes = max(value, 0.0) / (1024**3)
-        return 1.0 + min(gigabytes / 5.0, 0.75)
+        return 1.0 + min(gigabytes / 5.0, 1.5)
 
     component_complexity: dict[str, float] = {}
     component_complexity["vectorizers"] = 1.0 + max(0, _count(complexity.get("vectorizers")) - 1) * 0.35
@@ -1806,7 +1806,7 @@ def compute_prepare_pipeline_component_budgets(
         except (TypeError, ValueError):
             return 1.0
         gigabytes = max(value, 0.0) / (1024**3)
-        return 1.0 + min(gigabytes / 5.0, 0.75)
+        return 1.0 + min(gigabytes / 5.0, 1.5)
 
     component_complexity: dict[str, float] = {}
     component_complexity["vectorizers"] = 1.0 + max(0, _count(complexity.get("vectorizers")) - 1) * 0.35
@@ -2508,12 +2508,14 @@ def _apply_success_decay(
 
 
 def _host_load_scale(load_average: float | None = None) -> float:
-    try:
-        load = load_average if load_average is not None else os.getloadavg()[0]
-    except OSError:
-        return 1.0
     cpu_count = os.cpu_count() or 1
-    normalized = max(0.0, load / float(cpu_count))
+    try:
+        load = float(load_average) if load_average is not None else os.getloadavg()[0]
+    except (TypeError, ValueError, OSError):
+        return 1.0
+    normalized = max(0.0, load)
+    if cpu_count and normalized > 4.0:
+        normalized = normalized / float(cpu_count)
     return 1.0 + min(normalized, 1.5)
 
 

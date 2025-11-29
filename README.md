@@ -33,20 +33,20 @@ All `prepare_pipeline_for_bootstrap` callers now run through the `wait_for_boots
 
 The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
 
-- `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, keep this at the **360 second floor** so preflight does not race the first vector warm-up.
-- `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this at or above the **540 second floor** ensures the vector warm-up watchdog inherits the longer window.
-- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. The default is now **360 seconds** to cover slow hosts under contention or tight CPU quotas, and every stage budget is clamped to at least this floor even when `BOOTSTRAP_STEP_BUDGET` is unset.
-- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this at or above the **540 second floor** so large vector stores finish batching before the watchdog fires; vector-heavy steps automatically inherit a **540s** floor via the shared timeout policy.
-- `BOOTSTRAP_STEP_BUDGET`/`BOOTSTRAP_EMBEDDER_BUDGET` – explicit per-step watchdog overrides. These now inherit the shared timeout policy and will never drop below the **360s** standard floor or the **540s** vector-heavy floor.
+- `MENACE_BOOTSTRAP_WAIT_SECS` – overall grace period when waiting for the self-coding bootstrap to emit its ready signal. For heavy vector workloads or slow disks, keep this at the **720 second floor** so preflight does not race the first vector warm-up.
+- `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS` – extended grace period for vector-heavy initialisation paths. Keeping this at or above the **900 second floor** ensures the vector warm-up watchdog inherits the longer window.
+- `BOOTSTRAP_STEP_TIMEOUT` – per-step timeout used by the bootstrap orchestration. The default is now **720 seconds** to cover slow hosts under contention or tight CPU quotas, and every stage budget is clamped to at least this floor even when `BOOTSTRAP_STEP_BUDGET` is unset.
+- `BOOTSTRAP_VECTOR_STEP_TIMEOUT` – dedicated timeout for vector seeding stages. Leave this at or above the **900 second floor** so large vector stores finish batching before the watchdog fires; vector-heavy steps automatically inherit a **900s** floor via the shared timeout policy.
+- `BOOTSTRAP_STEP_BUDGET`/`BOOTSTRAP_EMBEDDER_BUDGET` – explicit per-step watchdog overrides. These now inherit the shared timeout policy and will never drop below the **720s** standard floor or the **900s** vector-heavy floor.
 
-Callers that need component-level control over bootstrap pacing can supply structured budgets (for example via `bootstrap_timeout_policy.load_component_timeout_floors()`) to `prepare_pipeline_for_bootstrap` through the `component_timeouts` argument. The shared timeout coordinator will track vectorizer, retriever, DB index, and orchestrator slices independently and persist the per-stage consumption in the watchdog telemetry so future runs can raise the appropriate floors automatically. Default budgets now mirror the enforced floors from `bootstrap_timeout_policy.py` (vectorizers **720s**, retrievers/DB warmup **480s**, orchestrator/pipeline config **420s**) so operator overrides cannot undercut the policy.
+Callers that need component-level control over bootstrap pacing can supply structured budgets (for example via `bootstrap_timeout_policy.load_component_timeout_floors()`) to `prepare_pipeline_for_bootstrap` through the `component_timeouts` argument. The shared timeout coordinator will track vectorizer, retriever, DB index, and orchestrator slices independently and persist the per-stage consumption in the watchdog telemetry so future runs can raise the appropriate floors automatically. Default budgets now mirror the enforced floors from `bootstrap_timeout_policy.py` (vectorizers **900s**, retrievers/DB warmup **720s**, orchestrator/pipeline config **540s**) so operator overrides cannot undercut the policy.
 
 When previous runs overrun their watchdog slices (or when the host is already under load), bootstrap entrypoints now call `bootstrap_timeout_policy.compute_prepare_pipeline_component_budgets()` before bootstrapping. The helper pulls persisted overrun telemetry, scales it for the current host load, and feeds those proactive budgets into the shared timeout coordinator so vectorizers, retrievers, DB warm-up, and orchestrator state recovery get room to finish without waiting for another timeout cycle.
 
 If you hit a 30s `prepare_pipeline_for_bootstrap` timeout:
 
-- Set `MENACE_BOOTSTRAP_WAIT_SECS=360` or `BOOTSTRAP_STEP_TIMEOUT=360` before rerunning bootstrap on slower hosts (these values are now the defaults and clamp to the shared floor).
-- For vector-heavy runs, keep `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=540` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=540` to bypass the legacy ceiling and honour the vector floor.
+- Set `MENACE_BOOTSTRAP_WAIT_SECS=720` or `BOOTSTRAP_STEP_TIMEOUT=720` before rerunning bootstrap on slower hosts (these values are now the defaults and clamp to the shared floor).
+- For vector-heavy runs, keep `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=900` or `BOOTSTRAP_VECTOR_STEP_TIMEOUT=900` to bypass the legacy ceiling and honour the vector floor.
 - Stagger concurrent bootstraps or trim watched directories (e.g., editors/sync tools) to cut I/O contention during startup.
 
 When timeouts persist, audit the host before retrying:

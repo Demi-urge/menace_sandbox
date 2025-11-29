@@ -5296,6 +5296,8 @@ def _prepare_pipeline_for_bootstrap_impl(
     """
 
     enforce_bootstrap_timeout_policy(logger=logger)
+    global _SUBSYSTEM_BUDGET_FLOORS
+    _SUBSYSTEM_BUDGET_FLOORS = load_component_timeout_floors()
     deferred_labels_normalized = {
         (label or "").strip().lower() for label in (deferred_stage_labels or []) if label
     }
