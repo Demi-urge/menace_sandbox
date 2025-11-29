@@ -78,6 +78,29 @@ def test_component_budgets_scale_with_live_backlog(monkeypatch):
     assert sum(backlog_budgets.values()) > sum(base_budgets.values())
 
 
+def test_component_budgets_include_defaults(monkeypatch):
+    monkeypatch.setattr(btp, "_state_host_key", lambda: "test-host")
+    monkeypatch.setattr(btp, "_save_timeout_state", lambda state: None)
+    monkeypatch.setattr(btp, "_load_timeout_state", lambda: {})
+
+    budgets = btp.compute_prepare_pipeline_component_budgets(
+        telemetry={}, host_telemetry={"ts": time.time()}
+    )
+
+    expected_components = {
+        "vectorizers": btp._COMPONENT_TIMEOUT_MINIMUMS["vectorizers"],
+        "retrievers": btp._COMPONENT_TIMEOUT_MINIMUMS["retrievers"],
+        "db_indexes": btp._COMPONENT_TIMEOUT_MINIMUMS["db_indexes"],
+        "orchestrator_state": btp._COMPONENT_TIMEOUT_MINIMUMS["orchestrator_state"],
+        "pipeline_config": btp._COMPONENT_TIMEOUT_MINIMUMS["pipeline_config"],
+        "background_loops": btp._DEFERRED_COMPONENT_TIMEOUT_MINIMUMS["background_loops"],
+    }
+
+    for gate, minimum in expected_components.items():
+        assert gate in budgets
+        assert budgets[gate] >= minimum
+
+
 def test_vector_heavy_budgets_extend_bootstrap_wait(monkeypatch, tmp_path):
     state_path = tmp_path / "timeout_state.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(state_path))

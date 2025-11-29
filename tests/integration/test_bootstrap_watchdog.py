@@ -202,3 +202,15 @@ def test_guard_context_persisted_for_component_floors(tmp_path, monkeypatch):
     base_floor = btp._COMPONENT_TIMEOUT_MINIMUMS["vectorizers"]
     assert guard_context.get("budget_scale", 1.0) >= budget_scale
     assert component_floors["vectorizers"] >= base_floor * guard_context.get("budget_scale", 1.0)
+
+
+def test_deferred_background_gates_do_not_block_readiness():
+    import coding_bot_interface as cbi
+
+    ready, pending, deferred = cbi._filter_deferred_pending_gates(
+        ["pipeline_config"], ["orchestrator_state", "background_loops"], ["background_loops"]
+    )
+
+    assert "background_loops" not in pending
+    assert "background_loops" not in ready
+    assert deferred == {"background_loops"}

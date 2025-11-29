@@ -1740,7 +1740,21 @@ def compute_prepare_pipeline_component_budgets(
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
     floors = dict(component_floors or load_component_timeout_floors())
-    deferred_floors = dict(deferred_component_floors or load_deferred_component_timeout_floors())
+    deferred_floors = dict(
+        deferred_component_floors or load_deferred_component_timeout_floors()
+    )
+    for component, minimum in _COMPONENT_TIMEOUT_MINIMUMS.items():
+        try:
+            floors[component] = max(float(minimum), float(floors.get(component, 0.0) or 0.0))
+        except (TypeError, ValueError):
+            floors[component] = float(minimum)
+    for component, minimum in _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.items():
+        try:
+            deferred_floors[component] = max(
+                float(minimum), float(deferred_floors.get(component, 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            deferred_floors[component] = float(minimum)
     deferred_components = set(deferred_floors)
     floors.update(deferred_floors)
 
@@ -1925,6 +1939,11 @@ def compute_prepare_pipeline_component_budgets(
         * component_pool_scales.get(key, 1.0)
         for key, value in floors.items()
     }
+    if not budgets:
+        budgets = dict(floors)
+    else:
+        for component, floor in floors.items():
+            budgets.setdefault(component, floor)
 
     cohort_backoff_meta: dict[str, object] = {}
     cohort_size = len(cohort_components)
