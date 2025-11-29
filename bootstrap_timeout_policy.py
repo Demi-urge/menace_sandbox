@@ -181,6 +181,30 @@ def read_bootstrap_heartbeat(max_age: float | None = None) -> Mapping[str, Any] 
     return payload
 
 
+def _persist_guard_context(guard_context: Mapping[str, object] | None) -> None:
+    if not isinstance(guard_context, Mapping):
+        return
+
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    if not isinstance(host_state, dict):  # pragma: no cover - defensive
+        host_state = {}
+
+    context = dict(guard_context)
+    context.setdefault("ts", time.time())
+
+    host_state["bootstrap_guard"] = context
+    host_state["updated_at"] = max(
+        _parse_float(str(host_state.get("updated_at", 0.0))) or 0.0,
+        _parse_float(str(context.get("ts", 0.0))) or time.time(),
+    )
+
+    state = state if isinstance(state, dict) else {}
+    state[host_key] = host_state
+    _save_timeout_state(state)
+
+
 def _record_bootstrap_guard(
     delay: float,
     budget_scale: float,
@@ -198,6 +222,7 @@ def _record_bootstrap_guard(
         "ts": time.time(),
         "host_load": host_load,
     }
+    _persist_guard_context(_LAST_BOOTSTRAP_GUARD)
 
 
 def broadcast_timeout_floors(
@@ -248,7 +273,29 @@ def broadcast_timeout_floors(
 def get_bootstrap_guard_context() -> Mapping[str, object]:
     """Return the most recent guard metadata when available."""
 
-    return dict(_LAST_BOOTSTRAP_GUARD or {})
+    state = _load_timeout_state()
+    host_state = state.get(_state_host_key(), {}) if isinstance(state, dict) else {}
+    persisted = (
+        host_state.get("bootstrap_guard", {}) if isinstance(host_state, Mapping) else {}
+    )
+    candidates = []
+    if isinstance(persisted, Mapping):
+        candidates.append(persisted)
+    if isinstance(_LAST_BOOTSTRAP_GUARD, Mapping):
+        candidates.append(_LAST_BOOTSTRAP_GUARD)
+    if not candidates:
+        return {}
+
+    merged: dict[str, object] = {}
+    for candidate in candidates:
+        merged.update(candidate)
+
+    latest_ts = max(
+        (_parse_float(str(candidate.get("ts", 0.0))) or 0.0)
+        for candidate in candidates
+    )
+    merged["ts"] = latest_ts or time.time()
+    return merged
 
 
 def wait_for_bootstrap_quiet_period(
@@ -356,6 +403,7 @@ def wait_for_bootstrap_quiet_period(
         "budget_scale": budget_scale,
         "queue_depth": queue_depth,
         "host_load": normalized_load,
+        "ts": time.time(),
     }
     if queue_capacity:
         guard_context["queue_capacity"] = queue_capacity
@@ -363,6 +411,18 @@ def wait_for_bootstrap_quiet_period(
         slept, budget_scale, source="bootstrap_guard", host_load=normalized_load
     )
     _record_adaptive_context({"guard_context": guard_context})
+    if slept > 0 or budget_scale > 1.0:
+        logger.info(
+            "bootstrap guard budgets escalated",
+            extra={
+                "event": "bootstrap-guard-budget-scale",
+                "guard_delay": round(slept, 2),
+                "budget_scale": round(budget_scale, 3),
+                "queue_depth": queue_depth,
+                "host_load": normalized_load,
+                "timeout_state": str(_TIMEOUT_STATE_PATH),
+            },
+        )
     return slept, budget_scale
 
 
@@ -3175,10 +3235,10 @@ class SharedTimeoutCoordinator:
         state = self.component_states.get(label)
         if state:
             record["component_state"] = state
+        if metadata:
+            record.update({f"meta.{k}": v for k, v in metadata.items()})
         if self.complexity_inputs:
             record["component_complexity"] = dict(self.complexity_inputs)
-            if metadata:
-                record.update({f"meta.{k}": v for k, v in metadata.items()})
         with self._lock:
             window = self._component_windows.get(label)
             if window is not None:

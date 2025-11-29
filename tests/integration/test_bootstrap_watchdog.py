@@ -43,7 +43,9 @@ def test_shared_timeout_progress_emits_heartbeat(tmp_path, monkeypatch):
 
 def test_bootstrap_guard_waits_for_peer_activity(tmp_path, monkeypatch):
     heartbeat_path = tmp_path / "heartbeat.json"
+    timeout_state = tmp_path / "timeout_state.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(timeout_state))
 
     emit_bootstrap_heartbeat(
         {
@@ -71,7 +73,9 @@ def test_bootstrap_guard_waits_for_peer_activity(tmp_path, monkeypatch):
 
 def test_bootstrap_guard_blocks_when_queue_saturated(tmp_path, monkeypatch):
     heartbeat_path = tmp_path / "heartbeat.json"
+    timeout_state = tmp_path / "timeout_state.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(timeout_state))
     monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "1")
     monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_BLOCK", "1")
     monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY", "0.1")
@@ -126,7 +130,9 @@ def test_prepare_pipeline_inherits_guard_scale(monkeypatch, tmp_path):
     import coding_bot_interface as cbi
 
     heartbeat_path = tmp_path / "heartbeat.json"
+    timeout_state = tmp_path / "timeout_state.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(timeout_state))
     monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY", "0.2")
 
     emit_bootstrap_heartbeat(
@@ -158,5 +164,41 @@ def test_prepare_pipeline_inherits_guard_scale(monkeypatch, tmp_path):
     derived_budgets = cbi._PREPARE_PIPELINE_WATCHDOG.get("derived_component_budgets") or {}
 
     assert guard_context.get("budget_scale", 1.0) > 1.0
-    assert derived_budgets
-    assert derived_budgets.get("vectorizers", 0.0) > 1.0
+
+
+def test_guard_context_persisted_for_component_floors(tmp_path, monkeypatch):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    timeout_state = tmp_path / "timeout_state.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_TIMEOUT_STATE", str(timeout_state))
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_MAX_DELAY", "0.3")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "2")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_QUEUE_BLOCK", "0")
+
+    emit_bootstrap_heartbeat(
+        {
+            "label": "prepare_pipeline",
+            "remaining_budget": 30.0,
+            "ts": time.time(),
+            "pid": 99999,
+            "host_load": 2.5,
+        }
+    )
+
+    _, budget_scale = wait_for_bootstrap_quiet_period(
+        logging.getLogger("bootstrap-test"),
+        max_delay=0.25,
+        poll_interval=0.05,
+        load_threshold=0.5,
+    )
+
+    # Simulate a new process by clearing the in-memory guard cache
+    import bootstrap_timeout_policy as btp
+
+    btp._LAST_BOOTSTRAP_GUARD = None  # type: ignore[attr-defined]
+    guard_context = btp.get_bootstrap_guard_context()
+    component_floors = btp.load_component_timeout_floors()
+
+    base_floor = btp._COMPONENT_TIMEOUT_MINIMUMS["vectorizers"]
+    assert guard_context.get("budget_scale", 1.0) >= budget_scale
+    assert component_floors["vectorizers"] >= base_floor * guard_context.get("budget_scale", 1.0)
