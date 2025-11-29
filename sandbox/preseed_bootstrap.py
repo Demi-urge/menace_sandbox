@@ -1613,6 +1613,8 @@ def initialize_bootstrap_context(
     component_budgets = compute_prepare_pipeline_component_budgets(
         component_floors=component_timeout_floors,
         telemetry=collect_timeout_telemetry(),
+        host_telemetry=read_bootstrap_heartbeat(),
+        pipeline_complexity=stage_deadlines,
     )
     _BOOTSTRAP_SCHEDULER.set_component_budgets(component_budgets)
     _apply_timeout_policy_snapshot(timeout_policy)
