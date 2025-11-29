@@ -100,6 +100,9 @@ except Exception:  # pragma: no cover - fallback when executed from flat layout
 _STRUCTURAL_BOOTSTRAP_OWNER: contextvars.ContextVar[object | None] = contextvars.ContextVar(
     "structural_bootstrap_owner", default=None
 )
+_BOOTSTRAP_DEPENDENCY_BROKER: contextvars.ContextVar[
+    "_BootstrapDependencyBroker" | None
+] = contextvars.ContextVar("bootstrap_dependency_broker", default=None)
 
 
 @contextlib.contextmanager
@@ -1828,6 +1831,7 @@ class _BootstrapContext:
     pipeline: Any = None
     bootstrap_safe: bool = False
     bootstrap_fast: bool = False
+    dependency_broker: "_BootstrapDependencyBroker | None" = None
 
 
 @dataclass(eq=False)
@@ -1848,6 +1852,55 @@ class _BootstrapContextGuard:
 _BOOTSTRAP_THREAD_STATE = threading.local()
 _SENTINEL_UNSET = object()
 _PATCH_HISTORY_BOOTSTRAP_FLAG = "PATCH_HISTORY_BOOTSTRAP"
+
+
+class _BootstrapDependencyBroker:
+    """Coordinates reuse of in-flight bootstrap dependencies."""
+
+    def __init__(self) -> None:
+        self.active_pipeline: Any | None = None
+        self.active_sentinel: Any | None = None
+
+    def advertise(
+        self, *, pipeline: Any | None = None, sentinel: Any | None = None
+    ) -> None:
+        if _looks_like_pipeline_candidate(pipeline):
+            self.active_pipeline = pipeline
+        elif pipeline is None:
+            self.active_pipeline = self.active_pipeline
+        else:
+            self.active_pipeline = None
+        if sentinel is not None:
+            self.active_sentinel = sentinel
+
+    def resolve(self) -> tuple[Any | None, Any | None]:
+        pipeline_candidate = _resolve_bootstrap_pipeline_candidate(self.active_pipeline)
+        sentinel_candidate = self.active_sentinel
+        if pipeline_candidate is not None:
+            try:
+                sentinel_candidate = getattr(
+                    pipeline_candidate, "manager", sentinel_candidate
+                )
+            except Exception:  # pragma: no cover - best effort
+                sentinel_candidate = sentinel_candidate
+        return pipeline_candidate, sentinel_candidate
+
+    def clear(self) -> None:
+        self.active_pipeline = None
+        self.active_sentinel = None
+
+
+def _bootstrap_dependency_broker() -> _BootstrapDependencyBroker:
+    """Return the broker tracking the current bootstrap dependency state."""
+
+    broker = _BOOTSTRAP_DEPENDENCY_BROKER.get(None)
+    if broker is None:
+        broker = _BootstrapDependencyBroker()
+        try:
+            _BOOTSTRAP_DEPENDENCY_BROKER.set(broker)
+        except Exception:  # pragma: no cover - best effort context propagation
+            logger.debug("failed to seed bootstrap dependency broker", exc_info=True)
+    return broker
 
 
 def _push_bootstrap_context(
@@ -1889,6 +1942,7 @@ def _push_bootstrap_context(
         pipeline=pipeline,
         bootstrap_safe=bool(bootstrap_flag),
         bootstrap_fast=bool(fast_flag),
+        dependency_broker=_bootstrap_dependency_broker(),
     )
     stack.append(context)
     return context
@@ -5394,11 +5448,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     active_guard_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
     sentinel_candidate = manager_override or manager_sentinel
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline, broker_sentinel = dependency_broker.resolve()
     if sentinel_candidate is None:
         sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+    if sentinel_candidate is None:
+        sentinel_candidate = broker_sentinel
     if sentinel_candidate is not None:
         _mark_bootstrap_placeholder(sentinel_candidate)
-    pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None)
+    pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None) or broker_pipeline
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
     bootstrap_inflight = bool(active_depth or any(value > 0 for value in owner_depths.values()))
     guard_metadata = {
@@ -5408,6 +5466,7 @@ def _prepare_pipeline_for_bootstrap_impl(
         "pipeline_candidate": bool(pipeline_candidate),
         "bootstrap_inflight": bootstrap_inflight,
         "owner_depths": dict(owner_depths),
+        "dependency_broker": bool(broker_pipeline or broker_sentinel),
     }
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
 
@@ -5457,14 +5516,27 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "event": "prepare-pipeline-bootstrap-short-circuit",
                 "depth": active_depth,
                 "guard_token": bool(active_guard_token),
+                "dependency_broker": bool(broker_pipeline or broker_sentinel),
                 "pipeline_candidate": getattr(
                     getattr(pipeline_candidate, "__class__", None), "__name__", str(type(pipeline_candidate))
                 ),
             },
         )
+        _record_prepare_pipeline_stage(
+            "bootstrap short circuit",
+            elapsed=0.0,
+            extra={
+                "dependency_broker": bool(broker_pipeline or broker_sentinel),
+                "pipeline_candidate": bool(pipeline_candidate),
+                "sentinel_candidate": bool(sentinel_candidate),
+            },
+        )
         return pipeline_candidate, _reuse_promote
 
     enforce_bootstrap_timeout_policy(logger=logger)
+    dependency_broker.advertise(
+        pipeline=pipeline_candidate, sentinel=sentinel_candidate
+    )
     global _SUBSYSTEM_BUDGET_FLOORS
     _SUBSYSTEM_BUDGET_FLOORS = load_component_timeout_floors()
     deferred_labels_normalized = {
@@ -7951,6 +8023,9 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
             if context is not None and context.pipeline is None:
                 context.pipeline = pipeline
+            dependency_broker.advertise(
+                pipeline=pipeline, sentinel=sentinel_manager
+            )
     finally:
         if context is not None:
             _pop_bootstrap_context(context)
