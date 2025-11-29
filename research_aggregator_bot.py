@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Type, Callable
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    _looks_like_pipeline_candidate,
+    _using_bootstrap_sentinel,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -203,19 +208,36 @@ def _ensure_runtime_dependencies(
     global _runtime_placeholder
     global _runtime_initializing
 
-    owner = bootstrap_owner
+    pipeline_hint = pipeline_override
+    manager_pipeline = getattr(manager_override, "pipeline", None)
+    if pipeline_hint is None and _looks_like_pipeline_candidate(manager_pipeline):
+        pipeline_hint = manager_pipeline
+
+    sentinel_active = False
     try:
-        if owner is None:
-            from .coding_bot_interface import get_structural_bootstrap_owner
+        sentinel_active = _using_bootstrap_sentinel(manager_override)
+    except Exception:  # pragma: no cover - sentinel detection best effort
+        sentinel_active = False
 
-            owner = get_structural_bootstrap_owner()
-    except Exception:  # pragma: no cover - bootstrap owner best effort
-        owner = bootstrap_owner
+    if pipeline_hint is None and sentinel_active and pipeline is not None:
+        pipeline_hint = pipeline
 
-    if owner is not None and pipeline_override is None:
+    owner = bootstrap_owner
+    if not sentinel_active and pipeline_hint is None:
+        try:
+            if owner is None:
+                from .coding_bot_interface import get_structural_bootstrap_owner
+
+                owner = get_structural_bootstrap_owner()
+        except Exception:  # pragma: no cover - bootstrap owner best effort
+            owner = bootstrap_owner
+
+    if owner is not None and pipeline_hint is None:
         cached = _bootstrap_pipeline_cache.get(owner)
         if cached is not None:
-            pipeline_override, promote_pipeline, manager_override = cached
+            pipeline_hint, promote_pipeline, manager_override = cached
+
+    pipeline_override = pipeline_hint
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
