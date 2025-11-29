@@ -2303,6 +2303,7 @@ def render_prepare_pipeline_timeout_hints(
     vector_heavy: bool | None = None,
     *,
     components: Mapping[str, Mapping[str, object]] | Iterable[str] | None = None,
+    overruns: Mapping[str, Mapping[str, object]] | None = None,
 ) -> list[str]:
     """Return remediation hints for ``prepare_pipeline_for_bootstrap`` timeouts.
 
@@ -2346,6 +2347,11 @@ def render_prepare_pipeline_timeout_hints(
     else:
         component_labels = components
 
+    dominant_component: str | None = None
+    dominant_spent: float | None = None
+    dominant_budget: float | None = None
+    dominant_remaining: float | None = None
+
     if component_labels:
         for component in sorted(set(component_labels)):
             env_var = _ALL_COMPONENT_ENV_MAPPING.get(component)
@@ -2372,11 +2378,33 @@ def render_prepare_pipeline_timeout_hints(
                     )
                     if budget_value is not None and remaining is not None:
                         spent = budget_value - remaining
+                        if dominant_spent is None or spent > dominant_spent:
+                            dominant_spent = spent
+                            dominant_budget = budget_value
+                            dominant_remaining = remaining
+                            dominant_component = component
                         budget_clause = (
                             f" (spent {spent:.1f}s of {budget_value:.1f}s, remaining {remaining:.1f}s)"
                         )
                     elif budget_value is not None:
                         budget_clause = f" (budget {budget_value:.1f}s)"
+                        dominant_spent = dominant_spent or 0.0
+                        dominant_budget = dominant_budget or budget_value
+                        dominant_component = dominant_component or component
+                        if dominant_remaining is None:
+                            dominant_remaining = budget_value
+
+                if overruns and component in overruns:
+                    overrun_meta = overruns.get(component) or {}
+                    suggested_floor = _parse_float(
+                        str(
+                            (overrun_meta.get("suggested_floor") if isinstance(overrun_meta, Mapping) else None)
+                            or (overrun_meta.get("expected_floor") if isinstance(overrun_meta, Mapping) else None)
+                            or (overrun_meta.get("floor") if isinstance(overrun_meta, Mapping) else None)
+                        )
+                    )
+                    if suggested_floor and suggested_floor > floor:
+                        floor = suggested_floor
                 hints.append(
                     (
                         f"Repeated {component} overruns detected; increase {env_var}"
@@ -2384,6 +2412,24 @@ def render_prepare_pipeline_timeout_hints(
                         f" stretching the global deadline.{budget_clause}"
                     )
                 )
+
+    if dominant_component:
+        env_var = _ALL_COMPONENT_ENV_MAPPING.get(dominant_component)
+        target_budget = dominant_budget or component_floors.get(dominant_component) or _COMPONENT_TIMEOUT_MINIMUMS.get(
+            dominant_component, _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS.get(dominant_component, 0.0)
+        )
+        baseline_env_hint = (
+            f" {env_var}" if env_var else " MENACE_BOOTSTRAP_WAIT_SECS"
+        )
+        hints.insert(
+            0,
+            (
+                f"{dominant_component} is consuming the bootstrap window"
+                f" (spent {dominant_spent:.1f}s, remaining {dominant_remaining:.1f}s);"
+                f" raise{baseline_env_hint} to >= {int(target_budget)}s or set a component override"
+                f" to avoid tripping the aggregate deadline."
+            ),
+        )
 
     recent_peers = _recent_peer_activity()
     active_peers = [peer for peer in recent_peers if peer.get("pid") not in (None, os.getpid())]

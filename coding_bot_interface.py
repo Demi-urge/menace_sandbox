@@ -5510,6 +5510,15 @@ def _prepare_pipeline_for_bootstrap_impl(
         gate: _resolve_gate_budget(gate) for gate in readiness_gate_order
     }
 
+    adaptive_overrun_meta = (
+        adaptive_budget_context if isinstance(adaptive_budget_context, Mapping) else {}
+    )
+    adaptive_overruns_seed = adaptive_overrun_meta.get("component_overruns") or adaptive_overrun_meta.get(
+        "telemetry_overruns", {}
+    )
+    if not isinstance(adaptive_overruns_seed, Mapping):
+        adaptive_overruns_seed = {}
+
     def _record_timeout(stage: str, context: Mapping[str, Any]) -> None:
         _record_prepare_pipeline_stage(
             stage,
@@ -5573,7 +5582,13 @@ def _prepare_pipeline_for_bootstrap_impl(
     def _emit_timeout_diagnostics(stage: str, context: Mapping[str, Any]) -> None:
         vector_heavy = bool(context.get("vector_heavy", False))
         timeline = list(_PREPARE_PIPELINE_WATCHDOG.get("stages", ()))
-        remediation_hints = render_prepare_pipeline_timeout_hints(vector_heavy)
+        remediation_hints = context.get("remediation_hints") or render_prepare_pipeline_timeout_hints(
+            vector_heavy,
+            components=context.get("component_consumption")
+            or context.get("watchdog_component_windows")
+            or component_budget_payload,
+            overruns=context.get("watchdog_component_overruns"),
+        )
         logger.warning(
             (
                 "prepare_pipeline timeout diagnostics stage=%s vector_heavy=%s "
@@ -6019,7 +6034,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                         remaining_window=0.0,
                     )
                     remediation_hints = render_prepare_pipeline_timeout_hints(
-                        vector_heavy, components=exhausted_gates
+                        vector_heavy, components=exhausted_gates, overruns=adaptive_overruns
                     )
                     logger.warning(
                         "prepare_pipeline entering degraded mode; deferred optional gates=%s hints=%s",
@@ -6182,6 +6197,14 @@ def _prepare_pipeline_for_bootstrap_impl(
             _PREPARE_PIPELINE_WATCHDOG["component_deadlines"] = deadline_snapshot
             watchdog_telemetry["component_deadlines"] = deadline_snapshot
 
+        remediation_hints = render_prepare_pipeline_timeout_hints(
+            vector_heavy,
+            components=consumption_snapshot or component_budget_payload,
+            overruns=adaptive_overruns,
+        )
+        watchdog_telemetry["remediation_hints"] = remediation_hints
+        _PREPARE_PIPELINE_WATCHDOG["watchdog_hints"] = remediation_hints
+
         if pending_critical and exhausted_critical >= pending_critical:
             elapsed_stage = time.perf_counter() - start_time
             if progress_signal.get("progressing"):
@@ -6206,7 +6229,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                 )
                 return
             remediation_hints = render_prepare_pipeline_timeout_hints(
-                vector_heavy, components=exhausted_critical or pending_critical
+                vector_heavy,
+                components=exhausted_critical or pending_critical,
+                overruns=adaptive_overruns,
             )
             context = {
                 "reason": "component_window",
@@ -6336,6 +6361,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 if component_budget_payload
                 else readiness_pending
                 or readiness_ready,
+                overruns=adaptive_overruns,
             )
             context["remediation_hints"] = remediation_hints
             if budget_annotations:
@@ -6618,6 +6644,21 @@ def _prepare_pipeline_for_bootstrap_impl(
             coordinator_total_budget = max(shared_timeout_budget, 0.0)
     if coordinator_total_budget == 0:
         coordinator_total_budget = None
+
+    initial_remediation_hints = render_prepare_pipeline_timeout_hints(
+        vector_bootstrap_heavy,
+        components=component_budget_payload or component_timer_budgets,
+        overruns=adaptive_overruns_seed,
+    )
+    _PREPARE_PIPELINE_WATCHDOG["watchdog_hints"] = list(initial_remediation_hints)
+    logger.info(
+        "prepare_pipeline bootstrap remediation hints primed",
+        extra={
+            "remediation_hints": initial_remediation_hints,
+            "component_budgets": component_budget_payload,
+            "component_overruns": adaptive_overruns_seed,
+        },
+    )
 
     if coordinator_total_budget is not None or component_timer_budgets:
         shared_timeout_coordinator = SharedTimeoutCoordinator(
