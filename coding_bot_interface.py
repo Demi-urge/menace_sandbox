@@ -5589,6 +5589,21 @@ def _prepare_pipeline_for_bootstrap_impl(
         return estimates
     historical_gate_budgets = _historical_gate_budgets(readiness_gate_order)
 
+    base_deadline_floor = sum(
+        _COMPONENT_TIMEOUT_MINIMUMS.get(gate, 0.0)
+        for gate in readiness_gate_order
+        if gate not in DEFERRED_COMPONENTS
+    )
+    adaptive_deadline_floor = None
+    if derived_component_budgets:
+        adaptive_deadline_floor = sum(
+            budget
+            for gate, budget in derived_component_budgets.items()
+            if gate not in DEFERRED_COMPONENTS and budget is not None
+        )
+    policy_deadline_budget = max(base_deadline_floor, adaptive_deadline_floor or 0.0)
+    _PREPARE_PIPELINE_WATCHDOG["policy_deadline_budget"] = policy_deadline_budget
+
     def _select_phase_budget(component: str) -> float | None:
         if component in component_budget_overrides:
             return component_budget_overrides[component]
@@ -6883,6 +6898,8 @@ def _prepare_pipeline_for_bootstrap_impl(
         resolved_wait_timeout if resolved_wait_timeout is not None else 0.0,
         _BOOTSTRAP_TIMEOUT_FLOOR,
     )
+    effective_deadline_floor = max(effective_timeout_floor, policy_deadline_budget)
+    _PREPARE_PIPELINE_WATCHDOG["effective_deadline_floor"] = effective_deadline_floor
     component_budget_payload = {
         k: v for k, v in component_timer_budgets.items() if v is not None and k not in DEFERRED_COMPONENTS
     }
@@ -6983,6 +7000,12 @@ def _prepare_pipeline_for_bootstrap_impl(
             coordinator_total_budget = sum(budget_basis.values())
         elif shared_timeout_budget is not None:
             coordinator_total_budget = max(shared_timeout_budget, 0.0)
+    if policy_deadline_budget:
+        coordinator_total_budget = (
+            policy_deadline_budget
+            if coordinator_total_budget is None
+            else max(coordinator_total_budget, policy_deadline_budget)
+        )
     contention_backlog = backlog_depth > 0 or guard_delay > 0 or load_scale > 1.0
     if contention_backlog and coordinator_total_budget is not None:
         scaled_basis = max(
@@ -7020,7 +7043,8 @@ def _prepare_pipeline_for_bootstrap_impl(
             component_floors=_SUBSYSTEM_BUDGET_FLOORS,
             component_budgets=component_timer_budgets,
             signal_hook=progress_signal,
-            global_window=global_bootstrap_window,
+            global_window=max(global_bootstrap_window or 0.0, policy_deadline_budget)
+            or None,
             complexity_inputs=component_complexity_inputs,
         )
         _PREPARE_PIPELINE_WATCHDOG["shared_timeout_instance"] = shared_timeout_coordinator
@@ -7091,7 +7115,7 @@ def _prepare_pipeline_for_bootstrap_impl(
     active_stage_gates: set[str] = set()
 
     def _clamp_to_timeout_floor(value: float) -> tuple[float, bool]:
-        clamped_value = max(effective_timeout_floor, value)
+        clamped_value = max(effective_deadline_floor, value)
         return clamped_value, clamped_value > value
 
     if timeout is not None:
@@ -7118,7 +7142,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 env_vector_wait,
                 extra={
                     "requested_timeout": timeout,
-                    "timeout_floor": effective_timeout_floor,
+                    "timeout_floor": effective_deadline_floor,
                     "effective_timeout": requested_timeout,
                     "vector_heavy": vector_bootstrap_heavy,
                     "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
@@ -7151,7 +7175,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 env_vector_wait,
                 extra={
                     "requested_timeout": deadline_budget,
-                    "timeout_floor": effective_timeout_floor,
+                    "timeout_floor": effective_deadline_floor,
                     "effective_timeout": requested_timeout,
                     "vector_heavy": vector_bootstrap_heavy,
                     "env_menace_bootstrap_wait_secs": env_bootstrap_wait,
@@ -7160,7 +7184,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             )
 
     if resolved_deadline is None and requested_timeout is None:
-        default_timeout = effective_timeout_floor
+        default_timeout = effective_deadline_floor
         if resolved_wait_timeout is not None:
             default_timeout = max(default_timeout, resolved_wait_timeout)
         resolved_deadline = start_time + default_timeout
@@ -7168,7 +7192,7 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     if resolved_deadline is not None:
         resolved_timeout_budget = max(0.0, resolved_deadline - start_time)
-        effective_min_timeout = effective_timeout_floor
+        effective_min_timeout = effective_deadline_floor
         if resolved_wait_timeout is not None:
             effective_min_timeout = max(effective_min_timeout, resolved_wait_timeout)
         clamped_timeout = max(resolved_timeout_budget, effective_min_timeout)
@@ -7214,6 +7238,25 @@ def _prepare_pipeline_for_bootstrap_impl(
             vector_bootstrap_heavy,
             env_bootstrap_wait,
             env_vector_wait,
+        )
+
+    resolved_timeout_budget = None
+    if resolved_deadline is not None:
+        resolved_timeout_budget = max(0.0, resolved_deadline - start_time)
+    _PREPARE_PIPELINE_WATCHDOG["resolved_deadline"] = resolved_deadline
+    _PREPARE_PIPELINE_WATCHDOG["resolved_timeout_budget"] = resolved_timeout_budget
+    if shared_timeout_coordinator is not None and resolved_timeout_budget is not None:
+        shared_timeout_coordinator.global_window = max(
+            shared_timeout_coordinator.global_window or 0.0,
+            resolved_timeout_budget,
+        )
+        shared_timeout_coordinator.remaining_budget = max(
+            shared_timeout_coordinator.remaining_budget or 0.0,
+            shared_timeout_coordinator.global_window,
+        )
+        shared_timeout_coordinator._expanded_global_window = max(
+            shared_timeout_coordinator._expanded_global_window or 0.0,
+            shared_timeout_coordinator.global_window,
         )
 
     if bootstrap_safe:
