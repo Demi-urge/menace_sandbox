@@ -35,3 +35,23 @@ def test_detect_conflicts_flags_bootstrap_and_watchers():
 
     assert bootstraps == ["pid 101: python /opt/run_autonomous.py"]
     assert watchers == ["pid 202: watchman --no-pretty sandbox_data"]
+
+
+def test_enforce_timeout_floor_envs_overrides_lower_values(monkeypatch):
+    floors = {"FOO_TIMEOUT": 10.0, "BAR_TIMEOUT": 5.0}
+
+    monkeypatch.setenv("FOO_TIMEOUT", "3")
+    monkeypatch.setenv("BAR_TIMEOUT", "7")
+    monkeypatch.setenv("BAZ_TIMEOUT", "invalid")
+
+    stub_policy = types.SimpleNamespace(
+        load_escalated_timeout_floors=lambda: floors
+    )
+
+    with mock.patch.dict("sys.modules", {"bootstrap_timeout_policy": stub_policy}):
+        applied = bcc.enforce_timeout_floor_envs(logger=None)
+
+    assert applied == {"FOO_TIMEOUT": 10.0, "BAR_TIMEOUT": 7.0}
+    assert os.getenv("FOO_TIMEOUT") == "10.0"
+    assert os.getenv("BAR_TIMEOUT") == "7"
+    assert os.getenv("BAZ_TIMEOUT") == "invalid"
