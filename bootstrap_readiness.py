@@ -5,6 +5,11 @@ from typing import Iterable, Mapping, MutableMapping
 
 import os
 
+from bootstrap_timeout_policy import (
+    _COMPONENT_TIMEOUT_MINIMUMS,
+    _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS,
+)
+
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
 
@@ -39,6 +44,12 @@ for stage in READINESS_STAGES:
         _STEP_TO_STAGE[step] = stage.name
 
 
+_COMPONENT_BASELINES: Mapping[str, float] = {
+    **_COMPONENT_TIMEOUT_MINIMUMS,
+    **_DEFERRED_COMPONENT_TIMEOUT_MINIMUMS,
+}
+
+
 def stage_for_step(step: str) -> str | None:
     return _STEP_TO_STAGE.get(step)
 
@@ -63,6 +74,31 @@ def _resolve_stage_budget(stage: str, budgets: Mapping[str, float] | None) -> fl
     return None
 
 
+def _baseline_for_stage(
+    stage: str,
+    *,
+    component_budgets: Mapping[str, float] | None,
+    component_floors: Mapping[str, float] | None,
+    fallback: float,
+) -> tuple[float | None, float | None]:
+    """Return the target budget and floor for a readiness stage."""
+
+    stage_budget = _resolve_stage_budget(stage, component_budgets)
+    stage_floor = _resolve_stage_budget(stage, component_floors)
+
+    if stage_floor is None:
+        for alias in _STAGE_BUDGET_ALIASES.get(stage, (stage,)):
+            if alias in _COMPONENT_BASELINES:
+                stage_floor = float(_COMPONENT_BASELINES[alias])
+                break
+
+    resolved_budget = stage_budget
+    if resolved_budget is None:
+        resolved_budget = stage_floor if stage_floor is not None else fallback
+
+    return resolved_budget, stage_floor
+
+
 def build_stage_deadlines(
     baseline_timeout: float,
     *,
@@ -77,11 +113,12 @@ def build_stage_deadlines(
     stage_deadlines: dict[str, dict[str, object]] = {}
     for stage in READINESS_STAGES:
         enforced = not stage.optional and not soft_deadline
-        stage_budget = _resolve_stage_budget(stage.name, component_budgets)
-        stage_floor = _resolve_stage_budget(stage.name, component_floors)
-        resolved_budget = stage_budget
-        if resolved_budget is None:
-            resolved_budget = stage_floor if stage_floor is not None else baseline_timeout
+        resolved_budget, stage_floor = _baseline_for_stage(
+            stage.name,
+            component_budgets=component_budgets,
+            component_floors=component_floors,
+            fallback=baseline_timeout,
+        )
         scaled_budget = resolved_budget * scale if resolved_budget is not None else None
         if stage.optional and scaled_budget is not None:
             scaled_budget *= 0.8
