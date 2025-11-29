@@ -10,6 +10,7 @@ from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import (
     _looks_like_pipeline_candidate,
+    get_active_bootstrap_pipeline,
     _using_bootstrap_sentinel,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
@@ -209,6 +210,12 @@ def _ensure_runtime_dependencies(
     global _runtime_initializing
 
     pipeline_hint = pipeline_override
+    guard_pipeline, guard_manager = get_active_bootstrap_pipeline()
+    if pipeline_hint is None and _looks_like_pipeline_candidate(guard_pipeline):
+        pipeline_hint = guard_pipeline
+        if manager_override is None:
+            manager_override = guard_manager
+
     manager_pipeline = getattr(manager_override, "pipeline", None)
     if pipeline_hint is None and _looks_like_pipeline_candidate(manager_pipeline):
         pipeline_hint = manager_pipeline
