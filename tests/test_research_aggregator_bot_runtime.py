@@ -635,3 +635,69 @@ def test_dependency_broker_reuses_inflight_pipeline(monkeypatch):
     assert state.pipeline is broker_pipeline
     broker_promote.assert_called_once_with(broker_manager)
     module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_bootstrap_guard_promise_waits_for_pipeline(monkeypatch):
+    """A guard promise blocks fresh bootstrap attempts until the pipeline appears."""
+
+    guard_token = object()
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    class FakeModelAutomationPipeline:
+        def __init__(self) -> None:
+            self.context_builder = fake_builder
+            self.manager = mock.Mock(name="manager")
+            self._bot_attribute_order: tuple[str, ...] = ()
+
+    fake_pipeline = FakeModelAutomationPipeline()
+    broker_calls: list[int] = []
+
+    class _Broker:
+        def resolve(self) -> tuple[object | None, object | None]:
+            broker_calls.append(len(broker_calls))
+            if len(broker_calls) > 1:
+                return fake_pipeline, fake_pipeline.manager
+            return None, None
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(active_bootstrap_guard=guard_token)
+    module._peek_owner_promise = lambda *_args, **_kwargs: object()
+    module._resolve_bootstrap_wait_timeout = lambda *_args, **_kwargs: 0.05
+    module._bootstrap_dependency_broker = lambda: _Broker()
+    module._current_bootstrap_context = lambda: None
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=FakeModelAutomationPipeline))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=fake_pipeline.manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies()
+
+    assert len(broker_calls) >= 2
+    assert state.pipeline is fake_pipeline
+    assert state.manager is fake_pipeline.manager
+    module.prepare_pipeline_for_bootstrap.assert_not_called()

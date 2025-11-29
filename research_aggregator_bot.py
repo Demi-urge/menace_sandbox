@@ -13,7 +13,10 @@ from .coding_bot_interface import (
     _looks_like_pipeline_candidate,
     _bootstrap_dependency_broker,
     get_active_bootstrap_pipeline,
+    _current_bootstrap_context,
     _using_bootstrap_sentinel,
+    _peek_owner_promise,
+    _resolve_bootstrap_wait_timeout,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -225,6 +228,15 @@ def _ensure_runtime_dependencies(
         if manager_override is None:
             manager_override = guard_manager
 
+    bootstrap_context = _current_bootstrap_context()
+    if pipeline_hint is None and bootstrap_context is not None:
+        context_pipeline = getattr(bootstrap_context, "pipeline", None)
+        if _looks_like_pipeline_candidate(context_pipeline):
+            pipeline_hint = context_pipeline
+        context_manager = getattr(bootstrap_context, "manager", None)
+        if manager_override is None and context_manager is not None:
+            manager_override = context_manager
+
     manager_pipeline = getattr(manager_override, "pipeline", None)
     if pipeline_hint is None and _looks_like_pipeline_candidate(manager_pipeline):
         pipeline_hint = manager_pipeline
@@ -319,17 +331,55 @@ def _ensure_runtime_dependencies(
         promote_pipeline = promote_pipeline or _active_bootstrap_promoter() or (
             lambda *_args: None
         )
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+        guard_promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
         dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, broker_manager = dependency_broker.resolve()
+        if pipeline_hint is None and _looks_like_pipeline_candidate(broker_pipeline):
+            pipeline_hint = broker_pipeline
+            if manager_override is None and manager is None and broker_manager is not None:
+                manager_override = broker_manager
+
+        pipe = None
         if pipeline_override is not None:
             pipe = pipeline_override
         elif pipeline is not None:
             pipe = pipeline
-        elif broker_pipeline is not None:
-            pipe = broker_pipeline
-            if manager_override is None and manager is None and broker_manager is not None:
-                manager_override = broker_manager
-        else:
+        elif _looks_like_pipeline_candidate(pipeline_hint):
+            pipe = pipeline_hint
+        if pipe is None and guard_promise is not None:
+            wait_timeout = _resolve_bootstrap_wait_timeout()
+            wait_start = time.perf_counter()
+            while pipe is None:
+                broker_pipeline, broker_manager = dependency_broker.resolve()
+                if _looks_like_pipeline_candidate(broker_pipeline):
+                    pipe = broker_pipeline
+                    if (
+                        manager_override is None
+                        and manager is None
+                        and broker_manager is not None
+                    ):
+                        manager_override = broker_manager
+                    break
+
+                bootstrap_context = _current_bootstrap_context()
+                if bootstrap_context is not None:
+                    context_pipeline = getattr(bootstrap_context, "pipeline", None)
+                    if _looks_like_pipeline_candidate(context_pipeline):
+                        pipe = context_pipeline
+                        if manager_override is None:
+                            context_manager = getattr(bootstrap_context, "manager", None)
+                            if context_manager is not None:
+                                manager_override = context_manager
+                        break
+
+                if wait_timeout is not None and (
+                    time.perf_counter() - wait_start
+                ) >= wait_timeout:
+                    break
+                time.sleep(0.01)
+
+        if pipe is None:
             pipe, promote_pipeline = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
                 context_builder=ctx_builder,
