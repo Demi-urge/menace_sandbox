@@ -124,7 +124,11 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    get_active_bootstrap_pipeline,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .threshold_service import ThresholdService
@@ -174,7 +178,51 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
             )
         assert _engine is not None
 
-        if _pipeline is None:
+        bootstrap_pipeline: "ModelAutomationPipeline" | None = None
+        bootstrap_manager: "SelfCodingManager" | None = None
+        promoter: Callable[["SelfCodingManager"], None] | None = None
+
+        if _pipeline is None or _manager_instance is None:
+            try:
+                bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+            except Exception:
+                bootstrap_pipeline, bootstrap_manager = None, None
+
+            if bootstrap_pipeline is None or bootstrap_manager is None:
+                try:
+                    from .coding_bot_interface import _bootstrap_dependency_broker
+
+                    broker = _bootstrap_dependency_broker()
+                    broker_pipeline, broker_manager = broker.resolve()
+                    if bootstrap_pipeline is None:
+                        bootstrap_pipeline = broker_pipeline
+                    if bootstrap_manager is None:
+                        bootstrap_manager = broker_manager
+                except Exception:
+                    bootstrap_pipeline, bootstrap_manager = bootstrap_pipeline, bootstrap_manager
+
+            for candidate in (bootstrap_pipeline, bootstrap_manager):
+                if promoter is None and candidate is not None:
+                    promoter = getattr(candidate, "_pipeline_promoter", None)
+
+            if _pipeline is None and bootstrap_pipeline is not None:
+                _pipeline = bootstrap_pipeline
+            if _pipeline_promoter is None and promoter is not None:
+                _pipeline_promoter = promoter
+            if _manager_instance is None and bootstrap_manager is not None:
+                _manager_instance = bootstrap_manager
+
+        bootstrap_active = bool(bootstrap_pipeline or bootstrap_manager)
+        try:
+            from .coding_bot_interface import _BOOTSTRAP_STATE, _current_bootstrap_context
+
+            bootstrap_active = bootstrap_active or bool(
+                getattr(_BOOTSTRAP_STATE, "depth", 0)
+            ) or bool(_current_bootstrap_context())
+        except Exception:
+            bootstrap_active = bootstrap_active
+
+        if _pipeline is None and not bootstrap_active:
             from .model_automation_pipeline import ModelAutomationPipeline
 
             pipeline, promoter = prepare_pipeline_for_bootstrap(
