@@ -71,6 +71,9 @@ _DEFAULT_GUARD_MAX_DELAY = 90.0
 _DEFAULT_GUARD_INTERVAL = 5.0
 _COMPONENT_FLOOR_MAX_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_FLOOR_MAX_SCALE"
 _COMPONENT_STALENESS_PAD_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_STALENESS_PAD"
+_COMPONENT_WINDOW_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_SCALE"
+_COMPONENT_WINDOW_MIN_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MIN"
+_COMPONENT_WINDOW_MAX_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MAX"
 _DEFAULT_COMPONENT_FLOOR_MAX_SCALE = 3.5
 _DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
@@ -963,6 +966,45 @@ def get_adaptive_timeout_context() -> Mapping[str, object]:
     return dict(_ADAPTIVE_TIMEOUT_CONTEXT)
 
 
+def _resolve_window_overrides(
+    overrides: Mapping[str, object] | None = None,
+) -> tuple[float, float | None, float | None, dict[str, object]]:
+    """Return scaling and ceiling overrides from env or config."""
+
+    overrides = overrides or {}
+    scale_override = _parse_float(os.getenv(_COMPONENT_WINDOW_SCALE_ENV)) or 1.0
+    minimum_override = _parse_float(os.getenv(_COMPONENT_WINDOW_MIN_ENV))
+    maximum_override = _parse_float(os.getenv(_COMPONENT_WINDOW_MAX_ENV))
+
+    if isinstance(overrides, Mapping):
+        if "scale" in overrides:
+            scale_override = _parse_float(str(overrides.get("scale"))) or scale_override
+        if "min" in overrides:
+            minimum_override = _parse_float(str(overrides.get("min"))) or minimum_override
+        if "floor" in overrides:
+            minimum_override = _parse_float(str(overrides.get("floor"))) or minimum_override
+        if "max" in overrides:
+            maximum_override = _parse_float(str(overrides.get("max"))) or maximum_override
+        if "ceiling" in overrides:
+            maximum_override = _parse_float(str(overrides.get("ceiling"))) or maximum_override
+
+    meta = {
+        "scale_override": scale_override,
+        "minimum_override": minimum_override,
+        "maximum_override": maximum_override,
+        "sources": {
+            "env": {
+                "scale": _COMPONENT_WINDOW_SCALE_ENV,
+                "min": _COMPONENT_WINDOW_MIN_ENV,
+                "max": _COMPONENT_WINDOW_MAX_ENV,
+            },
+            "config": dict(overrides),
+        },
+    }
+
+    return scale_override, minimum_override, maximum_override, meta
+
+
 def _parse_component_inventory(raw: Mapping[str, object] | str | None) -> Dict[str, object]:
     """Normalize component inventory hints from strings or mappings."""
 
@@ -1397,12 +1439,19 @@ def persist_component_consumption(
     return host_state
 
 
-def load_component_timeout_floors() -> dict[str, float]:
+def load_component_timeout_floors(
+    *,
+    pipeline_complexity: Mapping[str, object] | None = None,
+    host_telemetry: Mapping[str, object] | None = None,
+    component_hints: Mapping[str, object] | str | None = None,
+    load_average: float | None = None,
+    window_overrides: Mapping[str, object] | None = None,
+) -> dict[str, float]:
     """Return per-component timeout floors with host-level overrides applied."""
 
     state = _load_timeout_state()
     guard_context = get_bootstrap_guard_context()
-    host_telemetry = read_bootstrap_heartbeat()
+    host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
     historical = load_last_component_budgets()
     host_key = _state_host_key()
     host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
@@ -1413,7 +1462,10 @@ def load_component_timeout_floors() -> dict[str, float]:
         active_bootstraps=int(backlog_state.get("max_active_bootstraps", 0) or 0),
     )
     adaptive_minimums = compute_adaptive_component_minimums(
+        pipeline_complexity=pipeline_complexity,
         host_telemetry=host_telemetry,
+        load_average=load_average,
+        component_hints=component_hints,
         component_minimums=runtime_component_minimums,
     )
     base_defaults: dict[str, float] = {}
@@ -1425,15 +1477,20 @@ def load_component_timeout_floors() -> dict[str, float]:
         adaptive_floor = adaptive_minimums.get(component, 0.0)
         base_defaults[component] = max(minimum, historical_floor, adaptive_floor)
     scale, scale_context = _derive_component_floor_scale(
-    guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
+        guard_context=guard_context, host_state=state, host_telemetry=host_telemetry
     )
 
     heartbeat_scale = 1.0
     heartbeat_meta: dict[str, object] = {}
     threshold = _parse_float(os.getenv(_BOOTSTRAP_LOAD_THRESHOLD_ENV)) or _DEFAULT_LOAD_THRESHOLD
+    if load_average is None:
+        load_average = _parse_float(str(host_telemetry.get("host_load")))
+    if load_average is None:
+        load_average = _host_load_average()
+
     if isinstance(host_telemetry, Mapping):
         heartbeat_meta = dict(host_telemetry)
-        heartbeat_load = _parse_float(str(host_telemetry.get("host_load")))
+        heartbeat_load = _parse_float(str(host_telemetry.get("host_load", load_average)))
         if heartbeat_load is not None and threshold:
             heartbeat_scale = max(heartbeat_scale, 1.0 + max(heartbeat_load / threshold - 1.0, 0.0))
         active_clusters = 0
@@ -1516,6 +1573,16 @@ def load_component_timeout_floors() -> dict[str, float]:
                     component_floors.get(component, base), min(peer_floor, ceiling)
                 )
 
+    override_scale, minimum_override, maximum_override, override_meta = _resolve_window_overrides(window_overrides)
+    if override_scale != 1.0 or minimum_override is not None or maximum_override is not None:
+        for component, value in list(component_floors.items()):
+            adjusted = value * override_scale
+            if minimum_override is not None:
+                adjusted = max(adjusted, minimum_override)
+            if maximum_override is not None:
+                adjusted = min(adjusted, maximum_override)
+            component_floors[component] = adjusted
+
     floor_context = {
         "component_cluster_scale": scale_context | {"scale": scale, "max_scale": max_scale},
         "component_floor_inputs": {
@@ -1525,6 +1592,7 @@ def load_component_timeout_floors() -> dict[str, float]:
             "max_scale": max_scale,
             "heartbeat_scale": heartbeat_scale,
             "runtime_minimums": runtime_meta,
+            "window_overrides": override_meta,
         },
         "component_floors": dict(component_floors),
     }
@@ -1539,6 +1607,7 @@ def load_component_timeout_floors() -> dict[str, float]:
             "scale_context": scale_context,
             "scale": scale,
             "max_scale": max_scale,
+            "overrides": override_meta,
         }
         if isinstance(state, dict):
             state[host_key] = host_state
@@ -1809,6 +1878,8 @@ def compute_prepare_pipeline_component_budgets(
     pipeline_complexity: Mapping[str, object] | None = None,
     host_telemetry: Mapping[str, object] | None = None,
     scheduled_component_budgets: Mapping[str, float] | None = None,
+    component_hints: Mapping[str, object] | str | None = None,
+    window_overrides: Mapping[str, object] | None = None,
 ) -> dict[str, float]:
     """Return proactive per-component budgets for prepare_pipeline gates."""
 
@@ -1823,7 +1894,16 @@ def compute_prepare_pipeline_component_budgets(
     host_key = _state_host_key()
     host_state_details = host_state.get(host_key, {}) if isinstance(host_state, dict) else {}
     host_telemetry = dict(host_telemetry or read_bootstrap_heartbeat() or {})
-    floors = dict(component_floors or load_component_timeout_floors())
+    floors = dict(
+        component_floors
+        or load_component_timeout_floors(
+            pipeline_complexity=pipeline_complexity,
+            host_telemetry=host_telemetry,
+            component_hints=component_hints,
+            load_average=load_average,
+            window_overrides=window_overrides,
+        )
+    )
     deferred_floors = dict(
         deferred_component_floors or load_deferred_component_timeout_floors()
     )
@@ -2168,6 +2248,7 @@ def compute_prepare_pipeline_component_budgets(
             "pending_background_loops": pending_background_loops,
             "scale": backlog_scale,
         },
+        "window_overrides": window_overrides,
     }
     _record_adaptive_context(adaptive_inputs)
 
@@ -2219,6 +2300,7 @@ def compute_prepare_pipeline_component_budgets(
             "runtime_minimums": runtime_component_minimums,
             "runtime_bootstrap_minimums": runtime_bootstrap_minimums,
             "runtime_meta": runtime_meta,
+            "window_overrides": window_overrides,
             "updated_at": time.time(),
         }
     )
