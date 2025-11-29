@@ -6603,11 +6603,63 @@ def _prepare_pipeline_for_bootstrap_impl(
         k: v for k, v in component_timer_budgets.items() if v is not None and k not in DEFERRED_COMPONENTS
     }
     component_budget_total = sum(component_budget_payload.values()) if component_budget_payload else None
-    shared_timeout_budget = resolved_wait_timeout
-    if shared_timeout_budget is None:
-        shared_timeout_budget = _parse_float(os.getenv(MENACE_BOOTSTRAP_WAIT_SECS))
-    if global_bootstrap_window is not None:
-        shared_timeout_budget = max(shared_timeout_budget or 0.0, global_bootstrap_window)
+    active_gate_count = len([gate for gate in readiness_gate_order if gate not in DEFERRED_COMPONENTS])
+    historical_total_budget = sum(
+        historical_gate_budgets.get(gate, 0.0)
+        for gate in readiness_gate_order
+        if gate not in DEFERRED_COMPONENTS
+    )
+    adaptive_total_budget = None
+    if derived_component_budgets:
+        adaptive_total_budget = sum(
+            value
+            for gate, value in derived_component_budgets.items()
+            if gate not in DEFERRED_COMPONENTS
+        )
+    host_telemetry = read_bootstrap_heartbeat() or {}
+    guard_snapshot = dict(get_bootstrap_guard_context())
+    guard_delay = _parse_float(str(guard_snapshot.get("delay"))) or 0.0
+    host_load = _parse_float(str(guard_snapshot.get("host_load")))
+    if host_load is None:
+        host_load = _parse_float(str(host_telemetry.get("host_load")))
+    backlog_depth = 0
+    try:
+        backlog_depth = max(
+            backlog_depth,
+            int(guard_snapshot.get("queue_depth", 0) or 0),
+            int(host_telemetry.get("queue_depth", 0) or 0),
+        )
+    except Exception:
+        backlog_depth = backlog_depth
+    gate_scale = 1.0 + max(active_gate_count - 1, 0) * 0.05
+    load_scale = max(
+        1.0,
+        _parse_float(str(guard_snapshot.get("budget_scale"))) or 1.0,
+        1.0 + max((host_load or 0.0) - 1.0, 0.0) * 0.35,
+    )
+    backlog_scale = 1.0 + max(backlog_depth - 1, 0) * 0.1
+    dynamic_global_window: float | None = global_bootstrap_window
+    for candidate in (
+        adaptive_total_budget,
+        component_budget_total,
+        historical_total_budget,
+        resolved_wait_timeout,
+    ):
+        if candidate:
+            dynamic_global_window = max(dynamic_global_window or 0.0, candidate)
+    if dynamic_global_window is not None:
+        dynamic_global_window *= max(gate_scale, load_scale, backlog_scale)
+    _PREPARE_PIPELINE_WATCHDOG["dynamic_global_window_inputs"] = {
+        "gate_scale": gate_scale,
+        "load_scale": load_scale,
+        "backlog_scale": backlog_scale,
+        "historical_total_budget": historical_total_budget,
+        "adaptive_total_budget": adaptive_total_budget,
+        "component_budget_total": component_budget_total,
+        "active_gate_count": active_gate_count,
+        "dynamic_global_window": dynamic_global_window,
+    }
+    shared_timeout_budget = dynamic_global_window
     component_budget_active = bool(component_budget_payload)
     if component_budget_active:
         shared_timeout_budget = None
@@ -6631,7 +6683,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             },
         )
     component_windows: dict[str, dict[str, Any]] = {}
-    coordinator_total_budget: float | None = global_bootstrap_window
+    coordinator_total_budget: float | None = dynamic_global_window or global_bootstrap_window
     if coordinator_total_budget is None:
         budget_basis = component_budget_payload or {
             gate: budget
@@ -6642,6 +6694,17 @@ def _prepare_pipeline_for_bootstrap_impl(
             coordinator_total_budget = sum(budget_basis.values())
         elif shared_timeout_budget is not None:
             coordinator_total_budget = max(shared_timeout_budget, 0.0)
+    contention_backlog = backlog_depth > 0 or guard_delay > 0 or load_scale > 1.0
+    if contention_backlog and coordinator_total_budget is not None:
+        scaled_basis = max(
+            candidate
+            for candidate in (
+                (component_budget_total or 0.0) * max(load_scale, backlog_scale),
+                (historical_total_budget or 0.0) * max(load_scale, gate_scale),
+                (dynamic_global_window or 0.0),
+            )
+        )
+        coordinator_total_budget = max(coordinator_total_budget, scaled_basis)
     if coordinator_total_budget == 0:
         coordinator_total_budget = None
 
