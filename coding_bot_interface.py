@@ -5470,6 +5470,63 @@ def _prepare_pipeline_for_bootstrap_impl(
     }
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
 
+    reentry_waited = False
+    reentry_wait_timeout = None
+    reentry_wait_elapsed = 0.0
+    reentry_blocked = bootstrap_inflight and not (
+        pipeline_candidate is not None or sentinel_candidate is not None
+    )
+
+    if reentry_blocked:
+        wait_start = time.perf_counter()
+        wait_timeout = bootstrap_wait_timeout
+        if wait_timeout is None:
+            wait_timeout = _resolve_bootstrap_wait_timeout()
+        reentry_wait_timeout = wait_timeout
+        while pipeline_candidate is None and sentinel_candidate is None:
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            if pipeline_candidate is None:
+                pipeline_candidate = _resolve_bootstrap_pipeline_candidate(
+                    pipeline_candidate
+                ) or broker_pipeline
+            if sentinel_candidate is None:
+                sentinel_candidate = broker_sentinel or getattr(
+                    _BOOTSTRAP_STATE, "sentinel_manager", None
+                )
+                if sentinel_candidate is not None:
+                    _mark_bootstrap_placeholder(sentinel_candidate)
+            if pipeline_candidate is not None or sentinel_candidate is not None:
+                break
+            if wait_timeout is not None and (
+                time.perf_counter() - wait_start
+            ) >= wait_timeout:
+                break
+            reentry_waited = True
+            time.sleep(0.01)
+
+        reentry_wait_elapsed = time.perf_counter() - wait_start
+        guard_metadata.update(
+            {
+                "reentry_waited": reentry_waited or reentry_wait_elapsed > 0.0,
+                "reentry_wait_timeout": reentry_wait_timeout,
+                "reentry_wait_elapsed": reentry_wait_elapsed,
+            }
+        )
+        _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
+
+    if bootstrap_inflight and pipeline_candidate is None and sentinel_candidate is None:
+        sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+        if sentinel_candidate is None:
+            sentinel_candidate = SimpleNamespace(bootstrap_placeholder=True)
+        _mark_bootstrap_placeholder(sentinel_candidate)
+        pipeline_candidate = SimpleNamespace(
+            manager=sentinel_candidate,
+            initial_manager=sentinel_candidate,
+            bootstrap_placeholder=True,
+        )
+        _mark_bootstrap_placeholder(pipeline_candidate)
+        _BOOTSTRAP_STATE.pipeline = pipeline_candidate
+
     if bootstrap_inflight and (pipeline_candidate is not None or sentinel_candidate is not None):
         if pipeline_candidate is None:
             pipeline_candidate = getattr(_BOOTSTRAP_STATE, "pipeline", None)
@@ -5507,9 +5564,27 @@ def _prepare_pipeline_for_bootstrap_impl(
                 "suppress_logging": True,
                 "pipeline_candidate": bool(pipeline_candidate),
                 "sentinel_candidate": bool(sentinel_candidate),
+                "reentry_blocked": reentry_blocked,
+                "reentry_waited": reentry_waited or reentry_wait_elapsed > 0.0,
+                "reentry_wait_elapsed": reentry_wait_elapsed,
             }
         )
         _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
+        logger.info(
+            "prepare_pipeline.bootstrap.reentry_block",
+            extra={
+                "event": "prepare-pipeline-bootstrap-reentry-block",
+                "depth": active_depth,
+                "guard_token": bool(active_guard_token),
+                "dependency_broker": bool(broker_pipeline or broker_sentinel),
+                "pipeline_candidate": getattr(
+                    getattr(pipeline_candidate, "__class__", None), "__name__", str(type(pipeline_candidate))
+                ),
+                "waited": reentry_waited or reentry_wait_elapsed > 0.0,
+                "wait_timeout": reentry_wait_timeout,
+                "wait_elapsed": round(reentry_wait_elapsed, 6),
+            },
+        )
         logger.info(
             "prepare_pipeline.bootstrap.short_circuit",
             extra={

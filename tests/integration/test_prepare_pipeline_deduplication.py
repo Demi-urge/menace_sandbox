@@ -1,4 +1,6 @@
+from collections import deque
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -145,3 +147,62 @@ def test_reentrant_promoter_applies_manager_once(monkeypatch):
     assert pipeline_candidate.manager is real_manager
     assert pipeline_candidate.initial_manager is real_manager
     assert assigned.count(real_manager) == 1
+
+
+def test_reentrant_waits_for_dependency_broker(monkeypatch):
+    owner_guard = object()
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+    cbi._PREPARE_PIPELINE_WATCHDOG.clear()
+    cbi._PREPARE_PIPELINE_WATCHDOG.update(
+        {"stages": deque(maxlen=32), "timeouts": 0, "extensions": []}
+    )
+    cbi._BOOTSTRAP_STATE.depth = 1  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.active_bootstrap_token = object()  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.active_bootstrap_guard = owner_guard  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.owner_depths = {owner_guard: 1}  # type: ignore[attr-defined]
+
+    advertise_event = threading.Event()
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+
+    def _advertise_pipeline() -> None:
+        time.sleep(0.05)
+        cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+        cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+        broker.advertise(
+            pipeline=pipeline_placeholder,
+            sentinel=sentinel_placeholder,
+        )
+        advertise_event.set()
+
+    thread = threading.Thread(target=_advertise_pipeline, daemon=True)
+    thread.start()
+
+    class _Unreachable:
+        def __init__(self, **_: object) -> None:  # pragma: no cover - must not be called
+            raise AssertionError("pipeline constructor should be bypassed during reentry wait")
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Unreachable,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        bootstrap_guard=False,
+        bootstrap_wait_timeout=0.5,
+    )
+
+    thread.join(timeout=2)
+
+    guard_state = cbi._PREPARE_PIPELINE_WATCHDOG.get("bootstrap_guard", {})
+
+    assert advertise_event.is_set(), "expected to wait for broker advertisement"
+    assert getattr(pipeline, "bootstrap_placeholder", False) is True
+    assert getattr(pipeline, "manager", None) is sentinel_placeholder
+    assert callable(promote)
+    assert guard_state.get("short_circuit") is True
+    assert guard_state.get("reentry_waited") is True
