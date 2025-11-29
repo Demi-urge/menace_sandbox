@@ -35,6 +35,7 @@ from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
+    _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
     prepare_pipeline_for_bootstrap,
 )
@@ -188,6 +189,10 @@ class MenaceOrchestrator:
         bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, _broker_manager = dependency_broker.resolve()
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+        guard_promise = (
+            _peek_owner_promise(owner_guard) if owner_guard is not None else None
+        )
         try:
             bootstrap_context = _current_bootstrap_context()
         except Exception:
@@ -198,7 +203,11 @@ class MenaceOrchestrator:
             bootstrap_heartbeat = None
 
         self.pipeline_promoter: Callable[[Any], None] | None = None
-        if broker_pipeline is None and (bootstrap_context is not None or bootstrap_heartbeat):
+        if broker_pipeline is None and (
+            bootstrap_context is not None
+            or bootstrap_heartbeat
+            or guard_promise is not None
+        ):
             wait_timeout = _resolve_bootstrap_wait_timeout()
             wait_start = time.perf_counter()
             while broker_pipeline is None:
