@@ -54,6 +54,7 @@ from bootstrap_timeout_policy import (
     load_last_component_budgets,
     load_component_budget_pools,
     build_progress_signal_hook,
+    persist_component_consumption,
     persist_bootstrap_wait_window,
     read_bootstrap_heartbeat,
     render_prepare_pipeline_timeout_hints,
@@ -7800,10 +7801,18 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     if shared_timeout_coordinator is not None:
         try:
-            _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = (
-                shared_timeout_coordinator.snapshot()
+            snapshot = shared_timeout_coordinator.snapshot()
+            _PREPARE_PIPELINE_WATCHDOG["shared_timeout"] = snapshot
+            persist_component_consumption(
+                _PREPARE_PIPELINE_WATCHDOG,
+                logger=logger,
+                component_floors=_SUBSYSTEM_BUDGET_FLOORS,
             )
-            enforce_bootstrap_timeout_policy(logger=logger)
+            enforce_bootstrap_timeout_policy(
+                logger=logger,
+                telemetry=_PREPARE_PIPELINE_WATCHDOG,
+                merge_overruns=False,
+            )
         except Exception:  # pragma: no cover - telemetry persistence must be best-effort
             logger.debug("shared timeout telemetry persistence failed", exc_info=True)
 

@@ -95,6 +95,13 @@ _OPTIONAL_PHASES = {"background_loops"}
 _PREPARE_PIPELINE_COMPONENT = "prepare_pipeline"
 
 
+def _coerce_int(value: object) -> int:
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _truthy_env(value: str | None) -> bool:
     if value is None:
         return False
@@ -1292,9 +1299,11 @@ def _update_component_runtime_stats(
             "samples": aggregate_samples,
             "avg_elapsed": avg_elapsed,
             "max_elapsed": max(max_elapsed, float(state.get("max_elapsed", 0.0) or 0.0)),
+            "last_elapsed": max_elapsed,
             "queue_depth": max(int(state.get("queue_depth", 0) or 0), backlog_queue_depth),
             "peer_bootstraps": max(int(state.get("peer_bootstraps", 0) or 0), active_bootstraps),
             "overruns": max(int(state.get("overruns", 0) or 0), int((overruns or {}).get(component, {}).get("overruns", 0) or 0)),
+            "updated_at": time.time(),
         }
 
     if runtime_state:
@@ -1311,6 +1320,81 @@ def _update_component_runtime_stats(
     )
     backlog_state["updated_at"] = time.time()
     host_state_details["backlog_pressure"] = backlog_state
+
+
+def persist_component_consumption(
+    telemetry: Mapping[str, object] | None = None,
+    *,
+    logger: logging.Logger | None = None,
+    component_floors: Mapping[str, float] | None = None,
+) -> Mapping[str, object] | None:
+    """Persist elapsed component runtime and overrun streaks for future budgets."""
+
+    telemetry = telemetry or _collect_timeout_telemetry()
+    if not telemetry:
+        return None
+
+    state = _load_timeout_state()
+    host_key = _state_host_key()
+    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+    if not isinstance(host_state, dict):  # pragma: no cover - defensive
+        host_state = {}
+
+    budget_inputs = telemetry.get("component_budget_inputs", {}) if isinstance(telemetry, Mapping) else {}
+    backlog = budget_inputs.get("backlog", {}) if isinstance(budget_inputs, Mapping) else {}
+    backlog_queue_depth = _coerce_int(
+        backlog.get("queue_depth") or telemetry.get("queue_depth")
+    )
+    active_bootstraps = _coerce_int(backlog.get("active_bootstraps"))
+    pending_background_loops = _coerce_int(backlog.get("pending_background_loops"))
+    if not active_bootstraps:
+        active_bootstraps = len(_recent_peer_activity())
+        if telemetry:
+            active_bootstraps = max(active_bootstraps, 1)
+
+    overrun_meta = _summarize_component_overruns(telemetry)
+    _update_component_runtime_stats(
+        host_state,
+        telemetry=telemetry,
+        backlog_queue_depth=backlog_queue_depth,
+        active_bootstraps=active_bootstraps,
+        overruns=overrun_meta,
+    )
+
+    component_floor_state = dict(component_floors or host_state.get("component_floors") or {})
+    if not component_floor_state:
+        component_floor_state = load_component_timeout_floors()
+
+    state_changed = _merge_consumption_overruns(
+        host_state=host_state, component_floors=component_floor_state, overruns=overrun_meta
+    )
+
+    host_state["component_floors"] = component_floor_state
+    host_state.setdefault("component_runtime", host_state.get("component_runtime", {}))
+    host_state["updated_at"] = time.time()
+
+    state = state if isinstance(state, dict) else {}
+    state[host_key] = host_state
+    _save_timeout_state(state)
+
+    active_logger = logger or LOGGER
+    active_logger.info(
+        "prepare_pipeline component consumption persisted",
+        extra={
+            "event": "prepare-pipeline-component-consumption",
+            "overruns": overrun_meta,
+            "runtime": host_state.get("component_runtime"),
+            "backlog": {
+                "queue_depth": backlog_queue_depth,
+                "active_bootstraps": active_bootstraps,
+                "pending_background_loops": pending_background_loops,
+            },
+            "state_path": str(_TIMEOUT_STATE_PATH),
+            "state_changed": state_changed,
+        },
+    )
+
+    return host_state
 
 
 def load_component_timeout_floors() -> dict[str, float]:
@@ -1758,12 +1842,6 @@ def compute_prepare_pipeline_component_budgets(
     deferred_components = set(deferred_floors)
     floors.update(deferred_floors)
 
-    def _coerce_int(value: object) -> int:
-        try:
-            return max(int(value), 0)
-        except (TypeError, ValueError):
-            return 0
-
     backlog_queue_depth = _coerce_int(
         host_telemetry.get("queue_depth")
         or guard_context.get("queue_depth")
@@ -2156,6 +2234,25 @@ def compute_prepare_pipeline_component_budgets(
             extra={
                 "event": "adaptive-component-floors",
                 "floors": adaptive_floors,
+                "state_path": str(_TIMEOUT_STATE_PATH),
+            },
+        )
+
+    auto_raised_components = {
+        component
+        for component, budget in budgets.items()
+        if budget > floors.get(component, 0.0)
+        and component not in (scheduled_component_budgets or {})
+    }
+    auto_raised_components |= set(adaptive_floors)
+    manual_override_components = set(scheduled_component_budgets or {})
+    if auto_raised_components or manual_override_components:
+        LOGGER.info(
+            "prepare_pipeline component budgets resolved",
+            extra={
+                "event": "prepare-pipeline-budgets-resolved",
+                "auto_raised": sorted(auto_raised_components),
+                "manual_overrides": sorted(manual_override_components),
                 "state_path": str(_TIMEOUT_STATE_PATH),
             },
         )
@@ -2662,14 +2759,16 @@ def derive_phase_soft_budgets(
 def enforce_bootstrap_timeout_policy(
     *,
     logger: logging.Logger | None = None,
+    telemetry: Mapping[str, object] | None = None,
+    merge_overruns: bool = True,
     prompt_override: Callable[[str, float, float], bool] | None = None,
 ) -> Dict[str, Dict[str, float | bool | None]]:
     """Clamp bootstrap timeouts to recommended floors when needed."""
 
     active_logger = logger or LOGGER
+    telemetry = telemetry or _collect_timeout_telemetry()
     minimums: dict[str, float] = load_escalated_timeout_floors()
     component_floors: dict[str, float] = load_component_timeout_floors()
-    telemetry = _collect_timeout_telemetry()
     component_budgets = compute_prepare_pipeline_component_budgets(
         component_floors=component_floors, telemetry=telemetry
     )
@@ -2687,9 +2786,10 @@ def enforce_bootstrap_timeout_policy(
             state_changed = True
         host_state["success_streak"] = 0
 
-    state_changed |= _merge_consumption_overruns(
-        host_state=host_state, component_floors=component_floors, overruns=overrun_meta
-    )
+    if merge_overruns:
+        state_changed |= _merge_consumption_overruns(
+            host_state=host_state, component_floors=component_floors, overruns=overrun_meta
+        )
     state_changed |= _apply_success_decay(host_state=host_state, component_floors=component_floors)
     escalation_meta = _maybe_escalate_timeout_floors(
         minimums, component_floors, telemetry=telemetry, logger=active_logger
