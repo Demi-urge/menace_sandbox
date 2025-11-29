@@ -1759,6 +1759,18 @@ def compute_prepare_pipeline_component_budgets(
                     overruns=streak,
                 )
 
+    cohort_components = {
+        component
+        for component, meta in telemetry_overruns.items()
+        if isinstance(meta, Mapping) and int(meta.get("overruns", 0) or 0) > 0
+    }
+    historical_cohort = {
+        component
+        for component, meta in (host_overruns or {}).items()
+        if isinstance(meta, Mapping) and int(meta.get("overruns", 0) or 0) >= _OVERRUN_STREAK_THRESHOLD
+    }
+    cohort_components |= historical_cohort
+
     budgets = {
         key: value
         * scale
@@ -1767,6 +1779,32 @@ def compute_prepare_pipeline_component_budgets(
         * component_pool_scales.get(key, 1.0)
         for key, value in floors.items()
     }
+
+    cohort_backoff_meta: dict[str, object] = {}
+    cohort_size = len(cohort_components)
+    if cohort_size > 1:
+        cohort_complexity = (
+            sum(component_complexity.get(component, 1.0) for component in cohort_components)
+            / float(cohort_size or 1)
+        )
+        composite_load = max(scale, backlog_scale, guard_scale)
+        base_backoff = 1.05 + min(max(composite_load - 1.0, 0.0), 1.5) * 0.5
+        base_backoff += min(max(cohort_complexity - 1.0, 0.0), 1.0) * 0.4
+        cohort_backoff = max(base_backoff, 1.05) ** max(cohort_size - 1, 1)
+        for component in cohort_components:
+            if component in budgets:
+                budgets[component] *= cohort_backoff
+        cohort_backoff_meta = {
+            "components": sorted(cohort_components),
+            "cohort_size": cohort_size,
+            "cohort_complexity": cohort_complexity,
+            "backoff": cohort_backoff,
+            "base_backoff": base_backoff,
+            "composite_load": composite_load,
+            "host_scale": scale,
+            "backlog_scale": backlog_scale,
+            "guard_scale": guard_scale,
+        }
     component_budget_total = sum(
         value for key, value in budgets.items() if key not in deferred_components
     ) if budgets else 0.0
@@ -1858,9 +1896,11 @@ def compute_prepare_pipeline_component_budgets(
         "component_budget_pools": {key: budgets.get(key, floors.get(key, 0.0)) for key in floors},
         "floors": floors,
         "adaptive_floors": adaptive_floors,
+        "cohort_backoff": cohort_backoff_meta,
         "component_budget_total": component_budget_total,
         "deferred_component_budget_total": deferred_component_budget_total,
         "deferred_component_budgets": deferred_component_budgets,
+        "component_budgets": budgets,
         "global_window": global_window,
         "global_window_extension": global_window_extension,
         "concurrency_extension": concurrency_meta,
@@ -1916,6 +1956,7 @@ def compute_prepare_pipeline_component_budgets(
             "component_work_units": component_work_units,
             "component_budget_pools": adaptive_inputs.get("component_budget_pools", {}),
             "component_pool_scales": component_pool_scales,
+            "cohort_backoff": cohort_backoff_meta,
             "runtime_minimums": runtime_component_minimums,
             "runtime_bootstrap_minimums": runtime_bootstrap_minimums,
             "runtime_meta": runtime_meta,
@@ -1959,6 +2000,17 @@ def compute_prepare_pipeline_component_budgets(
         component_floors=persisted_floors or floors,
         timeout_floors=load_escalated_timeout_floors(),
         guard_context=guard_context,
+    )
+
+    emit_bootstrap_heartbeat(
+        {
+            "component_budgets": budgets,
+            "component_budget_total": component_budget_total,
+            "deferred_component_budget_total": deferred_component_budget_total,
+            "component_budget_backoff": cohort_backoff_meta,
+            "global_window": global_window,
+            "global_window_extension": global_window_extension,
+        }
     )
 
     return budgets
@@ -2711,6 +2763,27 @@ def render_prepare_pipeline_timeout_hints(
                     "Component floors are being elevated using persisted heartbeat telemetry"
                     f" (host_load={heartbeat_load}, vector_hint={component_floor_inputs.get('vector_hint')});"
                     f" override with {_OVERRIDE_ENV}=1 to bypass clamping."
+                )
+            )
+
+        cohort_backoff = adaptive_context.get("cohort_backoff") if isinstance(adaptive_context, Mapping) else None
+        if isinstance(cohort_backoff, Mapping) and int(cohort_backoff.get("cohort_size", 0) or 0) > 1:
+            hints.append(
+                (
+                    "Multiple prepare_pipeline components have overrun together; applying an exponential"
+                    f" backoff ({cohort_backoff.get('backoff')}x) across {', '.join(map(str, cohort_backoff.get('components', [])))}"
+                    " to keep them within the widened watchdog window."
+                )
+            )
+        component_budgets = adaptive_context.get("component_budgets") if isinstance(adaptive_context, Mapping) else None
+        if isinstance(component_budgets, Mapping) and component_budgets:
+            hinted_components = ", ".join(
+                f"{comp}={int(budget)}s" for comp, budget in sorted(component_budgets.items())
+            )
+            hints.append(
+                (
+                    "Adaptive component budgets persisted for future runs: "
+                    f"{hinted_components}. Override with explicit env vars to reclaim the default ceilings."
                 )
             )
 
