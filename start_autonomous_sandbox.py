@@ -376,11 +376,39 @@ def _apply_bootstrap_guard(logger: logging.Logger) -> tuple[float, float]:
     """Pause when another bootstrap is active or host load is elevated."""
 
     guard_delay, budget_scale = wait_for_bootstrap_quiet_period(logger)
+    floors = load_escalated_timeout_floors()
+    resolved_timeouts = guard_bootstrap_wait_env(floors=floors)
+
+    for env_var in ("BOOTSTRAP_STEP_TIMEOUT", "BOOTSTRAP_VECTOR_STEP_TIMEOUT"):
+        floor = floors.get(env_var, _BOOTSTRAP_TIMEOUT_MINIMUMS.get(env_var, 0.0))
+        raw_value = os.getenv(env_var)
+        try:
+            parsed = float(raw_value) if raw_value is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+
+        resolved = max(parsed if parsed is not None else floor, floor)
+        resolved_timeouts[env_var] = resolved
+
     if budget_scale > 1.0:
-        os.environ["BOOTSTRAP_STEP_TIMEOUT"] = str(
-            float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240) * budget_scale
-        )
-        os.environ["MENACE_BOOTSTRAP_WAIT_SECS"] = os.environ["BOOTSTRAP_STEP_TIMEOUT"]
+        resolved_timeouts = {k: v * budget_scale for k, v in resolved_timeouts.items()}
+
+    for env_var, value in resolved_timeouts.items():
+        try:
+            os.environ[env_var] = str(float(value))
+        except (TypeError, ValueError):
+            continue
+
+    logger.info(
+        "bootstrap guard timeouts exported",
+        extra=log_record(
+            event="bootstrap-guard-timeouts",
+            guard_scale=budget_scale,
+            resolved_timeout_floors={
+                key: round(value, 2) for key, value in resolved_timeouts.items()
+            },
+        ),
+    )
     return guard_delay, budget_scale
 
 
