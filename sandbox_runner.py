@@ -44,6 +44,8 @@ from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
     guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
+    load_adaptive_stage_windows,
+    load_component_runtime_samples,
     load_component_timeout_floors,
     load_deferred_component_timeout_floors,
     load_escalated_timeout_floors,
@@ -268,7 +270,12 @@ def _calibrated_stage_policy(
     )
     calibrated_timeout *= guard_scale
     budget_debug["timeout"] = timeout_debug
-    stage_policy = build_stage_deadlines(calibrated_timeout, soft_deadline=True)
+    stage_policy = build_stage_deadlines(
+        calibrated_timeout,
+        soft_deadline=True,
+        stage_windows=load_adaptive_stage_windows(component_budgets=calibrated_stage_budgets),
+        stage_runtime=load_component_runtime_samples(),
+    )
     return calibrated_timeout, stage_policy, calibrated_stage_budgets, budget_debug, guard_scale
 
 # Initialise a router for this process with a unique menace_id so

@@ -38,6 +38,10 @@ from bootstrap_timeout_policy import (
     get_bootstrap_guard_context,
     read_bootstrap_heartbeat,
     build_progress_signal_hook,
+    derive_bootstrap_timeout_env,
+    load_adaptive_stage_windows,
+    load_component_runtime_samples,
+    collect_timeout_telemetry,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
     load_last_global_bootstrap_window,
@@ -71,18 +75,27 @@ if "--health-check" in sys.argv[1:]:
     os.environ.setdefault("MENACE_SANDBOX_MODE", "health_check")
     os.environ.setdefault("MENACE_DISABLE_MONITORING", "1")
 
+_ADAPTIVE_TIMEOUT_FLOORS = derive_bootstrap_timeout_env()
 DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]),
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    "MENACE_BOOTSTRAP_WAIT_SECS": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"])
     ),
-    "BOOTSTRAP_STEP_TIMEOUT": str(_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"]),
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get(
+            "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", _BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+        )
+    ),
+    "BOOTSTRAP_STEP_TIMEOUT": str(
+        _ADAPTIVE_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"])
+    ),
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT": str(
-        _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+        _ADAPTIVE_TIMEOUT_FLOORS.get(
+            "BOOTSTRAP_VECTOR_STEP_TIMEOUT", _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+        )
     ),
 }
 
-BOOTSTRAP_WAIT_GUARD = guard_bootstrap_wait_env()
+BOOTSTRAP_WAIT_GUARD = guard_bootstrap_wait_env(floors=_ADAPTIVE_TIMEOUT_FLOORS)
 
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
     os.environ.setdefault(_timeout_env, _timeout_default)
@@ -1296,6 +1309,8 @@ def _resolve_bootstrap_deadline_policy(
     """Determine the effective bootstrap deadline policy."""
 
     heavy_scale = float(os.getenv("BOOTSTRAP_HEAVY_TIMEOUT_SCALE", "1.5"))
+    telemetry = collect_timeout_telemetry()
+    runtime_samples = load_component_runtime_samples(telemetry)
     component_floors = load_component_timeout_floors()
     component_budgets = compute_prepare_pipeline_component_budgets(
         component_floors=component_floors,
@@ -1303,6 +1318,7 @@ def _resolve_bootstrap_deadline_policy(
         host_telemetry=host_telemetry,
         load_average=load_average,
     )
+    stage_windows = load_adaptive_stage_windows(component_budgets=component_budgets)
     stage_deadlines = build_stage_deadlines(
         baseline_timeout,
         heavy_detected=heavy_detected,
@@ -1310,6 +1326,17 @@ def _resolve_bootstrap_deadline_policy(
         heavy_scale=heavy_scale,
         component_budgets=component_budgets,
         component_floors=component_floors,
+        stage_windows=stage_windows,
+        stage_runtime=runtime_samples,
+    )
+    LOGGER.info(
+        "adaptive stage deadlines computed",
+        extra={
+            "event": "bootstrap-stage-deadlines",
+            "stage_deadlines": stage_deadlines,
+            "stage_windows": stage_windows,
+            "runtime_samples": runtime_samples,
+        },
     )
     aggregate_buffer = float(
         os.getenv("BOOTSTRAP_DEADLINE_BUFFER", str(BUDGET_BUFFER_MULTIPLIER))

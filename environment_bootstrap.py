@@ -1106,6 +1106,9 @@ class EnvironmentBootstrapper:
             ] = str(effective_override)
             budgets[phase] = effective_override
 
+        stage_windows = bootstrap_timeout_policy.load_adaptive_stage_windows(
+            component_budgets=component_timeouts
+        )
         stage_deadlines = build_stage_deadlines(
             max(base_phase_budgets.values() or [base_wait_floor, 0.0]),
             heavy_detected=component_budget_total > 0,
@@ -1113,6 +1116,8 @@ class EnvironmentBootstrapper:
             component_budgets=component_timeouts,
             component_floors=component_floors,
             adaptive_window=adaptive_window,
+            stage_windows=stage_windows,
+            stage_runtime=bootstrap_timeout_policy.load_component_runtime_samples(),
         )
 
         shared_snapshot: dict[str, object] | None = None
