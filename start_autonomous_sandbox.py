@@ -34,6 +34,7 @@ from bootstrap_timeout_policy import (
     load_component_timeout_floors,
     load_escalated_timeout_floors,
     broadcast_timeout_floors,
+    guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
     read_bootstrap_heartbeat,
     build_progress_signal_hook,
@@ -80,6 +81,8 @@ DEFAULT_BOOTSTRAP_TIMEOUTS: Mapping[str, str] = {
         _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
     ),
 }
+
+BOOTSTRAP_WAIT_GUARD = guard_bootstrap_wait_env()
 
 for _timeout_env, _timeout_default in DEFAULT_BOOTSTRAP_TIMEOUTS.items():
     os.environ.setdefault(_timeout_env, _timeout_default)

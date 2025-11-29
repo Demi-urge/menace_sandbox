@@ -2522,6 +2522,57 @@ def derive_bootstrap_timeout_env(
     return resolved
 
 
+def guard_bootstrap_wait_env(
+    env: MutableMapping[str, str] | None = None,
+    floors: Mapping[str, float | None] | None = None,
+) -> Dict[str, float]:
+    """Ensure bootstrap wait env vars exist at or above the shared floors.
+
+    ``MENACE_BOOTSTRAP_WAIT_SECS`` and ``MENACE_BOOTSTRAP_VECTOR_WAIT_SECS`` are
+    exported with at least the policy minimums so downstream timeout
+    calculations never start from an unsafe baseline.
+    """
+
+    env = env or os.environ
+    floors = floors or _BOOTSTRAP_TIMEOUT_MINIMUMS
+    resolved: Dict[str, float] = {}
+
+    for env_var in ("MENACE_BOOTSTRAP_WAIT_SECS", "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"):
+        floor = floors.get(env_var)
+        try:
+            effective_floor = float(floor) if floor is not None else 0.0
+        except (TypeError, ValueError):
+            effective_floor = 0.0
+
+        raw_value = env.get(env_var)
+        update_env = False
+        effective_value = effective_floor
+
+        if raw_value is None:
+            update_env = True
+        else:
+            try:
+                parsed = float(raw_value)
+            except (TypeError, ValueError):
+                update_env = True
+            else:
+                effective_value = parsed
+                if parsed < effective_floor:
+                    effective_value = effective_floor
+                    update_env = True
+
+        if update_env:
+            env[env_var] = str(effective_value)
+
+        try:
+            resolved_value = float(env.get(env_var, str(effective_value)))
+        except (TypeError, ValueError):
+            resolved_value = effective_floor
+        resolved[env_var] = resolved_value
+
+    return resolved
+
+
 def _collect_timeout_telemetry() -> Mapping[str, object]:
     try:
         from coding_bot_interface import _PREPARE_PIPELINE_WATCHDOG
