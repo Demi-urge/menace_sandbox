@@ -23,7 +23,15 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
 
+from bootstrap_metrics import (
+    calibrate_overall_timeout,
+    calibrate_step_budgets,
+    compute_stats,
+    load_duration_store,
+)
 from bootstrap_readiness import (
+    READINESS_STAGES,
+    _COMPONENT_BASELINES,
     build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
@@ -179,8 +187,9 @@ class _BootstrapOnlineTracker:
 def _announce_staged_readiness(logger: logging.Logger) -> None:
     """Log the staged readiness policy and initial expectations."""
 
-    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
-    stage_policy = build_stage_deadlines(baseline_timeout, soft_deadline=True)
+    calibrated_timeout, stage_policy, calibrated_stage_budgets, budget_debug, guard_scale = (
+        _calibrated_stage_policy(logger)
+    )
     core_ready, lagging_core, degraded_core, degraded_online = minimal_online(
         {"components": {}}
     )
@@ -188,14 +197,49 @@ def _announce_staged_readiness(logger: logging.Logger) -> None:
         "staged readiness model initialised for sandbox runner",
         extra={
             "event": "sandbox-staged-readiness",
-            "baseline_timeout": baseline_timeout,
+            "baseline_timeout": calibrated_timeout,
             "stage_policy": stage_policy,
+            "stage_budgets": calibrated_stage_budgets,
+            "budget_adjustments": budget_debug.get("adjusted"),
+            "budget_scale": guard_scale,
+            "timeout_context": budget_debug.get("timeout"),
             "core_ready": core_ready,
             "lagging_core": sorted(lagging_core),
             "degraded_core": sorted(degraded_core),
             "degraded_online": degraded_online,
         },
     )
+
+
+def _calibrated_stage_policy(
+    logger: logging.Logger,
+) -> tuple[float, dict[str, dict[str, object]], dict[str, float], dict[str, object], float]:
+    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
+    duration_store = load_duration_store()
+    stage_stats = compute_stats(duration_store.get("bootstrap_stages", {}))
+    base_stage_budgets = {stage.name: baseline_timeout for stage in READINESS_STAGES}
+    floors = {stage.name: _COMPONENT_BASELINES.get(stage.name, 0.0) for stage in READINESS_STAGES}
+    calibrated_stage_budgets, budget_debug = calibrate_step_budgets(
+        base_budgets=base_stage_budgets,
+        stats=stage_stats,
+        floors=floors,
+    )
+    guard_context = get_bootstrap_guard_context() or {}
+    try:
+        guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+    except Exception:
+        guard_scale = 1.0
+    if guard_scale > 1.0:
+        calibrated_stage_budgets = {
+            stage: budget * guard_scale for stage, budget in calibrated_stage_budgets.items()
+        }
+    calibrated_timeout, timeout_debug = calibrate_overall_timeout(
+        base_timeout=baseline_timeout, calibrated_budgets=calibrated_stage_budgets
+    )
+    calibrated_timeout *= guard_scale
+    budget_debug["timeout"] = timeout_debug
+    stage_policy = build_stage_deadlines(calibrated_timeout, soft_deadline=True)
+    return calibrated_timeout, stage_policy, calibrated_stage_budgets, budget_debug, guard_scale
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
@@ -1682,8 +1726,9 @@ def _sandbox_main(
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
-    baseline_timeout = float(os.getenv("BOOTSTRAP_STEP_TIMEOUT", "240") or 240)
-    stage_policy = build_stage_deadlines(baseline_timeout, soft_deadline=True)
+    calibrated_timeout, stage_policy, calibrated_stage_budgets, budget_debug, guard_scale = (
+        _calibrated_stage_policy(logger)
+    )
     online_tracker = _BootstrapOnlineTracker(logger, stage_policy)
     try:
         context_builder.refresh_db_weights()
