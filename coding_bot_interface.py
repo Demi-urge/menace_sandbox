@@ -45,6 +45,7 @@ from bootstrap_timeout_policy import (
     get_adaptive_timeout_context,
     get_bootstrap_guard_context,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
+    _COMPONENT_TIMEOUT_MINIMUMS,
     compute_prepare_pipeline_component_budgets,
     DEFERRED_COMPONENTS,
     load_component_timeout_floors,
@@ -183,14 +184,35 @@ _READINESS_GATE_WEIGHTS: dict[str, float] = {
 _CRITICAL_READINESS_GATES = frozenset({"pipeline_config", "orchestrator_state"})
 
 _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
-_BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
-_MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
-_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
-    360.0,
-    _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", 0.0),
-    _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
+
+
+def _shared_timeout_floor(env_var: str, *, default_floor: float) -> float:
+    policy_floor = _BOOTSTRAP_TIMEOUT_MINIMUMS.get(env_var, default_floor)
+    return max(default_floor, policy_floor, _ESCALATED_TIMEOUT_FLOORS.get(env_var, 0.0))
+
+
+_BOOTSTRAP_TIMEOUT_FLOOR = _shared_timeout_floor(
+    "MENACE_BOOTSTRAP_WAIT_SECS",
+    default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
 )
-_MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
+_MIN_STAGE_TIMEOUT = _shared_timeout_floor(
+    "BOOTSTRAP_STEP_TIMEOUT",
+    default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"],
+)
+_VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
+    _shared_timeout_floor(
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+        default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"],
+    ),
+    _shared_timeout_floor(
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+        default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"],
+    ),
+)
+_MIN_STAGE_TIMEOUT_VECTOR = _shared_timeout_floor(
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"],
+)
 _SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = load_component_timeout_floors()
 _ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
 _BOOTSTRAP_WAIT_GROWTH_CAP = 0.65
@@ -862,7 +884,8 @@ def _merge_stage_budgets(
                 continue
             merged[key] = float(value)
 
-    for gate, floor in _SUBSYSTEM_BUDGET_FLOORS.items():
+    budget_floors = {**_COMPONENT_TIMEOUT_MINIMUMS, **_SUBSYSTEM_BUDGET_FLOORS}
+    for gate, floor in budget_floors.items():
         floor_value = float(floor)
         merged[gate] = max(merged.get(gate, 0.0), floor_value)
 
@@ -884,7 +907,7 @@ def _refresh_prepare_watchdog_budgets(
         "PREPARE_PIPELINE_VECTOR_BIAS", _VECTOR_BUDGET_BIAS, minimum=1.0
     )
 
-    base = {**_SUBSYSTEM_BUDGET_FLOORS}
+    base = {**_COMPONENT_TIMEOUT_MINIMUMS, **_SUBSYSTEM_BUDGET_FLOORS}
     _PREPARE_STAGE_BUDGETS = _merge_stage_budgets(
         base,
         _parse_stage_budget_env("PREPARE_PIPELINE_STAGE_BUDGETS"),
@@ -1030,11 +1053,11 @@ def _get_bootstrap_wait_timeout() -> float | None:
     slower initialisation paths.  It can be tuned via
     ``MENACE_BOOTSTRAP_WAIT_SECS``; specify ``"none"`` to disable timeouts.
     Invalid overrides fall back to a sensible default while emitting a warning
-    for visibility. A hard minimum of 240 seconds is enforced to avoid overly
-    aggressive clamps.  Adaptive scaling is applied when host contention or
-    recent ``SharedTimeoutCoordinator`` overruns are observed, with decisions
-    persisted through ``bootstrap_timeout_policy`` so repeated slow boots do
-    not regress to the static floor.
+    for visibility. A hard minimum aligned with ``bootstrap_timeout_policy`` is
+    enforced to avoid overly aggressive clamps.  Adaptive scaling is applied
+    when host contention or recent ``SharedTimeoutCoordinator`` overruns are
+    observed, with decisions persisted through ``bootstrap_timeout_policy`` so
+    repeated slow boots do not regress to the static floor.
     """
 
     default_timeout = _BOOTSTRAP_TIMEOUT_FLOOR
@@ -1262,14 +1285,28 @@ def _refresh_bootstrap_wait_timeouts(
     global _MIN_STAGE_TIMEOUT, _MIN_STAGE_TIMEOUT_VECTOR, _ESCALATED_TIMEOUT_FLOORS, _SUBSYSTEM_BUDGET_FLOORS
 
     _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
-    _BOOTSTRAP_TIMEOUT_FLOOR = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_WAIT_SECS", 0.0))
-    _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
-        360.0,
-        _ESCALATED_TIMEOUT_FLOORS.get("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", 0.0),
-        _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0),
+    _BOOTSTRAP_TIMEOUT_FLOOR = _shared_timeout_floor(
+        "MENACE_BOOTSTRAP_WAIT_SECS",
+        default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
     )
-    _MIN_STAGE_TIMEOUT = max(240.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_STEP_TIMEOUT", 0.0))
-    _MIN_STAGE_TIMEOUT_VECTOR = max(360.0, _ESCALATED_TIMEOUT_FLOORS.get("BOOTSTRAP_VECTOR_STEP_TIMEOUT", 0.0))
+    _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR = max(
+        _shared_timeout_floor(
+            "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+            default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"],
+        ),
+        _shared_timeout_floor(
+            "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+            default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"],
+        ),
+    )
+    _MIN_STAGE_TIMEOUT = _shared_timeout_floor(
+        "BOOTSTRAP_STEP_TIMEOUT",
+        default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_STEP_TIMEOUT"],
+    )
+    _MIN_STAGE_TIMEOUT_VECTOR = _shared_timeout_floor(
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+        default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"],
+    )
     _SUBSYSTEM_BUDGET_FLOORS = load_component_timeout_floors()
     _BOOTSTRAP_WAIT_TIMEOUT = _get_bootstrap_wait_timeout()
     _refresh_prepare_watchdog_budgets(

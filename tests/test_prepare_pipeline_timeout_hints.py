@@ -75,6 +75,35 @@ def test_bootstrap_policy_refreshes_cached_wait_timeout(monkeypatch, caplog):
     assert cbi._resolve_bootstrap_wait_timeout(False) == cbi._BOOTSTRAP_WAIT_TIMEOUT
 
 
+def test_bootstrap_stage_floors_clamp_to_policy_minimums(monkeypatch):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "30")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "45")
+    monkeypatch.setenv("BOOTSTRAP_STEP_TIMEOUT", "60")
+    monkeypatch.setenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "90")
+    monkeypatch.setenv(
+        "PREPARE_PIPELINE_STAGE_BUDGETS",
+        "vectorizers:1,retrievers:1,db_indexes:1,orchestrator_state:1,pipeline_config:1",
+    )
+    monkeypatch.setenv(
+        "PREPARE_PIPELINE_VECTOR_STAGE_BUDGETS",
+        "vectorizers:2,retrievers:2,db_indexes:2,orchestrator_state:2,pipeline_config:2",
+    )
+
+    cbi._refresh_bootstrap_wait_timeouts()
+
+    minima = btp._BOOTSTRAP_TIMEOUT_MINIMUMS
+    component_minima = btp._COMPONENT_TIMEOUT_MINIMUMS
+
+    assert cbi._BOOTSTRAP_TIMEOUT_FLOOR >= minima["MENACE_BOOTSTRAP_WAIT_SECS"]
+    assert cbi._VECTOR_BOOTSTRAP_TIMEOUT_FLOOR >= minima["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"]
+    assert cbi._MIN_STAGE_TIMEOUT >= minima["BOOTSTRAP_STEP_TIMEOUT"]
+    assert cbi._MIN_STAGE_TIMEOUT_VECTOR >= minima["BOOTSTRAP_VECTOR_STEP_TIMEOUT"]
+
+    for gate, minimum in component_minima.items():
+        assert cbi._PREPARE_STAGE_BUDGETS[gate] >= minimum
+        assert cbi._PREPARE_VECTOR_STAGE_BUDGETS[gate] >= minimum
+
+
 def test_shared_timeout_records_stage_gates(monkeypatch):
     monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "90")
     monkeypatch.setattr(cbi, "enforce_bootstrap_timeout_policy", lambda logger=None: {})
