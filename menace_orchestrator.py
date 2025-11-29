@@ -33,6 +33,7 @@ from .oversight_bots import (
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
+    _bootstrap_dependency_broker,
     _current_bootstrap_context,
     prepare_pipeline_for_bootstrap,
 )
@@ -56,6 +57,13 @@ from .session_vault import SessionVault
 from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
+
+
+def _latest_bootstrap_promoter() -> Callable[[Any], None] | None:
+    callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+    if callbacks:
+        return callbacks[-1]
+    return None
 
 
 class _SimpleScheduler:
@@ -173,20 +181,21 @@ class MenaceOrchestrator:
         except Exception:
             self.logger.exception("context builder refresh failed")
         bootstrap_context = None
+        dependency_broker = _bootstrap_dependency_broker()
+        broker_pipeline, _broker_manager = dependency_broker.resolve()
         try:
             bootstrap_context = _current_bootstrap_context()
         except Exception:
             bootstrap_context = None
 
         self.pipeline_promoter: Callable[[Any], None] | None = None
-        bootstrap_pipeline = None
-        bootstrap_promoter: Callable[[Any], None] | None = None
+        bootstrap_pipeline = broker_pipeline
+        bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
 
-        if bootstrap_context is not None:
+        if bootstrap_pipeline is None and bootstrap_context is not None:
             bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
-            callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
-            if callbacks:
-                bootstrap_promoter = callbacks[-1]
+            if bootstrap_promoter is None:
+                bootstrap_promoter = _latest_bootstrap_promoter()
             if bootstrap_pipeline is None and bootstrap_promoter is not None:
                 for _ in range(20):
                     bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
