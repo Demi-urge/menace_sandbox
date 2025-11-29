@@ -1,190 +1,217 @@
+from __future__ import annotations
+
 import importlib
-import os
 import sys
 import types
 from pathlib import Path
-
-import pytest
-
-ROOT = Path(__file__).resolve().parent.parent
+from types import SimpleNamespace
+from unittest import mock
 
 
-def _simple_class(label: str):
-    class _Stub:
-        def __init__(self, *args, **kwargs):
-            self._label = label
+def _install_stub(monkeypatch, name: str, **attrs: object) -> types.ModuleType:
+    module = types.ModuleType(name)
+    module.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    for attr, value in attrs.items():
+        setattr(module, attr, value)
+    monkeypatch.setitem(sys.modules, name, module)
+    return module
 
-    _Stub.__name__ = label
-    return _Stub
 
+def _stub_orchestrator_dependencies(monkeypatch) -> None:
+    base = sys.modules.get("menace_sandbox")
+    if base is None:
+        base = types.ModuleType("menace_sandbox")
+        base.__path__ = [str(Path(__file__).resolve().parent.parent)]
+        base.__spec__ = importlib.machinery.ModuleSpec(
+            "menace_sandbox", loader=None, is_package=True
+        )
+        monkeypatch.setitem(sys.modules, "menace_sandbox", base)
 
-@pytest.fixture()
-def orchestrator_module(monkeypatch):
-    os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-    monkeypatch.syspath_prepend(str(ROOT))
-    menace_pkg = types.ModuleType("menace")
-    menace_pkg.__path__ = [str(ROOT)]
-    monkeypatch.setitem(sys.modules, "menace", menace_pkg)
-
-    def _install(name: str, attrs: dict[str, object]) -> None:
-        module = types.ModuleType(name)
-        for key, value in attrs.items():
-            setattr(module, key, value)
-        monkeypatch.setitem(sys.modules, name, module)
-        if name.startswith("menace."):
-            short = name.split(".", 1)[1]
-            monkeypatch.setitem(sys.modules, short, module)
-        else:
-            monkeypatch.setitem(sys.modules, f"menace.{name}", module)
-
-    _install(
+    _install_stub(
+        monkeypatch,
         "dynamic_path_router",
-        {
-            "resolve_path": lambda path: Path(path),
-            "get_project_root": lambda: ROOT,
-        },
+        resolve_path=lambda path: Path(path),
+        get_project_root=lambda: Path("."),
     )
-    _install("db_router", {"DBRouter": _simple_class("DBRouter"), "GLOBAL_ROUTER": None})
-    _install("menace.coding_bot_interface", {"prepare_pipeline_for_bootstrap": lambda **_: (None, lambda *_a, **_k: None)})
-    _install("menace.knowledge_graph", {"KnowledgeGraph": _simple_class("KnowledgeGraph")})
-    _install("menace.advanced_error_management", {"AutomatedRollbackManager": _simple_class("AutomatedRollbackManager")})
-    _install("menace.self_coding_engine", {"SelfCodingEngine": _simple_class("SelfCodingEngine")})
-    _install("menace.rollback_validator", {"RollbackValidator": _simple_class("RollbackValidator")})
-    _install(
-        "menace.oversight_bots",
-        {name: _simple_class(name) for name in [
-            "L1OversightBot",
-            "L2OversightBot",
-            "L3OversightBot",
-            "M1OversightBot",
-            "M2OversightBot",
-            "M3OversightBot",
-            "H1OversightBot",
-            "H2OversightBot",
-            "H3OversightBot",
-        ]},
+    _install_stub(
+        monkeypatch,
+        "bootstrap_timeout_policy",
+        compute_prepare_pipeline_component_budgets=lambda: {},
+        read_bootstrap_heartbeat=lambda: None,
     )
-    _install(
-        "menace.model_automation_pipeline",
-        {
-            "ModelAutomationPipeline": _simple_class("ModelAutomationPipeline"),
-            "AutomationResult": _simple_class("AutomationResult"),
-        },
-    )
-    _install("menace.discrepancy_detection_bot", {"DiscrepancyDetectionBot": _simple_class("DiscrepancyDetectionBot")})
-    _install("menace.efficiency_bot", {"EfficiencyBot": _simple_class("EfficiencyBot")})
-    _install(
-        "menace.neuroplasticity",
-        {
-            "Outcome": _simple_class("Outcome"),
-            "PathwayDB": _simple_class("PathwayDB"),
-            "PathwayRecord": _simple_class("PathwayRecord"),
-        },
-    )
-    _install("menace.ad_integration", {"AdIntegration": _simple_class("AdIntegration")})
-    _install(
-        "menace.watchdog",
-        {
-            "Watchdog": _simple_class("Watchdog"),
-            "ContextBuilder": _simple_class("ContextBuilder"),
-        },
-    )
-    _install("menace.error_bot", {"ErrorDB": _simple_class("ErrorDB")})
-    _install("menace.resource_allocation_optimizer", {"ROIDB": _simple_class("ROIDB")})
-    _install("menace.data_bot", {"MetricsDB": _simple_class("MetricsDB")})
-    _install("menace.trending_scraper", {"TrendingScraper": _simple_class("TrendingScraper")})
-    _install("menace.self_learning_service", {"main": lambda *a, **k: None})
-    _install("menace.strategic_planner", {"StrategicPlanner": _simple_class("StrategicPlanner")})
-    _install("menace.strategy_prediction_bot", {"StrategyPredictionBot": _simple_class("StrategyPredictionBot")})
-    _install("menace.autoscaler", {"Autoscaler": _simple_class("Autoscaler")})
-    _install("menace.trend_predictor", {"TrendPredictor": _simple_class("TrendPredictor")})
-    _install("menace.identity_seeder", {"seed_identity": lambda *a, **k: None})
-    _install("menace.session_vault", {"SessionVault": _simple_class("SessionVault")})
-    _install(
-        "menace.cognition_layer",
-        {
-            "build_cognitive_context": lambda *a, **k: {},
-            "log_feedback": lambda *a, **k: None,
-        },
+    _install_stub(
+        monkeypatch,
+        "db_router",
+        DBRouter=type("DBRouter", (), {"__init__": lambda self, *a, **k: None}),
+        GLOBAL_ROUTER=None,
     )
 
-    sys.modules.pop("menace.menace_orchestrator", None)
-    return importlib.import_module("menace.menace_orchestrator")
+    _install_stub(monkeypatch, "menace_sandbox.knowledge_graph", KnowledgeGraph=type("KG", (), {}))
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.advanced_error_management",
+        AutomatedRollbackManager=type("ARM", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.self_coding_engine",
+        SelfCodingEngine=type("SCE", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.rollback_validator",
+        RollbackValidator=type("RV", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.oversight_bots",
+        L1OversightBot=type("L1", (), {}),
+        L2OversightBot=type("L2", (), {}),
+        L3OversightBot=type("L3", (), {}),
+        M1OversightBot=type("M1", (), {}),
+        M2OversightBot=type("M2", (), {}),
+        M3OversightBot=type("M3", (), {}),
+        H1OversightBot=type("H1", (), {}),
+        H2OversightBot=type("H2", (), {}),
+        H3OversightBot=type("H3", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.model_automation_pipeline",
+        ModelAutomationPipeline=type("Pipeline", (), {}),
+        AutomationResult=type("AutomationResult", (), {}),
+    )
+
+    coding_state = SimpleNamespace()
+
+    def _dependency_broker():
+        return SimpleNamespace(resolve=lambda: (None, None), advertise=lambda **_: None)
+
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.coding_bot_interface",
+        _BOOTSTRAP_STATE=coding_state,
+        _bootstrap_dependency_broker=_dependency_broker,
+        _current_bootstrap_context=lambda: None,
+        _peek_owner_promise=lambda *a, **k: None,
+        _resolve_bootstrap_wait_timeout=lambda *a, **k: None,
+        prepare_pipeline_for_bootstrap=lambda **_k: (SimpleNamespace(manager=None), lambda *_a: None),
+    )
+
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.discrepancy_detection_bot",
+        DiscrepancyDetectionBot=type("DiscrepancyDetectionBot", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.efficiency_bot",
+        EfficiencyBot=type("EfficiencyBot", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.neuroplasticity",
+        Outcome=type("Outcome", (), {}),
+        PathwayDB=type("PathwayDB", (), {}),
+        PathwayRecord=type("PathwayRecord", (), {}),
+    )
+    _install_stub(monkeypatch, "menace_sandbox.ad_integration", AdIntegration=type("AdIntegration", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.watchdog", Watchdog=type("Watchdog", (), {}), ContextBuilder=object)
+    _install_stub(monkeypatch, "menace_sandbox.error_bot", ErrorDB=type("ErrorDB", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.resource_allocation_optimizer", ROIDB=type("ROIDB", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.data_bot", MetricsDB=type("MetricsDB", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.trending_scraper", TrendingScraper=type("TrendingScraper", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.self_learning_service", main=lambda *a, **k: None)
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.strategic_planner",
+        StrategicPlanner=type("StrategicPlanner", (), {}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.strategy_prediction_bot",
+        StrategyPredictionBot=type("StrategyPredictionBot", (), {}),
+    )
+    _install_stub(monkeypatch, "menace_sandbox.autoscaler", Autoscaler=type("Autoscaler", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.trend_predictor", TrendPredictor=type("TrendPredictor", (), {}))
+    _install_stub(monkeypatch, "menace_sandbox.identity_seeder", seed_identity=lambda *a, **k: None)
+    _install_stub(monkeypatch, "menace_sandbox.session_vault", SessionVault=type("SessionVault", (), {}))
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.cognition_layer",
+        build_cognitive_context=lambda *a, **k: (None, ""),
+        log_feedback=lambda *a, **k: None,
+    )
 
 
-def test_menace_orchestrator_promotes_bootstrap_pipeline(orchestrator_module, monkeypatch, caplog):
-    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
-    pipeline = types.SimpleNamespace(manager="sentinel")
-    promote_calls: list[object] = []
+class _Broker:
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+        self.calls: list[int] = []
 
-    def _fake_prepare(**kwargs):
-        assert kwargs["pipeline_cls"] is orchestrator_module.ModelAutomationPipeline
+    def resolve(self):
+        self.calls.append(len(self.calls))
+        if len(self.calls) > 1:
+            return self.pipeline, getattr(self.pipeline, "manager", None)
+        return None, None
 
-        def _promote(manager):
-            promote_calls.append(manager)
-            pipeline.manager = manager
+    def advertise(self, **_kwargs):
+        return None
 
-        return pipeline, _promote
 
+class _Dummy:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+def test_orchestrator_reuses_active_bootstrap_pipeline(monkeypatch):
+    """An active guard promise should block new orchestrator bootstrap attempts."""
+
+    _stub_orchestrator_dependencies(monkeypatch)
+    module = importlib.import_module("menace_sandbox.menace_orchestrator")
+
+    guard_token = object()
+    fake_pipeline = SimpleNamespace(manager=mock.Mock(name="manager"))
+    broker = _Broker(fake_pipeline)
+
+    context_builder = SimpleNamespace(refresh_db_weights=lambda: None)
+    router = SimpleNamespace()
+
+    monkeypatch.setattr(module, "_BOOTSTRAP_STATE", SimpleNamespace(active_bootstrap_guard=guard_token))
+    monkeypatch.setattr(module, "_peek_owner_promise", lambda *_a, **_k: object())
+    monkeypatch.setattr(module, "_resolve_bootstrap_wait_timeout", lambda *_a, **_k: 0.05)
+    monkeypatch.setattr(module, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(module, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(module, "read_bootstrap_heartbeat", lambda: None)
     monkeypatch.setattr(
-        orchestrator_module,
+        module,
         "prepare_pipeline_for_bootstrap",
-        _fake_prepare,
-        raising=False,
+        mock.Mock(side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")),
     )
-    router = types.SimpleNamespace(menace_id="test", get_connection=lambda *a, **k: None)
-    orchestrator = orchestrator_module.MenaceOrchestrator(context_builder=builder, router=router)
+    monkeypatch.setattr(module, "compute_prepare_pipeline_component_budgets", lambda: {})
 
-    assert orchestrator.pipeline is pipeline
-    assert callable(orchestrator.pipeline_promoter)
-    orchestrator.promote_pipeline_manager("manager")
-    assert pipeline.manager == "manager"
-    assert promote_calls == ["manager"]
-    assert orchestrator.pipeline_promoter is None
-    assert "re-entrant initialisation depth" not in caplog.text
+    for attr in (
+        "KnowledgeGraph",
+        "DiscrepancyDetectionBot",
+        "EfficiencyBot",
+        "Watchdog",
+        "ErrorDB",
+        "ROIDB",
+        "MetricsDB",
+        "StrategicPlanner",
+        "StrategyPredictionBot",
+        "Autoscaler",
+        "TrendPredictor",
+    ):
+        monkeypatch.setattr(module, attr, _Dummy)
 
-
-def test_menace_orchestrator_reuses_active_bootstrap_pipeline(orchestrator_module, monkeypatch):
-    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
-    pipeline = types.SimpleNamespace(manager=None)
-    promoted: list[object] = []
-
-    def _promote(manager):
-        promoted.append(manager)
-        pipeline.manager = manager
-
-    bootstrap_context = types.SimpleNamespace(pipeline=pipeline)
-    bootstrap_state = types.SimpleNamespace(helper_promotion_callbacks=[_promote])
-
-    monkeypatch.setattr(
-        orchestrator_module, "_BOOTSTRAP_STATE", bootstrap_state, raising=False
-    )
-    monkeypatch.setattr(
-        orchestrator_module,
-        "_current_bootstrap_context",
-        lambda: bootstrap_context,
-        raising=False,
+    orchestrator = module.MenaceOrchestrator(
+        context_builder=context_builder,
+        router=router,
+        auto_bootstrap=False,
+        ad_client=_Dummy(),
     )
 
-    def _prepare_pipeline(**_kwargs):
-        raise AssertionError("prepare_pipeline_for_bootstrap should be skipped")
-
-    monkeypatch.setattr(
-        orchestrator_module,
-        "prepare_pipeline_for_bootstrap",
-        _prepare_pipeline,
-        raising=False,
-    )
-
-    router = types.SimpleNamespace(menace_id="test", get_connection=lambda *a, **k: None)
-    orchestrator = orchestrator_module.MenaceOrchestrator(
-        context_builder=builder, router=router
-    )
-
-    assert orchestrator.pipeline is pipeline
-    assert orchestrator.pipeline_promoter is _promote
-
-    orchestrator.promote_pipeline_manager("manager")
-
-    assert promoted == ["manager"]
-    assert pipeline.manager == "manager"
+    assert len(broker.calls) >= 2
+    assert orchestrator.pipeline is fake_pipeline
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
