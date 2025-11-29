@@ -39,6 +39,7 @@ from bootstrap_timeout_policy import (
     build_progress_signal_hook,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
     wait_for_bootstrap_quiet_period,
+    load_last_global_bootstrap_window,
 )
 from bootstrap_readiness import (
     CORE_COMPONENTS,
@@ -1040,8 +1041,12 @@ def _resolve_soft_deadline_flag(args: argparse.Namespace | None = None) -> bool:
 
 
 def _aggregate_stage_deadlines(
-    stage_deadlines: Mapping[str, Mapping[str, Any]], *, buffer: float
-) -> float | None:
+    stage_deadlines: Mapping[str, Mapping[str, Any]],
+    *,
+    buffer: float,
+    host_telemetry: Mapping[str, object] | None = None,
+    guard_context: Mapping[str, object] | None = None,
+) -> tuple[float | None, dict[str, object]]:
     """Return a buffered aggregate deadline across enforced stages."""
 
     enforced_deadlines: list[float] = []
@@ -1056,12 +1061,58 @@ def _aggregate_stage_deadlines(
         except (TypeError, ValueError):
             continue
 
+    guard_context = dict(guard_context or get_bootstrap_guard_context() or {})
+    host_telemetry = dict(host_telemetry or {})
+    guard_scale = 1.0
+    try:
+        guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
+    except Exception:
+        guard_scale = 1.0
+    host_load = host_telemetry.get("host_load")
+    try:
+        host_load = float(host_load) if host_load is not None else None
+    except (TypeError, ValueError):
+        host_load = None
+    historical_window, historical_window_inputs = load_last_global_bootstrap_window()
+    historical_window_inputs = historical_window_inputs or {}
+    telemetry_window = host_telemetry.get("global_window") or host_telemetry.get(
+        "bootstrap_window"
+    )
+    try:
+        telemetry_window = float(telemetry_window) if telemetry_window is not None else None
+    except (TypeError, ValueError):
+        telemetry_window = None
+
     if not enforced_deadlines:
-        return None
+        return None, {
+            "buffer": buffer,
+            "guard_scale": guard_scale,
+            "host_load": host_load,
+            "historical_window": historical_window,
+            "historical_window_inputs": historical_window_inputs,
+        }
 
     aggregate_deadline = sum(enforced_deadlines)
-    buffered_deadline = aggregate_deadline * max(buffer, 1.0)
-    return buffered_deadline
+    host_load_buffer = 1.0
+    if host_load is not None:
+        host_load_buffer = 1.0 + min(host_load, 2.0) * 0.15
+    effective_buffer = max(buffer, guard_scale, host_load_buffer, 1.0)
+
+    buffered_deadline = aggregate_deadline * effective_buffer
+    for candidate in (telemetry_window, historical_window):
+        if candidate:
+            buffered_deadline = max(buffered_deadline, float(candidate))
+
+    return buffered_deadline, {
+        "buffer": buffer,
+        "effective_buffer": effective_buffer,
+        "guard_scale": guard_scale,
+        "host_load": host_load,
+        "historical_window": historical_window,
+        "historical_window_inputs": historical_window_inputs,
+        "telemetry_window": telemetry_window,
+        "enforced_total": aggregate_deadline,
+    }
 
 
 def _resolve_bootstrap_deadline_policy(
@@ -1095,9 +1146,21 @@ def _resolve_bootstrap_deadline_policy(
     aggregate_buffer = float(
         os.getenv("BOOTSTRAP_DEADLINE_BUFFER", str(BUDGET_BUFFER_MULTIPLIER))
     )
-    aggregate_deadline = _aggregate_stage_deadlines(
-        stage_deadlines, buffer=aggregate_buffer
+    aggregate_deadline, aggregate_meta = _aggregate_stage_deadlines(
+        stage_deadlines,
+        buffer=aggregate_buffer,
+        host_telemetry=host_telemetry,
+        guard_context=get_bootstrap_guard_context(),
     )
+    telemetry_context = {
+        "host_load": host_telemetry.get("host_load") if host_telemetry else None,
+        "historical_window": aggregate_meta.get("historical_window"),
+        "aggregate_deadline": aggregate_deadline,
+        "guard_scale": aggregate_meta.get("guard_scale"),
+    }
+    for entry in stage_deadlines.values():
+        if isinstance(entry, dict):
+            entry.setdefault("telemetry", {}).update(telemetry_context)
     max_stage_deadline: float | None = None
     enforced_deadlines = [
         entry.get("deadline")
@@ -1118,6 +1181,7 @@ def _resolve_bootstrap_deadline_policy(
         "aggregate_deadline": aggregate_deadline,
         "deadline_buffer": aggregate_buffer,
         "max_stage_deadline": max_stage_deadline,
+        "aggregate_buffer_meta": aggregate_meta,
         "adjusted_timeout": aggregate_deadline,
         "pipeline_complexity": pipeline_complexity,
         "host_telemetry": host_telemetry,
