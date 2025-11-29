@@ -11,6 +11,7 @@ from typing import MutableMapping, Sequence
 from bootstrap_timeout_policy import (
     derive_bootstrap_timeout_env,
     enforce_bootstrap_timeout_policy,
+    guard_bootstrap_wait_env,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
 
@@ -59,6 +60,7 @@ _DisabledSelfCodingManager = getattr(
 )
 
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
+    guard_bootstrap_wait_env()
     defaults = derive_bootstrap_timeout_env(
         minimum=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
     )

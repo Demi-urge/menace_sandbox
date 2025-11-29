@@ -42,6 +42,7 @@ from bootstrap_timeout_policy import (
     derive_bootstrap_timeout_env,
     emit_bootstrap_heartbeat,
     enforce_bootstrap_timeout_policy,
+    guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
@@ -68,6 +69,7 @@ if hasattr(signal, "SIGBREAK"):
     signal.signal(signal.SIGBREAK, kill_handler) # Handles Ctrl+Break (Windows only)
 
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
+    guard_bootstrap_wait_env()
     defaults = derive_bootstrap_timeout_env(
         minimum=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
     )
