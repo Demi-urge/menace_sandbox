@@ -1106,20 +1106,6 @@ class EnvironmentBootstrapper:
             ] = str(effective_override)
             budgets[phase] = effective_override
 
-        stage_windows = bootstrap_timeout_policy.load_adaptive_stage_windows(
-            component_budgets=component_timeouts
-        )
-        stage_deadlines = build_stage_deadlines(
-            max(base_phase_budgets.values() or [base_wait_floor, 0.0]),
-            heavy_detected=component_budget_total > 0,
-            soft_deadline=bool(enforcement.get("soft_deadline")),
-            component_budgets=component_timeouts,
-            component_floors=component_floors,
-            adaptive_window=adaptive_window,
-            stage_windows=stage_windows,
-            stage_runtime=bootstrap_timeout_policy.load_component_runtime_samples(),
-        )
-
         shared_snapshot: dict[str, object] | None = None
         coordinator = self.shared_timeout_coordinator
         if coordinator is not None:
@@ -1165,6 +1151,60 @@ class EnvironmentBootstrapper:
         if adaptive_window is None:
             adaptive_window = _max_budget_value(budgets)
 
+        progress_detected = bool(
+            progress_signal.get("progressing") or progress_signal.get("recent_heartbeats")
+        )
+        progress_extension = component_remaining if progress_detected else 0.0
+        if progress_extension > 0:
+            baseline_window = adaptive_window if adaptive_window is not None else _max_budget_value(budgets)
+            if baseline_window is None:
+                baseline_window = base_wait_floor
+            extended_window = (baseline_window or 0.0) + progress_extension
+            previous_window = adaptive_window
+            adaptive_window = max(adaptive_window or 0.0, extended_window)
+
+            for phase in self.PHASES:
+                current = budgets.get(phase)
+                budgets[phase] = max(current or adaptive_window, adaptive_window)
+
+            soft_budgets = bootstrap_timeout_policy.derive_phase_soft_budgets(
+                budgets, telemetry=telemetry
+            )
+
+            if coordinator is not None:
+                for label, meta in (component_windows or {}).items():
+                    if not isinstance(meta, Mapping):
+                        continue
+                    try:
+                        budget_hint = float(meta.get("budget") or meta.get("remaining") or 0.0)
+                    except (TypeError, ValueError):
+                        budget_hint = 0.0
+                    if budget_hint > 0:
+                        coordinator._register_component_window(  # type: ignore[attr-defined]
+                            label, budget_hint
+                        )
+                with coordinator._lock:  # type: ignore[attr-defined]
+                    coordinator._expanded_global_window = max(  # type: ignore[attr-defined]
+                        coordinator._expanded_global_window or 0.0, adaptive_window
+                    )
+                    coordinator.global_window = max(
+                        coordinator.global_window or 0.0, adaptive_window
+                    )
+                shared_snapshot = coordinator.snapshot()
+
+            self.logger.info(
+                "bootstrap window extended from progress telemetry",
+                extra=log_record(
+                    event="bootstrap-window-extended",
+                    baseline_window=baseline_window,
+                    previous_window=previous_window,
+                    extended_window=adaptive_window,
+                    progress_extension=progress_extension,
+                    component_remaining=component_remaining,
+                    progress_signal=progress_signal,
+                ),
+            )
+
         elastic_window, elastic_meta = bootstrap_timeout_policy.derive_elastic_global_window(
             base_window=adaptive_window,
             component_budgets=component_timeouts,
@@ -1175,6 +1215,20 @@ class EnvironmentBootstrapper:
         if elastic_window is not None:
             adaptive_window = max(adaptive_window or 0.0, elastic_window)
             rolling_meta = {**(rolling_meta or {}), "elastic_window": elastic_meta}
+
+        stage_windows = bootstrap_timeout_policy.load_adaptive_stage_windows(
+            component_budgets=component_timeouts
+        )
+        stage_deadlines = build_stage_deadlines(
+            max(base_phase_budgets.values() or [base_wait_floor, 0.0]),
+            heavy_detected=component_budget_total > 0,
+            soft_deadline=bool(enforcement.get("soft_deadline")),
+            component_budgets=component_timeouts,
+            component_floors=component_floors,
+            adaptive_window=adaptive_window,
+            stage_windows=stage_windows,
+            stage_runtime=bootstrap_timeout_policy.load_component_runtime_samples(),
+        )
 
         bootstrap_timeout_policy.persist_bootstrap_wait_window(
             adaptive_window,
