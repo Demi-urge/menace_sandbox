@@ -31,7 +31,11 @@ from .oversight_bots import (
     H3OversightBot,
 )
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from .coding_bot_interface import prepare_pipeline_for_bootstrap
+from .coding_bot_interface import (
+    _BOOTSTRAP_STATE,
+    _current_bootstrap_context,
+    prepare_pipeline_for_bootstrap,
+)
 from bootstrap_timeout_policy import compute_prepare_pipeline_component_budgets
 from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
@@ -168,21 +172,46 @@ class MenaceOrchestrator:
             self.context_builder.refresh_db_weights()
         except Exception:
             self.logger.exception("context builder refresh failed")
+        bootstrap_context = None
+        try:
+            bootstrap_context = _current_bootstrap_context()
+        except Exception:
+            bootstrap_context = None
+
         self.pipeline_promoter: Callable[[Any], None] | None = None
-        placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
-        placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
-        component_budgets = compute_prepare_pipeline_component_budgets()
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=self.context_builder,
-            bot_registry=placeholder_registry,
-            data_bot=placeholder_data_bot,
-            pathway_db=pathway_db,
-            myelination_threshold=myelination_threshold,
-            component_timeouts=component_budgets,
-        )
-        self.pipeline = pipeline
-        self.pipeline_promoter = promote_pipeline
+        bootstrap_pipeline = None
+        bootstrap_promoter: Callable[[Any], None] | None = None
+
+        if bootstrap_context is not None:
+            bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+            callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+            if callbacks:
+                bootstrap_promoter = callbacks[-1]
+            if bootstrap_pipeline is None and bootstrap_promoter is not None:
+                for _ in range(20):
+                    bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+                    if bootstrap_pipeline is not None:
+                        break
+                    time.sleep(0.05)
+
+        if bootstrap_pipeline is None:
+            placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
+            placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
+            component_budgets = compute_prepare_pipeline_component_budgets()
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=self.context_builder,
+                bot_registry=placeholder_registry,
+                data_bot=placeholder_data_bot,
+                pathway_db=pathway_db,
+                myelination_threshold=myelination_threshold,
+                component_timeouts=component_budgets,
+            )
+            self.pipeline = pipeline
+            self.pipeline_promoter = promote_pipeline
+        else:
+            self.pipeline = bootstrap_pipeline
+            self.pipeline_promoter = bootstrap_promoter
         self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
@@ -191,7 +220,7 @@ class MenaceOrchestrator:
         if auto_bootstrap is None:
             auto_bootstrap = not bool(os.getenv("MENACE_LIGHT_IMPORTS"))
         self.model_id: int | None = None
-        if auto_bootstrap:
+        if auto_bootstrap and bootstrap_context is None:
             try:
                 from .self_model_bootstrap import bootstrap as self_bootstrap
 

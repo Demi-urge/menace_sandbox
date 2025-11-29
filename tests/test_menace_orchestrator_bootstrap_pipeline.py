@@ -142,3 +142,49 @@ def test_menace_orchestrator_promotes_bootstrap_pipeline(orchestrator_module, mo
     assert promote_calls == ["manager"]
     assert orchestrator.pipeline_promoter is None
     assert "re-entrant initialisation depth" not in caplog.text
+
+
+def test_menace_orchestrator_reuses_active_bootstrap_pipeline(orchestrator_module, monkeypatch):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    pipeline = types.SimpleNamespace(manager=None)
+    promoted: list[object] = []
+
+    def _promote(manager):
+        promoted.append(manager)
+        pipeline.manager = manager
+
+    bootstrap_context = types.SimpleNamespace(pipeline=pipeline)
+    bootstrap_state = types.SimpleNamespace(helper_promotion_callbacks=[_promote])
+
+    monkeypatch.setattr(
+        orchestrator_module, "_BOOTSTRAP_STATE", bootstrap_state, raising=False
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_current_bootstrap_context",
+        lambda: bootstrap_context,
+        raising=False,
+    )
+
+    def _prepare_pipeline(**_kwargs):
+        raise AssertionError("prepare_pipeline_for_bootstrap should be skipped")
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "prepare_pipeline_for_bootstrap",
+        _prepare_pipeline,
+        raising=False,
+    )
+
+    router = types.SimpleNamespace(menace_id="test", get_connection=lambda *a, **k: None)
+    orchestrator = orchestrator_module.MenaceOrchestrator(
+        context_builder=builder, router=router
+    )
+
+    assert orchestrator.pipeline is pipeline
+    assert orchestrator.pipeline_promoter is _promote
+
+    orchestrator.promote_pipeline_manager("manager")
+
+    assert promoted == ["manager"]
+    assert pipeline.manager == "manager"
