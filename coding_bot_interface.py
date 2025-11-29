@@ -5367,9 +5367,21 @@ def _prepare_pipeline_for_bootstrap_impl(
     if sentinel_candidate is not None:
         _mark_bootstrap_placeholder(sentinel_candidate)
     pipeline_candidate = _resolve_bootstrap_pipeline_candidate(None)
-    bootstrap_inflight = bool(active_depth or active_guard_token)
+    owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
+    bootstrap_inflight = bool(active_depth or any(value > 0 for value in owner_depths.values()))
+    guard_metadata = {
+        "active_depth": active_depth,
+        "active_guard_token": bool(active_guard_token),
+        "sentinel_candidate": bool(sentinel_candidate),
+        "pipeline_candidate": bool(pipeline_candidate),
+        "bootstrap_inflight": bootstrap_inflight,
+        "owner_depths": dict(owner_depths),
+    }
+    _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
 
     if bootstrap_inflight and (pipeline_candidate is not None or sentinel_candidate is not None):
+        if pipeline_candidate is None:
+            pipeline_candidate = getattr(_BOOTSTRAP_STATE, "pipeline", None)
         if pipeline_candidate is None:
             pipeline_candidate = SimpleNamespace(
                 manager=sentinel_candidate,
@@ -5377,6 +5389,7 @@ def _prepare_pipeline_for_bootstrap_impl(
                 bootstrap_placeholder=True,
             )
             _mark_bootstrap_placeholder(pipeline_candidate)
+            _BOOTSTRAP_STATE.pipeline = pipeline_candidate
 
         def _reuse_promote(real_manager: Any) -> None:
             if real_manager is None:
@@ -5390,8 +5403,22 @@ def _prepare_pipeline_for_bootstrap_impl(
                 )
 
             _apply(real_manager)
+            callback_key = ("reuse", id(pipeline_candidate))
+            registered = _PREPARE_PIPELINE_WATCHDOG.setdefault("promotion_callbacks", set())
+            if callback_key in registered:
+                return
+            registered.add(callback_key)
             _register_bootstrap_helper_callback(_apply)
 
+        guard_metadata.update(
+            {
+                "short_circuit": True,
+                "suppress_logging": True,
+                "pipeline_candidate": bool(pipeline_candidate),
+                "sentinel_candidate": bool(sentinel_candidate),
+            }
+        )
+        _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata
         logger.info(
             "prepare_pipeline.bootstrap.short_circuit",
             extra={
