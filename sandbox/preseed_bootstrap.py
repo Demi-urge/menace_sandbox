@@ -2205,7 +2205,22 @@ def initialize_bootstrap_context(
                     )
                     prepare_degraded = False
                     retry_scheduled = False
+                    prepare_resume_hook: Callable[[], Any] | None = None
                     prepare_result: tuple[Any, Callable[[Any], None]] | None = None
+                    prepare_kwargs = {
+                        "func": prepare_pipeline_for_bootstrap,
+                        "label": "prepare_pipeline_for_bootstrap",
+                        "stop_event": stop_event,
+                        "pipeline_cls": ModelAutomationPipeline,
+                        "context_builder": context_builder,
+                        "bot_registry": registry,
+                        "data_bot": data_bot,
+                        "bootstrap_runtime_manager": bootstrap_manager,
+                        "manager": bootstrap_manager,
+                        "bootstrap_safe": True,
+                        "bootstrap_fast": True,
+                        "component_timeouts": component_budgets,
+                    }
 
                     def _schedule_prepare_retry() -> bool:
                         if shared_timeout_coordinator is None:
@@ -2250,18 +2265,7 @@ def initialize_bootstrap_context(
                                     resolved_timeout=retry_context,
                                     budget=shared_timeout_coordinator,
                                     budget_label="retrievers.retry",
-                                    func=prepare_pipeline_for_bootstrap,
-                                    label=retry_label,
-                                    stop_event=stop_event,
-                                    pipeline_cls=ModelAutomationPipeline,
-                                    context_builder=context_builder,
-                                    bot_registry=registry,
-                                    data_bot=data_bot,
-                                    bootstrap_runtime_manager=bootstrap_manager,
-                                    manager=bootstrap_manager,
-                                    bootstrap_safe=True,
-                                    bootstrap_fast=True,
-                                    component_timeouts=component_budgets,
+                                    **prepare_kwargs,
                                 )
                             except Exception:
                                 LOGGER.exception("background prepare retry failed")
@@ -2297,22 +2301,24 @@ def initialize_bootstrap_context(
                             resolved_timeout=resolved_prepare_timeout,
                             budget=shared_timeout_coordinator,
                             budget_label="retrievers",
-                            func=prepare_pipeline_for_bootstrap,
-                            label="prepare_pipeline_for_bootstrap",
-                            stop_event=stop_event,
-                            pipeline_cls=ModelAutomationPipeline,
-                            context_builder=context_builder,
-                            bot_registry=registry,
-                            data_bot=data_bot,
-                            bootstrap_runtime_manager=bootstrap_manager,
-                            manager=bootstrap_manager,
-                            bootstrap_safe=True,
-                            bootstrap_fast=True,
-                            component_timeouts=component_budgets,
+                            **prepare_kwargs,
                         )
                     except TimeoutError:
                         prepare_degraded = True
                         retry_scheduled = _schedule_prepare_retry()
+                        prepare_resume_hook = lambda: _run_with_timeout(
+                            _timed_callable,
+                            timeout=effective_prepare_timeout,
+                            bootstrap_deadline=bootstrap_deadline,
+                            description="prepare_pipeline_for_bootstrap.resume",
+                            abort_on_timeout=False,
+                            heavy_bootstrap=heavy_prepare,
+                            contention_scale=prepare_gate["timeout_scale"],
+                            resolved_timeout=resolved_prepare_timeout,
+                            budget=shared_timeout_coordinator,
+                            budget_label="retrievers.resume",
+                            **prepare_kwargs,
+                        )
                         LOGGER.warning(
                             "prepare_pipeline_for_bootstrap exceeded budget; entering degraded mode",
                             extra={
@@ -2327,7 +2333,7 @@ def initialize_bootstrap_context(
                         _BOOTSTRAP_SCHEDULER.mark_partial(
                             "orchestrator_state", reason="prepare_timeout"
                         )
-                        _set_component_state("orchestrator_state", "partial")
+                        _set_component_state("orchestrator_state", "degraded")
                         prepare_result = None
                     except Exception:
                         LOGGER.exception("prepare_pipeline_for_bootstrap failed (step=prepare_pipeline)")
@@ -2367,6 +2373,7 @@ def initialize_bootstrap_context(
                             "manager": bootstrap_manager,
                             "degraded_prepare": True,
                             "prepare_retry": retry_scheduled,
+                            "resume_prepare": prepare_resume_hook,
                             "online_state": degrade_snapshot,
                         }
                         if use_cache:

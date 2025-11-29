@@ -711,6 +711,7 @@ def _monitor_bootstrap_thread(
     stage_overruns: set[str] = set()
     stage_timeout_context: dict[str, Any] | None = None
     optional_timeout_notes: dict[str, dict[str, object]] = {}
+    core_soft_overruns: set[str] = set()
     core_online_announced = False
     stage_progress_sent: dict[str, float] = {}
 
@@ -757,6 +758,7 @@ def _monitor_bootstrap_thread(
         core_online, lagging_core, degraded_core, degraded_online = minimal_online(
             online_state_snapshot
         )
+        degraded_core = set(degraded_core) | set(core_soft_overruns)
         coordinator_ready = False
         coordinator_meta: Mapping[str, object] = {}
         coordinator = get_prepare_pipeline_coordinator()
@@ -782,6 +784,8 @@ def _monitor_bootstrap_thread(
         optional_warming.update(optional_lagging)
         optional_warming.update(optional_timeout_notes)
         online_state_snapshot["optional_warming"] = sorted(optional_warming)
+        if core_soft_overruns:
+            online_state_snapshot["core_warming"] = sorted(core_soft_overruns)
         BOOTSTRAP_ONLINE_STATE.update(online_state_snapshot)
         if not core_online_announced and core_online:
             LOGGER.info(
@@ -924,6 +928,17 @@ def _monitor_bootstrap_thread(
         if stage_timeout_context and soft_degrade:
             stage_timeout_context = dict(stage_timeout_context)
             stage_timeout_context["soft_degrade"] = True
+            core_soft_overruns.add(stage)
+            optional_lagging.add(stage)
+            optional_timeout_notes.setdefault(
+                stage,
+                {
+                    "elapsed": round(stage_elapsed, 2),
+                    "deadline": stage_deadline,
+                    "optional": stage_optional,
+                    "soft_degrade": True,
+                },
+            )
 
         if stage_timeout_context and degraded_online:
             stage_timeout_context = dict(stage_timeout_context)
