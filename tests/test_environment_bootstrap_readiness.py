@@ -92,13 +92,15 @@ def test_core_online_degrades_until_provisioning_completes(monkeypatch, tmp_path
     bootstrapper._update_gate("critical", "ready")
     bootstrapper._maybe_mark_online(reason="critical-only", partial=True)
 
-    assert bootstrapper._phase_readiness.get("online") is True
+    assert bootstrapper._phase_readiness.get("online") is False
+    assert bootstrapper._phase_readiness.get("online_partial") is True
     assert bootstrapper._phase_readiness.get("online_degraded") is True
     assert bootstrapper._lagging_core_phases() == {"provisioning"}
 
     bootstrapper._update_gate("provisioning", "ready")
     bootstrapper._maybe_mark_online(reason="provisioning-finished", partial=False)
 
+    assert bootstrapper._phase_readiness.get("online") is True
     assert bootstrapper._phase_readiness.get("online_degraded") is False
     assert bootstrapper._lagging_core_phases() == set()
 
