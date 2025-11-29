@@ -31,11 +31,13 @@ from bootstrap_readiness import (
 
 from bootstrap_timeout_policy import (
     broadcast_timeout_floors,
+    derive_bootstrap_timeout_env,
     emit_bootstrap_heartbeat,
     enforce_bootstrap_timeout_policy,
     get_bootstrap_guard_context,
     load_component_timeout_floors,
     load_escalated_timeout_floors,
+    _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
 from coding_bot_interface import get_prepare_pipeline_coordinator
 from db_router import init_db_router
@@ -57,16 +59,17 @@ signal.signal(signal.SIGINT, kill_handler)   # Handles Ctrl+C
 if hasattr(signal, "SIGBREAK"):
     signal.signal(signal.SIGBREAK, kill_handler) # Handles Ctrl+Break (Windows only)
 
-# Standardise bootstrap timeout environment variables before initialising services.
-_BOOTSTRAP_TIMEOUT_DEFAULTS = {
-    "MENACE_BOOTSTRAP_WAIT_SECS": "240",
-    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": "240",
-    "BOOTSTRAP_STEP_TIMEOUT": "240",
-    "BOOTSTRAP_VECTOR_STEP_TIMEOUT": "240",
-}
+def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
+    defaults = derive_bootstrap_timeout_env(
+        minimum=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"]
+    )
+    for env_var, resolved in defaults.items():
+        os.environ.setdefault(env_var, str(resolved))
+    return defaults
 
-for _env_var, _default_value in _BOOTSTRAP_TIMEOUT_DEFAULTS.items():
-    os.environ.setdefault(_env_var, _default_value)
+
+# Standardise bootstrap timeout environment variables before initialising services.
+_BOOTSTRAP_TIMEOUT_DEFAULTS = _hydrate_bootstrap_timeout_env()
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
