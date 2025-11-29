@@ -122,6 +122,38 @@ def get_structural_bootstrap_owner() -> object | None:
 
     return _STRUCTURAL_BOOTSTRAP_OWNER.get(None)
 
+
+def get_active_bootstrap_pipeline() -> tuple[Any | None, Any | None]:
+    """Return a pipeline/manager pair already protected by bootstrap guards."""
+
+    pipeline = _resolve_bootstrap_pipeline_candidate(None)
+    manager: Any | None = None
+
+    context = _current_bootstrap_context()
+    if context is not None:
+        manager = getattr(context, "manager", None)
+        if pipeline is None:
+            pipeline = getattr(context, "pipeline", None)
+
+    pipeline_context = _current_pipeline_context()
+    if pipeline is None and pipeline_context is not None:
+        pipeline = pipeline_context
+        try:
+            manager = getattr(pipeline_context, "manager", manager)
+        except Exception:  # pragma: no cover - best effort manager probe
+            manager = manager
+
+    if pipeline is not None and not _looks_like_pipeline_candidate(pipeline):
+        pipeline = None
+
+    if pipeline is not None and manager is None:
+        try:
+            manager = getattr(pipeline, "manager", None)
+        except Exception:  # pragma: no cover - best effort manager probe
+            manager = None
+
+    return pipeline, manager
+
 try:  # pragma: no cover - prefer package import when available
     from menace_sandbox.self_coding_policy import get_self_coding_policy
 except Exception:  # pragma: no cover - fallback when executed from flat layout
