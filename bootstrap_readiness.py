@@ -141,6 +141,12 @@ def build_stage_deadlines(
         if soft_deadline:
             hard_deadline = None
 
+        # Core stages are now degradable: the initial deadline is treated as a
+        # soft budget that triggers degraded readiness instead of aborting the
+        # bootstrap loop. Optional stages retain soft budgets but already warm
+        # in the background.
+        soft_degrade = True if stage.name in CORE_COMPONENTS else stage.optional
+
         stage_deadlines[stage.name] = {
             "deadline": hard_deadline,
             "soft_budget": scaled_budget,
@@ -149,7 +155,7 @@ def build_stage_deadlines(
             "floor": stage_floor,
             "budget": resolved_budget,
             "scaled_budget": scaled_budget,
-            "soft_degrade": stage.optional,
+            "soft_degrade": soft_degrade,
             "scale": scale,
             "core_gate": not stage.optional,
         }
