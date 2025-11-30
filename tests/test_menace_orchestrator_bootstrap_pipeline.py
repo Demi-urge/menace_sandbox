@@ -148,6 +148,7 @@ class _Broker:
     def __init__(self, pipeline):
         self.pipeline = pipeline
         self.calls: list[int] = []
+        self.advertised: list[dict[str, object | None]] = []
 
     def resolve(self):
         self.calls.append(len(self.calls))
@@ -155,7 +156,8 @@ class _Broker:
             return self.pipeline, getattr(self.pipeline, "manager", None)
         return None, None
 
-    def advertise(self, **_kwargs):
+    def advertise(self, **kwargs):
+        self.advertised.append(kwargs)
         return None
 
 
@@ -214,4 +216,65 @@ def test_orchestrator_reuses_active_bootstrap_pipeline(monkeypatch):
 
     assert len(broker.calls) >= 2
     assert orchestrator.pipeline is fake_pipeline
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_orchestrator_waits_on_bootstrap_heartbeat(monkeypatch):
+    """A bootstrap heartbeat should trigger wait/backoff before new bootstrap."""
+
+    _stub_orchestrator_dependencies(monkeypatch)
+    module = importlib.import_module("menace_sandbox.menace_orchestrator")
+
+    fake_pipeline = SimpleNamespace(manager=mock.Mock(name="manager"))
+
+    class _DelayedBroker(_Broker):
+        def resolve(self):
+            self.calls.append(len(self.calls))
+            if len(self.calls) >= 3:
+                return self.pipeline, getattr(self.pipeline, "manager", None)
+            return None, None
+
+    broker = _DelayedBroker(fake_pipeline)
+
+    context_builder = SimpleNamespace(refresh_db_weights=lambda: None)
+    router = SimpleNamespace()
+
+    monkeypatch.setattr(module, "_BOOTSTRAP_STATE", SimpleNamespace(active_bootstrap_guard=None))
+    monkeypatch.setattr(module, "_peek_owner_promise", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_resolve_bootstrap_wait_timeout", lambda *_a, **_k: 0.2)
+    monkeypatch.setattr(module, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(module, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(module, "read_bootstrap_heartbeat", lambda *_, **__: {"active": True})
+    monkeypatch.setattr(
+        module,
+        "prepare_pipeline_for_bootstrap",
+        mock.Mock(side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")),
+    )
+    monkeypatch.setattr(module, "compute_prepare_pipeline_component_budgets", lambda: {})
+
+    for attr in (
+        "KnowledgeGraph",
+        "DiscrepancyDetectionBot",
+        "EfficiencyBot",
+        "Watchdog",
+        "ErrorDB",
+        "ROIDB",
+        "MetricsDB",
+        "StrategicPlanner",
+        "StrategyPredictionBot",
+        "Autoscaler",
+        "TrendPredictor",
+    ):
+        monkeypatch.setattr(module, attr, _Dummy)
+
+    orchestrator = module.MenaceOrchestrator(
+        context_builder=context_builder,
+        router=router,
+        auto_bootstrap=False,
+        ad_client=_Dummy(),
+    )
+
+    assert len(broker.calls) >= 3
+    assert orchestrator.pipeline is fake_pipeline
+    assert broker.advertised, "orchestrator should advertise the resolved pipeline early"
     module.prepare_pipeline_for_bootstrap.assert_not_called()
