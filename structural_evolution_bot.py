@@ -24,11 +24,10 @@ except Exception:  # pragma: no cover - optional dependency
 from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
-    _GLOBAL_BOOTSTRAP_COORDINATOR,
     get_active_bootstrap_pipeline,
     get_structural_bootstrap_owner as _get_structural_bootstrap_owner,
     normalise_manager_arg,
-    prepare_pipeline_for_bootstrap,
+    claim_bootstrap_dependency_entry,
     self_coding_managed,
     structural_bootstrap_owner_guard,
 )
@@ -111,78 +110,6 @@ def _load_thresholds():
             test_failure_increase=_thresholds.test_failure_increase,
         )
     return _thresholds
-
-
-def _build_pipeline() -> tuple["ModelAutomationPipeline", Callable[[object], None]]:
-    """Construct the automation pipeline without triggering circular imports."""
-
-    dependency_broker = _bootstrap_dependency_broker()
-    broker_pipeline, broker_manager = None, None
-    try:
-        broker_pipeline, broker_manager = dependency_broker.resolve()
-    except Exception:  # pragma: no cover - best effort broker resolve
-        broker_pipeline, broker_manager = None, None
-
-    active_pipeline, active_manager = get_active_bootstrap_pipeline()
-    pipeline_candidate = broker_pipeline or active_pipeline
-    manager_candidate = broker_manager or active_manager
-
-    if pipeline_candidate is not None:
-        dependency_broker.advertise(
-            pipeline=pipeline_candidate, sentinel=manager_candidate
-        )
-        logger.info(
-            "structural evolution bootstrap reusing active pipeline",
-            extra={
-                "event": "structural-evolution-bootstrap-reuse",
-                "broker": broker_pipeline is not None,
-                "candidate": getattr(
-                    getattr(pipeline_candidate, "__class__", None), "__name__", type(pipeline_candidate)
-                ),
-            },
-        )
-        promoter = getattr(pipeline_candidate, "_pipeline_promoter", None)
-        if promoter is None:
-            promoter = lambda _manager: None  # pragma: no cover - noop fallback
-        return pipeline_candidate, promoter
-
-    active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
-    if active_promise is not None and not getattr(active_promise, "done", False):
-        logger.info(
-            "structural evolution bootstrap waiting on active promise",
-            extra={
-                "event": "structural-evolution-bootstrap-promise-wait",
-                "waiters": getattr(active_promise, "waiters", None),
-            },
-        )
-        pipeline_candidate, promoter = active_promise.wait()
-        dependency_broker.advertise(
-            pipeline=pipeline_candidate,
-            sentinel=getattr(pipeline_candidate, "manager", None),
-        )
-        return pipeline_candidate, promoter
-
-    from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
-
-    pipeline, promoter = prepare_pipeline_for_bootstrap(
-        pipeline_cls=_Pipeline,
-        context_builder=_get_context_builder(),
-        bot_registry=_get_registry(),
-        data_bot=_get_data_bot(),
-    )
-    dependency_broker.advertise(
-        pipeline=pipeline, sentinel=getattr(pipeline, "manager", None)
-    )
-    logger.info(
-        "structural evolution bootstrap prepared new pipeline",
-        extra={
-            "event": "structural-evolution-bootstrap-new",
-            "pipeline": getattr(_Pipeline, "__name__", str(_Pipeline)),
-        },
-    )
-    return pipeline, promoter
-
-
 def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingManager:
     global _pipeline, _manager, _pipeline_promoter, _bootstrap_error, _bootstrap_in_progress
 
@@ -262,13 +189,36 @@ def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingMan
                 except Exception:
                     bootstrap_manager = bootstrap_manager
 
+            if dependency_broker is not None:
+                try:
+                    dependency_broker.advertise(
+                        pipeline=bootstrap_pipeline or _pipeline,
+                        sentinel=bootstrap_manager or _manager,
+                    )
+                except Exception:  # pragma: no cover - best effort advertising
+                    logger.debug(
+                        "failed to advertise bootstrap pipeline prior to claim", exc_info=True
+                    )
+
             if (
                 bootstrap_pipeline is None
                 and _pipeline is None
                 and bootstrap_manager is None
                 and not bootstrap_context
             ):
-                _pipeline, _pipeline_promoter = _build_pipeline()
+                from .model_automation_pipeline import ModelAutomationPipeline as _Pipeline
+
+                _pipeline, _pipeline_promoter, bootstrap_manager, _ = (
+                    claim_bootstrap_dependency_entry(
+                        dependency_broker=dependency_broker,
+                        pipeline=_pipeline or bootstrap_pipeline,
+                        manager=_manager or bootstrap_manager,
+                        pipeline_cls=_Pipeline,
+                        context_builder=_get_context_builder(),
+                        bot_registry=_get_registry(),
+                        data_bot=_get_data_bot(),
+                    )
+                )
             else:
                 if _pipeline is None:
                     _pipeline = bootstrap_pipeline
@@ -276,6 +226,10 @@ def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingMan
                     _pipeline = getattr(bootstrap_context, "pipeline", None)
                 if _pipeline_promoter is None and bootstrap_promoter is not None:
                     _pipeline_promoter = bootstrap_promoter
+            if _pipeline_promoter is None and _pipeline is not None:
+                _pipeline_promoter = getattr(_pipeline, "_pipeline_promoter", None)
+            if _pipeline_promoter is None and bootstrap_promoter is not None:
+                _pipeline_promoter = bootstrap_promoter
             if _manager is None:
                 _manager = bootstrap_manager
             if _manager is None and bootstrap_context is not None:
@@ -285,6 +239,13 @@ def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingMan
                     _pipeline = getattr(_manager, "pipeline", None)
                 except Exception:
                     _pipeline = None
+            if dependency_broker is not None and _pipeline is not None:
+                try:
+                    dependency_broker.advertise(
+                        pipeline=_pipeline, sentinel=_manager or bootstrap_manager
+                    )
+                except Exception:  # pragma: no cover - best effort advertising
+                    logger.debug("failed to advertise bootstrap pipeline to broker", exc_info=True)
             if _manager is None:
                 orchestrator = get_orchestrator("StructuralEvolutionBot", _get_data_bot(), _get_engine())
                 th = _load_thresholds()
