@@ -789,3 +789,69 @@ def test_bootstrap_consumer_warns_without_placeholder(monkeypatch, caplog):
         "No bootstrap dependency broker placeholder available" in str(w.message)
         for w in caught
     )
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_reset_bootstrap_state")
+def test_orchestrator_placeholder_health_bootstrap_dedupes_prepare(monkeypatch):
+    _install_orchestrator_stubs()
+
+    import menace_sandbox.menace_orchestrator as mo
+
+    prepare_calls: list[dict[str, object]] = []
+
+    def _prepare_pipeline_for_bootstrap(**kwargs: object):
+        prepare_calls.append(kwargs)
+        return SimpleNamespace(manager=SimpleNamespace(from_prepare=True)), (
+            lambda *_a, **_k: None
+        )
+
+    class _Broker:
+        def __init__(self) -> None:
+            self.active_owner = False
+            self.active_pipeline: object | None = None
+            self.active_sentinel: object | None = None
+
+        def resolve(self):
+            return self.active_pipeline, self.active_sentinel
+
+        def advertise(self, *, pipeline=None, sentinel=None, owner=None):
+            if owner is True and not self.active_owner:
+                self.active_owner = True
+                prepared_pipeline, _ = _prepare_pipeline_for_bootstrap()
+                self.active_pipeline = prepared_pipeline
+                self.active_sentinel = getattr(prepared_pipeline, "manager", None)
+            elif owner is False:
+                self.active_owner = False
+            if pipeline is not None:
+                self.active_pipeline = pipeline
+            if sentinel is not None:
+                self.active_sentinel = sentinel
+
+    broker = _Broker()
+
+    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(mo, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(mo, "_resolve_bootstrap_wait_timeout", lambda *_a, **_k: 0.2)
+    monkeypatch.setattr(mo, "prepare_pipeline_for_bootstrap", _prepare_pipeline_for_bootstrap)
+    monkeypatch.setattr(mo, "read_bootstrap_heartbeat", lambda *_a, **_k: {"active": True})
+
+    def _advertise_bootstrap_placeholder(*, dependency_broker=None, **_kwargs):
+        (dependency_broker or broker).advertise(owner=True)
+        return SimpleNamespace(bootstrap_placeholder=True, manager=None), None
+
+    monkeypatch.setattr(mo, "advertise_bootstrap_placeholder", _advertise_bootstrap_placeholder)
+
+    monkeypatch.setattr(mo, "ErrorDB", lambda *_, **__: SimpleNamespace())
+    monkeypatch.setattr(mo, "Watchdog", lambda *_a, **_k: SimpleNamespace())
+    monkeypatch.setattr(mo, "StrategicPlanner", lambda *_a, **_k: SimpleNamespace())
+    monkeypatch.setattr(mo, "StrategyPredictionBot", lambda *_a, **_k: SimpleNamespace())
+    monkeypatch.setattr(mo, "Autoscaler", lambda *_a, **_k: SimpleNamespace())
+    monkeypatch.setattr(mo, "TrendPredictor", lambda *_a, **_k: SimpleNamespace())
+
+    orchestrator = mo.MenaceOrchestrator(
+        context_builder=SimpleNamespace(refresh_db_weights=lambda: None)
+    )
+
+    assert orchestrator.pipeline is not None
+    assert len(prepare_calls) == 1
