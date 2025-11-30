@@ -5508,12 +5508,70 @@ def _prepare_pipeline_for_bootstrap_impl(
     single-flight coordinator when appropriate.
     """
 
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline, broker_sentinel = dependency_broker.resolve()
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
     guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
         "1",
         "true",
         "yes",
     )
+    dependency_owner_reset = False
+    if not getattr(dependency_broker, "active_owner", False):
+        dependency_broker.advertise(owner=True)
+        dependency_owner_reset = True
+    active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+    if not guard_enabled:
+        if active_promise is not None:
+            logger.info(
+                "prepare_pipeline.bootstrap.reentrancy_promise_wait",
+                extra={
+                    "event": "prepare-pipeline-bootstrap-reentrancy-promise-wait",
+                    "waiters": active_promise.waiters,
+                },
+            )
+            try:
+                return active_promise.wait()
+            finally:
+                if dependency_owner_reset:
+                    dependency_broker.advertise(owner=False)
+
+        if broker_pipeline is not None or broker_sentinel is not None:
+            if broker_pipeline is None:
+                broker_pipeline = SimpleNamespace(
+                    manager=broker_sentinel,
+                    initial_manager=broker_sentinel,
+                    bootstrap_placeholder=True,
+                )
+                _mark_bootstrap_placeholder(broker_pipeline)
+
+            def _reuse_promote(real_manager: Any) -> None:
+                if real_manager is None:
+                    return
+                _assign_bootstrap_manager_placeholder(
+                    broker_pipeline,
+                    real_manager,
+                    propagate_nested=True,
+                )
+
+            dependency_broker.advertise(
+                pipeline=broker_pipeline, sentinel=broker_sentinel, owner=True
+            )
+            if dependency_owner_reset:
+                dependency_owner_reset = False
+            logger.info(
+                "prepare_pipeline.bootstrap.reentrancy_broker_reuse",
+                extra={
+                    "event": "prepare-pipeline-bootstrap-reentrancy-broker-reuse",
+                    "dependency_broker": True,
+                    "pipeline_candidate": getattr(
+                        getattr(broker_pipeline, "__class__", None),
+                        "__name__",
+                        str(type(broker_pipeline)),
+                    ),
+                },
+            )
+            return broker_pipeline, _reuse_promote
     active_owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
     active_owner_depth = (getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}).get(
         active_owner_guard, 0
@@ -5594,10 +5652,13 @@ def _prepare_pipeline_for_bootstrap_impl(
         if single_flight_owner and single_flight_promise is not None:
             _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, error=exc)
         raise
-
-    if single_flight_owner and single_flight_promise is not None:
-        _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, result=result)
-    return result
+    else:
+        if single_flight_owner and single_flight_promise is not None:
+            _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, result=result)
+        return result
+    finally:
+        if dependency_owner_reset:
+            dependency_broker.advertise(owner=False)
 
 
 def _prepare_pipeline_for_bootstrap_impl_inner(
