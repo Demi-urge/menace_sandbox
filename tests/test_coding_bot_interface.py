@@ -732,6 +732,96 @@ def test_prepare_pipeline_guardless_reuses_dependency_broker(monkeypatch, caplog
     assert promote_a is promote_b
 
 
+def test_parallel_helpers_share_dependency_broker_placeholder(monkeypatch):
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+    cbi._PREPARE_PIPELINE_WATCHDOG.clear()
+
+    start_event = threading.Event()
+    release_event = threading.Event()
+    prepare_calls: list[dict[str, Any]] = []
+    promotions: list[Any] = []
+    broker_snapshots: list[tuple[Any | None, Any | None]] = []
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+
+    class DummyModelAutomationPipeline:
+        def __init__(self) -> None:
+            self.context_builder = SimpleNamespace()
+            self.manager = sentinel_placeholder
+            self.initial_manager = sentinel_placeholder
+            self._bot_attribute_order = []
+            self.bootstrap_placeholder = True
+
+    pipeline_placeholder = DummyModelAutomationPipeline()
+
+    def _stub_inner(**kwargs):
+        prepare_calls.append(kwargs)
+        dependency_broker.advertise(
+            pipeline=pipeline_placeholder, sentinel=sentinel_placeholder, owner=True
+        )
+        broker_snapshots.append(dependency_broker.resolve())
+        start_event.set()
+        release_event.wait(timeout=5)
+        return pipeline_placeholder, lambda manager: promotions.append(manager)
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl_inner", _stub_inner)
+
+    class _Pipeline:
+        vector_bootstrap_heavy = True
+
+        def __init__(self, *, manager=None, **_kwargs) -> None:
+            self.manager = manager
+
+    def _bootstrap_helper(results: list[tuple[Any, Any]]) -> None:
+        results.append(
+            cbi.prepare_pipeline_for_bootstrap(
+                pipeline_cls=_Pipeline,
+                context_builder=SimpleNamespace(),
+                bot_registry=DummyRegistry(),
+                data_bot=DummyDataBot(),
+            )
+        )
+
+    owner_results: list[tuple[Any, Any]] = []
+    aggregator_results: list[tuple[Any, Any]] = []
+    prediction_results: list[tuple[Any, Any]] = []
+    memory_results: list[tuple[Any, Any]] = []
+
+    owner_thread = threading.Thread(
+        target=_bootstrap_helper,
+        args=(owner_results,),
+    )
+    owner_thread.start()
+    assert start_event.wait(timeout=5)
+
+    helper_threads = [
+        threading.Thread(target=_bootstrap_helper, args=(aggregator_results,)),
+        threading.Thread(target=_bootstrap_helper, args=(prediction_results,)),
+        threading.Thread(target=_bootstrap_helper, args=(memory_results,)),
+    ]
+    for thread in helper_threads:
+        thread.start()
+
+    release_event.set()
+    owner_thread.join(timeout=5)
+    for thread in helper_threads:
+        thread.join(timeout=5)
+
+    assert len(prepare_calls) == 1
+
+    all_results = owner_results + aggregator_results + prediction_results + memory_results
+    assert all_results
+    assert all(pipeline is pipeline_placeholder for pipeline, _promote in all_results)
+    assert broker_snapshots[-1] == (pipeline_placeholder, sentinel_placeholder)
+    assert dependency_broker.active_owner
+    assert all(promote is all_results[0][1] for _pipe, promote in all_results)
+
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+
 def test_prepare_pipeline_reentrancy_without_sentinel_attaches_placeholder(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=cbi.logger.name)
     cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
