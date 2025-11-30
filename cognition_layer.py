@@ -8,7 +8,9 @@ inspect ROI statistics.  Internally it wires together the vector service
 :class:`vector_service.cognition_layer.CognitionLayer`.  The module advertises
 the active bootstrap placeholder at import time so downstream helpers reuse the
 shared promise rather than triggering a cascading
-``prepare_pipeline_for_bootstrap`` chain during cognition warm-ups.
+``prepare_pipeline_for_bootstrap`` chain during cognition warm-ups. Maintain
+the broker-first bootstrap pattern referenced in
+``docs/bootstrap_troubleshooting.md`` when updating these helpers.
 
 Example
 -------

@@ -1,4 +1,11 @@
-"""Research Aggregator Bot for autonomous multi-layered research."""
+"""Research Aggregator Bot for autonomous multi-layered research.
+
+This module participates in the bootstrap-sensitive pipeline chain; it must
+advertise or reuse the broker-published bootstrap placeholder before
+constructing any pipelines so downstream helpers preserve the broker-first
+pattern. See ``docs/bootstrap_troubleshooting.md`` for guidance on keeping the
+placeholder visible during orchestration.
+"""
 
 from __future__ import annotations
 
