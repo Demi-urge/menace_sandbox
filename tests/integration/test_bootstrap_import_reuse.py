@@ -283,11 +283,7 @@ def test_research_aggregator_import_reuses_placeholder(monkeypatch, caplog):
     rab.manager = None
 
     sentinel = SimpleNamespace(bootstrap_placeholder=True)
-    pipeline = SimpleNamespace(
-        manager=sentinel, initial_manager=sentinel, bootstrap_placeholder=True
-    )
-    cbi._mark_bootstrap_placeholder(sentinel)
-    cbi._mark_bootstrap_placeholder(pipeline)
+    pipeline = cbi._build_bootstrap_placeholder_pipeline(sentinel)
     broker = cbi._bootstrap_dependency_broker()
     broker.advertise(pipeline=pipeline, sentinel=sentinel)
 
@@ -322,11 +318,7 @@ def test_menace_orchestrator_import_reuses_bootstrap_promise(monkeypatch, caplog
     _install_orchestrator_stubs()
     broker = cbi._bootstrap_dependency_broker()
     sentinel = SimpleNamespace(bootstrap_placeholder=True)
-    pipeline = SimpleNamespace(
-        manager=sentinel, initial_manager=sentinel, bootstrap_placeholder=True
-    )
-    cbi._mark_bootstrap_placeholder(sentinel)
-    cbi._mark_bootstrap_placeholder(pipeline)
+    pipeline = cbi._build_bootstrap_placeholder_pipeline(sentinel)
     broker.advertise(pipeline=pipeline, sentinel=sentinel)
 
     active = cbi._BootstrapPipelinePromise()
@@ -672,6 +664,84 @@ def test_bootstrap_consumers_share_broker_placeholder(monkeypatch, caplog):
     assert getattr(cog_module, "_BOOTSTRAP_PLACEHOLDER_MANAGER") is sentinel_placeholder
     assert promotions == [sentinel_placeholder]
     assert not [r for r in caplog.records if "recursion" in r.message]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_reset_bootstrap_state")
+def test_cold_start_reuses_dependency_broker(monkeypatch, caplog):
+    sentinel = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline = cbi._build_bootstrap_placeholder_pipeline(sentinel)
+
+    broker = cbi._bootstrap_dependency_broker()
+    broker.advertise(pipeline=pipeline, sentinel=sentinel, owner=True)
+
+    def _fail_prepare(**_kwargs):  # pragma: no cover - safety guard
+        raise AssertionError("prepare pipeline should not run during broker reuse")
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl", _fail_prepare)
+
+    class _Pipeline:
+        pass
+
+    caplog.set_level("INFO", logger=cbi.logger.name)
+
+    reused_pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert reused_pipeline is pipeline
+    promote(object())
+    assert broker.resolve() == (pipeline, sentinel)
+    assert any(
+        r.message.startswith("prepare_pipeline.bootstrap.preflight_broker_short_circuit")
+        for r in caplog.records
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_reset_bootstrap_state")
+def test_cold_start_waits_for_active_promise(monkeypatch, caplog):
+    promise = cbi._BootstrapPipelinePromise()
+    sentinel = SimpleNamespace()
+    pipeline = SimpleNamespace(manager=sentinel)
+    resolved_promote = lambda *_a, **_k: None  # noqa: E731
+    promise.waiters = 1  # type: ignore[attr-defined]
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = promise  # type: ignore[attr-defined]
+
+    def _resolve_active() -> None:
+        promise.resolve((pipeline, resolved_promote))
+
+    resolver = threading.Timer(0.01, _resolve_active)
+    resolver.start()
+
+    def _fail_prepare(**_kwargs):  # pragma: no cover - safety guard
+        raise AssertionError("prepare pipeline should not run during active promise reuse")
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl", _fail_prepare)
+
+    class _Pipeline:
+        pass
+
+    caplog.set_level("INFO", logger=cbi.logger.name)
+
+    reused_pipeline, reused_promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    resolver.cancel()
+    assert reused_pipeline is pipeline
+    assert reused_promote is resolved_promote
+    assert promise.waiters == 2  # type: ignore[attr-defined]
+    assert any(
+        r.message.startswith("prepare_pipeline.bootstrap.preflight_promise_short_circuit")
+        for r in caplog.records
+    )
 
 
 @pytest.mark.integration
