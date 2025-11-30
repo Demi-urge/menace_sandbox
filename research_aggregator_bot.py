@@ -90,6 +90,8 @@ class _RuntimeDependencies:
     pipeline: "ModelAutomationPipeline"
     evolution_orchestrator: "EvolutionOrchestrator | None"
     manager: SelfCodingManager | None
+    dependency_broker: object | None
+    pipeline_promoter: Callable[[SelfCodingManager | None], None] | None
 
 
 registry: BotRegistry | None = None
@@ -278,6 +280,7 @@ def _ensure_runtime_dependencies(
         if _runtime_placeholder is not None:
             return _runtime_placeholder
 
+        dependency_broker = _bootstrap_dependency_broker()
         reg = registry if registry is not None else BotRegistry()
         dbot = data_bot if data_bot is not None else DataBot(start_server=False)
         ctx_builder = _context_builder
@@ -297,6 +300,8 @@ def _ensure_runtime_dependencies(
             pipeline=pipeline_override if pipeline_override is not None else pipeline,
             evolution_orchestrator=evolution_orchestrator,
             manager=manager_override if manager_override is not None else manager,
+            dependency_broker=dependency_broker,
+            pipeline_promoter=None,
         )
         return _runtime_placeholder
 
@@ -313,6 +318,8 @@ def _ensure_runtime_dependencies(
         context_builder=ctx_builder,
     )
 
+    dependency_broker = _bootstrap_dependency_broker()
+
     _runtime_initializing = True
     _runtime_placeholder = _RuntimeDependencies(
         registry=reg,
@@ -322,6 +329,8 @@ def _ensure_runtime_dependencies(
         pipeline=pipeline_override if pipeline_override is not None else pipeline,
         evolution_orchestrator=evolution_orchestrator,
         manager=manager_override if manager_override is not None else manager,
+        dependency_broker=dependency_broker,
+        pipeline_promoter=None,
     )
 
     orchestrator = evolution_orchestrator
@@ -343,12 +352,13 @@ def _ensure_runtime_dependencies(
         promote_pipeline = promote_pipeline or _active_bootstrap_promoter()
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
-        dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, broker_manager = dependency_broker.resolve()
         if manager_override is None and manager is None and broker_manager is not None:
             manager_override = broker_manager
         if pipeline_hint is None and _looks_like_pipeline_candidate(broker_pipeline):
             pipeline_hint = broker_pipeline
+
+        prepared_pipeline = False
 
         pipe = None
         if pipeline_override is not None:
@@ -415,6 +425,7 @@ def _ensure_runtime_dependencies(
                 else manager,
                 manager_override=manager_override,
             )
+            prepared_pipeline = True
             if promoted is not None and not promote_explicit:
                 promote_pipeline = promoted
 
@@ -481,6 +492,23 @@ def _ensure_runtime_dependencies(
                 promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
             promote_pipeline(mgr)
 
+        if prepared_pipeline and callable(promote_pipeline):
+            for target in (pipe, mgr):
+                if target is None:
+                    continue
+                try:
+                    setattr(target, "_pipeline_promoter", promote_pipeline)
+                except Exception:  # pragma: no cover - best effort attachment
+                    continue
+
+        try:
+            dependency_broker.advertise(
+                pipeline=pipe,
+                sentinel=manager_override if manager_override is not None else mgr,
+            )
+        except Exception:  # pragma: no cover - best effort broker update
+            logger.debug("Failed to advertise bootstrap dependency broker state", exc_info=True)
+
         registry = reg
         data_bot = dbot
         _context_builder = ctx_builder
@@ -498,6 +526,8 @@ def _ensure_runtime_dependencies(
             pipeline=pipe,
             evolution_orchestrator=orchestrator,
             manager=mgr,
+            dependency_broker=dependency_broker,
+            pipeline_promoter=promote_pipeline,
         )
         _runtime_placeholder = _runtime_state
         _ensure_self_coding_decorated(_runtime_state)
