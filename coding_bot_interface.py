@@ -1860,9 +1860,14 @@ class _BootstrapDependencyBroker:
     def __init__(self) -> None:
         self.active_pipeline: Any | None = None
         self.active_sentinel: Any | None = None
+        self.active_owner: bool = False
 
     def advertise(
-        self, *, pipeline: Any | None = None, sentinel: Any | None = None
+        self,
+        *,
+        pipeline: Any | None = None,
+        sentinel: Any | None = None,
+        owner: bool | None = None,
     ) -> None:
         if _looks_like_pipeline_candidate(pipeline):
             self.active_pipeline = pipeline
@@ -1872,6 +1877,10 @@ class _BootstrapDependencyBroker:
             self.active_pipeline = None
         if sentinel is not None:
             self.active_sentinel = sentinel
+        if owner is True:
+            self.active_owner = True
+        elif owner is False:
+            self.active_owner = False
 
     def resolve(self) -> tuple[Any | None, Any | None]:
         pipeline_candidate = _resolve_bootstrap_pipeline_candidate(self.active_pipeline)
@@ -1888,6 +1897,7 @@ class _BootstrapDependencyBroker:
     def clear(self) -> None:
         self.active_pipeline = None
         self.active_sentinel = None
+        self.active_owner = False
 
 
 def _bootstrap_dependency_broker() -> _BootstrapDependencyBroker:
@@ -5677,6 +5687,7 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
     sentinel_candidate = manager_override or manager_sentinel
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
     bootstrap_context = _current_bootstrap_context()
     if sentinel_candidate is None:
         sentinel_candidate = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
@@ -5697,7 +5708,9 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
             pipeline_candidate = context_pipeline
     owner_depths = getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}
     owner_bootstrap_active = any(value > 0 for value in owner_depths.values())
-    bootstrap_inflight = bool(active_depth or active_heartbeat or owner_bootstrap_active)
+    bootstrap_inflight = bool(
+        active_depth or active_heartbeat or owner_bootstrap_active or broker_owner_active
+    )
     guard_metadata = {
         "active_depth": active_depth,
         "active_guard_token": bool(active_guard_token),
@@ -5707,6 +5720,7 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
         "owner_depths": dict(owner_depths),
         "owner_bootstrap_active": owner_bootstrap_active,
         "dependency_broker": bool(broker_pipeline or broker_sentinel),
+        "broker_owner_active": broker_owner_active,
         "heartbeat": bool(active_heartbeat),
     }
     _PREPARE_PIPELINE_WATCHDOG["bootstrap_guard"] = guard_metadata

@@ -431,6 +431,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
             _bootstrap_dependency_broker().advertise(
                 pipeline=placeholder_pipeline,
                 sentinel=fallback_manager,
+                owner=True,
             )
             return prepare_pipeline_for_bootstrap(
                 pipeline_cls=ModelAutomationPipeline,

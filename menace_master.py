@@ -676,6 +676,11 @@ def deploy_patch(
                 pipeline.manager = sentinel
             except Exception:
                 logger.debug("failed to bind bootstrap sentinel", exc_info=True)
+    dependency_broker.advertise(
+        pipeline=pipeline,
+        sentinel=getattr(pipeline, "manager", None) or bootstrap_sentinel or broker_sentinel,
+        owner=True,
+    )
     capital_bot = CapitalManagementBot()
     evolution_manager = SystemEvolutionManager(bots=["MenaceMaster"])
     orchestrator = EvolutionOrchestrator(

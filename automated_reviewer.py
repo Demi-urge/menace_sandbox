@@ -151,6 +151,7 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
         )
 
         skip_prepare = bootstrap_inflight and bool(_pipeline or _manager_instance)
+        advertise_owner = not skip_prepare
 
         if _pipeline is None and not skip_prepare:
             pipeline, promoter = prepare_pipeline_for_bootstrap(
@@ -173,7 +174,9 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
                     sentinel_candidate = None
             try:
                 dependency_broker.advertise(
-                    pipeline=_pipeline, sentinel=sentinel_candidate
+                    pipeline=_pipeline,
+                    sentinel=sentinel_candidate,
+                    owner=True if advertise_owner else None,
                 )
             except Exception:
                 pass
