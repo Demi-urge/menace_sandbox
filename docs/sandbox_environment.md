@@ -108,6 +108,8 @@ promote_manager(manager)
 
 The sentinel manager returned during construction prevents nested helpers from trying to bootstrap themselves (which would trigger the "re-entrant initialisation depth" warning) while still letting manual scripts inspect or patch the pipeline before the concrete manager is promoted.
 
+If bootstrap logs start looping with `prepare_pipeline_for_bootstrap` owner/reuse notices or `recursion_refused` entries, treat it as a cascade caused by a helper importing the pipeline before the placeholder was advertised. Call `advertise_bootstrap_placeholder` at the start of the maintenance script (or leave `bootstrap_guard=True` when using `prepare_pipeline_for_bootstrap`) so late imports reuse the existing sentinel instead of spawning competing bootstraps.
+
 ## Initialization order
 
 1. `auto_env_setup.ensure_env()` – create or load the `.env` file.
