@@ -89,7 +89,14 @@ try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - gracefully degrade in tests
     UnifiedEventBus = None  # type: ignore
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    _BOOTSTRAP_STATE,
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    get_active_bootstrap_pipeline,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
 from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_engine import SelfCodingEngine
 from .self_coding_manager import internalize_coding_bot
@@ -294,20 +301,67 @@ class Watchdog:
             event_bus=bus_local,
             context_builder=self.context_builder,
         )
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=self.context_builder,
-            event_bus=bus_local,
-            bot_registry=self.registry,
-            data_bot=DATA_BOT,
-        )
+        pipeline: ModelAutomationPipeline | None = None
+        manager: object | None = None
+        promote_pipeline: Callable[[object], None] | None = None
+        try:
+            pipeline, manager = _bootstrap_dependency_broker().resolve()
+        except Exception:
+            pipeline, manager = None, None
+
+        if pipeline is None or manager is None:
+            try:
+                active_pipeline, active_manager = get_active_bootstrap_pipeline()
+            except Exception:
+                active_pipeline, active_manager = None, None
+            if pipeline is None:
+                pipeline = active_pipeline
+            if manager is None:
+                manager = active_manager
+
+        try:
+            bootstrap_context = _current_bootstrap_context()
+        except Exception:
+            bootstrap_context = None
+
+        if pipeline is None and bootstrap_context is not None:
+            pipeline = getattr(bootstrap_context, "pipeline", None)
+        if manager is None and bootstrap_context is not None:
+            manager = getattr(bootstrap_context, "manager", None)
+
+        for candidate in (pipeline, manager, bootstrap_context):
+            if promote_pipeline is None and candidate is not None:
+                promote_pipeline = getattr(candidate, "_pipeline_promoter", None)
+
+        callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
+        if promote_pipeline is None and callbacks:
+            promote_pipeline = callbacks[-1]
+
+        bootstrap_active = False
+        try:
+            bootstrap_active = bool(getattr(_BOOTSTRAP_STATE, "depth", 0))
+        except Exception:
+            bootstrap_active = False
+        bootstrap_active = bootstrap_active or bootstrap_context is not None
+
+        if pipeline is None:
+            if bootstrap_active:
+                raise RuntimeError("Watchdog cannot create a pipeline during bootstrap")
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=self.context_builder,
+                event_bus=bus_local,
+                bot_registry=self.registry,
+                data_bot=DATA_BOT,
+            )
+            manager = None
         persist_sc_thresholds(
             self.__class__.__name__,
             roi_drop=self.thresholds.roi_loss_percent,
             error_increase=self.thresholds.error_trend,
             event_bus=bus_local,
         )
-        self.manager = internalize_coding_bot(
+        manager = manager or internalize_coding_bot(
             self.__class__.__name__,
             engine,
             pipeline,
@@ -317,7 +371,9 @@ class Watchdog:
             error_threshold=self.thresholds.error_trend,
             event_bus=bus_local,
         )
-        promote_pipeline(self.manager)
+        if promote_pipeline is not None:
+            promote_pipeline(manager)
+        self.manager = manager
         self.evolution_orchestrator = self.manager.evolution_orchestrator
         self.quick_fix = self.manager.quick_fix
 
