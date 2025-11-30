@@ -5,7 +5,10 @@ need to build a cognitive context for a query, later log feedback about the
 resulting patch, reload ranking models, refresh reliability metrics and
 inspect ROI statistics.  Internally it wires together the vector service
 :class:`ContextBuilder`, :class:`PatchSafety` and :class:`ROITracker` through
-:class:`vector_service.cognition_layer.CognitionLayer`.
+:class:`vector_service.cognition_layer.CognitionLayer`.  The module advertises
+the active bootstrap placeholder at import time so downstream helpers reuse the
+shared promise rather than triggering a cascading
+``prepare_pipeline_for_bootstrap`` chain during cognition warm-ups.
 
 Example
 -------
@@ -27,6 +30,11 @@ from __future__ import annotations
 from typing import Any, Tuple
 
 from vector_service.context_builder import ContextBuilder
+from coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
+)
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -44,6 +52,16 @@ __all__ = [
 # retrieval sessions.  Context builders are supplied by callers to avoid
 # implicit global state.
 _roi_tracker = ROITracker()
+_dependency_broker = _bootstrap_dependency_broker()
+_bootstrap_pipeline, _bootstrap_manager = get_active_bootstrap_pipeline()
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_dependency_broker,
+    pipeline=_bootstrap_pipeline,
+    manager=_bootstrap_manager,
+)
 
 
 def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
